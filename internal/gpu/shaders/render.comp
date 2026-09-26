@@ -11,6 +11,7 @@ const int MAX_GRAD = 8;
 const int MAX_GLITCH = 64;
 const int MAX_BARS = 256;
 const int MAX_PARTS = 1024;
+const int MAX_TEXT = 96;
 
 layout(std430, set = 0, binding = 0) readonly buffer Params {
     ivec4 dims;       // outW, outH, padW (stride Y en bytes), padH
@@ -35,12 +36,26 @@ layout(std430, set = 0, binding = 0) readonly buffer Params {
     vec4 bars[MAX_BARS];       // alturaL, alturaR, magL, magR
     vec4 parts[MAX_PARTS];     // x, y, tamaño, alfa
     vec4 partCol[MAX_PARTS];   // rgb, glow (0/1)
+
+    ivec4 textInfo;            // nItems, atlasW, chroma(0/1), gradCount
+    vec4 textStyle;            // outlineW, glowRadius, glowIntensity, chromaPx
+    vec4 textColor;
+    vec4 textUpcoming;
+    vec4 textOutline;
+    vec4 textGlowC;
+    vec4 textShadow;           // dx, dy, opacidad, blur
+    vec4 textShadowC;
+    vec4 textGrad[MAX_GRAD];
+    vec4 tA[MAX_TEXT];         // atlas x, y, w, h
+    vec4 tB[MAX_TEXT];         // centro x, y, escala, alfa
+    vec4 tC[MAX_TEXT];         // relleno karaoke, pad
 } P;
 
 layout(std430, set = 0, binding = 1) readonly buffer BG { uint bg[]; };
 layout(std430, set = 0, binding = 2) writeonly buffer OutY { uint outY[]; };
 layout(std430, set = 0, binding = 3) writeonly buffer OutUV { uint outUV[]; };
 layout(std430, set = 0, binding = 4) writeonly buffer OutRGBA { uint outRGBA[]; };
+layout(std430, set = 0, binding = 5) readonly buffer TextAtlas { uint atlas[]; };
 
 int W, H;
 
@@ -279,6 +294,82 @@ void waveLines(vec2 p) {
     }
 }
 
+// ------------------------------------------------------------------ letra (SDF)
+
+float atlasByte(int x, int y) {
+    int idx = y * P.textInfo.y + x;
+    return float((atlas[idx >> 2] >> ((idx & 3) * 8)) & 0xFFu);
+}
+
+// Distancia con signo (px del atlas, + fuera) con interpolación bilineal
+float sdfAt(vec2 a, vec4 rect) {
+    a = clamp(a, rect.xy, rect.xy + rect.zw - 1.0);
+    ivec2 i0 = ivec2(floor(a));
+    vec2 f = a - vec2(i0);
+    ivec2 i1 = min(i0 + 1, ivec2(rect.xy + rect.zw - 1.0));
+    float v = mix(mix(atlasByte(i0.x, i0.y), atlasByte(i1.x, i0.y), f.x),
+                  mix(atlasByte(i0.x, i1.y), atlasByte(i1.x, i1.y), f.x), f.y);
+    return (128.0 - v) / 4.0;
+}
+
+vec3 textGradient(float t) {
+    int n = P.textInfo.w;
+    if (n <= 0) return P.textColor.rgb;
+    if (n == 1 || t <= P.textGrad[0].w) return P.textGrad[0].rgb;
+    if (t >= P.textGrad[n - 1].w) return P.textGrad[n - 1].rgb;
+    for (int i = 0; i < n - 1; i++) {
+        vec4 a = P.textGrad[i], b = P.textGrad[i + 1];
+        if (t >= a.w && t <= b.w) return mix(a.rgb, b.rgb, (t - a.w) / max(b.w - a.w, 1e-6));
+    }
+    return P.textGrad[n - 1].rgb;
+}
+
+// Compone la letra sobre col en el punto p
+vec3 drawText(vec3 col, vec2 p) {
+    int n = P.textInfo.x;
+    float ow = P.textStyle.x;
+    float gr = max(P.textStyle.y, 0.5);
+    for (int i = 0; i < n; i++) {
+        vec4 r = P.tA[i];
+        vec4 b = P.tB[i];
+        float sc = b.z;
+        vec2 local = (p - b.xy) / sc;          // px de atlas relativos al centro de la palabra
+        vec2 hs = r.zw * 0.5;
+        if (abs(local.x) > hs.x || abs(local.y) > hs.y) continue;
+        vec2 a = r.xy + hs + local;
+        float pad = P.tC[i].y;
+        float alpha = b.w;
+
+        // Sombra (difuminada)
+        if (P.textShadow.z > 0.0) {
+            float ds = sdfAt(a - P.textShadow.xy / sc, r) * sc - ow;
+            float blur = max(P.textShadow.w, 0.75);
+            float sa = (1.0 - smoothstep(-blur, blur, ds)) * P.textShadow.z * alpha;
+            col = mix(col, P.textShadowC.rgb, sa);
+        }
+
+        float d = sdfAt(a, r) * sc;           // distancia en px de pantalla
+        // Glow
+        if (P.textStyle.z > 0.0) {
+            float g = exp(-max(d - ow, 0.0) / (gr * 0.45)) * P.textStyle.z * alpha;
+            col = mix(col, P.textGlowC.rgb, clamp(g, 0.0, 1.0) * 0.85);
+        }
+        // Contorno
+        if (ow > 0.0) {
+            col = mix(col, P.textOutline.rgb, clamp(0.5 - (d - ow), 0.0, 1.0) * P.textOutline.a * alpha);
+        }
+        // Relleno: color principal hasta el progreso karaoke, el resto en color "pendiente"
+        float fillX = r.x + pad + P.tC[i].x * (r.z - 2.0 * pad);
+        float ty = clamp((a.y - r.y - pad) / max(r.w - 2.0 * pad, 1.0), 0.0, 1.0);
+        vec3 main = textGradient(ty);
+        float k = clamp(fillX - a.x + 0.5, 0.0, 1.0);
+        vec3 fc = mix(P.textUpcoming.rgb, main, k);
+        float fa = mix(P.textUpcoming.a, P.textColor.a, k);
+        col = mix(col, fc, clamp(0.5 - d, 0.0, 1.0) * fa * alpha);
+    }
+    return col;
+}
+
 vec3 shade(ivec2 pix) {
     vec2 q = vec2(pix);
     vec2 p = q + 0.5;
@@ -316,6 +407,17 @@ vec3 shade(ivec2 pix) {
         }
         col = over(col, gC, gA);
         col = over(col, cC, cA);
+    }
+
+    if (P.textInfo.x > 0) {
+        if (P.textInfo.z != 0) {
+            // Aberración cromática de la letra: cada canal compuesto con un desplazamiento
+            vec2 off = vec2(P.textStyle.w, 0.0);
+            vec3 base = col;
+            col = vec3(drawText(base, p - off).r, drawText(base, p).g, drawText(base, p + off).b);
+        } else {
+            col = drawText(col, p);
+        }
     }
     return col;
 }

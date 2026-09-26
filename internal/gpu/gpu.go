@@ -24,6 +24,8 @@ const (
 	MaxGlitch = 64
 	MaxBars   = 256
 	MaxParts  = 1024
+
+	MaxTextItems = 96
 )
 
 // Params refleja exactamente el bloque std430 'Params' de render.comp (todo vec4/ivec4)
@@ -43,6 +45,17 @@ type Params struct {
 	Bars                        [MaxBars][4]float32
 	Parts                       [MaxParts][4]float32
 	PartCol                     [MaxParts][4]float32
+
+	// Letra
+	TextInfo                                         [4]int32 // nItems, atlasW, chroma(0/1), gradCount
+	TextStyle                                        [4]float32 // outlineW, glowRadius, glowIntensity, chromaPx
+	TextColor, TextUpcoming, TextOutline, TextGlowC [4]float32
+	TextShadow                                       [4]float32 // dx, dy, opacidad, blur
+	TextShadowC                                      [4]float32
+	TextGrad                                         [MaxGrad][4]float32
+	TItemA                                           [MaxTextItems][4]float32 // atlas x, y, w, h
+	TItemB                                           [MaxTextItems][4]float32 // centro x, y, escala, alfa
+	TItemC                                           [MaxTextItems][4]float32 // relleno karaoke, pad
 }
 
 type Renderer struct {
@@ -65,7 +78,7 @@ func ListDevices() string {
 func align(v, a int) int { return (v + a - 1) / a * a }
 
 // New crea el renderer. deviceIndex -1 = automático.
-func New(width, height, slots, deviceIndex int) (*Renderer, error) {
+func New(width, height, slots, deviceIndex int, textSize int) (*Renderer, error) {
 	g := &Renderer{Width: width, Height: height, PadW: align(width, 16), PadH: align(height, 16), Slots: slots}
 	g.spirv = C.CBytes(renderSPV)
 	cfg := C.vkr_config{
@@ -73,6 +86,7 @@ func New(width, height, slots, deviceIndex int) (*Renderer, error) {
 		pad_w: C.int(g.PadW), pad_h: C.int(g.PadH),
 		slots: C.int(slots), device_index: C.int(deviceIndex),
 		params_size: C.size_t(unsafe.Sizeof(Params{})),
+		text_size:   C.size_t(textSize),
 		spirv:       (*C.uint32_t)(g.spirv), spirv_size: C.size_t(len(renderSPV)),
 	}
 	errBuf := make([]byte, 512)
@@ -100,6 +114,9 @@ func (g *Renderer) Background(slot int) []byte { return g.bytes(slot, C.VKR_BUF_
 // PlaneY / PlaneUV: salida NV12 (stride = PadW)
 func (g *Renderer) PlaneY(slot int) unsafe.Pointer  { return C.vkr_map(g.r, C.int(slot), C.VKR_BUF_Y) }
 func (g *Renderer) PlaneUV(slot int) unsafe.Pointer { return C.vkr_map(g.r, C.int(slot), C.VKR_BUF_UV) }
+// Text devuelve el buffer del atlas SDF de la letra del slot
+func (g *Renderer) Text(slot, n int) []byte { return g.bytes(slot, C.VKR_BUF_TEXT, n) }
+
 func (g *Renderer) RGBA(slot int) []byte            { return g.bytes(slot, C.VKR_BUF_RGBA, g.Width*g.Height*4) }
 
 func (g *Renderer) Submit(slot int) error {

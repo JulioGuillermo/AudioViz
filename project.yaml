@@ -142,6 +142,60 @@ particles:
       max_life: 2.2
       glow: true
 
+# Letra sincronizada (.lrc / .srt). Ver docs/lyrics/README.md
+# Actívala con enabled: true o con:  audioviz project.yaml --lyrics letra.lrc
+lyrics:
+  enabled: false
+  path: "letra.lrc"
+  offset: 0.0
+  font: "fonts/NotoSerifDisplay-CondensedBold.ttf"
+  size: 58
+  uppercase: true
+  position: "bottom"      # top, bottom, center, left, right, side (alterna izq/der) o custom
+  margin: 280             # por encima de las barras de fuego
+  max_width: 0.9
+  line_spacing: 1.1
+  word_spacing: 0.18
+  mode: "karaoke"         # karaoke (se rellena al cantarse), words (aparecen al cantarse), line
+  in_animation: "slide_up"
+  out_animation: "zoom"
+  in_duration: 0.3
+  out_duration: 0.4
+  slide_distance: 40
+  word_pop: 0.12
+  # Letras de fuego: amarillo arriba -> naranja -> rojo brasa abajo
+  gradient:
+    - offset: 0.0
+      color: "#fff3b0"
+    - offset: 0.45
+      color: "#ffae2a"
+    - offset: 1.0
+      color: "#d4200a"
+  upcoming_color: "#5a1a0a99"   # palabras aún no cantadas: brasa apagada semitransparente
+  outline_color: "#1a0000"
+  outline_width: 2.5
+  glow:
+    enabled: true
+    color: "#ff4a00"
+    radius: 16
+    intensity: 0.7
+  shadow:
+    enabled: true
+    color: "#000000"
+    offset_x: 3
+    offset_y: 5
+    opacity: 0.7
+    blur: 5
+  react:
+    react_to: "bass"
+    scale: 0.06           # latido con los graves
+    glow: 0.5             # el glow se aviva con los graves
+    flicker: 0.6          # parpadeo de llama
+    flash: 0.3            # vira hacia flash_color en los golpes
+    flash_color: "#fff8e0"
+    shake: 2.0
+    chromatic: 0.0
+
 output:
   path: "output.mp4"
   width: 0               # 0 = tamaño del fondo

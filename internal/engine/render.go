@@ -19,6 +19,7 @@ import (
 	"audioviz/internal/effects"
 	"audioviz/internal/encode"
 	"audioviz/internal/gpu"
+	"audioviz/internal/lyrics"
 	"audioviz/internal/mux"
 	"audioviz/internal/particles"
 	"audioviz/internal/video"
@@ -162,6 +163,18 @@ func (e *RenderEngine) Execute(opts RenderOptions) error {
 	}
 	defer bgReader.Close()
 
+	sc := newScene(cfg, targetW, targetH)
+	textSize := 16
+	if cfg.Lyrics.Enabled {
+		t1 := time.Now()
+		sc.lyr, err = lyrics.New(&cfg.Lyrics, targetW, targetH)
+		if err != nil {
+			return err
+		}
+		textSize = len(sc.lyr.Atlas.Pix)
+		fmt.Printf("🎤 Letra cargada: %s (atlas %dx%d, %v)\n", filepath.Base(cfg.Lyrics.Path), sc.lyr.Atlas.W, sc.lyr.Atlas.H, time.Since(t1).Round(time.Millisecond))
+	}
+
 	// Backend de render
 	var g *gpu.Renderer
 	mode := strings.ToLower(cfg.Output.Renderer)
@@ -170,7 +183,7 @@ func (e *RenderEngine) Execute(opts RenderOptions) error {
 		if opts.SingleFrameAt >= 0 {
 			slots = 1
 		}
-		g, err = gpu.New(targetW, targetH, slots, cfg.Output.GPUDevice)
+		g, err = gpu.New(targetW, targetH, slots, cfg.Output.GPUDevice, textSize)
 		if err != nil {
 			if mode == "gpu" {
 				return fmt.Errorf("GPU Vulkan no disponible: %w", err)
@@ -179,14 +192,17 @@ func (e *RenderEngine) Execute(opts RenderOptions) error {
 			g = nil
 		} else {
 			defer g.Close()
+			if sc.lyr != nil {
+				for s := 0; s < g.Slots; s++ {
+					copy(g.Text(s, textSize), sc.lyr.Atlas.Pix)
+				}
+			}
 			fmt.Printf("🖥️  Render por GPU (Vulkan): %s\n", g.DeviceName)
 		}
 	}
 	if g == nil {
 		fmt.Printf("🖥️  Render por CPU (%d hilos)\n", runtime.NumCPU())
 	}
-
-	sc := newScene(cfg, targetW, targetH)
 
 	if opts.SingleFrameAt >= 0 {
 		idx := endFrame - 1
@@ -396,6 +412,10 @@ func (e *RenderEngine) cpuFrame(sc *scene, bg video.BackgroundReader, feat *audi
 	dc := gg.NewContextForRGBA(frame)
 	sc.parts.Draw(dc)
 	sc.viz.Draw(dc, feat)
+	if sc.lyr != nil {
+		t := float64(idx) / float64(e.cfg.Output.FPS)
+		sc.lyr.DrawCPU(frame, sc.lyr.Frame(t, feat), sc.lyr.StyleAt(t, feat))
+	}
 	return frame, nil
 }
 
@@ -486,6 +506,7 @@ type scene struct {
 	w, h  int
 	parts *particles.ParticleSystem
 	viz   visualizer.Visualizer
+	lyr   *lyrics.Engine
 }
 
 func newScene(cfg *config.ProjectConfig, w, h int) *scene {
@@ -642,4 +663,34 @@ func (s *scene) fillParams(p *gpu.Params, fx frameFX, feat *audio.FrameFeatures,
 	}
 	p.Viz2[0] = float32(glowR)
 	p.Viz2[1] = float32(glowI)
+
+	// Letra
+	p.TextInfo = [4]int32{}
+	if s.lyr != nil {
+		t := float64(frameIdx) / float64(cfg.Output.FPS)
+		items := s.lyr.Frame(t, feat)
+		st := s.lyr.StyleAt(t, feat)
+		n := min(len(items), gpu.MaxTextItems)
+		for i := 0; i < n; i++ {
+			it := items[i]
+			p.TItemA[i] = [4]float32{it.AX, it.AY, it.AW, it.AH}
+			p.TItemB[i] = [4]float32{it.CX, it.CY, it.Scale, it.Alpha}
+			p.TItemC[i] = [4]float32{it.Fill, it.Pad}
+		}
+		f4 := func(c [4]float64) [4]float32 { return [4]float32{float32(c[0]), float32(c[1]), float32(c[2]), float32(c[3])} }
+		ng := min(len(st.Grad), gpu.MaxGrad)
+		for i := 0; i < ng; i++ {
+			g := st.Grad[i]
+			p.TextGrad[i] = [4]float32{float32(g.C[0]), float32(g.C[1]), float32(g.C[2]), float32(g.Off)}
+		}
+		chroma := int32(0)
+		if st.Chroma > 0.3 {
+			chroma = 1
+		}
+		p.TextInfo = [4]int32{int32(n), int32(s.lyr.Atlas.W), chroma, int32(ng)}
+		p.TextStyle = [4]float32{float32(st.OutlineW), float32(st.GlowR), float32(st.GlowI), float32(st.Chroma)}
+		p.TextColor, p.TextUpcoming, p.TextOutline, p.TextGlowC = f4(st.Color), f4(st.Upcoming), f4(st.Outline), f4(st.GlowC)
+		p.TextShadow = [4]float32{float32(st.ShadowDX), float32(st.ShadowDY), float32(st.ShadowOp), float32(st.Blur)}
+		p.TextShadowC = f4(st.ShadowC)
+	}
 }

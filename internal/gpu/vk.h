@@ -15,7 +15,8 @@ enum {
     VKR_BUF_Y = 2,
     VKR_BUF_UV = 3,
     VKR_BUF_RGBA = 4,
-    VKR_NUM_BUFS = 5,
+    VKR_BUF_TEXT = 5,
+    VKR_NUM_BUFS = 6,
 };
 
 typedef struct {
@@ -24,6 +25,7 @@ typedef struct {
     int slots;           // cuadros en vuelo
     int device_index;    // -1 = automático
     size_t params_size;
+    size_t text_size;    // bytes del atlas de texto (SDF)
     const uint32_t *spirv;
     size_t spirv_size;
 } vkr_config;

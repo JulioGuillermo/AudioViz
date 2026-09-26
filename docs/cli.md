@@ -14,6 +14,7 @@ Si no se indica proyecto se usa `project.yaml`.
 | `-o, --output <ruta>` | Sustituye `output.path` |
 | `-a, --audio <ruta>` | Sustituye `audio.path` |
 | `-b, --bg <ruta>` | Sustituye `background.path` |
+| `-l, --lyrics <ruta>` | Muestra esa letra `.lrc`/`.srt` (activa `lyrics`) |
 | `--renderer auto\|gpu\|cpu` | Backend de render (ver [output](output.md)) |
 | `--gpu-device <n>` | GPU a usar |
 | `--list-gpus` | Lista las GPUs Vulkan |

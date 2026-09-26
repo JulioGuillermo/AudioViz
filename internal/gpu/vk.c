@@ -339,12 +339,14 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
     sizes[VKR_BUF_Y] = (VkDeviceSize)cfg->pad_w * cfg->pad_h;
     sizes[VKR_BUF_UV] = (VkDeviceSize)cfg->pad_w * cfg->pad_h / 2;
     sizes[VKR_BUF_RGBA] = (VkDeviceSize)cfg->width * cfg->height * 4;
+    sizes[VKR_BUF_TEXT] = cfg->text_size < 16 ? 16 : (cfg->text_size + 3) / 4 * 4;
     VkMemoryPropertyFlags prefs[VKR_NUM_BUFS] = {
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
     };
 
     uint32_t gx = (uint32_t)((cfg->pad_w / 4 + 7) / 8);

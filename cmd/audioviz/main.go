@@ -28,6 +28,7 @@ func main() {
 		flagStart    float64
 		flagGPU      int
 		flagListGPUs bool
+		flagLyrics   string
 		flagHelp     bool
 	)
 
@@ -46,6 +47,8 @@ func main() {
 	fs.Float64Var(&flagStart, "ss", 0, "Segundo inicial del preview")
 	fs.IntVar(&flagGPU, "gpu-device", -2, "Índice de GPU Vulkan (ver --list-gpus)")
 	fs.BoolVar(&flagListGPUs, "list-gpus", false, "Lista las GPUs Vulkan disponibles")
+	fs.StringVar(&flagLyrics, "l", "", "Letra sincronizada (.srt / .lrc) a mostrar")
+	fs.StringVar(&flagLyrics, "lyrics", "", "Letra sincronizada (.srt / .lrc) a mostrar")
 	fs.StringVar(&flagInit, "init", "", "Crea un archivo de proyecto plantilla YAML listo para editar")
 	fs.BoolVar(&flagHelp, "h", false, "Muestra la ayuda")
 	fs.BoolVar(&flagHelp, "help", false, "Muestra la ayuda")
@@ -125,6 +128,10 @@ func main() {
 	if flagBg != "" {
 		cfg.Background.Path = flagBg
 	}
+	if flagLyrics != "" {
+		cfg.Lyrics.Path = flagLyrics
+		cfg.Lyrics.Enabled = true
+	}
 	if flagRenderer != "" {
 		cfg.Output.Renderer = flagRenderer
 	}
@@ -168,7 +175,8 @@ Opciones:
   --gpu-device <n>              GPU Vulkan a usar (--list-gpus)
   -o, --output <ruta>           Sobrescribe la ruta del video final en el YAML
   -a, --audio <ruta>            Sobrescribe la ruta del audio en el YAML
-  -b, --bg <ruta>               Sobrescribe la ruta del fondo (imagen o video) en el YAML
+  -b, --bg <ruta>               Sobrescribe la ruta del fondo (imagen o GIF) en el YAML
+  -l, --lyrics <ruta>           Muestra una letra sincronizada (.srt / .lrc) y la activa
   --init <archivo.yaml>         Crea una plantilla YAML completa con comentarios
   -h, --help                    Muestra este mensaje de ayuda
 `)

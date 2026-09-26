@@ -41,6 +41,9 @@ y audio FLAC sin pérdidas dentro de un MP4.
 | [radial_burst](particles/radial_burst.md) | Explosión desde el centro |
 | [ambient_dust](particles/ambient_dust.md) | Polvo flotando por toda la imagen |
 
+## Letra
+- [Letra sincronizada](lyrics/README.md): `.srt`, `.lrc` y LRC con tiempo por palabra. Karaoke, posiciones (top/bottom/left/right/side...), animaciones de entrada y salida, colores de fuego y reacción al audio
+
 ## Salida
 - [Video de salida](output.md) — resolución, fps, calidad, GPU/CPU
 
@@ -51,6 +54,7 @@ background:         # background/README.md
 background_effects: # un bloque por efecto: background/*.md
 visualizer:         # visualizer/*.md
 particles:          # particles/*.md
+lyrics:             # lyrics/README.md
 output:             # output.md
 ```
 Genera una plantilla con todo: `audioviz --init nuevo.yaml`. Las rutas son relativas al YAML.

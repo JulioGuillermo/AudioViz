@@ -16,6 +16,7 @@ type ProjectConfig struct {
 	BackgroundEffects BackgroundEffectsConfig `yaml:"background_effects"`
 	Visualizer        VisualizerConfig        `yaml:"visualizer"`
 	Particles         ParticlesConfig         `yaml:"particles"`
+	Lyrics            LyricsConfig            `yaml:"lyrics"`
 	Output            OutputConfig            `yaml:"output"`
 }
 
@@ -167,6 +168,75 @@ type ParticleLayer struct {
 	MaxLife    float64 `yaml:"max_life"`   // Vida máxima en segundos (def. 3)
 }
 
+// LyricsConfig: letra sincronizada (.srt / .lrc / LRC con tiempo por palabra) dibujada animada
+type LyricsConfig struct {
+	Enabled bool    `yaml:"enabled"`
+	Path    string  `yaml:"path"`
+	Offset  float64 `yaml:"offset"` // segundos a sumar a todos los tiempos (+ = más tarde)
+
+	Font        string  `yaml:"font"`         // .ttf/.otf; vacío = fuente integrada (Go Bold)
+	Size        float64 `yaml:"size"`         // tamaño en px
+	Uppercase   bool    `yaml:"uppercase"`    // pasar a mayúsculas
+	// Posición: top, bottom, center, left, right, side (alterna izquierda/derecha por línea)
+	// o custom (usa position_x / position_y)
+	Position    string  `yaml:"position"`
+	Margin      float64 `yaml:"margin"`       // px de margen a los bordes (posiciones top/bottom/left/right/side)
+	PositionX   float64 `yaml:"position_x"`   // centro relativo (0-1), solo con position: custom
+	PositionY   float64 `yaml:"position_y"`   // centro relativo (0-1), custom; o altura para left/right/side
+	MaxWidth    float64 `yaml:"max_width"`    // ancho máximo relativo antes de partir en varias filas
+	LineSpacing float64 `yaml:"line_spacing"` // interlineado (1.0 = altura de la fuente)
+	WordSpacing float64 `yaml:"word_spacing"` // espacio extra entre palabras, fracción del tamaño (def. 0.12)
+	Align       string  `yaml:"align"`        // center, left, right
+
+	Mode        string  `yaml:"mode"`         // karaoke, words, line
+	// Animaciones de entrada/salida de cada línea: fade, slide_up, slide_down, slide_left, slide_right,
+	// slide_side (desde su lado), pop, zoom, none
+	InAnimation  string `yaml:"in_animation"`
+	OutAnimation string `yaml:"out_animation"`
+	Animation    string `yaml:"animation"` // atajo: la misma para entrada y salida
+	InDuration  float64 `yaml:"in_duration"`  // s
+	OutDuration float64 `yaml:"out_duration"` // s
+	SlideDistance float64 `yaml:"slide_distance"` // px para animation: slide
+	WordPop     float64 `yaml:"word_pop"`     // aumento de escala de la palabra al cantarse (0.15 = +15 %)
+
+	Color         string         `yaml:"color"`          // color de la palabra cantada / visible
+	UpcomingColor string         `yaml:"upcoming_color"` // color de las palabras aún no cantadas (karaoke), admite alfa #rrggbbaa
+	Gradient      []GradientStop `yaml:"gradient"`       // opcional: gradiente vertical de arriba (0) a abajo (1) en vez de color
+	OutlineColor  string         `yaml:"outline_color"`
+	OutlineWidth  float64        `yaml:"outline_width"` // px, 0 = sin contorno
+	Glow          TextGlowConfig `yaml:"glow"`
+	Shadow        ShadowConfig   `yaml:"shadow"`
+	React         TextReact      `yaml:"react"`
+}
+
+type TextGlowConfig struct {
+	Enabled   bool    `yaml:"enabled"`
+	Color     string  `yaml:"color"`     // vacío = color del texto
+	Radius    float64 `yaml:"radius"`    // px (máx. ~24)
+	Intensity float64 `yaml:"intensity"` // 0-1+
+}
+
+type ShadowConfig struct {
+	Enabled bool    `yaml:"enabled"`
+	Color   string  `yaml:"color"`
+	OffsetX float64 `yaml:"offset_x"`
+	OffsetY float64 `yaml:"offset_y"`
+	Opacity float64 `yaml:"opacity"`
+	Blur    float64 `yaml:"blur"` // px de difuminado
+}
+
+// TextReact: cómo reacciona la letra al audio
+type TextReact struct {
+	ReactTo   string  `yaml:"react_to"`  // bass (def.), mid, treble, overall, transient, beat
+	Scale     float64 `yaml:"scale"`     // latido: +escala máxima (0.08 = +8 %)
+	Glow      float64 `yaml:"glow"`      // intensidad de glow extra con la banda
+	Shake     float64 `yaml:"shake"`     // temblor en px
+	Chromatic float64 `yaml:"chromatic"` // separación RGB en px
+	Flicker   float64 `yaml:"flicker"`   // parpadeo de brillo tipo llama (0-1)
+	Flash     float64 `yaml:"flash"`     // cuánto vira hacia flash_color con la banda (0-1)
+	FlashColor string `yaml:"flash_color"`
+}
+
 type OutputConfig struct {
 	Path        string `yaml:"path"`
 	Width       int    `yaml:"width"`       // 0 = automático (según imagen/video de fondo)
@@ -270,6 +340,31 @@ func DefaultConfig() ProjectConfig {
 				Glow:       true,
 			},
 		},
+		Lyrics: LyricsConfig{
+			Size:          56,
+			Position:      "bottom",
+			Margin:        60,
+			PositionX:     0.5,
+			PositionY:     0.5,
+			MaxWidth:      0.9,
+			LineSpacing:   1.15,
+			WordSpacing:   0.12,
+			Align:         "center",
+			Mode:          "karaoke",
+			InAnimation:   "slide_up",
+			OutAnimation:  "fade",
+			InDuration:    0.3,
+			OutDuration:   0.35,
+			SlideDistance: 30,
+			WordPop:       0.12,
+			Color:         "#ffffff",
+			UpcomingColor: "#ffffff66",
+			OutlineColor:  "#000000",
+			OutlineWidth:  2,
+			Glow:          TextGlowConfig{Enabled: true, Radius: 12, Intensity: 0.6},
+			Shadow:        ShadowConfig{Enabled: true, Color: "#000000", OffsetX: 3, OffsetY: 4, Opacity: 0.6, Blur: 4},
+			React:         TextReact{ReactTo: "bass", Scale: 0.05},
+		},
 		Output: OutputConfig{
 			Path:         "output.mp4",
 			Width:        0, // 0 = inferir de fondo
@@ -303,6 +398,11 @@ func LoadConfig(filePath string) (*ProjectConfig, error) {
 	}
 	if cfg.Background.Path != "" && !filepath.IsAbs(cfg.Background.Path) {
 		cfg.Background.Path = filepath.Clean(filepath.Join(projectDir, cfg.Background.Path))
+	}
+	for _, pp := range []*string{&cfg.Lyrics.Path, &cfg.Lyrics.Font} {
+		if *pp != "" && !filepath.IsAbs(*pp) {
+			*pp = filepath.Clean(filepath.Join(projectDir, *pp))
+		}
 	}
 	if cfg.Output.Path != "" && !filepath.IsAbs(cfg.Output.Path) {
 		cfg.Output.Path = filepath.Clean(filepath.Join(projectDir, cfg.Output.Path))
