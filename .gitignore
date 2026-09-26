@@ -6,3 +6,5 @@
 /third_party/x264/
 /third_party/build/
 I didn*t ask to be the devil
+tools/lyrics/.venv/
+tools/lyrics/cache/

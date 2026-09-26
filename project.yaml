@@ -145,8 +145,8 @@ particles:
 # Letra sincronizada (.lrc / .srt). Ver docs/lyrics/README.md
 # Actívala con enabled: true o con:  audioviz project.yaml --lyrics letra.lrc
 lyrics:
-  enabled: false
-  path: "letra.lrc"
+  enabled: true
+  path: "letra.lrc"       # generado con tools/lyrics/run.sh (ver docs/lyrics/generar.md)
   offset: 0.0
   font: "fonts/NotoSerifDisplay-CondensedBold.ttf"
   size: 58

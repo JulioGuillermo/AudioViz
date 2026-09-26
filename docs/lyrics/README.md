@@ -11,6 +11,8 @@ lyrics:
 ```
 O desde la línea de comandos: `audioviz project.yaml --lyrics letra.lrc`.
 
+¿No tienes el `.lrc`? [Genéralo a partir del audio y la letra en texto](generar.md).
+
 ## Formatos
 | Formato | Tiempos | Ejemplo |
 |---|---|---|
