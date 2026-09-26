@@ -138,3 +138,11 @@ func AlongPattern(cfg *config.VisualizerConfig, bx, by, dx, dy, h, alpha float64
 	}
 	return g
 }
+
+// CenterGap es la separación entre la primera barra L y la primera R en el visualizador horizontal
+func CenterGap(cfg *config.VisualizerConfig) float64 {
+	if cfg.CenterGap != nil {
+		return *cfg.CenterGap
+	}
+	return cfg.BarGap * 2
+}

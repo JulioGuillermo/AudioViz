@@ -48,8 +48,9 @@ func (lv *LinearVisualizer) Draw(dc *gg.Context, feat *audio.FrameFeatures) {
 	totalBarSpan := barWidth + barGap
 
 	// Si no cabe en media pantalla, reajustar ancho automáticamente
-	if float64(barCount)*totalBarSpan > halfW*0.95 {
-		totalBarSpan = (halfW * 0.95) / float64(barCount)
+	cg := CenterGap(lv.cfg)
+	if avail := halfW*0.95 - cg/2; float64(barCount)*totalBarSpan > avail {
+		totalBarSpan = avail / float64(barCount)
 		barWidth = totalBarSpan * 0.75
 		barGap = totalBarSpan * 0.25
 	}
@@ -76,7 +77,7 @@ func (lv *LinearVisualizer) renderBars(dc *gg.Context, feat *audio.FrameFeatures
 	for i := 0; i < barCount; i++ {
 		magL := feat.LeftBars[i]
 		h := lv.cfg.MinHeight + magL*(lv.cfg.MaxHeight-lv.cfg.MinHeight)
-		x := centerX - (float64(i)*totalSpan + barWidth)
+		x := centerX - CenterGap(lv.cfg)/2 - (float64(i)*totalSpan + barWidth)
 
 		t := float64(i) / float64(barCount)
 		col := lv.getColor(t, alpha)
@@ -98,7 +99,7 @@ func (lv *LinearVisualizer) renderBars(dc *gg.Context, feat *audio.FrameFeatures
 	for i := 0; i < barCount; i++ {
 		magR := feat.RightBars[i]
 		h := lv.cfg.MinHeight + magR*(lv.cfg.MaxHeight-lv.cfg.MinHeight)
-		x := centerX + (float64(i) * totalSpan)
+		x := centerX + CenterGap(lv.cfg)/2 + (float64(i) * totalSpan)
 
 		t := float64(i) / float64(barCount)
 		col := lv.getColor(t, alpha)

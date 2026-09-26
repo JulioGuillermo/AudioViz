@@ -221,13 +221,14 @@ void horizontalBars(vec2 p) {
     float span = P.viz1.y;
     float rr = P.viz1.z;
     for (int ch = 0; ch < 2; ch++) {
-        float rel = ch == 0 ? (cx - p.x) : (p.x - cx);
+        float hg = P.viz3.z * 0.5; // media separación central
+        float rel = ch == 0 ? (cx - hg - p.x) : (p.x - cx - hg);
         int base = int(floor(rel / span));
         for (int k = -1; k <= 1; k++) {
             int i = base + k;
             if (i < 0 || i >= N) continue;
             float h = ch == 0 ? P.bars[i].x : P.bars[i].y;
-            float x0 = ch == 0 ? cx - (float(i) * span + bw) : cx + float(i) * span;
+            float x0 = ch == 0 ? cx - hg - (float(i) * span + bw) : cx + hg + float(i) * span;
             float r = min(rr, min(bw * 0.5, h * 0.5));
             addShape(sdRoundBox(p, vec2(x0, baseY - h), vec2(x0 + bw, baseY), r), gradientAt(gradT(i, N, baseY - p.y, h)), solidAlpha());
             if (P.flags3.x != 0) {

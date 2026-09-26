@@ -614,14 +614,15 @@ func (s *scene) fillParams(p *gpu.Params, fx frameFX, feat *audio.FrameFeatures,
 			posY = 0.85
 		}
 		halfW := W / 2
-		gap := v.BarGap
-		span := bw + gap
-		if float64(n)*span > halfW*0.95 {
-			span = halfW * 0.95 / float64(n)
+		cg := visualizer.CenterGap(v)
+		span := bw + v.BarGap
+		if avail := halfW*0.95 - cg/2; float64(n)*span > avail {
+			span = avail / float64(n)
 			bw = span * 0.75
 		}
 		p.Viz0 = [4]float32{float32(halfW), 0, 0, float32(H * posY)}
 		p.Viz1 = [4]float32{float32(bw), float32(span), float32(v.Roundness), 0}
+		p.Viz3 = [4]float32{0, 0, float32(cg), 0}
 	case 3:
 		span := H * 0.8 / float64(n)
 		p.Viz1 = [4]float32{float32(bw), float32(span), float32(v.Roundness), 0}

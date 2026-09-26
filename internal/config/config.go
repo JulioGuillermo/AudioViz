@@ -114,6 +114,7 @@ type VisualizerConfig struct {
 	// Para tipo "horizontal":
 	PositionY       float64       `yaml:"position_y"`      // Posición Y relativa (ej. 0.85 para abajo)
 	MirrorBottom    bool          `yaml:"mirror_bottom"`   // Reflejo hacia abajo
+	CenterGap       *float64      `yaml:"center_gap"`      // Separación entre L y R en el centro (px, def. 2×bar_gap)
 
 	// Colores y Glow
 	ColorMode       string        `yaml:"color_mode"`      // "gradient", "solid"

@@ -75,6 +75,7 @@ visualizer:
   decay_rate: 0.12
   position_y: 1.0        # base de las barras en el borde inferior
   mirror_bottom: false
+  center_gap: 8.0        # separación entre L y R en el centro (px)
   color_mode: "gradient"
   gradient_axis: "length"  # a lo largo de cada barra (base -> punta)
   gradient_fit: "max"      # el último color está en max_height

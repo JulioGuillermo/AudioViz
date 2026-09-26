@@ -14,5 +14,6 @@ visualizer:
 |---|---|---|
 | `position_y` | 0.85 | Altura relativa de la línea base (1.0 = borde inferior) |
 | `mirror_bottom` | true | Reflejo hacia abajo (mitad de altura, 35 % de opacidad) |
+| `center_gap` | 2 × `bar_gap` | Separación en px entre la primera barra L y la primera R, en el centro (0 = pegadas) |
 
 Más las [opciones comunes](README.md#opciones-comunes) (`bar_width`, `bar_gap`, `roundness`...).
