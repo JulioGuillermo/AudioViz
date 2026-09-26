@@ -72,6 +72,14 @@ def main():
 
     work = tempfile.mkdtemp(prefix="lyrics_")
     vocals = args.vocals or (args.audio if args.no_separate else separate_vocals(args.audio, work))
+    if not args.vocals and not args.no_separate:
+        # Guardar la voz separada para reutilizarla (--vocals) y analizarla (energy.py / transcribe.py)
+        import shutil
+        cache = os.path.join(os.path.dirname(os.path.abspath(__file__)), "cache")
+        os.makedirs(cache, exist_ok=True)
+        shutil.copy(vocals, os.path.join(cache, "vocals.wav"))
+        vocals = os.path.join(cache, "vocals.wav")
+        print(f"💾 Voz separada guardada en {vocals}", flush=True)
 
     import stable_whisper
     import torch

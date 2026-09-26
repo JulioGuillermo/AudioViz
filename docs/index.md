@@ -43,7 +43,7 @@ y audio FLAC sin pérdidas dentro de un MP4.
 
 ## Letra
 - [Letra sincronizada](lyrics/README.md): `.srt`, `.lrc` y LRC con tiempo por palabra. Karaoke, posiciones (top/bottom/left/right/side...), animaciones de entrada y salida, colores de fuego y reacción al audio
-- [Generar el .lrc con tiempo por palabra](lyrics/generar.md) a partir del audio y la letra en texto (formato Suno admitido)
+- [Generar el .lrc con tiempo por palabra](lyrics/generar.md) a partir del audio y la letra en texto (formato Suno admitido) · [receta paso a paso con todos los comandos](lyrics/paso-a-paso.md)
 
 ## Salida
 - [Video de salida](output.md) — resolución, fps, calidad, GPU/CPU
