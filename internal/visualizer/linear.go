@@ -13,7 +13,8 @@ type LinearVisualizer struct {
 	cfg    *config.VisualizerConfig
 	width  int
 	height int
-	baseY  float64
+	baseY   float64
+	pattern gg.Pattern
 }
 
 func NewLinearVisualizer(cfg *config.VisualizerConfig, width, height int) *LinearVisualizer {
@@ -81,12 +82,14 @@ func (lv *LinearVisualizer) renderBars(dc *gg.Context, feat *audio.FrameFeatures
 		col := lv.getColor(t, alpha)
 
 		// Barra hacia arriba
+		lv.pattern = AlongPattern(lv.cfg, x, lv.baseY, 0, -1, h, alpha)
 		lv.drawBar(dc, x, lv.baseY, barWidth, -h, col)
 
 		// Reflejo hacia abajo si está activo
 		if lv.cfg.MirrorBottom {
 			mirrorCol := col
 			mirrorCol.A = uint8(float64(mirrorCol.A) * 0.35)
+			lv.pattern = AlongPattern(lv.cfg, x, lv.baseY, 0, 0.5, h, alpha*0.35)
 			lv.drawBar(dc, x, lv.baseY, barWidth, h*0.5, mirrorCol)
 		}
 	}
@@ -101,12 +104,14 @@ func (lv *LinearVisualizer) renderBars(dc *gg.Context, feat *audio.FrameFeatures
 		col := lv.getColor(t, alpha)
 
 		// Barra hacia arriba
+		lv.pattern = AlongPattern(lv.cfg, x, lv.baseY, 0, -1, h, alpha)
 		lv.drawBar(dc, x, lv.baseY, barWidth, -h, col)
 
 		// Reflejo hacia abajo si está activo
 		if lv.cfg.MirrorBottom {
 			mirrorCol := col
 			mirrorCol.A = uint8(float64(mirrorCol.A) * 0.35)
+			lv.pattern = AlongPattern(lv.cfg, x, lv.baseY, 0, 0.5, h, alpha*0.35)
 			lv.drawBar(dc, x, lv.baseY, barWidth, h*0.5, mirrorCol)
 		}
 	}
@@ -114,6 +119,9 @@ func (lv *LinearVisualizer) renderBars(dc *gg.Context, feat *audio.FrameFeatures
 
 func (lv *LinearVisualizer) drawBar(dc *gg.Context, x, y, width, height float64, col color.RGBA) {
 	dc.SetRGBA255(int(col.R), int(col.G), int(col.B), int(col.A))
+	if lv.pattern != nil {
+		dc.SetFillStyle(lv.pattern)
+	}
 	r := lv.cfg.Roundness
 	if r > width/2 {
 		r = width / 2

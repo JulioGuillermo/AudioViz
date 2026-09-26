@@ -28,10 +28,13 @@ layout(std430, set = 0, binding = 0) readonly buffer Params {
     vec4 partColor;   // rgb
     vec4 waveColL;
     vec4 waveColR;
+    vec4 gradInfo;    // eje (0 índice, 1 longitud), ajuste (0 barra, 1 máximo), maxHeight, -
+    vec4 shake;       // desplazamiento de cámara dx, dy
     vec4 grad[MAX_GRAD];       // rgb + offset en w
     vec4 glitch[MAX_GLITCH];   // y0, y1, shiftX, -
     vec4 bars[MAX_BARS];       // alturaL, alturaR, magL, magR
     vec4 parts[MAX_PARTS];     // x, y, tamaño, alfa
+    vec4 partCol[MAX_PARTS];   // rgb, glow (0/1)
 } P;
 
 layout(std430, set = 0, binding = 1) readonly buffer BG { uint bg[]; };
@@ -70,6 +73,7 @@ vec3 warped(vec2 q) {
     if (zoom > 1.001) {
         q = c + (q - c) / zoom;
     }
+    q -= P.shake.xy;
     return bilinear(q);
 }
 
@@ -159,6 +163,14 @@ float sdRoundBox(vec2 p, vec2 lo, vec2 hi, float r) {
     return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
 }
 
+// Posición en el gradiente: por índice de barra, o a lo largo de la barra (dist = distancia
+// recorrida desde la base, h = altura actual de esa barra)
+float gradT(int i, int N, float dist, float h) {
+    if (P.gradInfo.x < 0.5) return float(i) / float(N);
+    float L = P.gradInfo.y > 0.5 ? P.gradInfo.z : h;
+    return clamp(dist / max(L, 1.0), 0.0, 1.0);
+}
+
 // Acumuladores del visualizador: glow (máx) y núcleo (máx) con su color
 float gA, cA;
 vec3 gC, cC;
@@ -195,7 +207,8 @@ void circularBars(vec2 p) {
             float a = ch == 0 ? (-HALF_PI - (float(i) + 0.5) * stepA) : (-HALF_PI + (float(i) + 0.5) * stepA);
             vec2 dir = vec2(cos(a), sin(a));
             float dist = sdSegment(p, c + dir * r0, c + dir * (r0 + h)) - w * 0.5;
-            addShape(dist, gradientAt(float(i) / float(N)), solidAlpha());
+            float along = dot(p - c, dir) - r0;
+            addShape(dist, gradientAt(gradT(i, N, along, h)), solidAlpha());
         }
     }
 }
@@ -215,13 +228,12 @@ void horizontalBars(vec2 p) {
             if (i < 0 || i >= N) continue;
             float h = ch == 0 ? P.bars[i].x : P.bars[i].y;
             float x0 = ch == 0 ? cx - (float(i) * span + bw) : cx + float(i) * span;
-            vec3 col = gradientAt(float(i) / float(N));
             float r = min(rr, min(bw * 0.5, h * 0.5));
-            addShape(sdRoundBox(p, vec2(x0, baseY - h), vec2(x0 + bw, baseY), r), col, solidAlpha());
+            addShape(sdRoundBox(p, vec2(x0, baseY - h), vec2(x0 + bw, baseY), r), gradientAt(gradT(i, N, baseY - p.y, h)), solidAlpha());
             if (P.flags3.x != 0) {
                 float hm = h * 0.5;
                 float rm = min(rr, min(bw * 0.5, hm * 0.5));
-                addShape(sdRoundBox(p, vec2(x0, baseY), vec2(x0 + bw, baseY + hm), rm), col, solidAlpha() * 0.35);
+                addShape(sdRoundBox(p, vec2(x0, baseY), vec2(x0 + bw, baseY + hm), rm), gradientAt(gradT(i, N, (p.y - baseY) * 2.0, h)), solidAlpha() * 0.35);
             }
         }
     }
@@ -238,11 +250,10 @@ void verticalBars(vec2 p) {
         int i = base + k;
         if (i < 0 || i >= N) continue;
         float y0 = startY + float(i) * span;
-        vec3 col = gradientAt(float(i) / float(N));
         float lenL = max(P.bars[i].x, 2.0);
         float lenR = max(P.bars[i].y, 2.0);
-        addShape(sdRoundBox(p, vec2(0.0, y0), vec2(lenL, y0 + barH), min(rr, min(barH, lenL) * 0.5)), col, solidAlpha());
-        addShape(sdRoundBox(p, vec2(float(W) - lenR, y0), vec2(float(W), y0 + barH), min(rr, min(barH, lenR) * 0.5)), col, solidAlpha());
+        addShape(sdRoundBox(p, vec2(0.0, y0), vec2(lenL, y0 + barH), min(rr, min(barH, lenL) * 0.5)), gradientAt(gradT(i, N, p.x, lenL)), solidAlpha());
+        addShape(sdRoundBox(p, vec2(float(W) - lenR, y0), vec2(float(W), y0 + barH), min(rr, min(barH, lenR) * 0.5)), gradientAt(gradT(i, N, float(W) - p.x, lenR)), solidAlpha());
     }
 }
 
@@ -258,6 +269,7 @@ void waveLines(vec2 p) {
     int base = int(floor(p.x / P.viz2.w));
     for (int ch = 0; ch < 2; ch++) {
         vec3 col = ch == 0 ? P.waveColL.rgb : P.waveColR.rgb;
+        if (P.gradInfo.x > 0.5) col = gradientAt(clamp(abs(p.y - P.viz0.w) / max(P.viz2.z, 1.0), 0.0, 1.0));
         for (int k = -2; k <= 1; k++) {
             int i = base + k;
             if (i < 0 || i + 1 >= N) continue;
@@ -273,11 +285,11 @@ vec3 shade(ivec2 pix) {
 
     // Partículas (glow suave + núcleo)
     int np = P.flags.z;
-    vec3 pc = P.partColor.rgb;
     for (int i = 0; i < np; i++) {
         vec4 pt = P.parts[i];
+        vec3 pc = P.partCol[i].rgb;
         float dist = length(p - pt.xy);
-        if (P.flags3.z != 0) {
+        if (P.partCol[i].w > 0.5) {
             float rg = pt.z * 2.0;
             if (dist < rg + 1.0) col = over(col, pc, clamp(rg - dist + 0.5, 0.0, 1.0) * pt.w * 0.3);
         }

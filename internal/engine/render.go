@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"image"
+	"image/color"
 	"image/png"
 	"math"
 	"os"
@@ -27,7 +28,8 @@ import (
 )
 
 type RenderEngine struct {
-	cfg *config.ProjectConfig
+	cfg        *config.ProjectConfig
+	outW, outH int
 }
 
 func NewRenderEngine(cfg *config.ProjectConfig) *RenderEngine {
@@ -49,48 +51,58 @@ type frameFX struct {
 	chromaShift                 float64
 	chromaMode                  int // 0 no, 1 horizontal, 2 radial
 	glitch                      bool
+	shakeX, shakeY              float64
 	bright, contrast            float64
 }
 
 func (e *RenderEngine) computeFX(feat *audio.FrameFeatures, frameIdx int) frameFX {
 	eff := &e.cfg.BackgroundEffects
+	fps := float64(e.cfg.Output.FPS)
 	var fx frameFX
 	fx.zoom = 1
 	if eff.BassZoom.Enabled {
-		fx.zoom = 1.0 + (eff.BassZoom.MaxZoom-1.0)*feat.BassEnergy*eff.BassZoom.Sensitivity
+		fx.zoom = 1.0 + (eff.BassZoom.MaxZoom-1.0)*feat.Band(eff.BassZoom.ReactTo, "bass")*eff.BassZoom.Sensitivity
 		if feat.BeatPulse > 0 {
 			fx.zoom += (eff.BassZoom.MaxZoom - 1.0) * feat.BeatPulse * 0.5
 		}
 	}
+	if sh := eff.Shake; sh.Enabled && sh.Amplitude > 0 {
+		speed := sh.Speed
+		if speed <= 0 {
+			speed = 1
+		}
+		t := float64(frameIdx) / fps * speed
+		amp := sh.Amplitude * feat.Band(sh.ReactTo, "bass")
+		// Suma de senos de frecuencias no múltiplas: vaivén orgánico sin repetición visible
+		fx.shakeX = amp * (0.6*math.Sin(t*7.3) + 0.4*math.Sin(t*13.1+1.7))
+		fx.shakeY = amp * (0.6*math.Sin(t*8.9+0.5) + 0.4*math.Sin(t*11.7+2.3))
+		// Zoom extra para que el desplazamiento nunca deje ver los bordes
+		minDim := math.Max(math.Min(float64(e.outW), float64(e.outH)), 64)
+		fx.zoom *= 1 + 2*sh.Amplitude/minDim
+	}
 	if eff.Ripple.Enabled {
 		fx.rTim = float64(frameIdx) * 0.05 * eff.Ripple.Speed
-		fx.rippleAmp = eff.Ripple.Amplitude * (0.3 + feat.MidEnergy*0.7)
+		fx.rippleAmp = eff.Ripple.Amplitude * (0.3 + feat.Band(eff.Ripple.ReactTo, "mid")*0.7)
 		fx.rippleFreq = eff.Ripple.Frequency
 	}
 	if eff.ChromaticAberration.Enabled {
-		var v float64
-		switch eff.ChromaticAberration.ReactTo {
-		case "treble":
-			v = feat.TrebleEnergy
-		case "transient":
-			v = math.Min(feat.SpectralFlux*5.0, 1.5)
-		case "overall":
-			v = feat.OverallRMS
-		default:
-			v = feat.BassEnergy
-		}
-		fx.chromaShift = eff.ChromaticAberration.MaxShift * v
+		fx.chromaShift = eff.ChromaticAberration.MaxShift * feat.Band(eff.ChromaticAberration.ReactTo, "bass")
 		fx.chromaMode = 1
 		if eff.ChromaticAberration.Mode == "radial" {
 			fx.chromaMode = 2
 		}
 	}
-	if eff.Glitch.Enabled && (feat.SpectralFlux > eff.Glitch.Threshold || feat.IsBeat) {
-		fx.glitch = true
+	if g := eff.Glitch; g.Enabled {
+		if g.ReactTo == "" {
+			fx.glitch = feat.SpectralFlux > g.Threshold || feat.IsBeat
+		} else {
+			fx.glitch = feat.Band(g.ReactTo, "") > g.Threshold
+		}
 	}
 	if eff.ColorFlash.Enabled {
-		fx.bright = eff.ColorFlash.BrightnessBoost * feat.BassEnergy
-		fx.contrast = eff.ColorFlash.ContrastBoost * feat.BassEnergy
+		v := feat.Band(eff.ColorFlash.ReactTo, "bass")
+		fx.bright = eff.ColorFlash.BrightnessBoost * v
+		fx.contrast = eff.ColorFlash.ContrastBoost * v
 	}
 	return fx
 }
@@ -109,6 +121,7 @@ func (e *RenderEngine) Execute(opts RenderOptions) error {
 		targetW, targetH = probe.Width, probe.Height
 	}
 	targetW, targetH = targetW/2*2, targetH/2*2
+	e.outW, e.outH = targetW, targetH
 	fmt.Printf("📐 Resolución: %dx%d\n", targetW, targetH)
 
 	fmt.Printf("🎵 Decodificando audio: %s\n", cfg.Audio.Path)
@@ -364,7 +377,7 @@ func (e *RenderEngine) cpuFrame(sc *scene, bg video.BackgroundReader, feat *audi
 	frame := image.NewRGBA(src.Bounds())
 	copy(frame.Pix, src.Pix)
 	fx := e.computeFX(feat, idx)
-	frame = effects.ApplyBassZoom(frame, fx.zoom)
+	frame = effects.ApplyBassZoom(frame, fx.zoom, fx.shakeX, fx.shakeY)
 	if fx.rippleAmp > 0 {
 		frame = effects.ApplyRipple(frame, fx.rippleAmp, fx.rippleFreq, fx.rTim)
 	}
@@ -381,18 +394,7 @@ func (e *RenderEngine) cpuFrame(sc *scene, bg video.BackgroundReader, feat *audi
 	effects.ApplyColorAndContrast(frame, fx.bright, fx.contrast, e.cfg.Background.Darken, e.cfg.Background.Opacity, e.cfg.Background.Vignette)
 
 	dc := gg.NewContextForRGBA(frame)
-	col := sc.parts.Color()
-	sc.parts.Each(func(x, y, size, alpha float64) {
-		a := int(alpha * 255)
-		if e.cfg.Particles.Glow {
-			dc.SetRGBA255(int(col.R), int(col.G), int(col.B), int(float64(a)*0.3))
-			dc.DrawCircle(x, y, size*2)
-			dc.Fill()
-		}
-		dc.SetRGBA255(int(col.R), int(col.G), int(col.B), a)
-		dc.DrawCircle(x, y, size)
-		dc.Fill()
-	})
+	sc.parts.Draw(dc)
 	sc.viz.Draw(dc, feat)
 	return frame, nil
 }
@@ -528,14 +530,18 @@ func (s *scene) fillParams(p *gpu.Params, fx frameFX, feat *audio.FrameFeatures,
 
 	// Partículas
 	np := 0
-	s.parts.Each(func(x, y, size, alpha float64) {
+	s.parts.Each(func(x, y, size, alpha float64, col color.RGBA, glow bool) {
 		if np < gpu.MaxParts {
 			p.Parts[np] = [4]float32{float32(x), float32(y), float32(size), float32(alpha)}
+			g := float32(0)
+			if glow {
+				g = 1
+			}
+			p.PartCol[np] = [4]float32{float32(col.R) / 255, float32(col.G) / 255, float32(col.B) / 255, g}
 			np++
 		}
 	})
-	pc := s.parts.Color()
-	p.PartColor = [4]float32{float32(pc.R) / 255, float32(pc.G) / 255, float32(pc.B) / 255, 1}
+	p.Shake = [4]float32{float32(fx.shakeX), float32(fx.shakeY)}
 
 	// Visualizador
 	vizType := int32(0)
@@ -578,7 +584,8 @@ func (s *scene) fillParams(p *gpu.Params, fx frameFX, feat *audio.FrameFeatures,
 
 	p.Flags = [4]int32{vizType, int32(n), int32(np), int32(nGlitch)}
 	p.Flags2 = [4]int32{chromaMode, colorMode, int32(ng), b2i(writeRGBA)}
-	p.Flags3 = [4]int32{b2i(v.MirrorBottom), b2i(v.Glow.Enabled), b2i(cfg.Particles.Glow), 1}
+	p.Flags3 = [4]int32{b2i(v.MirrorBottom), b2i(v.Glow.Enabled), 0, 1}
+	p.GradInfo = [4]float32{float32(b2i(v.GradientAxis == "length")), float32(b2i(v.GradientFit == "max")), float32(v.MaxHeight)}
 
 	bw := v.BarWidth
 	glowR, glowI := v.Glow.Radius, v.Glow.Intensity

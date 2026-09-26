@@ -1,127 +1,152 @@
 # ==============================================================
-# AudioViz - Archivo de Configuración de Proyecto
+# AudioViz - "I didn't ask to be the devil"  (estética: fuego)
+# Documentación completa de cada opción: docs/index.md
 # ==============================================================
 
-# 1. Pista de Audio
 audio:
   path: "I didnt ask to be the devil.flac"
-  volume: 1.0         # Multiplicador de volumen (1.0 = normal)
-  sensitivity: 1.0    # Sensibilidad general de la reactividad visual
-  normalize: true     # Normalización adaptativa: cada efecto/barra se reescala a su rango local
-  normalize_window: 4.0 # Segundos a cada lado de la ventana de normalización
+  volume: 1.0
+  sensitivity: 1.0
+  normalize: true        # Cada efecto/barra se reescala a su rango local: nada se queda clavado
+  normalize_window: 4.0  # Segundos a cada lado de la ventana de normalización
 
-# 2. Fondo (Imagen o Video)
 background:
-  path: "I didn't ask to be the devil"   # Ruta a imagen o video
-  fit_mode: "cover"                      # "cover", "contain", "stretch"
-  opacity: 0.90                          # Opacidad (0.0 a 1.0)
-  darken: 0.12                           # Oscurecimiento base para resaltar el espectrograma
-  vignette: 0.25                         # Sombra de viñeta en los bordes (0.0 a 1.0)
-  loop_video: true                       # Repetir si el fondo es video y dura menos que el audio
+  path: "I didn't ask to be the devil"
+  fit_mode: "cover"
+  opacity: 1.0
+  darken: 0.10
+  vignette: 0.30
+  loop_video: true
 
-# 3. Efectos de Distorsión Reactivos sobre el Fondo
+# Reparto por frecuencias:
+#   graves  -> zoom, temblor de cámara y flash de brillo (el "golpe")
+#   medios  -> aberración cromática
+#   agudos  -> ondulación tipo calor sobre el fuego y glitch en los picos
 background_effects:
-  # Zoom y bombeo al compás de los graves (kicks, bajo)
   bass_zoom:
     enabled: true
-    max_zoom: 1.07       # 1.07 = hasta 7% de aumento en picos de graves
-    sensitivity: 1.2     # Reacción a frecuencias bajas
-    decay_speed: 0.15    # Velocidad de retorno elástico
+    max_zoom: 1.06
+    sensitivity: 1.0
+    react_to: "bass"
 
-  # Separación cromática de canales RGB
+  shake:
+    enabled: true
+    amplitude: 5.0       # píxeles
+    speed: 1.0
+    react_to: "bass"
+
   chromatic_aberration:
     enabled: true
-    max_shift: 8.0       # Píxeles máximos de desplazamiento entre canales
-    mode: "radial"       # "radial" (desde el centro) o "horizontal"
-    react_to: "bass"     # "bass", "treble", "transient", "overall"
+    max_shift: 7.0
+    mode: "radial"
+    react_to: "mid"
 
-  # Ondulación de agua / deformación senoidal
   ripple:
-    enabled: false
-    amplitude: 6.0       # Amplitud de onda en píxeles
-    frequency: 0.04
-    speed: 1.5
+    enabled: true
+    amplitude: 2.5       # distorsión suave tipo aire caliente
+    frequency: 0.025
+    speed: 1.2
+    react_to: "treble"
 
-  # Glitch / Fallo digital en transitorios fuertes
   glitch:
     enabled: true
-    threshold: 0.65      # Sensibilidad (más bajo = más frecuente)
-    intensity: 0.35      # Desplazamiento de scanlines
+    react_to: "treble"   # solo en picos muy altos de agudos
+    threshold: 0.93
+    intensity: 0.25
 
-  # Flashes de iluminación al compás del ritmo
   color_flash:
     enabled: true
-    brightness_boost: 0.18
-    contrast_boost: 0.12
+    brightness_boost: 0.12
+    contrast_boost: 0.10
+    react_to: "bass"
 
-# 4. Visualizador / Espectrograma de Audio
+# Barras que salen del borde inferior como llamas: rojo oscuro en la base,
+# naranja/amarillo solo cuando la barra se acerca al máximo (gradient_fit: max)
 visualizer:
   enabled: true
-  # Tipos disponibles:
-  # - "circular": Anillo central simétrico (L a la izquierda, R a la derecha)
-  # - "horizontal": Barras en la base saliendo desde el centro
-  # - "vertical": Barras en los laterales saliendo desde los bordes
-  # - "oscilloscope": Líneas de onda neón estilo osciloscopio
-  type: "circular"
-  stereo_symmetric: true # L canal izquierdo, R canal derecho
-  bars: 56               # Cantidad de bandas por canal
-  min_height: 4.0        # Altura mínima de las barras
-  max_height: 180.0      # Altura máxima en picos
-  bar_width: 5.0         # Grosor de cada barra
-  bar_gap: 3.5           # Espacio entre barras
-  roundness: 2.5         # Bordes redondeados en las puntas
-  smoothing: 0.75        # Suavidad de transición (0.0 muy brusco, 0.95 muy suave)
-  decay_rate: 0.12       # Caída de picos tras un golpe
-
-  # Ajustes para tipo circular:
-  radius: 200.0          # Radio del círculo central
-  center_x: 0.5          # Posición horizontal (0.5 = centro)
-  center_y: 0.5          # Posición vertical (0.5 = centro)
-
-  # Ajustes para tipo horizontal:
-  position_y: 0.85       # Altura relativa (0.85 = parte inferior)
-  mirror_bottom: true    # Reflejo hacia abajo con transparencia
-
-  # Colores y estilo de iluminación:
-  color_mode: "gradient" # "gradient" o "solid"
-  solid_color: "#00f0ff"
+  type: "horizontal"
+  bars: 48
+  min_height: 3.0
+  max_height: 230.0
+  bar_width: 6.0
+  bar_gap: 3.0
+  roundness: 3.0
+  smoothing: 0.75
+  decay_rate: 0.12
+  position_y: 1.0        # base de las barras en el borde inferior
+  mirror_bottom: false
+  color_mode: "gradient"
+  gradient_axis: "length"  # a lo largo de cada barra (base -> punta)
+  gradient_fit: "max"      # el último color está en max_height
   gradient:
     - offset: 0.0
-      color: "#00f0ff"   # Cyan neón
-    - offset: 0.5
-      color: "#9b51e0"   # Púrpura eléctrico
+      color: "#7a0000"   # brasa
+    - offset: 0.45
+      color: "#e0220a"   # rojo fuego
+    - offset: 0.8
+      color: "#ff7a1a"   # naranja
     - offset: 1.0
-      color: "#ff007f"   # Rosa neón
-
-  # Resplandor neón alrededor del espectrograma
+      color: "#ffc04d"   # punta amarilla
   glow:
     enabled: true
-    radius: 12.0
-    intensity: 0.65
+    radius: 16.0
+    intensity: 0.8
 
-# 5. Sistema de Partículas Reactivo
+# Chispas de fuego subiendo: una capa por banda. Cantidad e intensidad siguen a su banda.
 particles:
   enabled: true
-  # Tipos disponibles:
-  # - "radial_burst": Explosión desde el centro impulsada por el ritmo
-  # - "ambient_dust": Motes de polvo flotante cinematográfico
-  # - "rising_sparks": Chispas ascendentes desde la base
-  type: "radial_burst"
-  count: 120            # Número de partículas
-  min_size: 1.5
-  max_size: 5.0
-  color: "#ffffff"
-  speed: 1.5
-  audio_boost: 3.0       # Aceleración en los picos de audio
-  glow: true
+  layers:
+    - type: "rising_sparks"   # graves: brasas grandes y rojas
+      react_to: "bass"
+      count: 90
+      min_density: 0.15
+      min_size: 1.8
+      max_size: 4.0
+      color: "#ff3a0a"
+      color_end: "#6e0a00"
+      speed: 0.9
+      audio_boost: 1.5
+      turbulence: 0.6
+      min_life: 1.5
+      max_life: 3.5
+      glow: true
 
-# 6. Salida de Video
+    - type: "rising_sparks"   # medios: chispas naranjas
+      react_to: "mid"
+      count: 110
+      min_density: 0.15
+      min_size: 1.5
+      max_size: 4.0
+      color: "#ff8c1a"
+      color_end: "#b82a00"
+      speed: 1.3
+      audio_boost: 1.5
+      turbulence: 0.8
+      min_life: 1.2
+      max_life: 3.0
+      glow: true
+
+    - type: "rising_sparks"   # agudos: chispitas amarillas brillantes y rápidas
+      react_to: "treble"
+      count: 140
+      min_density: 0.1
+      min_size: 0.8
+      max_size: 2.2
+      color: "#fff0a0"
+      color_end: "#ff9500"
+      speed: 1.8
+      audio_boost: 2.0
+      turbulence: 1.0
+      min_life: 0.8
+      max_life: 2.2
+      glow: true
+
 output:
   path: "output.mp4"
-  width: 0               # 0 = adapta automáticamente a las dimensiones de la imagen/video
-  height: 0              # 0 = adapta automáticamente
-  fps: 60                # Cuadros por segundo (ej. 30 o 60)
+  width: 0               # 0 = tamaño del fondo
+  height: 0
+  fps: 60
   renderer: "auto"       # auto (GPU Vulkan, cae a CPU), gpu, cpu
-  gpu_device: -1         # -1 = automático (ver: audioviz --list-gpus)
-  preset: "fast"         # preset x264 integrado: ultrafast ... veryslow
-  crf: 18                # Calidad (18 = alta fidelidad visual, 23 = estándar)
+  gpu_device: -1
+  preset: "fast"         # preset x264: ultrafast ... veryslow
+  crf: 20                # calidad (18 = muy alta, 23 = estándar, más alto = archivo más pequeño)

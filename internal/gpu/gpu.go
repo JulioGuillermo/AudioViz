@@ -36,10 +36,13 @@ type Params struct {
 	SolidColor                  [4]float32
 	PartColor                   [4]float32
 	WaveColL, WaveColR          [4]float32
+	GradInfo                    [4]float32
+	Shake                       [4]float32
 	Grad                        [MaxGrad][4]float32
 	Glitch                      [MaxGlitch][4]float32
 	Bars                        [MaxBars][4]float32
 	Parts                       [MaxParts][4]float32
+	PartCol                     [MaxParts][4]float32
 }
 
 type Renderer struct {

@@ -120,6 +120,9 @@ func (cv *CircularVisualizer) drawRadialBar(dc *gg.Context, angle, r0, length, w
 	y1 := cv.cy + (r0+length)*math.Sin(angle)
 
 	dc.SetRGBA255(int(col.R), int(col.G), int(col.B), int(col.A))
+	if pat := AlongPattern(cv.cfg, x0, y0, math.Cos(angle), math.Sin(angle), length, float64(col.A)/255); pat != nil {
+		dc.SetStrokeStyle(pat)
+	}
 	dc.SetLineWidth(width)
 	dc.SetLineCapRound()
 	dc.DrawLine(x0, y0, x1, y1)

@@ -40,6 +40,7 @@ type BackgroundConfig struct {
 
 type BackgroundEffectsConfig struct {
 	BassZoom            BassZoomConfig            `yaml:"bass_zoom"`
+	Shake               ShakeConfig               `yaml:"shake"`
 	ChromaticAberration ChromaticAberrationConfig `yaml:"chromatic_aberration"`
 	Ripple              RippleConfig              `yaml:"ripple"`
 	Glitch              GlitchConfig              `yaml:"glitch"`
@@ -51,6 +52,15 @@ type BassZoomConfig struct {
 	MaxZoom     float64 `yaml:"max_zoom"`     // ej. 1.08 = 8% de zoom máximo
 	Sensitivity float64 `yaml:"sensitivity"`  // Multiplicador de reacción a graves
 	DecaySpeed  float64 `yaml:"decay_speed"`  // Velocidad de amortiguación (0.1 a 0.5)
+	ReactTo     string  `yaml:"react_to"`     // bass (def.), mid, treble, overall, transient, beat
+}
+
+// ShakeConfig: movimiento de cámara (traslación suave pseudoaleatoria) guiado por una banda
+type ShakeConfig struct {
+	Enabled   bool    `yaml:"enabled"`
+	Amplitude float64 `yaml:"amplitude"` // desplazamiento máximo en píxeles
+	Speed     float64 `yaml:"speed"`     // velocidad del vaivén (1.0 = normal)
+	ReactTo   string  `yaml:"react_to"`  // bass (def.), mid, treble, overall, transient, beat
 }
 
 type ChromaticAberrationConfig struct {
@@ -65,18 +75,21 @@ type RippleConfig struct {
 	Amplitude float64 `yaml:"amplitude"` // Amplitud máxima de onda en píxeles
 	Frequency float64 `yaml:"frequency"` // Frecuencia espacial de la onda
 	Speed     float64 `yaml:"speed"`     // Velocidad de propagación temporal
+	ReactTo   string  `yaml:"react_to"`  // mid (def.), bass, treble, overall, transient, beat
 }
 
 type GlitchConfig struct {
 	Enabled   bool    `yaml:"enabled"`
 	Threshold float64 `yaml:"threshold"` // Umbral de energía de transitorios (0.0 a 1.0)
 	Intensity float64 `yaml:"intensity"` // Intensidad del desplazamiento de franjas
+	ReactTo   string  `yaml:"react_to"`  // "" = golpes/transitorios (def.); o una banda que dispara al superar threshold
 }
 
 type ColorFlashConfig struct {
 	Enabled         bool    `yaml:"enabled"`
 	BrightnessBoost float64 `yaml:"brightness_boost"` // ej. 0.20
 	ContrastBoost   float64 `yaml:"contrast_boost"`   // ej. 0.15
+	ReactTo         string  `yaml:"react_to"`         // bass (def.), mid, treble, overall, transient, beat
 }
 
 type VisualizerConfig struct {
@@ -106,6 +119,12 @@ type VisualizerConfig struct {
 	ColorMode       string        `yaml:"color_mode"`      // "gradient", "solid"
 	SolidColor      string        `yaml:"solid_color"`     // Hex ej "#00f0ff"
 	Gradient        []GradientStop `yaml:"gradient"`
+	// Dirección del gradiente: "index" (def., a lo ancho: una barra de cada color)
+	// o "length" (a lo largo de cada barra: de la base a la punta)
+	GradientAxis string `yaml:"gradient_axis"`
+	// Solo con gradient_axis: length. "bar" = el último color siempre en la punta (se mueve con la barra);
+	// "max" = el último color está en max_height (las barras bajas solo muestran los primeros colores)
+	GradientFit string `yaml:"gradient_fit"`
 	Glow            GlowConfig    `yaml:"glow"`
 }
 
@@ -121,15 +140,30 @@ type GlowConfig struct {
 }
 
 type ParticlesConfig struct {
-	Enabled    bool    `yaml:"enabled"`
-	Type       string  `yaml:"type"`       // "radial_burst", "ambient_dust", "rising_sparks"
-	Count      int     `yaml:"count"`      // Número total de partículas activas
-	MinSize    float64 `yaml:"min_size"`   // Tamaño mínimo
-	MaxSize    float64 `yaml:"max_size"`   // Tamaño máximo
-	Color      string  `yaml:"color"`      // Hex "#ffffff"
-	Speed      float64 `yaml:"speed"`      // Velocidad base
-	AudioBoost float64 `yaml:"audio_boost"`// Multiplicador de velocidad/explosión con el audio
-	Glow       bool    `yaml:"glow"`       // Brillo neón en partículas
+	Enabled bool `yaml:"enabled"`
+	// Capas: cada una con su tipo, color y banda. Si está vacío se usa una única capa con los campos de abajo.
+	Layers []ParticleLayer `yaml:"layers"`
+
+	ParticleLayer `yaml:",inline"`
+}
+
+type ParticleLayer struct {
+	Type       string  `yaml:"type"`        // "radial_burst", "ambient_dust", "rising_sparks"
+	Count      int     `yaml:"count"`       // Número máximo de partículas de la capa
+	MinSize    float64 `yaml:"min_size"`    // Tamaño mínimo
+	MaxSize    float64 `yaml:"max_size"`    // Tamaño máximo
+	Color      string  `yaml:"color"`       // Hex "#ffffff" (color al nacer)
+	ColorEnd   string  `yaml:"color_end"`   // Hex opcional: color al morir (se interpola con la vida)
+	Speed      float64 `yaml:"speed"`       // Velocidad base
+	AudioBoost float64 `yaml:"audio_boost"` // Multiplicador de velocidad con el audio
+	Glow       bool    `yaml:"glow"`        // Halo suave
+	ReactTo    string  `yaml:"react_to"`    // bass (def.), mid, treble, overall, transient, beat
+	// Densidad reactiva: fracción mínima de partículas vivas en silencio (0..1).
+	// 1 = siempre todas (comportamiento clásico); 0.1 = casi ninguna si la banda está en silencio.
+	MinDensity *float64 `yaml:"min_density"` // sin definir = 1
+	Turbulence float64 `yaml:"turbulence"` // Serpenteo lateral (0 = recto; 0.5-1 = llama)
+	MinLife    float64 `yaml:"min_life"`   // Vida mínima en segundos (def. 1)
+	MaxLife    float64 `yaml:"max_life"`   // Vida máxima en segundos (def. 3)
 }
 
 type OutputConfig struct {
@@ -223,15 +257,17 @@ func DefaultConfig() ProjectConfig {
 			},
 		},
 		Particles: ParticlesConfig{
-			Enabled:    true,
-			Type:       "radial_burst",
-			Count:      120,
-			MinSize:    1.5,
-			MaxSize:    5.0,
-			Color:      "#ffffff",
-			Speed:      1.5,
-			AudioBoost: 3.0,
-			Glow:       true,
+			Enabled: true,
+			ParticleLayer: ParticleLayer{
+				Type:       "radial_burst",
+				Count:      120,
+				MinSize:    1.5,
+				MaxSize:    5.0,
+				Color:      "#ffffff",
+				Speed:      1.5,
+				AudioBoost: 3.0,
+				Glow:       true,
+			},
 		},
 		Output: OutputConfig{
 			Path:         "output.mp4",
@@ -307,8 +343,8 @@ func (c *ProjectConfig) Validate() error {
 	if c.Visualizer.Bars > 256 {
 		c.Visualizer.Bars = 256
 	}
-	if c.Particles.Count > 1024 {
-		c.Particles.Count = 1024
+	if len(c.Particles.Layers) == 0 {
+		c.Particles.Layers = []ParticleLayer{c.Particles.ParticleLayer}
 	}
 	if c.Output.Renderer == "" {
 		c.Output.Renderer = "auto"

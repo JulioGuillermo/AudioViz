@@ -117,3 +117,24 @@ func clamp(v, min, max float64) float64 {
 func lerp(a, b, t float64) float64 {
 	return a*(1.0-t) + b*t
 }
+
+// AlongPattern devuelve el gradiente a lo largo de una barra (gradient_axis: length) o nil.
+// (bx,by) es la base, (dx,dy) la dirección unitaria hacia la punta, h la altura actual.
+func AlongPattern(cfg *config.VisualizerConfig, bx, by, dx, dy, h, alpha float64) gg.Pattern {
+	if cfg.GradientAxis != "length" || cfg.ColorMode == "solid" || len(cfg.Gradient) == 0 {
+		return nil
+	}
+	L := h
+	if cfg.GradientFit == "max" {
+		L = cfg.MaxHeight
+	}
+	if L < 1 {
+		L = 1
+	}
+	g := gg.NewLinearGradient(bx, by, bx+dx*L, by+dy*L)
+	for _, st := range cfg.Gradient {
+		c, _ := ParseHexColor(st.Color)
+		g.AddColorStop(st.Offset, color.NRGBA{R: c.R, G: c.G, B: c.B, A: uint8(float64(c.A) * alpha)})
+	}
+	return g
+}

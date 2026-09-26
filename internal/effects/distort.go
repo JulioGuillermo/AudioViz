@@ -38,8 +38,8 @@ func parallelFor(height int, fn func(startY, endY int)) {
 }
 
 // ApplyBassZoom aplica un zoom concéntrico desde el centro de la imagen en paralelo
-func ApplyBassZoom(src *image.RGBA, zoom float64) *image.RGBA {
-	if zoom <= 1.001 {
+func ApplyBassZoom(src *image.RGBA, zoom, shiftX, shiftY float64) *image.RGBA {
+	if zoom <= 1.001 && shiftX == 0 && shiftY == 0 {
 		return src
 	}
 
@@ -53,13 +53,19 @@ func ApplyBassZoom(src *image.RGBA, zoom float64) *image.RGBA {
 
 	parallelFor(h, func(startY, endY int) {
 		for y := startY; y < endY; y++ {
-			srcY := centerY + (float64(y)-centerY)*invZoom
+			srcY := centerY + (float64(y)-centerY)*invZoom - shiftY
 			iy0 := int(math.Floor(srcY))
 			iy1 := iy0 + 1
 			fy := srcY - float64(iy0)
 
 			if iy0 < 0 {
 				iy0 = 0
+			}
+			if iy0 > h-1 {
+				iy0 = h - 1
+			}
+			if iy1 < 0 {
+				iy1 = 0
 			}
 			if iy1 >= h {
 				iy1 = h - 1
@@ -70,13 +76,19 @@ func ApplyBassZoom(src *image.RGBA, zoom float64) *image.RGBA {
 			dstRow := y * dst.Stride
 
 			for x := 0; x < w; x++ {
-				srcX := centerX + (float64(x)-centerX)*invZoom
+				srcX := centerX + (float64(x)-centerX)*invZoom - shiftX
 				ix0 := int(math.Floor(srcX))
 				ix1 := ix0 + 1
 				fx := srcX - float64(ix0)
 
 				if ix0 < 0 {
 					ix0 = 0
+				}
+				if ix0 > w-1 {
+					ix0 = w - 1
+				}
+				if ix1 < 0 {
+					ix1 = 0
 				}
 				if ix1 >= w {
 					ix1 = w - 1

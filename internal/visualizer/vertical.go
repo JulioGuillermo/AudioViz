@@ -12,7 +12,8 @@ import (
 type VerticalVisualizer struct {
 	cfg    *config.VisualizerConfig
 	width  int
-	height int
+	height  int
+	pattern gg.Pattern
 }
 
 func NewVerticalVisualizer(cfg *config.VisualizerConfig, width, height int) *VerticalVisualizer {
@@ -62,17 +63,22 @@ func (vv *VerticalVisualizer) renderBars(dc *gg.Context, feat *audio.FrameFeatur
 		// Canal L: Borde izquierdo proyectándose hacia adentro (+X)
 		magL := feat.LeftBars[i]
 		lenL := vv.cfg.MinHeight + magL*(vv.cfg.MaxHeight-vv.cfg.MinHeight)
+		vv.pattern = AlongPattern(vv.cfg, 0, y, 1, 0, lenL, alpha)
 		vv.drawHBar(dc, 0, y, lenL, barHeight, col)
 
 		// Canal R: Borde derecho proyectándose hacia adentro (-X)
 		magR := feat.RightBars[i]
 		lenR := vv.cfg.MinHeight + magR*(vv.cfg.MaxHeight-vv.cfg.MinHeight)
+		vv.pattern = AlongPattern(vv.cfg, float64(vv.width), y, -1, 0, lenR, alpha)
 		vv.drawHBar(dc, float64(vv.width)-lenR, y, lenR, barHeight, col)
 	}
 }
 
 func (vv *VerticalVisualizer) drawHBar(dc *gg.Context, x, y, width, height float64, col color.RGBA) {
 	dc.SetRGBA255(int(col.R), int(col.G), int(col.B), int(col.A))
+	if vv.pattern != nil {
+		dc.SetFillStyle(vv.pattern)
+	}
 	r := vv.cfg.Roundness
 	if r > height/2 {
 		r = height / 2
