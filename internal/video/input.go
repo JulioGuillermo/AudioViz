@@ -1,284 +1,161 @@
+// Package video carga el fondo (imagen fija o GIF animado) en Go puro, sin ffmpeg.
 package video
 
 import (
-	"encoding/json"
 	"fmt"
 	"image"
+	"image/draw"
+	"image/gif"
 	_ "image/jpeg"
 	_ "image/png"
-	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
+	_ "golang.org/x/image/bmp"
 	xdraw "golang.org/x/image/draw"
 	_ "golang.org/x/image/webp"
 )
 
-// BackgroundReader es la interfaz común para alimentar cuadros de fondo (imagen o video)
+// BackgroundReader es la interfaz común para alimentar cuadros de fondo
 type BackgroundReader interface {
 	Width() int
 	Height() int
-	GetFrame(frameIndex int) (*image.RGBA, error)
+	// FrameAt devuelve el cuadro de fondo para el instante t (segundos) y un índice
+	// que cambia solo cuando cambia la imagen (para no re-subirla a la GPU)
+	FrameAt(t float64) (*image.RGBA, int)
 	Close() error
 }
 
 // ProbeResult contiene dimensiones y tipo detectado de un medio
 type ProbeResult struct {
-	IsVideo  bool
-	Width    int
-	Height   int
-	Duration float64
+	IsAnimated bool
+	Width      int
+	Height     int
 }
 
-// ProbeMedia analiza un archivo para determinar si es imagen o video y sus dimensiones
+var videoExts = map[string]bool{".mp4": true, ".mkv": true, ".mov": true, ".webm": true, ".avi": true, ".m4v": true}
+
+// ProbeMedia determina las dimensiones del fondo
 func ProbeMedia(filePath string) (*ProbeResult, error) {
-	ext := strings.ToLower(filepath.Ext(filePath))
-	isImgExt := ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".webp" || ext == ".bmp"
-
-	// Probar si se puede abrir como imagen estándar de Go
-	if isImgExt || ext == "" {
-		f, err := os.Open(filePath)
-		if err == nil {
-			defer f.Close()
-			cfg, _, err := image.DecodeConfig(f)
-			if err == nil && cfg.Width > 0 && cfg.Height > 0 {
-				w := (cfg.Width / 2) * 2
-				h := (cfg.Height / 2) * 2
-				return &ProbeResult{
-					IsVideo: false,
-					Width:   w,
-					Height:  h,
-				}, nil
-			}
-		}
+	if videoExts[strings.ToLower(filepath.Ext(filePath))] {
+		return nil, fmt.Errorf("los fondos de video (%s) no están soportados sin ffmpeg; usa una imagen o un GIF animado", filepath.Ext(filePath))
 	}
-
-	// Usar ffprobe para inspeccionar videos o imágenes no estándar
-	cmd := exec.Command("ffprobe",
-		"-v", "error",
-		"-select_streams", "v:0",
-		"-show_entries", "stream=width,height,duration,codec_type",
-		"-of", "json",
-		filePath,
-	)
-
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("error analizando medio con ffprobe: %w", err)
-	}
-
-	var data struct {
-		Streams []struct {
-			Width     int    `json:"width"`
-			Height    int    `json:"height"`
-			CodecType string `json:"codec_type"`
-		} `json:"streams"`
-	}
-
-	if err := json.Unmarshal(out, &data); err != nil || len(data.Streams) == 0 {
-		return nil, fmt.Errorf("no se encontró flujo de video o imagen en '%s'", filePath)
-	}
-
-	st := data.Streams[0]
-	w := (st.Width / 2) * 2
-	h := (st.Height / 2) * 2
-
-	// Comprobar si tiene más de 1 cuadro para saber si es video
-	isVideo := !isImgExt
-
-	return &ProbeResult{
-		IsVideo: isVideo,
-		Width:   w,
-		Height:  h,
-	}, nil
-}
-
-// ----------------------------------------------------
-// LECTOR DE IMAGEN ESTÁTICA
-// ----------------------------------------------------
-
-type ImageBackgroundReader struct {
-	width     int
-	height    int
-	baseFrame *image.RGBA
-}
-
-func NewImageBackgroundReader(filePath string, targetWidth, targetHeight int, fitMode string) (*ImageBackgroundReader, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("no se pudo abrir la imagen '%s': %w", filePath, err)
+		return nil, err
+	}
+	defer f.Close()
+	cfg, format, err := image.DecodeConfig(f)
+	if err != nil {
+		return nil, fmt.Errorf("no se reconoce '%s' como imagen (PNG, JPEG, WebP, BMP, GIF): %w", filePath, err)
+	}
+	return &ProbeResult{IsAnimated: format == "gif", Width: cfg.Width / 2 * 2, Height: cfg.Height / 2 * 2}, nil
+}
+
+// fit escala src a (w, h) según el modo cover/contain/stretch
+func fit(src image.Image, w, h int, mode string) *image.RGBA {
+	out := image.NewRGBA(image.Rect(0, 0, w, h))
+	draw.Draw(out, out.Bounds(), image.Black, image.Point{}, draw.Src)
+	ow, oh := src.Bounds().Dx(), src.Bounds().Dy()
+	dst := out.Bounds()
+	if mode != "stretch" {
+		sx, sy := float64(w)/float64(ow), float64(h)/float64(oh)
+		s := sx
+		if (mode == "contain") == (sy < sx) {
+			s = sy
+		}
+		dw, dh := int(float64(ow)*s+0.5), int(float64(oh)*s+0.5)
+		ox, oy := (w-dw)/2, (h-dh)/2
+		dst = image.Rect(ox, oy, ox+dw, oy+dh)
+	}
+	xdraw.CatmullRom.Scale(out, dst, src, src.Bounds(), xdraw.Over, nil)
+	return out
+}
+
+type staticReader struct {
+	frame *image.RGBA
+}
+
+func (r *staticReader) Width() int                             { return r.frame.Bounds().Dx() }
+func (r *staticReader) Height() int                            { return r.frame.Bounds().Dy() }
+func (r *staticReader) FrameAt(float64) (*image.RGBA, int)     { return r.frame, 0 }
+func (r *staticReader) Close() error                           { return nil }
+
+type gifReader struct {
+	frames []*image.RGBA
+	ends   []float64 // instante (s) en que termina cada cuadro
+	total  float64
+	loop   bool
+}
+
+func (r *gifReader) Width() int   { return r.frames[0].Bounds().Dx() }
+func (r *gifReader) Height() int  { return r.frames[0].Bounds().Dy() }
+func (r *gifReader) Close() error { return nil }
+
+func (r *gifReader) FrameAt(t float64) (*image.RGBA, int) {
+	if r.loop && r.total > 0 {
+		for t >= r.total {
+			t -= r.total
+		}
+	}
+	for i, e := range r.ends {
+		if t < e {
+			return r.frames[i], i
+		}
+	}
+	last := len(r.frames) - 1
+	return r.frames[last], last
+}
+
+// NewBackgroundReader carga la imagen o el GIF animado ya escalado a la salida
+func NewBackgroundReader(filePath string, w, h int, fitMode string, loop bool) (BackgroundReader, error) {
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("no se pudo abrir el fondo '%s': %w", filePath, err)
 	}
 	defer f.Close()
 
+	if _, format, err := image.DecodeConfig(f); err == nil && format == "gif" {
+		f.Seek(0, 0)
+		g, err := gif.DecodeAll(f)
+		if err != nil {
+			return nil, err
+		}
+		if len(g.Image) > 1 {
+			return newGIFReader(g, w, h, fitMode, loop), nil
+		}
+	}
+	f.Seek(0, 0)
 	img, _, err := image.Decode(f)
 	if err != nil {
 		return nil, fmt.Errorf("error decodificando imagen '%s': %w", filePath, err)
 	}
-
-	origW := img.Bounds().Dx()
-	origH := img.Bounds().Dy()
-
-	if targetWidth <= 0 || targetHeight <= 0 {
-		targetWidth = (origW / 2) * 2
-		targetHeight = (origH / 2) * 2
-	}
-
-	out := image.NewRGBA(image.Rect(0, 0, targetWidth, targetHeight))
-
-	switch fitMode {
-	case "stretch":
-		xdraw.ApproxBiLinear.Scale(out, out.Bounds(), img, img.Bounds(), xdraw.Over, nil)
-	case "contain":
-		scale := mathMin(float64(targetWidth)/float64(origW), float64(targetHeight)/float64(origH))
-		destW := int(float64(origW) * scale)
-		destH := int(float64(origH) * scale)
-		offsetX := (targetWidth - destW) / 2
-		offsetY := (targetHeight - destH) / 2
-		destRect := image.Rect(offsetX, offsetY, offsetX+destW, offsetY+destH)
-		xdraw.ApproxBiLinear.Scale(out, destRect, img, img.Bounds(), xdraw.Over, nil)
-	case "cover":
-		fallthrough
-	default:
-		scale := mathMax(float64(targetWidth)/float64(origW), float64(targetHeight)/float64(origH))
-		destW := int(float64(origW) * scale)
-		destH := int(float64(origH) * scale)
-		offsetX := (targetWidth - destW) / 2
-		offsetY := (targetHeight - destH) / 2
-		destRect := image.Rect(offsetX, offsetY, offsetX+destW, offsetY+destH)
-		xdraw.ApproxBiLinear.Scale(out, destRect, img, img.Bounds(), xdraw.Over, nil)
-	}
-
-	return &ImageBackgroundReader{
-		width:     targetWidth,
-		height:    targetHeight,
-		baseFrame: out,
-	}, nil
+	return &staticReader{frame: fit(img, w, h, fitMode)}, nil
 }
 
-func (r *ImageBackgroundReader) Width() int  { return r.width }
-func (r *ImageBackgroundReader) Height() int { return r.height }
-
-func (r *ImageBackgroundReader) GetFrame(frameIndex int) (*image.RGBA, error) {
-	// Copiar el buffer para que cada worker pueda transformarlo de forma aislada
-	copyImg := image.NewRGBA(r.baseFrame.Bounds())
-	copy(copyImg.Pix, r.baseFrame.Pix)
-	return copyImg, nil
-}
-
-func (r *ImageBackgroundReader) Close() error {
-	return nil
-}
-
-// ----------------------------------------------------
-// LECTOR DE VIDEO EN STREAMING (PIPE FFMPEG)
-// ----------------------------------------------------
-
-type VideoBackgroundReader struct {
-	filePath  string
-	width     int
-	height    int
-	fps       int
-	loopVideo bool
-	cmd       *exec.Cmd
-	pipe      io.ReadCloser
-	frameSize int
-	rawBuf    []byte
-}
-
-func NewVideoBackgroundReader(filePath string, targetWidth, targetHeight, fps int, loopVideo bool) (*VideoBackgroundReader, error) {
-	vr := &VideoBackgroundReader{
-		filePath:  filePath,
-		width:     targetWidth,
-		height:    targetHeight,
-		fps:       fps,
-		loopVideo: loopVideo,
-		frameSize: targetWidth * targetHeight * 4,
-		rawBuf:    make([]byte, targetWidth*targetHeight*4),
-	}
-
-	if err := vr.startProcess(); err != nil {
-		return nil, err
-	}
-
-	return vr, nil
-}
-
-func (vr *VideoBackgroundReader) startProcess() error {
-	cmd := exec.Command("ffmpeg",
-		"-v", "error",
-		"-i", vr.filePath,
-		"-vf", fmt.Sprintf("scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d,fps=%d",
-			vr.width, vr.height, vr.width, vr.height, vr.fps),
-		"-f", "rawvideo",
-		"-pix_fmt", "rgba",
-		"-",
-	)
-
-	pipe, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("error creando stdout pipe para ffmpeg video reader: %w", err)
-	}
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("error iniciando ffmpeg video reader: %w", err)
-	}
-
-	vr.cmd = cmd
-	vr.pipe = pipe
-	return nil
-}
-
-func (vr *VideoBackgroundReader) Width() int  { return vr.width }
-func (vr *VideoBackgroundReader) Height() int { return vr.height }
-
-func (vr *VideoBackgroundReader) GetFrame(frameIndex int) (*image.RGBA, error) {
-	_, err := io.ReadFull(vr.pipe, vr.rawBuf)
-	if err == io.EOF || err == io.ErrUnexpectedEOF {
-		if vr.loopVideo {
-			// Reiniciar proceso de lectura de video
-			_ = vr.Close()
-			if err := vr.startProcess(); err != nil {
-				return nil, fmt.Errorf("error reiniciando video en loop: %w", err)
-			}
-			_, err = io.ReadFull(vr.pipe, vr.rawBuf)
-			if err != nil {
-				return nil, fmt.Errorf("error leyendo tras reiniciar video: %w", err)
-			}
-		} else {
-			return nil, io.EOF
+func newGIFReader(g *gif.GIF, w, h int, fitMode string, loop bool) *gifReader {
+	canvas := image.NewRGBA(image.Rect(0, 0, g.Config.Width, g.Config.Height))
+	r := &gifReader{loop: loop}
+	for i, fr := range g.Image {
+		prev := image.NewRGBA(canvas.Bounds())
+		copy(prev.Pix, canvas.Pix)
+		draw.Draw(canvas, fr.Bounds(), fr, fr.Bounds().Min, draw.Over)
+		r.frames = append(r.frames, fit(canvas, w, h, fitMode))
+		d := 0.1
+		if i < len(g.Delay) && g.Delay[i] > 1 {
+			d = float64(g.Delay[i]) / 100
 		}
-	} else if err != nil {
-		return nil, err
+		r.total += d
+		r.ends = append(r.ends, r.total)
+		if i < len(g.Disposal) {
+			switch g.Disposal[i] {
+			case gif.DisposalBackground:
+				draw.Draw(canvas, fr.Bounds(), image.Transparent, image.Point{}, draw.Src)
+			case gif.DisposalPrevious:
+				copy(canvas.Pix, prev.Pix)
+			}
+		}
 	}
-
-	frame := image.NewRGBA(image.Rect(0, 0, vr.width, vr.height))
-	copy(frame.Pix, vr.rawBuf)
-	return frame, nil
-}
-
-func (vr *VideoBackgroundReader) Close() error {
-	if vr.pipe != nil {
-		_ = vr.pipe.Close()
-	}
-	if vr.cmd != nil && vr.cmd.Process != nil {
-		_ = vr.cmd.Process.Kill()
-		_ = vr.cmd.Wait()
-	}
-	return nil
-}
-
-func mathMin(a, b float64) float64 {
-	if a < b {
-		return a
-	}
-	return b
-}
-
-func mathMax(a, b float64) float64 {
-	if a > b {
-		return a
-	}
-	return b
+	return r
 }

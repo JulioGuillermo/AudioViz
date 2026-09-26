@@ -1,0 +1,350 @@
+#version 450
+// Render completo de un cuadro en la GPU (un único dispatch):
+//   fondo (zoom + ripple + aberración cromática + glitch + color/viñeta)
+//   -> partículas -> visualizador (circular / horizontal / vertical / onda) con glow
+//   -> conversión a NV12 (BT.709, rango limitado) lista para el codificador H.264.
+// Cada invocación procesa un bloque de 4x2 píxeles (1 palabra Y por fila + 1 palabra UV).
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+const int MAX_GRAD = 8;
+const int MAX_GLITCH = 64;
+const int MAX_BARS = 256;
+const int MAX_PARTS = 1024;
+
+layout(std430, set = 0, binding = 0) readonly buffer Params {
+    ivec4 dims;       // outW, outH, padW (stride Y en bytes), padH
+    ivec4 flags;      // vizType (0 nada,1 circ,2 horiz,3 vert,4 onda), barCount, particleCount, glitchCount
+    ivec4 flags2;     // chromaMode (0 no,1 horiz,2 radial), colorMode (0 grad,1 sólido), gradCount, writeRGBA
+    ivec4 flags3;     // mirrorBottom, glowEnabled, particleGlow, drawRing
+    vec4 zoomRipple;  // zoom, rippleAmp, rippleFreq, rippleTime
+    vec4 colorAdj;    // contrastFactor, brightAdd (0..1), opacity, vignette
+    vec4 chroma;      // shift, -, -, -
+    vec4 viz0;        // cx, cy, baseRadius, baseY
+    vec4 viz1;        // barWidth, span, roundness, ringAlpha
+    vec4 viz2;        // glowRadius, glowIntensity, waveAmp, stepX
+    vec4 viz3;        // startY (vertical), barHeight (vertical), -, -
+    vec4 solidColor;  // rgba
+    vec4 partColor;   // rgb
+    vec4 waveColL;
+    vec4 waveColR;
+    vec4 grad[MAX_GRAD];       // rgb + offset en w
+    vec4 glitch[MAX_GLITCH];   // y0, y1, shiftX, -
+    vec4 bars[MAX_BARS];       // alturaL, alturaR, magL, magR
+    vec4 parts[MAX_PARTS];     // x, y, tamaño, alfa
+} P;
+
+layout(std430, set = 0, binding = 1) readonly buffer BG { uint bg[]; };
+layout(std430, set = 0, binding = 2) writeonly buffer OutY { uint outY[]; };
+layout(std430, set = 0, binding = 3) writeonly buffer OutUV { uint outUV[]; };
+layout(std430, set = 0, binding = 4) writeonly buffer OutRGBA { uint outRGBA[]; };
+
+int W, H;
+
+vec3 fetch(ivec2 c) {
+    c = clamp(c, ivec2(0), ivec2(W - 1, H - 1));
+    return unpackUnorm4x8(bg[c.y * W + c.x]).rgb;
+}
+
+vec3 bilinear(vec2 q) {
+    q = clamp(q, vec2(0.0), vec2(float(W - 1), float(H - 1)));
+    ivec2 i0 = ivec2(floor(q));
+    vec2 f = q - vec2(i0);
+    vec3 a = fetch(i0);
+    vec3 b = fetch(i0 + ivec2(1, 0));
+    vec3 c = fetch(i0 + ivec2(0, 1));
+    vec3 d = fetch(i0 + ivec2(1, 1));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// Mapa de deformación: ripple y luego zoom centrado (cada efecto lee la salida del anterior)
+vec3 warped(vec2 q) {
+    vec2 c = vec2(float(W), float(H)) * 0.5;
+    float amp = P.zoomRipple.y;
+    if (amp > 0.2) {
+        float ph = q.y * P.zoomRipple.z + P.zoomRipple.w;
+        q += vec2(sin(ph), cos(ph)) * amp;
+        q = clamp(q, vec2(0.0), vec2(float(W - 1), float(H - 1)));
+    }
+    float zoom = P.zoomRipple.x;
+    if (zoom > 1.001) {
+        q = c + (q - c) / zoom;
+    }
+    return bilinear(q);
+}
+
+bool inside(vec2 q) {
+    return q.x >= 0.0 && q.x < float(W) && q.y >= 0.0 && q.y < float(H);
+}
+
+vec3 background(vec2 q) {
+    // Glitch: desplazamiento horizontal de franjas
+    for (int i = 0; i < P.flags.w; i++) {
+        vec4 g = P.glitch[i];
+        if (q.y >= g.x && q.y < g.y) {
+            float nx = q.x - g.z;
+            if (nx >= 0.0 && nx < float(W)) q.x = nx;
+        }
+    }
+
+    vec3 col = warped(q);
+
+    // Aberración cromática
+    float shift = P.chroma.x;
+    if (P.flags2.x != 0 && shift > 0.5) {
+        vec2 off;
+        if (P.flags2.x == 2) {
+            vec2 c = vec2(float(W), float(H)) * 0.5;
+            off = (q - c) / length(c) * shift;
+        } else {
+            off = vec2(-round(shift), 0.0);
+        }
+        vec2 qr = q + off;
+        vec2 qb = q - off;
+        if (inside(qr)) col.r = warped(qr).r;
+        if (inside(qb)) col.b = warped(qb).b;
+    }
+
+    // Brillo / contraste / viñeta / opacidad
+    vec4 ca = P.colorAdj;
+    col = ca.x * (col - 0.5) + 0.5 + ca.y;
+    if (ca.w > 0.01) {
+        vec2 c = vec2(float(W), float(H)) * 0.5;
+        vec2 d = q - c;
+        col *= max(0.0, 1.0 - dot(d, d) / dot(c, c) * ca.w);
+    }
+    col *= ca.z;
+    return clamp(col, 0.0, 1.0);
+}
+
+vec3 gradientAt(float t) {
+    if (P.flags2.y == 1) return P.solidColor.rgb;
+    int n = P.flags2.z;
+    if (n == 0) return vec3(0.0, 240.0 / 255.0, 1.0);
+    if (n == 1 || t <= P.grad[0].w) return P.grad[0].rgb;
+    if (t >= P.grad[n - 1].w) return P.grad[n - 1].rgb;
+    for (int i = 0; i < n - 1; i++) {
+        vec4 a = P.grad[i];
+        vec4 b = P.grad[i + 1];
+        if (t >= a.w && t <= b.w) {
+            return mix(a.rgb, b.rgb, (t - a.w) / max(b.w - a.w, 1e-6));
+        }
+    }
+    return P.grad[n - 1].rgb;
+}
+
+float solidAlpha() { return P.flags2.y == 1 ? P.solidColor.a : 1.0; }
+
+vec3 over(vec3 dst, vec3 src, float a) { return mix(dst, src, clamp(a, 0.0, 1.0)); }
+
+// Resplandor equivalente a 3 pasadas concéntricas de opacidad (intensidad/3)*0.4
+float glowAlpha(float d) {
+    float R = max(P.viz2.x, 1.0);
+    float a = P.viz2.y / 3.0 * 0.4;
+    float k = clamp(3.0 * (1.0 - d / (R * 0.5)), 0.0, 3.0);
+    return 1.0 - pow(1.0 - a, k);
+}
+
+float sdSegment(vec2 p, vec2 a, vec2 b) {
+    vec2 pa = p - a, ba = b - a;
+    float h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-6), 0.0, 1.0);
+    return length(pa - ba * h);
+}
+
+float sdRoundBox(vec2 p, vec2 lo, vec2 hi, float r) {
+    vec2 c = (lo + hi) * 0.5;
+    vec2 b = (hi - lo) * 0.5;
+    r = min(r, min(b.x, b.y));
+    vec2 q = abs(p - c) - b + r;
+    return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;
+}
+
+// Acumuladores del visualizador: glow (máx) y núcleo (máx) con su color
+float gA, cA;
+vec3 gC, cC;
+
+void addShape(float d, vec3 color, float alpha) {
+    float cov = clamp(0.5 - d, 0.0, 1.0) * alpha;
+    if (cov > cA) { cA = cov; cC = color; }
+    if (P.flags3.y != 0) {
+        float g = glowAlpha(d) * alpha;
+        if (g > gA) { gA = g; gC = color; }
+    }
+}
+
+void circularBars(vec2 p) {
+    int N = P.flags.y;
+    vec2 c = P.viz0.xy;
+    float r0 = P.viz0.z;
+    float w = P.viz1.x;
+    float stepA = 3.14159265 / float(N);
+    vec2 d = p - c;
+    float ang = atan(d.y, d.x);
+    const float HALF_PI = 1.5707963;
+    const float TWO_PI = 6.2831853;
+
+    for (int ch = 0; ch < 2; ch++) {
+        // Canal L: desde arriba girando a la izquierda; canal R: a la derecha
+        float t = ch == 0 ? (-HALF_PI - ang) : (ang + HALF_PI);
+        t = mod(t + TWO_PI, TWO_PI);
+        int base = int(floor(t / stepA - 0.5));
+        for (int k = -2; k <= 2; k++) {
+            int i = base + k;
+            if (i < 0 || i >= N) continue;
+            float h = ch == 0 ? P.bars[i].x : P.bars[i].y;
+            float a = ch == 0 ? (-HALF_PI - (float(i) + 0.5) * stepA) : (-HALF_PI + (float(i) + 0.5) * stepA);
+            vec2 dir = vec2(cos(a), sin(a));
+            float dist = sdSegment(p, c + dir * r0, c + dir * (r0 + h)) - w * 0.5;
+            addShape(dist, gradientAt(float(i) / float(N)), solidAlpha());
+        }
+    }
+}
+
+void horizontalBars(vec2 p) {
+    int N = P.flags.y;
+    float cx = P.viz0.x;
+    float baseY = P.viz0.w;
+    float bw = P.viz1.x;
+    float span = P.viz1.y;
+    float rr = P.viz1.z;
+    for (int ch = 0; ch < 2; ch++) {
+        float rel = ch == 0 ? (cx - p.x) : (p.x - cx);
+        int base = int(floor(rel / span));
+        for (int k = -1; k <= 1; k++) {
+            int i = base + k;
+            if (i < 0 || i >= N) continue;
+            float h = ch == 0 ? P.bars[i].x : P.bars[i].y;
+            float x0 = ch == 0 ? cx - (float(i) * span + bw) : cx + float(i) * span;
+            vec3 col = gradientAt(float(i) / float(N));
+            float r = min(rr, min(bw * 0.5, h * 0.5));
+            addShape(sdRoundBox(p, vec2(x0, baseY - h), vec2(x0 + bw, baseY), r), col, solidAlpha());
+            if (P.flags3.x != 0) {
+                float hm = h * 0.5;
+                float rm = min(rr, min(bw * 0.5, hm * 0.5));
+                addShape(sdRoundBox(p, vec2(x0, baseY), vec2(x0 + bw, baseY + hm), rm), col, solidAlpha() * 0.35);
+            }
+        }
+    }
+}
+
+void verticalBars(vec2 p) {
+    int N = P.flags.y;
+    float startY = P.viz3.x;
+    float barH = P.viz3.y;
+    float span = P.viz1.y;
+    float rr = P.viz1.z;
+    int base = int(floor((p.y - startY) / span));
+    for (int k = -1; k <= 1; k++) {
+        int i = base + k;
+        if (i < 0 || i >= N) continue;
+        float y0 = startY + float(i) * span;
+        vec3 col = gradientAt(float(i) / float(N));
+        float lenL = max(P.bars[i].x, 2.0);
+        float lenR = max(P.bars[i].y, 2.0);
+        addShape(sdRoundBox(p, vec2(0.0, y0), vec2(lenL, y0 + barH), min(rr, min(barH, lenL) * 0.5)), col, solidAlpha());
+        addShape(sdRoundBox(p, vec2(float(W) - lenR, y0), vec2(float(W), y0 + barH), min(rr, min(barH, lenR) * 0.5)), col, solidAlpha());
+    }
+}
+
+vec2 wavePoint(int i, int ch) {
+    float mag = ch == 0 ? P.bars[i].z : P.bars[i].w;
+    float dir = ch == 0 ? -1.0 : 1.0;
+    return vec2(float(i) * P.viz2.w, P.viz0.w + dir * mag * P.viz2.z * sin(float(i) * 0.4));
+}
+
+void waveLines(vec2 p) {
+    int N = P.flags.y;
+    float w = P.viz1.x;
+    int base = int(floor(p.x / P.viz2.w));
+    for (int ch = 0; ch < 2; ch++) {
+        vec3 col = ch == 0 ? P.waveColL.rgb : P.waveColR.rgb;
+        for (int k = -2; k <= 1; k++) {
+            int i = base + k;
+            if (i < 0 || i + 1 >= N) continue;
+            addShape(sdSegment(p, wavePoint(i, ch), wavePoint(i + 1, ch)) - w * 0.5, col, 1.0);
+        }
+    }
+}
+
+vec3 shade(ivec2 pix) {
+    vec2 q = vec2(pix);
+    vec2 p = q + 0.5;
+    vec3 col = background(q);
+
+    // Partículas (glow suave + núcleo)
+    int np = P.flags.z;
+    vec3 pc = P.partColor.rgb;
+    for (int i = 0; i < np; i++) {
+        vec4 pt = P.parts[i];
+        float dist = length(p - pt.xy);
+        if (P.flags3.z != 0) {
+            float rg = pt.z * 2.0;
+            if (dist < rg + 1.0) col = over(col, pc, clamp(rg - dist + 0.5, 0.0, 1.0) * pt.w * 0.3);
+        }
+        if (dist < pt.z + 1.0) col = over(col, pc, clamp(pt.z - dist + 0.5, 0.0, 1.0) * pt.w);
+    }
+
+    int vt = P.flags.x;
+    if (vt != 0) {
+        gA = 0.0; cA = 0.0; gC = vec3(0.0); cC = vec3(0.0);
+        if (vt == 1) {
+            if (P.flags3.w != 0) {
+                // Anillo base del visualizador circular
+                float rd = abs(length(p - P.viz0.xy) - (P.viz0.z - 2.0)) - 1.0;
+                col = over(col, gradientAt(0.5), clamp(0.5 - rd, 0.0, 1.0) * P.viz1.w);
+            }
+            circularBars(p);
+        } else if (vt == 2) {
+            horizontalBars(p);
+        } else if (vt == 3) {
+            verticalBars(p);
+        } else if (vt == 4) {
+            waveLines(p);
+        }
+        col = over(col, gC, gA);
+        col = over(col, cC, cA);
+    }
+    return col;
+}
+
+uint packBytes(float a, float b, float c, float d) {
+    uvec4 v = uvec4(clamp(round(vec4(a, b, c, d)), 0.0, 255.0));
+    return v.x | (v.y << 8) | (v.z << 16) | (v.w << 24);
+}
+
+float lumaOf(vec3 c) { return 16.0 + 219.0 * dot(c, vec3(0.2126, 0.7152, 0.0722)); }
+
+void main() {
+    W = P.dims.x;
+    H = P.dims.y;
+    int padW = P.dims.z;
+    int padH = P.dims.w;
+    int bx = int(gl_GlobalInvocationID.x);
+    int by = int(gl_GlobalInvocationID.y);
+    if (bx * 4 >= padW || by * 2 >= padH) return;
+
+    vec3 c[8];
+    for (int yy = 0; yy < 2; yy++) {
+        for (int xx = 0; xx < 4; xx++) {
+            ivec2 pix = ivec2(bx * 4 + xx, by * 2 + yy);
+            ivec2 src = min(pix, ivec2(W - 1, H - 1)); // relleno replicando el borde
+            vec3 v = shade(src);
+            c[yy * 4 + xx] = v;
+            if (P.flags2.w != 0 && pix.x < W && pix.y < H) {
+                outRGBA[pix.y * W + pix.x] = packUnorm4x8(vec4(v, 1.0));
+            }
+        }
+    }
+
+    int wordsPerRow = padW / 4;
+    for (int yy = 0; yy < 2; yy++) {
+        outY[(by * 2 + yy) * wordsPerRow + bx] = packBytes(
+            lumaOf(c[yy * 4 + 0]), lumaOf(c[yy * 4 + 1]), lumaOf(c[yy * 4 + 2]), lumaOf(c[yy * 4 + 3]));
+    }
+
+    vec3 a = (c[0] + c[1] + c[4] + c[5]) * 0.25;
+    vec3 b = (c[2] + c[3] + c[6] + c[7]) * 0.25;
+    vec3 uvA = vec3(128.0) + 224.0 * vec3(dot(a, vec3(-0.1146, -0.3854, 0.5)), dot(a, vec3(0.5, -0.4542, -0.0458)), 0.0);
+    vec3 uvB = vec3(128.0) + 224.0 * vec3(dot(b, vec3(-0.1146, -0.3854, 0.5)), dot(b, vec3(0.5, -0.4542, -0.0458)), 0.0);
+    outUV[by * wordsPerRow + bx] = packBytes(uvA.x, uvA.y, uvB.x, uvB.y);
+}

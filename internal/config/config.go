@@ -23,6 +23,10 @@ type AudioConfig struct {
 	Path        string  `yaml:"path"`
 	Volume      float64 `yaml:"volume"`       // Multiplicador de volumen (1.0 = normal)
 	Sensitivity float64 `yaml:"sensitivity"`  // Multiplicador global de reactividad (1.0 = normal)
+	// Normalización adaptativa: cada efecto y cada barra se reescala a su rango local
+	// para que no se queden saturados (ni muertos) cuando una banda está siempre alta/baja.
+	Normalize       bool    `yaml:"normalize"`
+	NormalizeWindow float64 `yaml:"normalize_window"` // segundos a cada lado de la ventana (def. 4)
 }
 
 type BackgroundConfig struct {
@@ -133,8 +137,10 @@ type OutputConfig struct {
 	Width       int    `yaml:"width"`       // 0 = automático (según imagen/video de fondo)
 	Height      int    `yaml:"height"`      // 0 = automático
 	FPS         int    `yaml:"fps"`         // ej. 30 o 60
-	Codec       string `yaml:"codec"`       // "libx264", "h264_nvenc", etc.
-	Preset      string `yaml:"preset"`      // "veryfast", "fast", "medium"
+	Codec       string `yaml:"codec"`       // obsoleto: siempre H.264 (x264 integrado)
+	Preset      string `yaml:"preset"`      // preset x264: "ultrafast" ... "veryslow"
+	Renderer    string `yaml:"renderer"`    // "auto" (GPU Vulkan si hay), "gpu", "cpu"
+	GPUDevice   int    `yaml:"gpu_device"`  // -1 = automático
 	CRF         int    `yaml:"crf"`         // 18-23
 	AudioBitrate string `yaml:"audio_bitrate"` // "320k"
 }
@@ -143,8 +149,10 @@ type OutputConfig struct {
 func DefaultConfig() ProjectConfig {
 	return ProjectConfig{
 		Audio: AudioConfig{
-			Volume:      1.0,
-			Sensitivity: 1.0,
+			Volume:          1.0,
+			Sensitivity:     1.0,
+			Normalize:       true,
+			NormalizeWindow: 4.0,
 		},
 		Background: BackgroundConfig{
 			FitMode:   "cover",
@@ -230,8 +238,9 @@ func DefaultConfig() ProjectConfig {
 			Width:        0, // 0 = inferir de fondo
 			Height:       0, // 0 = inferir de fondo
 			FPS:          60,
-			Codec:        "libx264",
 			Preset:       "fast",
+			Renderer:     "auto",
+			GPUDevice:    -1,
 			CRF:          18,
 			AudioBitrate: "320k",
 		},
@@ -291,6 +300,18 @@ func (c *ProjectConfig) Validate() error {
 	}
 	if c.Audio.Sensitivity <= 0 {
 		c.Audio.Sensitivity = 1.0
+	}
+	if c.Audio.NormalizeWindow <= 0 {
+		c.Audio.NormalizeWindow = 4.0
+	}
+	if c.Visualizer.Bars > 256 {
+		c.Visualizer.Bars = 256
+	}
+	if c.Particles.Count > 1024 {
+		c.Particles.Count = 1024
+	}
+	if c.Output.Renderer == "" {
+		c.Output.Renderer = "auto"
 	}
 	c.Visualizer.Type = strings.ToLower(c.Visualizer.Type)
 	return nil

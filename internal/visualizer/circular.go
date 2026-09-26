@@ -91,7 +91,7 @@ func (cv *CircularVisualizer) renderBars(dc *gg.Context, feat *audio.FrameFeatur
 		h := cv.cfg.MinHeight + magL*(cv.cfg.MaxHeight-cv.cfg.MinHeight)
 
 		// Ángulo: inicia en el polo superior (-PI/2) y gira hacia la izquierda hacia el polo inferior (+PI/2)
-		angle := -math.Pi/2.0 - float64(i)*angleStep
+		angle := -math.Pi/2.0 - (float64(i)+0.5)*angleStep
 		t := float64(i) / float64(barCount)
 
 		col := cv.getColor(t, alpha)
@@ -104,7 +104,7 @@ func (cv *CircularVisualizer) renderBars(dc *gg.Context, feat *audio.FrameFeatur
 		h := cv.cfg.MinHeight + magR*(cv.cfg.MaxHeight-cv.cfg.MinHeight)
 
 		// Ángulo: inicia en el polo superior (-PI/2) y gira hacia la derecha hacia el polo inferior (+PI/2)
-		angle := -math.Pi/2.0 + float64(i)*angleStep
+		angle := -math.Pi/2.0 + (float64(i)+0.5)*angleStep
 		t := float64(i) / float64(barCount)
 
 		col := cv.getColor(t, alpha)

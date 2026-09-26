@@ -2,7 +2,10 @@ package audio
 
 import (
 	"math"
-	"math/cmplx"
+	"runtime"
+	"sort"
+	"sync"
+	"sync/atomic"
 )
 
 const FFTWindowSize = 2048 // 2048 samples = ~42.6ms at 48kHz (resolution ~23.4Hz)
@@ -36,6 +39,10 @@ type AudioAnalyzer struct {
 	sensitivity    float64
 	smoothing      float64
 	decayRate      float64
+
+	// Normalización adaptativa: cada señal se reescala según su rango local (ventana ±WindowSec)
+	Normalize bool
+	WindowSec float64
 
 	// Tablas precalculadas
 	hannWindow     []float64
@@ -114,52 +121,100 @@ func NewAudioAnalyzer(audio *DecodedAudio, fps int, barCount int, sensitivity fl
 		binFrequencies: ranges,
 		prevLeftBars:   make([]float64, barCount),
 		prevRightBars:  make([]float64, barCount),
+		Normalize:      true,
+		WindowSec:      4.0,
 	}
 }
 
-// AnalyzeAllFrames preanaliza todos los cuadros del video secuencialmente para garantizar suavizado temporal perfecto
+// AnalyzeAllFrames preanaliza todos los cuadros del video. Las FFT (independientes por cuadro)
+// se calculan en paralelo en todos los núcleos; el suavizado temporal se aplica después en orden.
 func (a *AudioAnalyzer) AnalyzeAllFrames(totalVideoFrames int) []FrameFeatures {
 	results := make([]FrameFeatures, totalVideoFrames)
 	samplesPerVideoFrame := float64(a.audio.SampleRate) / float64(a.fps)
+	hzPerBin := float64(a.audio.SampleRate) / float64(FFTWindowSize)
 
-	bufL := make([]float32, FFTWindowSize)
-	bufR := make([]float32, FFTWindowSize)
-	fftInL := make([]complex128, FFTWindowSize)
-	fftInR := make([]complex128, FFTWindowSize)
+	raws := make([]rawFrame, totalVideoFrames)
+	fft := newFFTPlan(FFTWindowSize)
+
+	workers := runtime.NumCPU()
+	var wg sync.WaitGroup
+	var next atomic.Int64
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			bufL := make([]float32, FFTWindowSize)
+			bufR := make([]float32, FFTWindowSize)
+			re := make([]float64, FFTWindowSize)
+			im := make([]float64, FFTWindowSize)
+			magsL := make([]float64, FFTWindowSize/2)
+			magsR := make([]float64, FFTWindowSize/2)
+			for {
+				frameIdx := int(next.Add(1) - 1)
+				if frameIdx >= totalVideoFrames {
+					return
+				}
+				centerSample := int(float64(frameIdx) * samplesPerVideoFrame)
+				a.audio.ExtractChannelSamples(0, centerSample, FFTWindowSize, bufL)
+				a.audio.ExtractChannelSamples(1, centerSample, FFTWindowSize, bufR)
+
+				for ch, buf := range [2][]float32{bufL, bufR} {
+					for i := range re {
+						re[i] = float64(buf[i]) * a.hannWindow[i]
+						im[i] = 0
+					}
+					fft.transform(re, im)
+					mags := magsL
+					if ch == 1 {
+						mags = magsR
+					}
+					for i := range mags {
+						mags[i] = math.Hypot(re[i], im[i])
+					}
+				}
+
+				raws[frameIdx] = rawFrame{
+					barsL:  a.extractBars(magsL),
+					barsR:  a.extractBars(magsR),
+					bass:   a.calculateBandEnergy(magsL, magsR, 20.0, 150.0, hzPerBin),
+					mid:    a.calculateBandEnergy(magsL, magsR, 150.0, 3000.0, hzPerBin),
+					treble: a.calculateBandEnergy(magsL, magsR, 3000.0, 16000.0, hzPerBin),
+					rmsAll: (ComputeRMS(bufL) + ComputeRMS(bufR)) * 0.5,
+				}
+			}
+		}()
+	}
+	wg.Wait()
+
+	series := func(get func(r *rawFrame) *float64) []*float64 {
+		out := make([]*float64, totalVideoFrames)
+		for i := range raws {
+			out[i] = get(&raws[i])
+		}
+		return out
+	}
+	if a.Normalize && totalVideoFrames > 1 {
+		win := int(a.WindowSec * float64(a.fps))
+		// Energías: cada una contra su propio rango local
+		normalizeSeries(win, series(func(r *rawFrame) *float64 { return &r.bass }))
+		normalizeSeries(win, series(func(r *rawFrame) *float64 { return &r.mid }))
+		normalizeSeries(win, series(func(r *rawFrame) *float64 { return &r.treble }))
+		normalizeSeries(win, series(func(r *rawFrame) *float64 { return &r.rmsAll }))
+		bl, br := raws2bars(raws)
+		a.normalizeBars(win, bl, br)
+	} else {
+		for i := range raws {
+			r := &raws[i]
+			r.bass, r.mid, r.treble = math.Min(r.bass, 1), math.Min(r.mid, 1), math.Min(r.treble, 1)
+			for b := range r.barsL {
+				r.barsL[b], r.barsR[b] = math.Min(r.barsL[b], 1), math.Min(r.barsR[b], 1)
+			}
+		}
+	}
 
 	for frameIdx := 0; frameIdx < totalVideoFrames; frameIdx++ {
-		centerSample := int(float64(frameIdx) * samplesPerVideoFrame)
-		timestamp := float64(frameIdx) / float64(a.fps)
-
-		// Extraer muestras para canal L (0) y canal R (1)
-		a.audio.ExtractChannelSamples(0, centerSample, FFTWindowSize, bufL)
-		a.audio.ExtractChannelSamples(1, centerSample, FFTWindowSize, bufR)
-
-		rmsL := ComputeRMS(bufL)
-		rmsR := ComputeRMS(bufR)
-		overallRMS := (rmsL + rmsR) * 0.5
-
-		// Aplicar ventana Hann y llenar buffers complejos
-		for i := 0; i < FFTWindowSize; i++ {
-			fftInL[i] = complex(float64(bufL[i])*a.hannWindow[i], 0)
-			fftInR[i] = complex(float64(bufR[i])*a.hannWindow[i], 0)
-		}
-
-		// Ejecutar FFT Cooley-Tukey
-		fftOutL := fftCooleyTukey(fftInL)
-		fftOutR := fftCooleyTukey(fftInR)
-
-		// Magnitudes para L y R
-		magsL := make([]float64, FFTWindowSize/2)
-		magsR := make([]float64, FFTWindowSize/2)
-		for i := 0; i < FFTWindowSize/2; i++ {
-			magsL[i] = cmplx.Abs(fftOutL[i])
-			magsR[i] = cmplx.Abs(fftOutR[i])
-		}
-
-		// Extraer barras logarítmicas
-		rawBarsL := a.extractBars(magsL)
-		rawBarsR := a.extractBars(magsR)
+		raw := &raws[frameIdx]
+		rawBarsL, rawBarsR := raw.barsL, raw.barsR
 
 		// Suavizado temporal con balística (Attack rápido, Decay suave)
 		smoothBarsL := make([]float64, a.barCount)
@@ -187,18 +242,17 @@ func (a *AudioAnalyzer) AnalyzeAllFrames(totalVideoFrames int) []FrameFeatures {
 			a.prevRightBars[b] = smoothBarsR[b]
 		}
 
-		// Bandas de frecuencia específicas
-		hzPerBin := float64(a.audio.SampleRate) / float64(FFTWindowSize)
-		bassEnergy := a.calculateBandEnergy(magsL, magsR, 20.0, 150.0, hzPerBin)
-		midEnergy := a.calculateBandEnergy(magsL, magsR, 150.0, 3000.0, hzPerBin)
-		trebleEnergy := a.calculateBandEnergy(magsL, magsR, 3000.0, 16000.0, hzPerBin)
-
 		// Spectral Flux y Beat Detection
+		bassEnergy := raw.bass
 		flux := math.Max(0, bassEnergy-a.prevBassEnergy)
 		a.prevBassEnergy = bassEnergy
 
 		isBeat := false
-		if flux > 0.08 && flux > a.prevFlux*1.2 {
+		beatThresh := 0.08
+		if a.Normalize {
+			beatThresh = 0.15 // el rango normalizado es mayor
+		}
+		if flux > beatThresh && flux > a.prevFlux*1.2 {
 			isBeat = true
 			a.beatPulseVal = 1.0
 		} else {
@@ -208,13 +262,13 @@ func (a *AudioAnalyzer) AnalyzeAllFrames(totalVideoFrames int) []FrameFeatures {
 
 		results[frameIdx] = FrameFeatures{
 			FrameIndex:   frameIdx,
-			TimestampSec: timestamp,
+			TimestampSec: float64(frameIdx) / float64(a.fps),
 			LeftBars:     smoothBarsL,
 			RightBars:    smoothBarsR,
 			BassEnergy:   bassEnergy,
-			MidEnergy:    midEnergy,
-			TrebleEnergy: trebleEnergy,
-			OverallRMS:   overallRMS,
+			MidEnergy:    raw.mid,
+			TrebleEnergy: raw.treble,
+			OverallRMS:   raw.rmsAll,
 			SpectralFlux: flux,
 			IsBeat:       isBeat,
 			BeatPulse:    a.beatPulseVal,
@@ -236,11 +290,7 @@ func (a *AudioAnalyzer) extractBars(magnitudes []float64) []float64 {
 		if count > 0 {
 			avg := sum / float64(count)
 			// Escala de compresión perceptual (logarítmica suave con normalización)
-			norm := math.Log10(1.0 + avg*9.0) / 1.5
-			if norm > 1.0 {
-				norm = 1.0
-			}
-			bars[i] = norm
+			bars[i] = math.Log10(1.0+avg*9.0) / 1.5
 		}
 	}
 	return bars
@@ -264,36 +314,186 @@ func (a *AudioAnalyzer) calculateBandEnergy(magsL, magsR []float64, fMin, fMax, 
 		sum += (magsL[b] + magsR[b]) * 0.5
 	}
 	avg := sum / float64(bEnd-bStart)
-	val := math.Log10(1.0 + avg*8.0)
-	if val > 1.0 {
-		val = 1.0
-	}
-	return val
+	return math.Log10(1.0 + avg*8.0)
 }
 
-// fftCooleyTukey implementa la Transformada Rápida de Fourier Radix-2 en Go puro
-func fftCooleyTukey(x []complex128) []complex128 {
+type rawFrame struct {
+	barsL, barsR              []float64
+	bass, mid, treble, rmsAll float64
+}
+
+func raws2bars(raws []rawFrame) (l, r [][]float64) {
+	l = make([][]float64, len(raws))
+	r = make([][]float64, len(raws))
+	for i := range raws {
+		l[i], r[i] = raws[i].barsL, raws[i].barsR
+	}
+	return
+}
+
+// rollingRange calcula para cada cuadro el suelo (p10) y techo (p97) de x en una ventana centrada
+// de ±win cuadros. Se evalúa en una rejilla y se interpola para que sea barato.
+func rollingRange(x []float64, win int) (lo, hi []float64) {
 	n := len(x)
-	if n <= 1 {
-		return x
+	lo, hi = make([]float64, n), make([]float64, n)
+	step := win / 12
+	if step < 1 {
+		step = 1
 	}
+	var grid []int
+	for t := 0; t < n; t += step {
+		grid = append(grid, t)
+	}
+	if grid[len(grid)-1] != n-1 {
+		grid = append(grid, n-1)
+	}
+	glo, ghi := make([]float64, len(grid)), make([]float64, len(grid))
+	buf := make([]float64, 0, 2*win+1)
+	for gi, t := range grid {
+		s, e := t-win, t+win+1
+		if s < 0 {
+			s = 0
+		}
+		if e > n {
+			e = n
+		}
+		buf = append(buf[:0], x[s:e]...)
+		sort.Float64s(buf)
+		glo[gi] = buf[int(float64(len(buf)-1)*0.10)]
+		ghi[gi] = buf[int(float64(len(buf)-1)*0.97)]
+	}
+	for gi := 0; gi+1 < len(grid); gi++ {
+		t0, t1 := grid[gi], grid[gi+1]
+		for t := t0; t <= t1; t++ {
+			f := 0.0
+			if t1 > t0 {
+				f = float64(t-t0) / float64(t1-t0)
+			}
+			lo[t] = glo[gi]*(1-f) + glo[gi+1]*f
+			hi[t] = ghi[gi]*(1-f) + ghi[gi+1]*f
+		}
+	}
+	if len(grid) == 1 {
+		lo[0], hi[0] = glo[0], ghi[0]
+	}
+	return
+}
 
-	even := make([]complex128, n/2)
-	odd := make([]complex128, n/2)
+// softKnee comprime suavemente por encima de 0.85 en lugar de recortar en seco
+func softKnee(v float64) float64 {
+	if v < 0 {
+		return 0
+	}
+	if v <= 0.85 {
+		return v
+	}
+	return 0.85 + 0.15*math.Tanh((v-0.85)/0.15)
+}
+
+// normalizeSeries reescala in-place una señal a su rango local [p10, p97].
+// Así un bajo constantemente alto sigue "respirando" en vez de dejar el efecto clavado al máximo.
+func normalizeSeries(win int, ptrs []*float64) {
+	x := make([]float64, len(ptrs))
+	gmax := 0.0
+	for i, p := range ptrs {
+		x[i] = *p
+	}
+	lo, hi := rollingRange(x, win)
+	for _, h := range hi {
+		gmax = math.Max(gmax, h)
+	}
+	minSpan := math.Max(gmax*0.25, 1e-4) // evita amplificar ruido en pasajes casi silenciosos
+	for i, p := range ptrs {
+		*p = softKnee((x[i] - lo[i]) / math.Max(hi[i]-lo[i], minSpan))
+	}
+}
+
+// normalizeBars normaliza cada banda contra su propio rango local (compartido entre L y R para
+// conservar el balance estéreo), con un mínimo relativo al espectro completo para no inflar
+// bandas prácticamente vacías.
+func (a *AudioAnalyzer) normalizeBars(win int, left, right [][]float64) {
+	n := len(left)
+	nb := a.barCount
+	los := make([][]float64, nb)
+	his := make([][]float64, nb)
+	var wg sync.WaitGroup
+	for b := 0; b < nb; b++ {
+		wg.Add(1)
+		go func(b int) {
+			defer wg.Done()
+			x := make([]float64, n)
+			for t := 0; t < n; t++ {
+				x[t] = math.Max(left[t][b], right[t][b])
+			}
+			los[b], his[b] = rollingRange(x, win)
+		}(b)
+	}
+	wg.Wait()
+	for t := 0; t < n; t++ {
+		maxHi := 0.0
+		for b := 0; b < nb; b++ {
+			maxHi = math.Max(maxHi, his[b][t])
+		}
+		minSpan := math.Max(maxHi*0.35, 1e-4)
+		for b := 0; b < nb; b++ {
+			span := math.Max(his[b][t]-los[b][t], minSpan)
+			left[t][b] = softKnee((left[t][b] - los[b][t]) / span)
+			right[t][b] = softKnee((right[t][b] - los[b][t]) / span)
+		}
+	}
+}
+
+// fftPlan es una FFT radix-2 iterativa in-place con tablas precalculadas (sin asignaciones por llamada)
+type fftPlan struct {
+	n      int
+	rev    []int
+	cosTab []float64
+	sinTab []float64
+}
+
+func newFFTPlan(n int) *fftPlan {
+	p := &fftPlan{n: n, rev: make([]int, n), cosTab: make([]float64, n/2), sinTab: make([]float64, n/2)}
+	bits := 0
+	for 1<<bits < n {
+		bits++
+	}
+	for i := 0; i < n; i++ {
+		r := 0
+		for b := 0; b < bits; b++ {
+			if i&(1<<b) != 0 {
+				r |= 1 << (bits - 1 - b)
+			}
+		}
+		p.rev[i] = r
+	}
 	for i := 0; i < n/2; i++ {
-		even[i] = x[i*2]
-		odd[i] = x[i*2+1]
+		angle := -2.0 * math.Pi * float64(i) / float64(n)
+		p.cosTab[i] = math.Cos(angle)
+		p.sinTab[i] = math.Sin(angle)
 	}
+	return p
+}
 
-	fftEven := fftCooleyTukey(even)
-	fftOdd := fftCooleyTukey(odd)
-
-	res := make([]complex128, n)
-	for k := 0; k < n/2; k++ {
-		angle := -2.0 * math.Pi * float64(k) / float64(n)
-		twiddle := cmplx.Rect(1, angle) * fftOdd[k]
-		res[k] = fftEven[k] + twiddle
-		res[k+n/2] = fftEven[k] - twiddle
+func (p *fftPlan) transform(re, im []float64) {
+	n := p.n
+	for i := 0; i < n; i++ {
+		if j := p.rev[i]; j > i {
+			re[i], re[j] = re[j], re[i]
+			im[i], im[j] = im[j], im[i]
+		}
 	}
-	return res
+	for size := 2; size <= n; size <<= 1 {
+		half := size >> 1
+		step := n / size
+		for start := 0; start < n; start += size {
+			for k := 0; k < half; k++ {
+				wr, wi := p.cosTab[k*step], p.sinTab[k*step]
+				a, b := start+k, start+k+half
+				tr := wr*re[b] - wi*im[b]
+				ti := wr*im[b] + wi*re[b]
+				re[b], im[b] = re[a]-tr, im[a]-ti
+				re[a], im[a] = re[a]+tr, im[a]+ti
+			}
+		}
+	}
 }

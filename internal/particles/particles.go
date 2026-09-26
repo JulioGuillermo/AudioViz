@@ -122,6 +122,23 @@ func (ps *ParticleSystem) respawn(p *Particle, randomLife bool) {
 }
 
 func (ps *ParticleSystem) UpdateAndDraw(dc *gg.Context, feat *audio.FrameFeatures, dt float64) {
+	ps.Update(feat, dt)
+	ps.Each(func(x, y, size, alpha float64) {
+		col := ps.baseCol
+		col.A = uint8(alpha * 255.0)
+		if ps.cfg.Glow {
+			dc.SetRGBA255(int(col.R), int(col.G), int(col.B), int(float64(col.A)*0.3))
+			dc.DrawCircle(x, y, size*2.0)
+			dc.Fill()
+		}
+		dc.SetRGBA255(int(col.R), int(col.G), int(col.B), int(col.A))
+		dc.DrawCircle(x, y, size)
+		dc.Fill()
+	})
+}
+
+// Update avanza la simulación un cuadro
+func (ps *ParticleSystem) Update(feat *audio.FrameFeatures, dt float64) {
 	if !ps.cfg.Enabled || len(ps.particles) == 0 {
 		return
 	}
@@ -150,31 +167,26 @@ func (ps *ParticleSystem) UpdateAndDraw(dc *gg.Context, feat *audio.FrameFeature
 			pulseFactor = 1.0 + feat.BassEnergy*0.5
 		}
 		p.Size = p.BaseSize * pulseFactor
-
-		// Transparencia según vida restante
-		lifeRatio := p.Life / p.MaxLife
-		alpha := math.Sin(lifeRatio*math.Pi) * 0.8 // Entrada y salida suave
-		if alpha < 0 {
-			alpha = 0
-		}
-
-		col := p.Color
-		col.A = uint8(alpha * 255.0)
-
-		// Dibujar partícula con glow
-		if ps.cfg.Glow {
-			// Glow suave
-			dc.SetRGBA255(int(col.R), int(col.G), int(col.B), int(float64(col.A)*0.3))
-			dc.DrawCircle(p.X, p.Y, p.Size*2.0)
-			dc.Fill()
-		}
-
-		// Núcleo brillante
-		dc.SetRGBA255(int(col.R), int(col.G), int(col.B), int(col.A))
-		dc.DrawCircle(p.X, p.Y, p.Size)
-		dc.Fill()
 	}
 }
+
+// Each recorre las partículas visibles: posición, radio y alfa (0..1)
+func (ps *ParticleSystem) Each(fn func(x, y, size, alpha float64)) {
+	if !ps.cfg.Enabled {
+		return
+	}
+	for _, p := range ps.particles {
+		// Transparencia según vida restante (entrada y salida suave)
+		alpha := math.Sin(p.Life/p.MaxLife*math.Pi) * 0.8
+		if alpha <= 0 {
+			continue
+		}
+		fn(p.X, p.Y, p.Size, alpha)
+	}
+}
+
+// Color devuelve el color base de las partículas
+func (ps *ParticleSystem) Color() color.RGBA { return ps.baseCol }
 
 func parseColor(s string) color.RGBA {
 	if s == "" {

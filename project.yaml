@@ -7,6 +7,8 @@ audio:
   path: "I didnt ask to be the devil.flac"
   volume: 1.0         # Multiplicador de volumen (1.0 = normal)
   sensitivity: 1.0    # Sensibilidad general de la reactividad visual
+  normalize: true     # Normalización adaptativa: cada efecto/barra se reescala a su rango local
+  normalize_window: 4.0 # Segundos a cada lado de la ventana de normalización
 
 # 2. Fondo (Imagen o Video)
 background:
@@ -119,7 +121,7 @@ output:
   width: 0               # 0 = adapta automáticamente a las dimensiones de la imagen/video
   height: 0              # 0 = adapta automáticamente
   fps: 60                # Cuadros por segundo (ej. 30 o 60)
-  codec: "libx264"       # Códec de video
-  preset: "fast"         # ultrafast, superfast, veryfast, faster, fast, medium
+  renderer: "auto"       # auto (GPU Vulkan, cae a CPU), gpu, cpu
+  gpu_device: -1         # -1 = automático (ver: audioviz --list-gpus)
+  preset: "fast"         # preset x264 integrado: ultrafast ... veryslow
   crf: 18                # Calidad (18 = alta fidelidad visual, 23 = estándar)
-  audio_bitrate: "320k"  # Calidad del audio de salida

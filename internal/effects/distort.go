@@ -204,48 +204,53 @@ func ApplyRipple(src *image.RGBA, amplitude float64, frequency float64, timeVal 
 	return dst
 }
 
-// ApplyGlitch aplica desplazamiento de franjas y ruido temporal
-func ApplyGlitch(src *image.RGBA, intensity float64, seed int64) *image.RGBA {
-	if intensity <= 0.05 {
-		return src
-	}
+// GlitchSlice es una franja desplazada horizontalmente
+type GlitchSlice struct {
+	Y0, Y1, ShiftX int
+}
 
-	w := src.Bounds().Dx()
-	h := src.Bounds().Dy()
-	dst := image.NewRGBA(src.Bounds())
-	copy(dst.Pix, src.Pix)
-
+// GlitchSlices genera las franjas deterministas para una semilla (compartido CPU/GPU)
+func GlitchSlices(w, h int, intensity float64, seed int64) []GlitchSlice {
 	rng := rand.New(rand.NewSource(seed))
 	numSlices := int(float64(h) * 0.04 * intensity)
 	if numSlices < 2 {
 		numSlices = 2
 	}
-
 	maxSliceH := int(float64(h) * 0.08)
 	if maxSliceH < 4 {
 		maxSliceH = 4
 	}
-
-	for i := 0; i < numSlices; i++ {
-		sliceY := rng.Intn(h)
-		sliceH := rng.Intn(maxSliceH) + 2
+	out := make([]GlitchSlice, numSlices)
+	for i := range out {
+		y := rng.Intn(h)
+		sh := rng.Intn(maxSliceH) + 2
 		shiftX := int((rng.Float64()*2.0 - 1.0) * float64(w) * 0.06 * intensity)
+		out[i] = GlitchSlice{Y0: y, Y1: y + sh, ShiftX: shiftX}
+	}
+	return out
+}
 
-		for y := sliceY; y < sliceY+sliceH && y < h; y++ {
+// ApplyGlitch aplica desplazamiento de franjas
+func ApplyGlitch(src *image.RGBA, intensity float64, seed int64) *image.RGBA {
+	if intensity <= 0.05 {
+		return src
+	}
+	w := src.Bounds().Dx()
+	h := src.Bounds().Dy()
+	dst := image.NewRGBA(src.Bounds())
+	copy(dst.Pix, src.Pix)
+	origRow := make([]byte, w*4)
+	for _, sl := range GlitchSlices(w, h, intensity, seed) {
+		for y := sl.Y0; y < sl.Y1 && y < h; y++ {
 			row := y * dst.Stride
-			origRow := make([]byte, w*4)
 			copy(origRow, dst.Pix[row:row+w*4])
-
 			for x := 0; x < w; x++ {
-				srcX := x - shiftX
+				srcX := x - sl.ShiftX
 				if srcX >= 0 && srcX < w {
-					dst.Pix[row+x*4+0] = origRow[srcX*4+0]
-					dst.Pix[row+x*4+1] = origRow[srcX*4+1]
-					dst.Pix[row+x*4+2] = origRow[srcX*4+2]
+					copy(dst.Pix[row+x*4:row+x*4+3], origRow[srcX*4:srcX*4+3])
 				}
 			}
 		}
 	}
-
 	return dst
 }

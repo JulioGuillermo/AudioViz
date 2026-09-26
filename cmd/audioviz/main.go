@@ -9,10 +9,11 @@ import (
 
 	"audioviz/internal/config"
 	"audioviz/internal/engine"
+	"audioviz/internal/gpu"
 	"gopkg.in/yaml.v3"
 )
 
-const version = "1.0.0"
+const version = "2.0.0"
 
 func main() {
 	var (
@@ -23,7 +24,10 @@ func main() {
 		flagFrameAt  float64
 		flagFrameOut string
 		flagInit     string
-		flagCodec    string
+		flagRenderer string
+		flagStart    float64
+		flagGPU      int
+		flagListGPUs bool
 		flagHelp     bool
 	)
 
@@ -38,7 +42,10 @@ func main() {
 	fs.Float64Var(&flagPreview, "preview", 0, "Duración en segundos para renderizar un preview corto")
 	fs.Float64Var(&flagFrameAt, "frame-at", -1, "Segundo exacto del cual extraer un cuadro estático (ej. --frame-at 25.5)")
 	fs.StringVar(&flagFrameOut, "frame-out", "preview_frame.png", "Ruta del cuadro estático a exportar")
-	fs.StringVar(&flagCodec, "codec", "", "Códec de video ('auto', 'h264_vaapi', 'h264_nvenc', 'libx264')")
+	fs.StringVar(&flagRenderer, "renderer", "", "Backend de render: auto, gpu, cpu")
+	fs.Float64Var(&flagStart, "ss", 0, "Segundo inicial del preview")
+	fs.IntVar(&flagGPU, "gpu-device", -2, "Índice de GPU Vulkan (ver --list-gpus)")
+	fs.BoolVar(&flagListGPUs, "list-gpus", false, "Lista las GPUs Vulkan disponibles")
 	fs.StringVar(&flagInit, "init", "", "Crea un archivo de proyecto plantilla YAML listo para editar")
 	fs.BoolVar(&flagHelp, "h", false, "Muestra la ayuda")
 	fs.BoolVar(&flagHelp, "help", false, "Muestra la ayuda")
@@ -57,7 +64,7 @@ func main() {
 			// Si el flag toma valor y no contiene '=', tomar el siguiente argumento si existe
 			if !strings.Contains(arg, "=") && i+1 < len(rawArgs) && !strings.HasPrefix(rawArgs[i+1], "-") {
 				// Comprobar si es un flag booleano
-				if arg != "-h" && arg != "--help" {
+				if arg != "-h" && arg != "--help" && arg != "--list-gpus" && arg != "-list-gpus" {
 					i++
 					flagArgs = append(flagArgs, rawArgs[i])
 				}
@@ -69,6 +76,11 @@ func main() {
 
 	if err := fs.Parse(flagArgs); err != nil {
 		os.Exit(1)
+	}
+
+	if flagListGPUs {
+		fmt.Print(gpu.ListDevices())
+		os.Exit(0)
 	}
 
 	if flagHelp {
@@ -113,12 +125,16 @@ func main() {
 	if flagBg != "" {
 		cfg.Background.Path = flagBg
 	}
-	if flagCodec != "" {
-		cfg.Output.Codec = flagCodec
+	if flagRenderer != "" {
+		cfg.Output.Renderer = flagRenderer
+	}
+	if flagGPU != -2 {
+		cfg.Output.GPUDevice = flagGPU
 	}
 
 	renderOpts := engine.RenderOptions{
 		MaxDurationSec: flagPreview,
+		StartSec:       flagStart,
 		SingleFrameAt:  flagFrameAt,
 		SingleFrameOut: flagFrameOut,
 	}
@@ -136,17 +152,20 @@ Uso:
   audioviz [ruta_al_proyecto.yaml] [opciones]
 
 Ejemplos:
-  audioviz project.yaml                       # Renderiza el video completo usando GPU/CPU
-  audioviz project.yaml -p 10                 # Renderiza una prueba rápida de los primeros 10 segundos
+  audioviz project.yaml                       # Renderiza el video completo (GPU Vulkan si hay)
+  audioviz project.yaml -p 10 --ss 60         # Preview de 10 s empezando en el segundo 60
   audioviz project.yaml --frame-at 35.0       # Exporta el fotograma exacto en el segundo 35
-  audioviz project.yaml --codec h264_vaapi    # Fuerza aceleración por hardware GPU (VAAPI)
+  audioviz project.yaml --renderer cpu        # Fuerza render por CPU
+  audioviz --list-gpus                        # Lista GPUs Vulkan
   audioviz --init nuevo.yaml                  # Genera una plantilla con todos los efectos
 
 Opciones:
   -p, --preview <segundos>      Renderiza solo los primeros N segundos
   --frame-at <segundo>          Exporta un fotograma individual en PNG
   --frame-out <ruta>            Nombre del fotograma extraído (default: preview_frame.png)
-  --codec <nombre>              Códec de video ('auto', 'h264_vaapi', 'h264_nvenc', 'libx264')
+  --ss <segundo>                Inicio del preview
+  --renderer <auto|gpu|cpu>     Backend de render (auto = GPU Vulkan con caída a CPU)
+  --gpu-device <n>              GPU Vulkan a usar (--list-gpus)
   -o, --output <ruta>           Sobrescribe la ruta del video final en el YAML
   -a, --audio <ruta>            Sobrescribe la ruta del audio en el YAML
   -b, --bg <ruta>               Sobrescribe la ruta del fondo (imagen o video) en el YAML
