@@ -1,0 +1,8 @@
+*.mp4
+*.png
+*.flac
+*.tmp
+/audioviz
+/third_party/x264/
+/third_party/build/
+I didn*t ask to be the devil
