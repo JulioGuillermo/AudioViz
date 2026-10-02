@@ -11,7 +11,7 @@ audio:
   normalize_window: 4.0  # Segundos a cada lado de la ventana de normalización
 
 background:
-  path: "I didn't ask to be the devil"
+  path: "I didn't ask to be the devil.png"
   fit_mode: "cover"
   opacity: 1.0
   darken: 0.10
@@ -65,10 +65,10 @@ background_effects:
 visualizer:
   enabled: true
   type: "horizontal"
-  bars: 48
+  bars: 96
   min_height: 3.0
-  max_height: 230.0
-  bar_width: 6.0
+  max_height: 280.0
+  bar_width: 7.0
   bar_gap: 3.0
   roundness: 3.0
   smoothing: 0.75
@@ -151,9 +151,9 @@ lyrics:
   font: "fonts/NotoSerifDisplay-CondensedBold.ttf"
   size: 58
   uppercase: true
-  position: "bottom"      # top, bottom, center, left, right, side (alterna izq/der) o custom
-  margin: 280             # por encima de las barras de fuego
-  max_width: 0.9
+  position: "side"      # top, bottom, center, left, right, side (alterna izq/der) o custom
+  margin: 80             # por encima de las barras de fuego
+  max_width: 0.4
   line_spacing: 1.1
   word_spacing: 0.18
   mode: "karaoke"         # karaoke (se rellena al cantarse), words (aparecen al cantarse), line
