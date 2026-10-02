@@ -12,12 +12,17 @@ const KIND_HINT = {
 };
 
 export function Modal({ title, icon, onClose, children, footer, wide }) {
+  const ref = useRef();
   useEffect(() => {
-    const k = (e) => e.key === 'Escape' && onClose();
+    const k = (e) => {
+      if (e.key !== 'Escape') return;
+      const all = document.querySelectorAll('.modal-bg');
+      if (all[all.length - 1] === ref.current) onClose(); // solo el diálogo de arriba
+    };
     addEventListener('keydown', k);
     return () => removeEventListener('keydown', k);
   }, []);
-  return html`<div class="modal-bg" onMouseDown=${(e) => e.target === e.currentTarget && onClose()}>
+  return html`<div class="modal-bg" ref=${ref} onMouseDown=${(e) => e.target === e.currentTarget && onClose()}>
     <div class="modal" style=${wide ? { width: 'min(820px,96vw)' } : null}>
       <div class="modal-h">${icon && html`<${Icon} name=${icon} size=${16} cls="muted" />`}${title}<span class="spacer"></span>
         <button class="btn icon ghost" title="Cerrar (Esc)" onClick=${onClose}><${Icon} name="x" size=${16} /></button></div>
@@ -136,8 +141,8 @@ export function JobView({ job }) {
   </div>`;
 }
 
-export function GenLyricsDialog({ meta, job, available, pickFile, onStart, onCancel, onClose }) {
-  const [txt, setTxt] = useState('');
+export function GenLyricsDialog({ meta, job, available, pickFile, onStart, onCancel, onClose, initialTxt }) {
+  const [txt, setTxt] = useState(initialTxt || '');
   const [lang, setLang] = useState('en');
   const running = job && job.kind === 'lyrics' && job.status === 'running';
   return html`<${Modal} title="Generar letra sincronizada" icon="wand-sparkles" onClose=${onClose}

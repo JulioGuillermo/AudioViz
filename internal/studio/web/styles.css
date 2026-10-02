@@ -260,3 +260,21 @@ input[type=color]::-moz-color-swatch { border: 0; border-radius: 3px; }
 .word input[type=number] { width: 100%; }
 .word.head { color: var(--text-3); font-size: 11px; }
 .word.now input[type=text] { border-color: var(--accent-line); }
+
+/* ---------- primeros pasos y soltar archivos */
+.stage-wrap { flex: 1; position: relative; display: flex; min-height: 0; }
+.stage-wrap > .stage { flex: 1; }
+.setup { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(460px, 90%); background: rgba(21, 23, 27, .97);
+  border: 1px solid var(--border-2); border-radius: 12px; box-shadow: 0 20px 60px rgba(0, 0, 0, .6); z-index: 5; }
+.setup-h { display: flex; align-items: center; padding: 10px 10px 10px 16px; border-bottom: 1px solid var(--border); font-weight: 600; font-size: 13.5px; }
+.step { display: flex; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.step .num { width: 24px; height: 24px; flex: none; border-radius: 50%; display: grid; place-items: center; font: 12px var(--mono); color: var(--text-2); border: 1px solid var(--border-2); }
+.step.done .num { background: var(--accent-soft); border-color: var(--accent-line); color: var(--accent-hi); }
+.step-t { font-weight: 600; font-size: 13px; }
+.step.done .step-t { color: var(--text-2); }
+.step-d { font-size: 12px; color: var(--text-3); margin-top: 2px; }
+.setup-f { display: flex; align-items: center; gap: 8px; padding: 10px 16px; font-size: 12px; color: var(--text-3); }
+.dropzone { position: fixed; inset: 0; z-index: 70; background: rgba(8, 9, 11, .78); display: grid; place-items: center; pointer-events: none; }
+.dropzone > div { text-align: center; padding: 34px 48px; border: 2px dashed var(--accent-line); border-radius: 16px; color: var(--text); background: rgba(21, 23, 27, .9); }
+.dropzone .ic { color: var(--accent); }
+.btn.notice { color: var(--warn); }

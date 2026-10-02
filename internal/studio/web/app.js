@@ -76,6 +76,51 @@ function Preview({ meta, time, scale, rev, playing }) {
   </div>`;
 }
 
+// ------------------------------------------------------------------ primeros pasos
+
+const EXT = {
+  audio: ['flac', 'wav', 'mp3', 'ogg'],
+  bg: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif', 'mp4', 'mov', 'mkv', 'webm', 'avi', 'm4v'],
+  lyrics: ['lrc', 'srt'],
+  txt: ['txt'],
+  font: ['ttf', 'otf'],
+};
+export function kindOf(name) {
+  const ext = String(name).split('.').pop().toLowerCase();
+  for (const k in EXT) if (EXT[k].includes(ext)) return k;
+  return null;
+}
+
+// Guía sobre el preview mientras falten el audio o el fondo
+function Setup({ proj, ctx, onHide }) {
+  const lyr = proj.tracks.lyrics[0].cfg;
+  const steps = [
+    { done: !!proj.audio.path, icon: 'music', title: 'Elige la canción', text: 'FLAC, WAV, MP3 u OGG. Se analiza al momento: graves, medios, agudos y golpes.',
+      btn: 'Elegir audio…', act: () => ctx.pickFile('audio', ctx.setAudio) },
+    { done: !!proj.tracks.background[0].cfg.path, icon: 'image', title: 'Elige el fondo', text: 'Imagen, GIF o vídeo. La resolución del vídeo final será la del fondo (se puede cambiar en Salida).',
+      btn: 'Elegir fondo…', act: () => ctx.pickFile('bg', ctx.setBackground) },
+    { done: !!lyr.path, optional: true, icon: 'mic-vocal', title: 'Añade la letra', text: 'Un .lrc / .srt ya sincronizado, o genérala desde un .txt con la letra.',
+      btn: 'Elegir .lrc / .srt…', act: () => ctx.pickFile('lyrics', ctx.setLyrics),
+      btn2: 'Generar desde .txt…', act2: () => ctx.dialog({ type: 'genlyrics' }) },
+  ];
+  return html`<div class="setup">
+    <div class="setup-h"><span>Primeros pasos</span><span class="spacer"></span>
+      <button class="btn sm icon ghost" title="Ocultar" onClick=${onHide}><${Icon} name="x" size=${14} /></button></div>
+    ${steps.map((st, i) => html`<div class=${'step' + (st.done ? ' done' : '')}>
+      <div class="num">${st.done ? html`<${Icon} name="check" size=${14} />` : i + 1}</div>
+      <div class="grow">
+        <div class="step-t">${st.title}${st.optional && html`<span class="faint"> · opcional</span>`}</div>
+        <div class="step-d">${st.text}</div>
+        <div class="row" style="margin-top:8px">
+          <button class=${'btn sm' + (!st.done && !st.optional ? ' primary' : '')} onClick=${st.act}><${Icon} name="folder-open" size=${14} /> ${st.done ? 'Cambiar…' : st.btn}</button>
+          ${st.btn2 && html`<button class="btn sm" onClick=${st.act2}><${Icon} name="wand-sparkles" size=${14} /> ${st.btn2}</button>`}
+        </div>
+      </div>
+    </div>`)}
+    <div class="setup-f"><${Icon} name="upload" size=${14} /><span>También puedes arrastrar archivos a la ventana: se copian a <span class="mono">assets/</span> y se colocan solos.</span></div>
+  </div>`;
+}
+
 // ------------------------------------------------------------------ inspector
 
 function SegHeader({ track, segs, i, set, meta }) {
@@ -206,8 +251,11 @@ function App() {
   const [save, setSave] = useState('');
   const [job, setJob] = useState(null);
   const [dlg, setDlg] = useState(null);
+  const [pick, setPick] = useState(null); // explorador de archivos: capa propia, encima de cualquier diálogo
   const [toast, setToast] = useState('');
   const [tlH, setTlH] = useState(Math.round(innerHeight * 0.36));
+  const [hideSetup, setHideSetup] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const audio = useRef(new Audio());
   const projRef = useRef(null);
   const timeRef = useRef(0);
@@ -307,8 +355,18 @@ function App() {
   const ctx = {
     seek,
     dialog: setDlg,
-    pickFile: (kind, cb, start) => setDlg({ type: 'file', kind, cb, start }),
+    pickFile: (kind, cb, start) => setPick({ kind, cb, start }),
     openProject: async (p) => { try { await api('POST', '/api/project/open', { path: p }); await loadAll(); } catch (e) { showErr(e); } },
+    setAudio: (path) => update((p) => { p.audio.path = path; }),
+    // El fondo va al tramo activo en el cursor (o al primero si aún está vacío)
+    setBackground: (path) => update((p) => {
+      const segs = p.tracks.background;
+      let i = 0;
+      if (segs[0].cfg.path) segs.forEach((g, k) => { if (g.at <= timeRef.current) i = k; });
+      segs[i].cfg.path = path;
+    }),
+    setLyrics: (path) => update((p) => { p.tracks.lyrics.forEach((g) => { g.cfg.path = path; }); p.tracks.lyrics[0].cfg.enabled = true; }),
+    setFont: (path) => update((p) => { p.tracks.lyrics.forEach((g) => { g.cfg.font = path; }); }),
     addSeg: (track, t) => {
       const segs = projRef.current.tracks[track];
       if (t <= 0.01) { setSel({ kind: 'track', track, seg: 0 }); return; }
@@ -368,6 +426,43 @@ function App() {
     } catch (e) { showErr(e); }
   };
 
+  // --- arrastrar y soltar archivos: se suben a assets/ y se asignan según su tipo
+  const dropFiles = async (files) => {
+    for (const file of files) {
+      const kind = kindOf(file.name);
+      if (!kind) { showErr(`No sé qué hacer con «${file.name}»`); continue; }
+      try {
+        setSave(`Subiendo ${file.name}…`);
+        const fd = new FormData();
+        fd.append('file', file);
+        const r = await fetch('/api/upload', { method: 'POST', body: fd });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.error);
+        if (kind === 'audio') { ctx.setAudio(d.path); setSel({ kind: 'audio' }); }
+        else if (kind === 'bg') { ctx.setBackground(d.path); setSel({ kind: 'track', track: 'background', seg: 0 }); }
+        else if (kind === 'lyrics') { ctx.setLyrics(d.path); setSel({ kind: 'track', track: 'lyrics', seg: 0 }); }
+        else if (kind === 'font') { ctx.setFont(d.path); setSel({ kind: 'track', track: 'lyrics', seg: 0 }); }
+        else if (kind === 'txt') setDlg({ type: 'genlyrics', txt: d.path });
+      } catch (e) { showErr(e); }
+    }
+  };
+  useEffect(() => {
+    let depth = 0;
+    const has = (e) => e.dataTransfer && [...e.dataTransfer.types].includes('Files');
+    const enter = (e) => { if (!has(e)) return; e.preventDefault(); depth++; setDragging(true); };
+    const over = (e) => { if (has(e)) e.preventDefault(); };
+    const leave = (e) => { if (!has(e)) return; depth = Math.max(0, depth - 1); if (!depth) setDragging(false); };
+    const drop = (e) => {
+      if (!has(e)) return;
+      e.preventDefault(); depth = 0; setDragging(false);
+      if (!projRef.current) { showErr('Crea o abre un proyecto antes de añadir archivos'); return; }
+      dropFiles([...e.dataTransfer.files]);
+    };
+    addEventListener('dragenter', enter); addEventListener('dragover', over);
+    addEventListener('dragleave', leave); addEventListener('drop', drop);
+    return () => { removeEventListener('dragenter', enter); removeEventListener('dragover', over); removeEventListener('dragleave', leave); removeEventListener('drop', drop); };
+  }, []);
+
   // --- teclado
   useEffect(() => {
     const k = (e) => {
@@ -393,15 +488,16 @@ function App() {
   if (!st) return html`<div class="welcome"><p class="muted">Cargando…</p></div>`;
 
   const dialogs = html`
-    ${dlg && dlg.type === 'file' && html`<${FilePicker} kind=${dlg.kind} start=${dlg.start} hasProject=${!!proj}
-        onPick=${dlg.cb} onClose=${() => setDlg(null)} />`}
+
     ${dlg && dlg.type === 'new' && html`<${NewProject} start=${st.home || st.startDir} pickFile=${ctx.pickFile} onClose=${() => setDlg(null)}
         onCreate=${async (dir, name) => { await api('POST', '/api/project/new', { dir, name }); await loadAll(); }} />`}
     ${dlg && dlg.type === 'export' && proj && html`<${ExportDialog} proj=${proj} meta=${meta} job=${job} onClose=${() => setDlg(null)}
         onStart=${(o) => api('POST', '/api/export', o).then(setJob).catch(showErr)} onCancel=${() => api('POST', '/api/job/cancel')} />`}
-    ${dlg && dlg.type === 'genlyrics' && proj && html`<${GenLyricsDialog} meta=${meta} job=${job} available=${st.lyricsTool}
+    ${dlg && dlg.type === 'genlyrics' && proj && html`<${GenLyricsDialog} meta=${meta} job=${job} available=${st.lyricsTool} initialTxt=${dlg.txt}
         pickFile=${ctx.pickFile} onClose=${() => setDlg(null)} onCancel=${() => api('POST', '/api/job/cancel')}
         onStart=${(txt, lang) => api('POST', '/api/lyrics/generate', { txt, lang }).then(setJob).catch(showErr)} />`}
+    ${pick && html`<${FilePicker} kind=${pick.kind} start=${pick.start} hasProject=${!!proj}
+        onPick=${pick.cb} onClose=${() => setPick(null)} />`}
     ${toast && html`<div class="toast" onClick=${() => setToast('')}><${Icon} name="triangle-alert" size=${16} />${toast}</div>`}`;
 
   if (!proj || !meta) return html`<${Welcome} st=${st} ctx=${ctx} />${dialogs}`;
@@ -463,7 +559,10 @@ function App() {
     </div>
 
     <div class="preview">
-      <${Preview} meta=${meta} time=${time} scale=${scale} rev=${rev} playing=${playing} />
+      <div class="stage-wrap">
+        <${Preview} meta=${meta} time=${time} scale=${scale} rev=${rev} playing=${playing} />
+        ${!hideSetup && (!proj.audio.path || !proj.tracks.background[0].cfg.path) && html`<${Setup} proj=${proj} ctx=${ctx} onHide=${() => setHideSetup(true)} />`}
+      </div>
       <div class="transport">
         <div class="btngroup">
           <button class="btn icon" title="Ir al inicio (Inicio)" onClick=${() => seek(0)}><${Icon} name="skip-back" size=${15} /></button>
@@ -477,7 +576,7 @@ function App() {
         </div>
         <span class="time">${fmtTime(time)} <small>/ ${fmtTime(meta.duration)} · cuadro ${Math.round(time * meta.fps)}</small></span>
         <span class="spacer"></span>
-        ${!meta.hasAudio && html`<span class="notice"><${Icon} name="triangle-alert" size=${14} />Sin audio</span>`}
+        ${!meta.hasAudio && html`<button class="btn sm ghost notice" onClick=${() => ctx.pickFile('audio', ctx.setAudio)}><${Icon} name="triangle-alert" size=${14} />Sin audio · elegir…</button>`}
         <span class="faint" style="font-size:12px">Preview</span>
         <select value=${scale} title="Resolución del preview" onChange=${(e) => setScale(+e.target.value)}>
           <option value="1">Completa</option><option value="2">1/2</option><option value="3">1/3</option><option value="4">1/4</option>
@@ -491,6 +590,9 @@ function App() {
       onSeek=${seek} onSelect=${selTrack} onMoveSeg=${onMoveSeg} onAddSeg=${ctx.addSeg} onMarker=${onMarker}
       onSelectLine=${(i) => { setSel({ kind: 'line', line: i }); seek(lyr.lines[i].start); }} />
     ${dialogs}
+    ${dragging && html`<div class="dropzone"><div><${Icon} name="upload" size=${28} />
+      <div style="margin-top:10px;font-size:15px;font-weight:600">Suelta para añadir al proyecto</div>
+      <div class="faint" style="margin-top:4px">Audio, imagen o vídeo de fondo, letra (.lrc/.srt/.txt) o fuente</div></div></div>`}
   </div>`;
 }
 

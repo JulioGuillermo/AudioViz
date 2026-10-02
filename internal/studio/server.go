@@ -359,7 +359,7 @@ func (s *Server) hAnalysis(w http.ResponseWriter, r *http.Request) {
 	feats := sess.Features()
 	n := len(feats)
 	bass, mid, tre, rms := make([]float64, n), make([]float64, n), make([]float64, n), make([]float64, n)
-	var beats []int
+	beats := []int{}
 	for i, f := range feats {
 		bass[i], mid[i], tre[i], rms[i] = f.BassEnergy, f.MidEnergy, f.TrebleEnergy, math.Min(f.OverallRMS*3, 1)
 		if f.IsBeat {
@@ -367,7 +367,7 @@ func (s *Server) hAnalysis(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Forma de onda: pico por columna (2 por segundo de cuadro)
-	var wave []float64
+	wave := []float64{}
 	if a := sess.Audio; a != nil {
 		cols := n
 		per := len(a.Samples) / 2 / max(cols, 1)

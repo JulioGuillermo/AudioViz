@@ -167,16 +167,15 @@ func runStudio(args []string) {
 	addr := fs.String("addr", "127.0.0.1:8787", "Dirección de escucha (usa 0.0.0.0:8787 para abrirlo desde otro equipo de la red)")
 	noOpen := fs.Bool("no-open", false, "No abrir el navegador automáticamente")
 	tools := fs.String("tools", "", "Carpeta tools/ (para generar letras); por defecto junto al binario")
+	// El proyecto puede ir antes o después de las opciones
 	var project string
-	var rest []string
-	for _, a := range args {
-		if !strings.HasPrefix(a, "-") && project == "" {
-			project = a
-		} else {
-			rest = append(rest, a)
-		}
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		project, args = args[0], args[1:]
 	}
-	fs.Parse(rest)
+	fs.Parse(args)
+	if project == "" && fs.NArg() > 0 {
+		project = fs.Arg(0)
+	}
 	err := studio.Run(studio.Options{Addr: *addr, Project: project, ToolsDir: *tools, Version: version}, func(url string) {
 		fmt.Printf("🎛️  AudioViz Studio en %s  (Ctrl+C para salir)\n", url)
 		if !*noOpen {

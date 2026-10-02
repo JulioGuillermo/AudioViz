@@ -7,7 +7,7 @@ const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValu
 
 const H = { ruler: 26, audio: 74, lyrics: 30, track: 28 };
 
-const BAND = { bass: 'graves', mid: 'medios', treble: 'agudos', overall: 'volumen', transient: 'ataques', beat: 'golpes', '': 'golpes' };
+const BAND = { bass: 'graves', mid: 'medios', treble: 'agudos', overall: 'volumen', transient: 'ataques', beat: 'golpes' };
 
 // Resumen corto de un tramo para mostrarlo en el bloque
 export function segSummary(track, cfg) {
@@ -17,7 +17,8 @@ export function segSummary(track, cfg) {
     case 'visualizer': return cfg.enabled ? `${cfg.type} · ${cfg.bars}` : 'oculto';
     case 'particles': return cfg.enabled ? `${(cfg.layers || []).length} capa${(cfg.layers || []).length === 1 ? '' : 's'}` : 'apagadas';
     case 'lyrics': return cfg.enabled ? `${cfg.position} · ${cfg.mode}` : 'oculta';
-    default: return cfg.enabled ? (BAND[cfg.react_to] || 'activo') : 'apagado';
+    case 'glitch': return cfg.enabled ? (cfg.react_to ? BAND[cfg.react_to] : 'golpes') : 'apagado';
+    default: return cfg.enabled ? (BAND[cfg.react_to || 'bass'] || 'activo') : 'apagado';
   }
 }
 
@@ -66,7 +67,7 @@ function AudioLane({ ana, width, pps, duration }) {
     curve(ana.treble, cssVar('--band-treble'));
     // Golpes
     g.fillStyle = 'rgba(255,255,255,0.22)';
-    for (const b of ana.beats) g.fillRect((b / fps) * pps, 0, 1, 5);
+    for (const b of ana.beats || []) g.fillRect((b / fps) * pps, 0, 1, 5);
   }, [ana, width, pps]);
   return html`<canvas ref=${ref}></canvas>`;
 }
@@ -112,9 +113,9 @@ export function Timeline({ proj, meta, ana, lyr, time, sel, onSeek, onSelect, on
   const effPps = pps ?? 12;
   const width = Math.max(200, Math.ceil(duration * effPps) + 40);
 
-  // Ajustar zoom al ancho disponible la primera vez
+  // Ajustar el zoom para ver la canción entera al abrir y cuando cambia la duración (p. ej. al elegir el audio)
   useEffect(() => {
-    if (pps === null && scroller.current) setPps(Math.max(2, (scroller.current.clientWidth - 40) / duration));
+    if (scroller.current) setPps(Math.max(2, (scroller.current.clientWidth - 40) / duration));
   }, [duration]);
 
   // Mantener el cursor visible durante la reproducción
@@ -129,7 +130,7 @@ export function Timeline({ proj, meta, ana, lyr, time, sel, onSeek, onSelect, on
   const snaps = useMemo(() => {
     const s = [time, ...proj.markers.map((m) => m.at)];
     for (const id in proj.tracks) proj.tracks[id].forEach((g) => s.push(g.at));
-    if (ana) for (const b of ana.beats) s.push(b / ana.fps);
+    if (ana) for (const b of ana.beats || []) s.push(b / ana.fps);
     return s;
   }, [proj, ana, time]);
   const snap = (t, ev) => {

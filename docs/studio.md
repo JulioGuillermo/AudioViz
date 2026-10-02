@@ -13,6 +13,30 @@ mismo motor que la exportación, así que lo que ves es lo que se exporta.
 > `--addr 0.0.0.0:...` permite entrar desde la red, y cualquiera en ella podría ver tus carpetas.
 > Úsalo solo en redes de confianza.
 
+## Empezar un proyecto nuevo
+1. **Nuevo** → eliges la carpeta y el nombre. Se crea `nombre/project.yaml` y `nombre/assets/`.
+2. Sobre el preview aparece **Primeros pasos**:
+   - **Elegir audio…**: la canción. Se analiza al momento y la línea de tiempo pasa a durar lo mismo
+     que la canción (sin audio dura 30 s, para poder ir montando lo visual).
+   - **Elegir fondo…**: imagen, GIF o vídeo. La resolución del vídeo será la del fondo (se puede
+     fijar otra en **Salida**). Hasta elegirlo es 1080×1920 con fondo negro.
+   - **Letra** (opcional): un `.lrc`/`.srt`, o *Generar desde .txt…*.
+3. La guía se oculta sola cuando ya hay audio y fondo. Desde ahí todo se ajusta en las pistas.
+
+**Arrastrar y soltar**: suelta archivos en cualquier parte de la ventana. Se copian a `assets/`
+y se colocan según su tipo:
+
+| Archivo | Va a |
+|---|---|
+| FLAC, WAV, MP3, OGG | Audio del proyecto |
+| Imagen, GIF o vídeo | Fondo (el tramo activo en el cursor; el primero si aún no hay fondo) |
+| `.lrc`, `.srt` | Letra (y la activa) |
+| `.txt` | Abre *Generar letra* con ese texto |
+| `.ttf`, `.otf` | Fuente de la letra |
+
+Un proyecto nuevo arranca con valores por defecto razonables (visualizador circular, zoom con los
+graves, aberración, glitch en los golpes, partículas). Cambia lo que quieras desde cada pista.
+
 ## Pantalla
 
 | Zona | Qué hay |
