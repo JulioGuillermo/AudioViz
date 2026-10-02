@@ -4,6 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 scripts/build-x264.sh
+scripts/build-ffmpeg.sh
 if command -v glslc >/dev/null && [ internal/gpu/shaders/render.comp -nt internal/gpu/shaders/render.spv ]; then
   glslc -O --target-env=vulkan1.1 internal/gpu/shaders/render.comp -o internal/gpu/shaders/render.spv
 fi

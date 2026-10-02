@@ -1,4 +1,5 @@
-// Package video carga el fondo (imagen fija o GIF animado) en Go puro, sin ffmpeg.
+// Package video carga el fondo: imágenes y GIF en Go puro; vídeos con un FFmpeg mínimo
+// enlazado estáticamente (no hace falta nada instalado).
 package video
 
 import (
@@ -30,16 +31,25 @@ type BackgroundReader interface {
 // ProbeResult contiene dimensiones y tipo detectado de un medio
 type ProbeResult struct {
 	IsAnimated bool
+	IsVideo    bool
 	Width      int
 	Height     int
+	Duration   float64 // s (vídeo)
 }
 
-var videoExts = map[string]bool{".mp4": true, ".mkv": true, ".mov": true, ".webm": true, ".avi": true, ".m4v": true}
+var videoExts = map[string]bool{".mp4": true, ".mkv": true, ".mov": true, ".webm": true, ".avi": true, ".m4v": true, ".ts": true}
+
+// IsVideo indica si la ruta es un vídeo por su extensión
+func IsVideo(path string) bool { return videoExts[strings.ToLower(filepath.Ext(path))] }
 
 // ProbeMedia determina las dimensiones del fondo
 func ProbeMedia(filePath string) (*ProbeResult, error) {
-	if videoExts[strings.ToLower(filepath.Ext(filePath))] {
-		return nil, fmt.Errorf("los fondos de video (%s) no están soportados sin ffmpeg; usa una imagen o un GIF animado", filepath.Ext(filePath))
+	if IsVideo(filePath) {
+		w, h, dur, err := probeVideo(filePath)
+		if err != nil {
+			return nil, err
+		}
+		return &ProbeResult{IsVideo: true, Width: w / 2 * 2, Height: h / 2 * 2, Duration: dur}, nil
 	}
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -110,6 +120,9 @@ func (r *gifReader) FrameAt(t float64) (*image.RGBA, int) {
 
 // NewBackgroundReader carga la imagen o el GIF animado ya escalado a la salida
 func NewBackgroundReader(filePath string, w, h int, fitMode string, loop bool) (BackgroundReader, error) {
+	if IsVideo(filePath) {
+		return newVideoReader(filePath, w, h, fitMode, loop)
+	}
 	f, err := os.Open(filePath)
 	if err != nil {
 		return nil, fmt.Errorf("no se pudo abrir el fondo '%s': %w", filePath, err)
