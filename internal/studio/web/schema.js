@@ -20,7 +20,7 @@ const ANIMS = [['fade', 'Fundido'], ['slide_up', 'Desliza arriba'], ['slide_down
   ['pop', 'Pop'], ['zoom', 'Zoom'], ['none', 'Ninguna']];
 
 export const TRACKS = [
-  { id: 'background', group: 'Fondo', label: 'Imagen / vídeo', icon: '🖼️', color: '#6b7cff', fields: [
+  { id: 'background', group: 'Fondo', label: 'Imagen / vídeo', icon: 'image', fields: [
     { key: 'path', label: 'Archivo', type: 'file', kind: 'bg', help: 'Imagen, GIF o vídeo (mp4, mov, mkv, webm)' },
     { key: 'fit_mode', label: 'Ajuste', type: 'enum', options: [['cover', 'Rellenar (recorta)'], ['contain', 'Contener (bandas)'], ['stretch', 'Estirar']] },
     { key: 'opacity', label: 'Opacidad', type: 'num', min: 0, max: 1, step: 0.01 },
@@ -28,44 +28,44 @@ export const TRACKS = [
     { key: 'vignette', label: 'Viñeta', type: 'num', min: 0, max: 1, step: 0.01 },
     { key: 'loop_video', label: 'Repetir vídeo/GIF', type: 'bool' },
   ] },
-  { id: 'bass_zoom', group: 'Efectos del fondo', label: 'Zoom', icon: '🔍', color: '#ff6b6b', fields: [
+  { id: 'bass_zoom', group: 'Efectos del fondo', label: 'Zoom', icon: 'zoom-in', fields: [
     { key: 'enabled', label: 'Activo', type: 'bool' },
     { key: 'max_zoom', label: 'Zoom máximo', type: 'num', min: 1, max: 1.4, step: 0.005 },
     { key: 'sensitivity', label: 'Sensibilidad', type: 'num', min: 0, max: 3, step: 0.05 },
     react('bass'),
   ] },
-  { id: 'shake', group: 'Efectos del fondo', label: 'Temblor / movimiento', icon: '〰️', color: '#ff9f43', fields: [
+  { id: 'shake', group: 'Efectos del fondo', label: 'Temblor / movimiento', icon: 'move', fields: [
     { key: 'enabled', label: 'Activo', type: 'bool' },
     { key: 'amplitude', label: 'Amplitud (px)', type: 'num', min: 0, max: 60, step: 0.5 },
     { key: 'speed', label: 'Velocidad', type: 'num', min: 0.1, max: 5, step: 0.05 },
     react('bass'),
   ] },
-  { id: 'chromatic_aberration', group: 'Efectos del fondo', label: 'Aberración cromática', icon: '🌈', color: '#a55eea', fields: [
+  { id: 'chromatic_aberration', group: 'Efectos del fondo', label: 'Aberración cromática', icon: 'blend', fields: [
     { key: 'enabled', label: 'Activo', type: 'bool' },
     { key: 'max_shift', label: 'Desplazamiento (px)', type: 'num', min: 0, max: 40, step: 0.5 },
     { key: 'mode', label: 'Modo', type: 'enum', options: [['radial', 'Radial'], ['horizontal', 'Horizontal']] },
     react('bass'),
   ] },
-  { id: 'ripple', group: 'Efectos del fondo', label: 'Ondulación', icon: '🌊', color: '#26de81', fields: [
+  { id: 'ripple', group: 'Efectos del fondo', label: 'Ondulación', icon: 'waves', fields: [
     { key: 'enabled', label: 'Activo', type: 'bool' },
     { key: 'amplitude', label: 'Amplitud (px)', type: 'num', min: 0, max: 30, step: 0.5 },
     { key: 'frequency', label: 'Frecuencia', type: 'num', min: 0.002, max: 0.2, step: 0.001 },
     { key: 'speed', label: 'Velocidad', type: 'num', min: 0, max: 6, step: 0.05 },
     react('mid'),
   ] },
-  { id: 'glitch', group: 'Efectos del fondo', label: 'Glitch', icon: '📺', color: '#fd9644', fields: [
+  { id: 'glitch', group: 'Efectos del fondo', label: 'Glitch', icon: 'scan-line', fields: [
     { key: 'enabled', label: 'Activo', type: 'bool' },
     { key: 'intensity', label: 'Intensidad', type: 'num', min: 0, max: 1, step: 0.01 },
     { key: 'threshold', label: 'Umbral', type: 'num', min: 0, max: 1, step: 0.01, help: 'Por encima de este valor se dispara' },
     { key: 'react_to', label: 'Se dispara con', type: 'enum', options: [['', 'Golpes / ataques'], ...BANDS] },
   ] },
-  { id: 'color_flash', group: 'Efectos del fondo', label: 'Flash de color', icon: '⚡', color: '#fed330', fields: [
+  { id: 'color_flash', group: 'Efectos del fondo', label: 'Flash de color', icon: 'sun', fields: [
     { key: 'enabled', label: 'Activo', type: 'bool' },
     { key: 'brightness_boost', label: 'Brillo extra', type: 'num', min: 0, max: 0.8, step: 0.01 },
     { key: 'contrast_boost', label: 'Contraste extra', type: 'num', min: 0, max: 0.8, step: 0.01 },
     react('bass'),
   ] },
-  { id: 'visualizer', group: 'Visualizador', label: 'Espectro', icon: '📊', color: '#ff3a0a', fields: [
+  { id: 'visualizer', group: 'Visualizador', label: 'Espectro', icon: 'chart-column', fields: [
     { key: 'enabled', label: 'Activo', type: 'bool' },
     { key: 'type', label: 'Tipo', type: 'enum', options: [['circular', 'Circular'], ['horizontal', 'Horizontal'], ['vertical', 'Vertical (bordes)'], ['oscilloscope', 'Osciloscopio']] },
     { key: 'bars', label: 'Barras por canal', type: 'int', min: 4, max: 256, step: 1 },
@@ -89,7 +89,7 @@ export const TRACKS = [
     { key: 'gradient_fit', label: 'Referencia', type: 'enum', options: [['bar', 'Se mueve con la barra'], ['max', 'Respecto al máximo']], showIf: c => c.color_mode !== 'solid' && c.gradient_axis === 'length' },
     glow,
   ] },
-  { id: 'particles', group: 'Partículas', label: 'Partículas', icon: '✨', color: '#ffb300', fields: [
+  { id: 'particles', group: 'Partículas', label: 'Partículas', icon: 'sparkles', fields: [
     { key: 'enabled', label: 'Activas', type: 'bool' },
     { key: 'layers', label: 'Capas', type: 'layers', fields: [
       { key: 'type', label: 'Tipo', type: 'enum', options: [['rising_sparks', 'Chispas (dirección)'], ['radial_burst', 'Explosión radial'], ['ambient_dust', 'Polvo ambiental']] },
@@ -110,7 +110,7 @@ export const TRACKS = [
       { key: 'glow', label: 'Halo', type: 'bool' },
     ] },
   ] },
-  { id: 'lyrics', group: 'Letra', label: 'Letra', icon: '🎤', color: '#2bcbba', fields: [
+  { id: 'lyrics', group: 'Letra', label: 'Letra', icon: 'mic-vocal', fields: [
     { key: 'enabled', label: 'Visible', type: 'bool' },
     { key: 'path', label: 'Archivo .lrc / .srt', type: 'file', kind: 'lyrics', firstOnly: true },
     { key: 'offset', label: 'Desfase (s)', type: 'num', min: -5, max: 5, step: 0.01, firstOnly: true },

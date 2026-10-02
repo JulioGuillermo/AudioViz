@@ -1,8 +1,13 @@
 import { html, useEffect, useRef, useState, useMemo } from './vendor/preact-htm.js';
 import { TRACKS } from './schema.js';
 import { fmtTime, basename } from './util.js';
+import { Icon } from './icons.js';
+
+const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
 const H = { ruler: 26, audio: 74, lyrics: 30, track: 28 };
+
+const BAND = { bass: 'graves', mid: 'medios', treble: 'agudos', overall: 'volumen', transient: 'ataques', beat: 'golpes', '': 'golpes' };
 
 // Resumen corto de un tramo para mostrarlo en el bloque
 export function segSummary(track, cfg) {
@@ -10,9 +15,9 @@ export function segSummary(track, cfg) {
   switch (track) {
     case 'background': return basename(cfg.path) || 'sin fondo';
     case 'visualizer': return cfg.enabled ? `${cfg.type} · ${cfg.bars}` : 'oculto';
-    case 'particles': return cfg.enabled ? (cfg.layers || []).map((l) => l.react_to || 'bass').join(' + ') : 'apagadas';
+    case 'particles': return cfg.enabled ? `${(cfg.layers || []).length} capa${(cfg.layers || []).length === 1 ? '' : 's'}` : 'apagadas';
     case 'lyrics': return cfg.enabled ? `${cfg.position} · ${cfg.mode}` : 'oculta';
-    default: return cfg.enabled ? (cfg.react_to ? `↯ ${cfg.react_to}` : 'activo') : 'apagado';
+    default: return cfg.enabled ? (BAND[cfg.react_to] || 'activo') : 'apagado';
   }
 }
 
@@ -33,7 +38,7 @@ function AudioLane({ ana, width, pps, duration }) {
     const fps = ana.fps;
     const mid = H.audio / 2;
     // Forma de onda (columna por píxel)
-    g.fillStyle = '#3a4252';
+    g.fillStyle = '#2b2f36';
     for (let x = 0; x < width; x++) {
       const i0 = Math.floor((x / pps) * fps), i1 = Math.max(i0 + 1, Math.floor(((x + 1) / pps) * fps));
       let pk = 0;
@@ -56,11 +61,11 @@ function AudioLane({ ana, width, pps, duration }) {
       }
       g.stroke();
     };
-    curve(ana.bass, '#ff5d5dcc');
-    curve(ana.mid, '#3ddc97b0');
-    curve(ana.treble, '#5ab0ffb0');
+    curve(ana.bass, cssVar('--band-bass'));
+    curve(ana.mid, cssVar('--band-mid'));
+    curve(ana.treble, cssVar('--band-treble'));
     // Golpes
-    g.fillStyle = '#ffd16655';
+    g.fillStyle = 'rgba(255,255,255,0.22)';
     for (const b of ana.beats) g.fillRect((b / fps) * pps, 0, 1, 5);
   }, [ana, width, pps]);
   return html`<canvas ref=${ref}></canvas>`;
@@ -81,9 +86,9 @@ function Ruler({ width, pps, duration }) {
     g.clearRect(0, 0, width, H.ruler);
     const steps = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60];
     const step = steps.find((s) => s * pps >= 70) || 60;
-    g.fillStyle = '#8b93a5';
-    g.strokeStyle = '#3a4252';
-    g.font = '10px ui-monospace, monospace';
+    g.fillStyle = cssVar('--text-3');
+    g.strokeStyle = '#30343b';
+    g.font = '10px ' + cssVar('--mono');
     for (let t = 0; t <= duration; t += step) {
       const x = Math.round(t * pps) + 0.5;
       g.beginPath(); g.moveTo(x, 14); g.lineTo(x, H.ruler); g.stroke();
@@ -194,24 +199,28 @@ export function Timeline({ proj, meta, ana, lyr, time, sel, onSeek, onSelect, on
   return html`<div class="timeline">
     <div class="tl-resize" onMouseDown=${resize}></div>
     <div class="tl-bar">
-      <b>Línea de tiempo</b>
-      <span class="muted">Doble clic en una pista = nuevo tramo · arrastra un tramo para moverlo (imán a marcas/golpes, Alt sin imán) · Ctrl+rueda = zoom</span>
+      <span class="label-sm" style="color:var(--text-2)">Línea de tiempo</span>
+      <span class="hint">Doble clic en una pista: nuevo tramo · Arrastra para mover (imán; Alt sin imán) · Ctrl + rueda: zoom</span>
       <span class="spacer"></span>
-      <span class="row muted" style="gap:10px;font-size:11px">
-        <span style="color:#ff5d5d">━ graves</span><span style="color:#3ddc97">━ medios</span><span style="color:#5ab0ff">━ agudos</span>
+      <span class="legend">
+        <span><i style="background:var(--band-bass)"></i>Graves</span>
+        <span><i style="background:var(--band-mid)"></i>Medios</span>
+        <span><i style="background:var(--band-treble)"></i>Agudos</span>
       </span>
-      <button class="icon" title="Marca en el cursor (M)" onClick=${() => onMarker('add')}>⚑ Marca</button>
-      <button class="icon" title="Alejar" onClick=${() => setPps(Math.max(1, effPps / 1.5))}>－</button>
-      <button class="icon" title="Acercar" onClick=${() => setPps(Math.min(600, effPps * 1.5))}>＋</button>
-      <button class="icon" title="Ver todo" onClick=${() => setPps(Math.max(1, (scroller.current.clientWidth - 40) / duration))}>⤢</button>
+      <button class="btn sm" title="Marca en el cursor (M)" onClick=${() => onMarker('add')}><${Icon} name="flag" size=${14} /> Marca</button>
+      <div class="btngroup">
+        <button class="btn sm icon" title="Alejar" onClick=${() => setPps(Math.max(1, effPps / 1.5))}><${Icon} name="zoom-out" size=${14} /></button>
+        <button class="btn sm icon" title="Acercar" onClick=${() => setPps(Math.min(600, effPps * 1.5))}><${Icon} name="zoom-in" size=${14} /></button>
+        <button class="btn sm icon" title="Ver toda la canción" onClick=${() => setPps(Math.max(1, (scroller.current.clientWidth - 40) / duration))}><${Icon} name="maximize-2" size=${14} /></button>
+      </div>
     </div>
     <div class="tl-body">
       <div class="tl-names" ref=${namesRef}>
         <div class="nm" style=${{ '--h': H.ruler + 'px' }}></div>
-        <div class="nm" style=${{ '--h': H.audio + 'px' }}>🎵 Audio</div>
-        <div class="nm" style=${{ '--h': H.lyrics + 'px' }} onClick=${() => onSelect('lyrics', 0)}>🎤 Letra (líneas)</div>
-        ${TRACKS.map((t) => html`<div class=${'nm' + (sel.track === t.id ? ' on' : '')} style=${{ '--h': H.track + 'px' }}
-            onClick=${() => onSelect(t.id, null)}>${t.icon} ${t.label}</div>`)}
+        <div class="nm" style=${{ '--h': H.audio + 'px' }}><${Icon} name="audio-waveform" size=${14} /> Audio</div>
+        <div class="nm" style=${{ '--h': H.lyrics + 'px' }} onClick=${() => onSelect('lyrics', 0)}><${Icon} name="text-cursor-input" size=${14} /> Líneas de letra</div>
+        ${TRACKS.map((t) => html`<div class=${'nm' + (sel.kind === 'track' && sel.track === t.id ? ' on' : '')} style=${{ '--h': H.track + 'px' }}
+            onClick=${() => onSelect(t.id, null)}><${Icon} name=${t.icon} size=${14} /> ${t.label}</div>`)}
       </div>
       <div class="tl-scroll" ref=${scroller} onWheel=${wheel} onScroll=${onScroll}>
         <div class="tl-inner" style=${{ width: width + 'px' }}>
@@ -222,8 +231,8 @@ export function Timeline({ proj, meta, ana, lyr, time, sel, onSeek, onSelect, on
             <${AudioLane} ana=${ana} width=${width} pps=${effPps} duration=${duration} />
           </div>
           <div class="lane" style=${{ '--h': H.lyrics + 'px' }} onMouseDown=${seekDrag}>
-            ${lyr.lines.map((l, i) => html`<div class=${'lyrline' + (sel.kind === 'line' && sel.line === i ? ' on' : '')}
-                style=${{ left: l.start * effPps + 'px', width: Math.max(4, (l.end - l.start) * effPps) + 'px', opacity: i === curLine ? 1 : 0.8 }}
+            ${lyr.lines.map((l, i) => html`<div class=${'lyrline' + (sel.kind === 'line' && sel.line === i ? ' on' : i === curLine ? ' now' : '')}
+                style=${{ left: l.start * effPps + 'px', width: Math.max(4, (l.end - l.start) * effPps) + 'px' }}
                 title=${l.words.map((w) => w.text).join(' ')}
                 onMouseDown=${(e) => { e.stopPropagation(); onSelectLine(i); }}>${l.words.map((w) => w.text).join(' ')}</div>`)}
           </div>
@@ -237,12 +246,12 @@ export function Timeline({ proj, meta, ana, lyr, time, sel, onSeek, onSelect, on
                 const fade = s.transition && s.transition.mode === 'fade' && i > 0 ? s.transition.duration * effPps : 0;
                 const enabled = t.id === 'background' ? !!s.cfg.path : s.cfg.enabled !== false;
                 return html`<div class=${'seg' + (on ? ' on' : '') + (enabled ? '' : ' off')}
-                    style=${{ left: s.at * effPps + 'px', width: Math.max(3, (end - s.at) * effPps - 1) + 'px', background: t.color + (on ? 'ee' : '99') }}
+                    style=${{ left: s.at * effPps + 'px', width: Math.max(3, (end - s.at) * effPps - 1) + 'px' }}
                     title=${(s.label ? s.label + ' · ' : '') + fmtTime(s.at) + ' → ' + fmtTime(end)}
                     onMouseDown=${(e) => segDrag(e, t.id, i)} onDblClick=${(e) => e.stopPropagation()}>
                   ${fade > 0 && html`<div class="fade" style=${{ width: fade + 'px' }}></div>`}
                   ${i > 0 && html`<div class="grip"></div>`}
-                  <span>${s.label ? html`<b>${s.label}</b> · ` : ''}${segSummary(t.id, s.cfg)}</span>
+                  <span class="t">${s.label ? html`<b>${s.label}</b> · ` : ''}${segSummary(t.id, s.cfg)}</span>
                 </div>`;
               })}
             </div>`;
@@ -251,7 +260,7 @@ export function Timeline({ proj, meta, ana, lyr, time, sel, onSeek, onSelect, on
             <b title="Clic: ir · doble clic: renombrar · clic derecho: borrar"
               onMouseDown=${(e) => { e.stopPropagation(); if (e.button === 0) onSeek(m.at); }}
               onDblClick=${() => onMarker('rename', i)}
-              onContextMenu=${(e) => { e.preventDefault(); onMarker('delete', i); }}>⚑ ${m.label}</b>
+              onContextMenu=${(e) => { e.preventDefault(); onMarker('delete', i); }}><${Icon} name="flag" size=${11} /> ${m.label}</b>
           </div>`)}
           <div class="playhead" style=${{ left: time * effPps + 'px' }}></div>
         </div>

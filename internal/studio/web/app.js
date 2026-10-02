@@ -1,7 +1,8 @@
 import { html, render, useState, useEffect, useRef, useCallback } from './vendor/preact-htm.js';
 import { TRACKS, AUDIO_FIELDS, OUTPUT_FIELDS, trackById } from './schema.js';
 import { api, clone, fmtTime, parseTime, b64u8, basename, debounce } from './util.js';
-import { Form } from './fields.js';
+import { Form, Switch } from './fields.js';
+import { Icon } from './icons.js';
 import { Timeline, segSummary } from './timeline.js';
 import { FilePicker, NewProject, ExportDialog, GenLyricsDialog, JobView } from './dialogs.js';
 
@@ -79,20 +80,20 @@ function Preview({ meta, time, scale, rev, playing }) {
 
 function SegHeader({ track, segs, i, set, meta }) {
   const s = segs[i];
-  if (i === 0) return html`<div class="seghead"><span class="muted">Tramo inicial: se aplica desde el principio hasta el siguiente cambio.</span>
-    <div class="fld"><label>Nombre</label><div class="ctl"><input type="text" class="grow" value=${s.label} placeholder="(opcional)"
-      onChange=${(e) => set({ ...s, label: e.target.value })} /></div></div></div>`;
-  return html`<div class="seghead">
-    <div class="fld"><label>Nombre</label><div class="ctl"><input type="text" class="grow" value=${s.label} placeholder="p. ej. Estribillo"
-      onChange=${(e) => set({ ...s, label: e.target.value })} /></div></div>
+  const name = html`<div class="fld"><label>Nombre</label><div class="ctl"><input type="text" class="grow" value=${s.label}
+      placeholder=${i === 0 ? 'Opcional' : 'p. ej. Estribillo'} onChange=${(e) => set({ ...s, label: e.target.value })} /></div></div>`;
+  if (i === 0) return html`<div class="card">${name}<div class="card-note">Tramo inicial: se aplica desde el principio hasta el siguiente cambio.</div></div>`;
+  return html`<div class="card">
+    ${name}
     <div class="fld"><label>Empieza en</label><div class="ctl">
-      <input type="text" class="mono" style="width:90px" value=${fmtTime(s.at)} onChange=${(e) => set({ ...s, at: Math.max(0.01, Math.min(meta.duration - 0.01, parseTime(e.target.value))) })} />
-      <span class="muted">m:ss.cc</span></div></div>
+      <input type="text" class="mono" style="width:96px" value=${fmtTime(s.at)}
+        onChange=${(e) => set({ ...s, at: Math.max(0.01, Math.min(meta.duration - 0.01, parseTime(e.target.value))) })} />
+      <span class="faint" style="font-size:11.5px">min:seg</span></div></div>
     <div class="fld"><label>Transición</label><div class="ctl">
-      <select value=${s.transition.mode} onChange=${(e) => set({ ...s, transition: { ...s.transition, mode: e.target.value, duration: s.transition.duration || 1 } })}>
-        <option value="cut">De golpe</option><option value="fade">Suave (fundido)</option></select>
-      ${s.transition.mode === 'fade' && html`<input type="number" step="0.1" min="0.05" value=${s.transition.duration}
-        onChange=${(e) => set({ ...s, transition: { ...s.transition, duration: Math.max(0.05, +e.target.value) } })} /><span class="muted">s</span>`}
+      <select class="grow" value=${s.transition.mode} onChange=${(e) => set({ ...s, transition: { ...s.transition, mode: e.target.value, duration: s.transition.duration || 1 } })}>
+        <option value="cut">Corte</option><option value="fade">Fundido</option></select>
+      ${s.transition.mode === 'fade' && html`<input type="number" step="0.1" min="0.05" value=${s.transition.duration} title="Duración (s)"
+        onChange=${(e) => set({ ...s, transition: { ...s.transition, duration: Math.max(0.05, +e.target.value) } })} /><span class="faint">s</span>`}
     </div></div>
   </div>`;
 }
@@ -106,27 +107,30 @@ function TrackInspector({ proj, track, segIdx, time, meta, update, setSel, ctx, 
   const addAt = (t) => ctx.addSeg(track, t);
   return html`<div>
     <div class="insp-h">
-      <h3><span>${def.icon}</span>${def.label}<span class="spacer"></span><span class="muted" style="font-size:12px">${def.group}</span></h3>
-      <div class="segtabs">${segs.map((s, k) => html`<button class=${k === i ? 'on' : ''} title=${s.label || ''}
-          onClick=${() => { setSel({ kind: 'track', track, seg: k }); ctx.seek(s.at); }}>${k + 1} · ${fmtTime(s.at, false)}${s.label ? ' ' + s.label : ''}</button>`)}</div>
+      <div class="insp-title"><${Icon} name=${def.icon} size=${16} cls="muted" />${def.label}${def.group !== def.label && html`<span class="sub">${def.group}</span>`}</div>
+      <div class="segtabs">${segs.map((s, k) => html`<button class=${'segtab' + (k === i ? ' on' : '')} title=${s.label || ''}
+          onClick=${() => { setSel({ kind: 'track', track, seg: k }); ctx.seek(s.at); }}>
+          <span class="mono">${fmtTime(s.at, false)}</span>${s.label || 'Tramo ' + (k + 1)}</button>`)}</div>
       <div class="row">
-        <button onClick=${() => addAt(time)} title="Nuevo tramo que empieza en el cursor (N)">＋ Tramo en ${fmtTime(time)}</button>
-        <button class="ghost danger" disabled=${i === 0} onClick=${() => { update((p) => { p.tracks[track].splice(i, 1); }); setSel({ kind: 'track', track, seg: i - 1 }); }}>Eliminar tramo</button>
+        <button class="btn sm" onClick=${() => addAt(time)} title="Nuevo tramo que empieza en el cursor (N)"><${Icon} name="plus" size=${14} /> Tramo en ${fmtTime(time)}</button>
+        <span class="spacer"></span>
+        <button class="btn sm ghost danger" disabled=${i === 0} title="Eliminar este tramo (Supr)"
+          onClick=${() => { update((p) => { p.tracks[track].splice(i, 1); }); setSel({ kind: 'track', track, seg: i - 1 }); }}><${Icon} name="trash-2" size=${14} /> Eliminar</button>
       </div>
     </div>
     <div class="insp-b">
       <${SegHeader} track=${track} segs=${segs} i=${i} set=${setSeg} meta=${meta} />
       <${Form} fields=${def.fields} value=${seg.cfg} onChange=${(cfg) => setSeg({ ...seg, cfg })} ctx=${ctx} isFirst=${i === 0} />
-      ${track === 'lyrics' && html`<div class="group"><div class="gh">Generar la letra</div><div class="gb">
-        <p class="muted">Crea un .lrc con el tiempo de cada palabra a partir de la letra en texto.</p>
-        <button onClick=${onGenLyrics}>🎙️ Generar letra sincronizada…</button></div></div>`}
+      ${track === 'lyrics' && html`<div class="section"><div class="sh">Generar letra</div><div class="sb">
+        <p class="faint" style="margin:2px 0 8px;font-size:12px">Crea un .lrc con el tiempo de cada palabra a partir de la letra en texto.</p>
+        <button class="btn" onClick=${onGenLyrics}><${Icon} name="wand-sparkles" size=${15} /> Generar letra sincronizada…</button></div></div>`}
     </div>
   </div>`;
 }
 
 function LineEditor({ lyr, idx, time, onChange, onSave, dirty, seek }) {
   const line = lyr.lines[idx];
-  if (!line) return html`<div class="insp-b muted">Selecciona una línea en la pista de letra.</div>`;
+  if (!line) return html`<div class="insp-b faint" style="padding-top:14px">Selecciona una línea en la pista de letra.</div>`;
   const setWord = (w, k, v) => {
     const l = clone(line);
     l.words[w][k] = v;
@@ -142,25 +146,29 @@ function LineEditor({ lyr, idx, time, onChange, onSave, dirty, seek }) {
     onChange(idx, l);
   };
   return html`<div>
-    <div class="insp-h"><h3>🎤 Línea ${idx + 1}<span class="spacer"></span>
-      <button class=${dirty ? 'primary' : ''} disabled=${!dirty} onClick=${onSave}>💾 Guardar letra</button></h3>
-      <div class="row">
-        <button onClick=${() => seek(line.start - 0.5)}>▶ Ir</button>
-        <button title="Adelantar toda la línea" onClick=${() => shift(-0.05)}>−0.05 s</button>
-        <button title="Retrasar toda la línea" onClick=${() => shift(0.05)}>+0.05 s</button>
-        <button title="Que la línea empiece en el cursor" onClick=${() => shift(time - line.start)}>⇤ al cursor</button>
+    <div class="insp-h">
+      <div class="insp-title"><${Icon} name="text-cursor-input" size=${16} cls="muted" />Línea ${idx + 1}<span class="sub">Letra</span></div>
+      <div class="row" style="margin-top:10px">
+        <button class="btn sm" title="Ir al inicio de la línea" onClick=${() => seek(line.start - 0.5)}><${Icon} name="play" size=${13} /> Ir</button>
+        <div class="btngroup">
+          <button class="btn sm" title="Adelantar toda la línea 0,05 s" onClick=${() => shift(-0.05)}>−0,05 s</button>
+          <button class="btn sm" title="Retrasar toda la línea 0,05 s" onClick=${() => shift(0.05)}>+0,05 s</button>
+        </div>
+        <button class="btn sm icon" title="Que la línea empiece en el cursor" onClick=${() => shift(time - line.start)}><${Icon} name="crosshair" size=${14} /></button>
+        <span class="spacer"></span>
+        <button class=${'btn sm' + (dirty ? ' primary' : '')} disabled=${!dirty} onClick=${onSave}><${Icon} name="save" size=${14} /> Guardar</button>
       </div>
     </div>
     <div class="insp-b"><div class="words">
-      <div class="word muted" style="font-size:11px"><span>Palabra</span><span>Inicio</span><span>Fin</span><span></span></div>
+      <div class="word head"><span>Palabra</span><span>Inicio</span><span>Fin</span><span></span></div>
       ${line.words.map((w, k) => html`<div class=${'word' + (time >= w.start && time < w.end ? ' now' : '')}>
         <input type="text" value=${w.text} onChange=${(e) => setWord(k, 'text', e.target.value)} />
         <input type="number" step="0.01" value=${w.start.toFixed(2)} onChange=${(e) => setWord(k, 'start', +e.target.value)} />
         <input type="number" step="0.01" value=${w.end.toFixed(2)} onChange=${(e) => setWord(k, 'end', +e.target.value)} />
-        <button class="icon" title="Inicio en el cursor" onClick=${() => setWord(k, 'start', +time.toFixed(2))}>⇤</button>
+        <button class="btn icon" title="Poner el inicio en el cursor" onClick=${() => setWord(k, 'start', +time.toFixed(2))}><${Icon} name="crosshair" size=${14} /></button>
       </div>`)}
     </div>
-    <p class="muted">Consejo: reproduce, pausa justo cuando empieza una palabra y pulsa ⇤.</p></div>
+    <p class="faint" style="font-size:12px">Reproduce, pausa justo cuando empieza una palabra y pulsa el botón de mira para fijar su inicio.</p></div>
   </div>`;
 }
 
@@ -168,13 +176,18 @@ function LineEditor({ lyr, idx, time, onChange, onSave, dirty, seek }) {
 
 function Welcome({ st, ctx }) {
   return html`<div class="welcome">
-    <h1>Audio<b>Viz</b> Studio</h1>
-    <p class="muted">Vídeos musicales reactivos al audio · render por GPU (Vulkan)</p>
-    <div class="cards">
-      <div class="card" onClick=${() => ctx.dialog({ type: 'new' })}><h3>＋ Nuevo proyecto</h3><p class="muted">Crea una carpeta de proyecto y empieza eligiendo el audio y el fondo.</p></div>
-      <div class="card" onClick=${() => ctx.pickFile('project', (p) => ctx.openProject(p))}><h3>📂 Abrir proyecto</h3><p class="muted">Abre un project.yaml existente (también los creados a mano).</p></div>
+    <div class="hero">
+      <div class="mark"><${Icon} name="audio-waveform" size=${24} /></div>
+      <h1>AudioViz Studio</h1>
+      <p class="muted" style="margin:0">Vídeos musicales reactivos al audio, renderizados por GPU</p>
     </div>
-    <p class="muted mono" style="font-size:11px">${(st.gpu || '').trim()}</p>
+    <div class="cards">
+      <div class="card2" onClick=${() => ctx.dialog({ type: 'new' })}><${Icon} name="plus" size=${20} />
+        <h3>Nuevo proyecto</h3><p>Crea una carpeta de proyecto y empieza eligiendo el audio y el fondo.</p></div>
+      <div class="card2" onClick=${() => ctx.pickFile('project', (p) => ctx.openProject(p))}><${Icon} name="folder-open" size=${20} />
+        <h3>Abrir proyecto</h3><p>Abre un project.yaml existente, también los escritos a mano.</p></div>
+    </div>
+    <p class="faint mono" style="font-size:11px">${(st.gpu || '').trim()}</p>
   </div>`;
 }
 
@@ -389,7 +402,7 @@ function App() {
     ${dlg && dlg.type === 'genlyrics' && proj && html`<${GenLyricsDialog} meta=${meta} job=${job} available=${st.lyricsTool}
         pickFile=${ctx.pickFile} onClose=${() => setDlg(null)} onCancel=${() => api('POST', '/api/job/cancel')}
         onStart=${(txt, lang) => api('POST', '/api/lyrics/generate', { txt, lang }).then(setJob).catch(showErr)} />`}
-    ${toast && html`<div class="toast" onClick=${() => setToast('')}>⚠ ${toast}</div>`}`;
+    ${toast && html`<div class="toast" onClick=${() => setToast('')}><${Icon} name="triangle-alert" size=${16} />${toast}</div>`}`;
 
   if (!proj || !meta) return html`<${Welcome} st=${st} ctx=${ctx} />${dialogs}`;
 
@@ -402,11 +415,11 @@ function App() {
   const jobRunning = job && job.status === 'running';
 
   let inspector;
-  if (sel.kind === 'audio') inspector = html`<div><div class="insp-h"><h3>🎵 Audio</h3></div><div class="insp-b">
+  if (sel.kind === 'audio') inspector = html`<div><div class="insp-h"><div class="insp-title"><${Icon} name="music" size=${16} cls="muted" />Audio<span class="sub">Proyecto</span></div></div><div class="insp-b">
       <${Form} fields=${AUDIO_FIELDS} value=${proj.audio} onChange=${(v) => update((p) => { p.audio = v; })} ctx=${ctx} /></div></div>`;
-  else if (sel.kind === 'output') inspector = html`<div><div class="insp-h"><h3>🎬 Salida</h3></div><div class="insp-b">
+  else if (sel.kind === 'output') inspector = html`<div><div class="insp-h"><div class="insp-title"><${Icon} name="monitor" size=${16} cls="muted" />Salida<span class="sub">Proyecto</span></div></div><div class="insp-b">
       <${Form} fields=${OUTPUT_FIELDS} value=${proj.output} onChange=${(v) => update((p) => { p.output = v; })} ctx=${ctx} />
-      <p class="muted">Resolución actual: ${meta.width}×${meta.height} · ${meta.fps} fps · ${fmtTime(meta.duration)}</p></div></div>`;
+      <p class="faint" style="font-size:12px">Resolución actual: ${meta.width}×${meta.height} · ${meta.fps} fps · ${fmtTime(meta.duration)}</p></div></div>`;
   else if (sel.kind === 'line') inspector = html`<${LineEditor} lyr=${lyr} idx=${sel.line} time=${time} seek=${seek} dirty=${lyrDirty}
       onSave=${saveLyrics} onChange=${(i, l) => { const n = clone(lyr); n.lines[i] = l; setLyr(n); setLyrDirty(true); }} />`;
   else inspector = html`<${TrackInspector} proj=${proj} track=${sel.track} segIdx=${sel.seg} time=${time} meta=${meta}
@@ -414,51 +427,59 @@ function App() {
 
   return html`<div class="app" style=${{ '--tl-h': tlH + 'px' }}>
     <div class="top">
-      <div class="logo">▮▮▮ Audio<b>Viz</b></div>
+      <div class="brand"><span class="mark"><${Icon} name="audio-waveform" size=${13} /></span>AudioViz</div>
+      <span class="sep"></span>
       <span class="projname" title=${meta.path}>${meta.name}</span>
-      <span class=${'save' + (save.startsWith('Error') ? ' err' : '')}>${save}</span>
+      <span class=${'save' + (save.startsWith('Error') ? ' err' : '')}>${save && html`<${Icon} name=${save.startsWith('Error') ? 'triangle-alert' : save.startsWith('Guardando') ? 'loader-circle' : 'check'} size=${13} />`}${save}</span>
       <span class="spacer"></span>
       ${job && html`<div class="jobbar" title=${job.message} onClick=${() => setDlg({ type: job.kind === 'lyrics' ? 'genlyrics' : 'export' })}>
-        <span>${job.kind === 'export' ? '🎬' : '🎙️'}</span>
-        <div class="bar"><i style=${{ width: (job.progress * 100).toFixed(1) + '%' }}></i></div>
-        <span class="msg">${job.status === 'running' ? job.message : { done: '✔ ', error: '✖ ', canceled: '■ ' }[job.status] + job.message}</span>
+        <${Icon} name=${job.status === 'running' ? (job.kind === 'export' ? 'film' : 'wand-sparkles') : job.status === 'done' ? 'check' : 'triangle-alert'} size=${14}
+          cls=${{ done: 'st-ok', error: 'st-err', canceled: 'st-warn' }[job.status] || 'muted'} />
+        <div class="progress"><i style=${{ width: (job.progress * 100).toFixed(1) + '%' }}></i></div>
+        <span class="msg">${job.message}</span>
       </div>`}
-      <button class="ghost" onClick=${() => setDlg({ type: 'new' })}>Nuevo</button>
-      <button class="ghost" onClick=${() => ctx.pickFile('project', (p) => ctx.openProject(p), meta.path)}>Abrir</button>
-      <button class="primary" disabled=${jobRunning && job.kind === 'export'} onClick=${() => setDlg({ type: 'export' })}>🎬 Exportar</button>
+      <button class="btn ghost" onClick=${() => setDlg({ type: 'new' })}><${Icon} name="plus" size=${15} /> Nuevo</button>
+      <button class="btn ghost" onClick=${() => ctx.pickFile('project', (p) => ctx.openProject(p), meta.path)}><${Icon} name="folder-open" size=${15} /> Abrir</button>
+      <button class="btn primary" disabled=${jobRunning && job.kind === 'export'} onClick=${() => setDlg({ type: 'export' })}><${Icon} name="film" size=${15} /> Exportar</button>
     </div>
 
     <div class="tracks">
-      <h4>Proyecto</h4>
-      <div class=${'trk' + (sel.kind === 'audio' ? ' on' : '')} onClick=${() => setSel({ kind: 'audio' })}>
-        <span>🎵</span><span class="lbl">Audio</span><span class="n">${proj.audio.path ? basename(proj.audio.path).slice(0, 14) : '—'}</span></div>
+      <div class="label-sm">Proyecto</div>
+      <div class=${'trk' + (sel.kind === 'audio' ? ' on' : '')} onClick=${() => setSel({ kind: 'audio' })} title=${proj.audio.path || 'Sin audio'}>
+        <${Icon} name="music" size=${15} /><span class="lbl">Audio</span>${!proj.audio.path && html`<span class="badge">vacío</span>`}</div>
       <div class=${'trk' + (sel.kind === 'output' ? ' on' : '')} onClick=${() => setSel({ kind: 'output' })}>
-        <span>🎬</span><span class="lbl">Salida</span><span class="n">${meta.width}×${meta.height}</span></div>
-      ${groups.map((g) => html`<h4>${g}</h4>${TRACKS.filter((t) => t.group === g).map((t) => {
+        <${Icon} name="monitor" size=${15} /><span class="lbl">Salida</span><span class="n">${meta.width}×${meta.height}</span></div>
+      ${groups.map((g) => html`<div class="label-sm">${g}</div>${TRACKS.filter((t) => t.group === g).map((t) => {
         const segs = proj.tracks[t.id];
         let cur = 0;
         segs.forEach((s, k) => { if (s.at <= time) cur = k; });
         const c = segs[cur].cfg;
         const on = t.id === 'background' ? !!c.path : c.enabled !== false;
         return html`<div class=${'trk' + (sel.kind === 'track' && sel.track === t.id ? ' on' : '') + (on ? '' : ' off')}
-            title=${segSummary(t.id, c)} onClick=${() => selTrack(t.id, null)}>
-          <span class="dot" style=${{ background: t.color }}></span><span>${t.icon}</span><span class="lbl">${t.label}</span>
-          <span class="n">${segs.length > 1 ? segs.length + ' tramos' : ''}</span></div>`;
+            title=${segSummary(t.id, c) + (on ? '' : ' (en este instante)')} onClick=${() => selTrack(t.id, null)}>
+          <${Icon} name=${t.icon} size=${15} /><span class="lbl">${t.label}</span>
+          ${segs.length > 1 && html`<span class="badge" title="Número de tramos">${segs.length}</span>`}</div>`;
       })}`)}
     </div>
 
     <div class="preview">
       <${Preview} meta=${meta} time=${time} scale=${scale} rev=${rev} playing=${playing} />
       <div class="transport">
-        <button class="icon" title="Inicio (Inicio)" onClick=${() => seek(0)}>⏮</button>
-        <button class="icon" title="Cuadro anterior (←)" onClick=${() => seek(time - 1 / meta.fps)}>◀</button>
-        <button class="primary icon" style="width:44px;justify-content:center" title="Reproducir / pausa (Espacio)" onClick=${() => setPlaying(!playing)}>${playing ? '❚❚' : '▶'}</button>
-        <button class="icon" title="Cuadro siguiente (→)" onClick=${() => seek(time + 1 / meta.fps)}>▶</button>
+        <div class="btngroup">
+          <button class="btn icon" title="Ir al inicio (Inicio)" onClick=${() => seek(0)}><${Icon} name="skip-back" size=${15} /></button>
+          <button class="btn icon" title="Cuadro anterior (←)" onClick=${() => seek(time - 1 / meta.fps)}><${Icon} name="chevron-left" size=${16} /></button>
+        </div>
+        <button class="btn primary play" title="Reproducir / pausa (Espacio)" onClick=${() => setPlaying(!playing)}>
+          <${Icon} name=${playing ? 'pause' : 'play'} size=${16} /></button>
+        <div class="btngroup">
+          <button class="btn icon" title="Cuadro siguiente (→)" onClick=${() => seek(time + 1 / meta.fps)}><${Icon} name="chevron-right" size=${16} /></button>
+          <button class="btn icon" title="Ir al final (Fin)" onClick=${() => seek(meta.duration)}><${Icon} name="skip-forward" size=${15} /></button>
+        </div>
         <span class="time">${fmtTime(time)} <small>/ ${fmtTime(meta.duration)} · cuadro ${Math.round(time * meta.fps)}</small></span>
         <span class="spacer"></span>
-        ${!meta.hasAudio && html`<span style="color:var(--warn)">Sin audio: elige uno en 🎵 Audio</span>`}
-        <label class="muted">Calidad preview</label>
-        <select value=${scale} onChange=${(e) => setScale(+e.target.value)}>
+        ${!meta.hasAudio && html`<span class="notice"><${Icon} name="triangle-alert" size=${14} />Sin audio</span>`}
+        <span class="faint" style="font-size:12px">Preview</span>
+        <select value=${scale} title="Resolución del preview" onChange=${(e) => setScale(+e.target.value)}>
           <option value="1">Completa</option><option value="2">1/2</option><option value="3">1/3</option><option value="4">1/4</option>
         </select>
       </div>

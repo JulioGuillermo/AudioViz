@@ -1,5 +1,6 @@
 import { html, useState } from './vendor/preact-htm.js';
 import { basename, splitHex, joinHex, gradientCSS, clone } from './util.js';
+import { Icon } from './icons.js';
 
 // Formulario genérico a partir del esquema. value = objeto de config; onChange(nuevoObjeto)
 export function Form({ fields, value, onChange, ctx, isFirst = true }) {
@@ -7,7 +8,7 @@ export function Form({ fields, value, onChange, ctx, isFirst = true }) {
   return html`${fields.map((f) => {
     if (f.showIf && !f.showIf(value)) return null;
     if (f.firstOnly && !isFirst) return null;
-    return html`<${Field} key=${f.key} f=${f} v=${value[f.key]} set=${(v) => set(f.key, v)} ctx=${ctx} parent=${value} isFirst=${isFirst} />`;
+    return html`<${Field} key=${f.key} f=${f} v=${value[f.key]} set=${(v) => set(f.key, v)} ctx=${ctx} isFirst=${isFirst} />`;
   })}`;
 }
 
@@ -19,14 +20,20 @@ function Row({ f, children }) {
   </div>`;
 }
 
+export function Switch({ checked, onChange, title, disabled }) {
+  return html`<label class="switch" title=${title || ''}>
+    <input type="checkbox" checked=${!!checked} disabled=${disabled} onChange=${(e) => onChange(e.target.checked)} /><span></span>
+  </label>`;
+}
+
 function Num({ f, v, set, optional }) {
   const step = f.step || (f.type === 'int' ? 1 : 0.01);
   const val = v ?? f.min ?? 0;
   const conv = (x) => (f.type === 'int' ? Math.round(+x) : +x);
   const on = !optional || (v !== null && v !== undefined);
   return html`
-    ${optional && html`<input type="checkbox" title="Usar valor propio" checked=${on}
-        onChange=${(e) => set(e.target.checked ? (f.min ?? 0) : null)} />`}
+    ${optional && html`<${Switch} title="Usar un valor propio (apagado = automático)" checked=${on}
+        onChange=${(c) => set(c ? (f.min ?? 0) : null)} />`}
     <input type="range" min=${f.min ?? 0} max=${f.max ?? 1} step=${step} value=${val} disabled=${!on}
       onInput=${(e) => set(conv(e.target.value))} />
     <input type="number" step=${step} value=${on ? val : ''} disabled=${!on} placeholder="auto"
@@ -35,15 +42,15 @@ function Num({ f, v, set, optional }) {
 
 function Color({ f, v, set }) {
   const empty = v === '' || v === undefined || v === null;
+  const off = empty && f.optional;
   const { rgb, a } = splitHex(empty ? '#ffffff' : v);
   return html`
-    ${f.optional && html`<input type="checkbox" title="Usar color propio" checked=${!empty}
-        onChange=${(e) => set(e.target.checked ? '#ffffff' : '')} />`}
-    <input type="color" value=${rgb} disabled=${empty && f.optional} onInput=${(e) => set(joinHex(e.target.value, a))} />
-    <input type="range" min="0" max="255" step="1" value=${a} title="Opacidad" disabled=${empty && f.optional}
-      style="max-width:70px" onInput=${(e) => set(joinHex(rgb, +e.target.value))} />
-    <input type="text" value=${empty ? '' : v} style="width:96px" class="mono" placeholder=${f.optional ? 'ninguno' : ''}
-      onChange=${(e) => set(e.target.value.trim())} />`;
+    ${f.optional && html`<${Switch} title="Usar un color propio" checked=${!empty} onChange=${(c) => set(c ? '#ffffff' : '')} />`}
+    <input type="color" value=${rgb} disabled=${off} onInput=${(e) => set(joinHex(e.target.value, a))} />
+    <input type="range" min="0" max="255" step="1" value=${a} title="Opacidad" disabled=${off}
+      onInput=${(e) => set(joinHex(rgb, +e.target.value))} />
+    <input type="text" value=${empty ? '' : v} style="width:88px" class="mono" placeholder=${f.optional ? 'automático' : ''}
+      disabled=${off} onChange=${(e) => set(e.target.value.trim())} />`;
 }
 
 function Gradient({ v, set }) {
@@ -56,37 +63,52 @@ function Gradient({ v, set }) {
       return html`<div class="stop">
         <input type="color" value=${rgb} onInput=${(e) => upd(i, 'color', joinHex(e.target.value, a))} />
         <input type="text" value=${g.color} onChange=${(e) => upd(i, 'color', e.target.value.trim())} />
-        <input type="range" min="0" max="1" step="0.01" value=${g.offset} onInput=${(e) => upd(i, 'offset', +e.target.value)} />
-        <span class="mono muted" style="width:34px">${Math.round(g.offset * 100)}%</span>
-        <button class="icon ghost danger" title="Quitar" onClick=${() => set(stops.filter((_, j) => j !== i))}>✕</button>
+        <input type="range" min="0" max="1" step="0.01" value=${g.offset} title="Posición" onInput=${(e) => upd(i, 'offset', +e.target.value)} />
+        <span class="pct">${Math.round(g.offset * 100)}%</span>
+        <button class="btn sm icon ghost danger" title="Quitar color" onClick=${() => set(stops.filter((_, j) => j !== i))}><${Icon} name="x" size=${14} /></button>
       </div>`;
     })}
     <div class="row">
-      <button onClick=${() => {
+      <button class="btn sm" onClick=${() => {
         const last = stops[stops.length - 1];
         set([...stops, { offset: last ? Math.min(1, last.offset + 0.25) : 0, color: last ? last.color : '#ffffff' }]);
-      }}>＋ Color</button>
-      ${stops.length > 1 && html`<button class="ghost" title="Invertir" onClick=${() => set(stops.map((g) => ({ ...g, offset: 1 - g.offset })).reverse())}>⇄</button>`}
+      }}><${Icon} name="plus" size=${14} /> Color</button>
+      ${stops.length > 1 && html`<button class="btn sm ghost" title="Invertir el gradiente"
+        onClick=${() => set(stops.map((g) => ({ ...g, offset: 1 - g.offset })).reverse())}><${Icon} name="arrow-left-right" size=${14} /> Invertir</button>`}
     </div>
   </div>`;
 }
+
+const BAND_LABEL = { bass: 'graves', mid: 'medios', treble: 'agudos', overall: 'volumen', transient: 'ataques', beat: 'golpes' };
+const TYPE_LABEL = { rising_sparks: 'Chispas', radial_burst: 'Explosión', ambient_dust: 'Polvo' };
 
 function Layers({ f, v, set, ctx }) {
   const layers = v || [];
   const [open, setOpen] = useState(0);
   const upd = (i, lv) => { const l = clone(layers); l[i] = lv; set(l); };
   return html`<div style="width:100%">
-    ${layers.map((l, i) => html`<div class="group" key=${i}>
-      <div class="gh" onClick=${() => setOpen(open === i ? -1 : i)}>
-        <span style=${{ width: 10, height: 10, borderRadius: 5, background: l.color || '#fff', display: 'inline-block' }}></span>
-        Capa ${i + 1} · <span class="muted">${l.type} · ${l.react_to || 'bass'}</span>
+    ${layers.map((l, i) => html`<div class="layer" key=${i}>
+      <div class="lh" onClick=${() => setOpen(open === i ? -1 : i)}>
+        <${Icon} name=${open === i ? 'chevron-down' : 'chevron-right'} size=${14} cls="faint" />
+        <span class="sw" style=${{ background: l.color || '#fff' }}></span>
+        <span>Capa ${i + 1}</span>
+        <span class="faint">${TYPE_LABEL[l.type] || l.type} · ${BAND_LABEL[l.react_to || 'bass']}</span>
         <span class="spacer"></span>
-        <button class="icon ghost" title="Duplicar" onClick=${(e) => { e.stopPropagation(); const n = clone(layers); n.splice(i + 1, 0, clone(l)); set(n); }}>⧉</button>
-        <button class="icon ghost danger" title="Eliminar" disabled=${layers.length < 2} onClick=${(e) => { e.stopPropagation(); set(layers.filter((_, j) => j !== i)); }}>✕</button>
+        <button class="btn sm icon ghost" title="Duplicar capa" onClick=${(e) => { e.stopPropagation(); const n = clone(layers); n.splice(i + 1, 0, clone(l)); set(n); }}><${Icon} name="copy" size=${14} /></button>
+        <button class="btn sm icon ghost danger" title="Eliminar capa" disabled=${layers.length < 2} onClick=${(e) => { e.stopPropagation(); set(layers.filter((_, j) => j !== i)); }}><${Icon} name="trash-2" size=${14} /></button>
       </div>
-      ${open === i && html`<div class="gb"><${Form} fields=${f.fields} value=${l} onChange=${(lv) => upd(i, lv)} ctx=${ctx} /></div>`}
+      ${open === i && html`<div class="lb"><${Form} fields=${f.fields} value=${l} onChange=${(lv) => upd(i, lv)} ctx=${ctx} /></div>`}
     </div>`)}
-    <button onClick=${() => { set([...layers, clone(layers[layers.length - 1] || {})]); setOpen(layers.length); }}>＋ Capa</button>
+    <button class="btn sm" style="margin-top:4px" onClick=${() => { set([...layers, clone(layers[layers.length - 1] || {})]); setOpen(layers.length); }}>
+      <${Icon} name="plus" size=${14} /> Capa</button>
+  </div>`;
+}
+
+function Section({ title, children, defOpen = true }) {
+  const [open, setOpen] = useState(defOpen);
+  return html`<div class="section">
+    <div class="sh" onClick=${() => setOpen(!open)}><${Icon} name=${open ? 'chevron-down' : 'chevron-right'} size=${13} />${title}</div>
+    ${open && html`<div class="sb">${children}</div>`}
   </div>`;
 }
 
@@ -97,10 +119,10 @@ function Field({ f, v, set, ctx, isFirst }) {
     case 'optnum':
       return html`<${Row} f=${f}><${Num} f=${f} v=${v} set=${set} optional=${true} /></${Row}>`;
     case 'bool':
-      return html`<${Row} f=${f}><input type="checkbox" checked=${!!v} onChange=${(e) => set(e.target.checked)} /></${Row}>`;
+      return html`<${Row} f=${f}><${Switch} checked=${v} onChange=${set} /></${Row}>`;
     case 'enum': {
       const numeric = typeof f.options[0][0] === 'number';
-      return html`<${Row} f=${f}><select value=${v ?? ''} onChange=${(e) => set(numeric ? +e.target.value : e.target.value)}>
+      return html`<${Row} f=${f}><select class="grow" value=${v ?? ''} onChange=${(e) => set(numeric ? +e.target.value : e.target.value)}>
         ${f.options.map(([val, lbl]) => html`<option value=${val}>${lbl}</option>`)}
       </select></${Row}>`;
     }
@@ -112,17 +134,17 @@ function Field({ f, v, set, ctx, isFirst }) {
       return html`<${Row} f=${f}><input type="text" class="grow" value=${v ?? ''} onChange=${(e) => set(e.target.value)} /></${Row}>`;
     case 'file':
       return html`<${Row} f=${f}><div class="filectl">
-        <div class="fn" title=${v || ''}>${v ? basename(v) : html`<span class="muted">ninguno</span>`}</div>
-        <button onClick=${() => ctx.pickFile(f.kind, set, v)}>Elegir…</button>
-        ${v && html`<button class="icon ghost danger" title="Quitar" onClick=${() => set('')}>✕</button>`}
+        <div class="fn" title=${v || ''}><${Icon} name=${FILE_ICON[f.kind] || 'file'} size=${14} cls="faint" />
+          <span>${v ? basename(v) : html`<span class="faint">Ninguno</span>`}</span></div>
+        <button class="btn icon" title="Elegir archivo" onClick=${() => ctx.pickFile(f.kind, set, v)}><${Icon} name="folder-open" size=${15} /></button>
+        ${v && html`<button class="btn icon ghost danger" title="Quitar" onClick=${() => set('')}><${Icon} name="x" size=${15} /></button>`}
       </div></${Row}>`;
     case 'group':
-      return html`<div class="group">
-        <div class="gh">${f.label}</div>
-        <div class="gb"><${Form} fields=${f.fields} value=${v || {}} onChange=${set} ctx=${ctx} isFirst=${isFirst} /></div>
-      </div>`;
+      return html`<${Section} title=${f.label}><${Form} fields=${f.fields} value=${v || {}} onChange=${set} ctx=${ctx} isFirst=${isFirst} /></${Section}>`;
     case 'layers':
-      return html`<${Layers} f=${f} v=${v} set=${set} ctx=${ctx} />`;
+      return html`<${Section} title=${f.label}><${Layers} f=${f} v=${v} set=${set} ctx=${ctx} /></${Section}>`;
   }
   return null;
 }
+
+export const FILE_ICON = { audio: 'file-audio', bg: 'image', lyrics: 'file-text', txt: 'file-text', font: 'type', project: 'file', dir: 'folder' };
