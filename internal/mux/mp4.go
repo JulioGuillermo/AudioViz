@@ -1,7 +1,7 @@
-// Package mux implementa un muxer MP4 (ISO BMFF) mínimo en Go puro:
-// una pista de video H.264 (avc1/avcC) y una pista de audio FLAC (fLaC/dfLa).
-// El resultado se escribe con el 'moov' delante (faststart) para que sea reproducible
-// en streaming y navegadores.
+// Package mux implements a minimal pure-Go MP4 (ISO BMFF) muxer:
+// one H.264 video track (avc1/avcC) and one FLAC audio track (fLaC/dfLa).
+// The result is written with 'moov' first (faststart) so it can be played
+// when streaming and in browsers.
 package mux
 
 import (
@@ -13,13 +13,13 @@ import (
 )
 
 type videoSample struct {
-	off      int64 // desplazamiento dentro del archivo temporal
+	off      int64 // offset within the temporary file
 	size     uint32
-	pts, dts int64 // en unidades de cuadro
+	pts, dts int64 // in frame units
 	key      bool
 }
 
-// AudioTrack describe una pista de audio ya codificada (FLAC) en memoria
+// AudioTrack describes an already encoded (FLAC) audio track in memory
 type AudioTrack struct {
 	SampleRate    int
 	Channels      int
@@ -53,7 +53,7 @@ func NewMP4Writer(path string, width, height, fps int) (*MP4Writer, error) {
 		width: width, height: height, fps: fps}, nil
 }
 
-// SetAVCConfig fija SPS y PPS (sin código de inicio)
+// SetAVCConfig sets SPS and PPS (without start code)
 func (m *MP4Writer) SetAVCConfig(sps, pps []byte) {
 	m.sps = append([]byte(nil), sps...)
 	m.pps = append([]byte(nil), pps...)
@@ -61,8 +61,8 @@ func (m *MP4Writer) SetAVCConfig(sps, pps []byte) {
 
 func (m *MP4Writer) SetAudio(a *AudioTrack) { m.audio = a }
 
-// WriteVideoAnnexB recibe una unidad de acceso en formato Annex B (00 00 01 / 00 00 00 01),
-// descarta SPS/PPS/AUD/SEI de parámetros ya conocidos y la guarda en formato AVCC (longitud de 4 bytes).
+// WriteVideoAnnexB takes an access unit in Annex B format (00 00 01 / 00 00 00 01),
+// drops SPS/PPS/AUD/SEI for already known parameters and stores it in AVCC format (4-byte length).
 func (m *MP4Writer) WriteVideoAnnexB(au []byte, pts, dts int64, key bool) error {
 	var size uint32
 	for _, nal := range SplitAnnexB(au) {
@@ -98,7 +98,7 @@ func (m *MP4Writer) WriteVideoAnnexB(au []byte, pts, dts int64, key bool) error 
 	return nil
 }
 
-// SplitAnnexB separa un flujo Annex B en unidades NAL (sin códigos de inicio)
+// SplitAnnexB splits an Annex B stream into NAL units (without start codes)
 func SplitAnnexB(b []byte) [][]byte {
 	var nals [][]byte
 	start := -1
@@ -124,7 +124,7 @@ func SplitAnnexB(b []byte) [][]byte {
 	return nals
 }
 
-// Close compone el archivo final: ftyp + moov + mdat (intercalado por segundos)
+// Close assembles the final file: ftyp + moov + mdat (interleaved per second)
 func (m *MP4Writer) Close() error {
 	if err := m.tmpW.Flush(); err != nil {
 		return err
@@ -132,13 +132,13 @@ func (m *MP4Writer) Close() error {
 	defer os.Remove(m.tmpPath)
 	defer m.tmp.Close()
 	if len(m.samples) == 0 {
-		return fmt.Errorf("no se escribió ningún cuadro de video")
+		return fmt.Errorf("no video frames were written")
 	}
 	if m.sps == nil || m.pps == nil {
-		return fmt.Errorf("faltan SPS/PPS H.264")
+		return fmt.Errorf("missing H.264 SPS/PPS")
 	}
 
-	// Normalizar DTS para que empiece en 0
+	// Normalize DTS so it starts at 0
 	dts0 := m.samples[0].dts
 	for i := range m.samples {
 		m.samples[i].dts -= dts0
@@ -148,7 +148,7 @@ func (m *MP4Writer) Close() error {
 	vts := videoTimescale(m.fps)
 	vtick := int64(vts / m.fps)
 
-	// ---- Plan de chunks intercalados (1 s por chunk)
+	// ---- Interleaved chunk plan (1 s per chunk)
 	type chunk struct {
 		audio      bool
 		first, cnt int
@@ -156,7 +156,7 @@ func (m *MP4Writer) Close() error {
 	}
 	var chunks []chunk
 	vi, ai := 0, 0
-	var audioPos int64 // en muestras
+	var audioPos int64 // in samples
 	for sec := int64(0); vi < len(m.samples) || (m.audio != nil && ai < len(m.audio.Frames)); sec++ {
 		c := chunk{first: vi}
 		for vi < len(m.samples) && m.samples[vi].dts < (sec+1)*int64(m.fps) {
@@ -251,7 +251,7 @@ func (m *MP4Writer) buildMoov(vts int, vtick int64, vOffs []int64, vPer []int, a
 	vDur := int64(n) * vtick
 	videoDurMs := vDur * movieTS / int64(vts)
 
-	// ---------- Pista de video
+	// ---------- Video track
 	var stts, ctts, stss, stsz []byte
 	stts = append(stts, u32(1)...)
 	stts = append(stts, u32(uint32(n))...)
@@ -302,8 +302,8 @@ func (m *MP4Writer) buildMoov(vts int, vtick int64, vOffs []int64, vPer []int, a
 	}
 
 	avc1 := concat(
-		make([]byte, 6), u16(1), // reservado + data_reference_index
-		make([]byte, 16), // pre_defined/reservados
+		make([]byte, 6), u16(1), // reserved + data_reference_index
+		make([]byte, 16), // pre_defined/reserved
 		u16(uint16(m.width)), u16(uint16(m.height)),
 		u32(0x00480000), u32(0x00480000), u32(0), u16(1),
 		make([]byte, 32), // compressorname
@@ -311,7 +311,7 @@ func (m *MP4Writer) buildMoov(vts int, vtick int64, vOffs []int64, vPer []int, a
 		box("avcC", avcc),
 	)
 
-	// Edit list para compensar el retardo de B-frames (primer PTS)
+	// Edit list to compensate for B-frame delay (first PTS)
 	firstPTS := m.samples[0].pts
 	for _, s := range m.samples {
 		if s.pts < firstPTS {
@@ -351,7 +351,7 @@ func (m *MP4Writer) buildMoov(vts int, vtick int64, vOffs []int64, vPer []int, a
 	traks := [][]byte{videoTrak}
 	maxDurMs := videoDurMs
 
-	// ---------- Pista de audio FLAC
+	// ---------- FLAC audio track
 	if a := m.audio; a != nil && len(a.Frames) > 0 {
 		var aDur int64
 		var asz []byte

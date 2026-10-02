@@ -16,36 +16,36 @@ import (
 	"golang.org/x/image/math/fixed"
 )
 
-// SDFScale: niveles de cuantización por píxel del campo de distancias (byte = 128 - d*SDFScale)
+// SDFScale: quantization levels per pixel of the distance field (byte = 128 - d*SDFScale)
 const SDFScale = 4.0
 
-// Atlas contiene el campo de distancias con signo (SDF) de todas las palabras, 1 byte por píxel
+// Atlas holds the signed distance field (SDF) of all words, 1 byte per pixel
 type Atlas struct {
 	W, H int
 	Pix  []byte
 }
 
 type glyphWord struct {
-	ax, ay, aw, ah int     // rectángulo en el atlas (incluye margen)
-	pad            int     // margen alrededor del texto
-	adv            float64 // avance horizontal del texto
-	offX, offY     float64 // centro de la palabra relativo al centro de su línea (px)
+	ax, ay, aw, ah int     // rectangle in the atlas (includes padding)
+	pad            int     // padding around the text
+	adv            float64 // horizontal advance of the text
+	offX, offY     float64 // word center relative to its line center (px)
 	start, end     float64
 }
 
 type layLine struct {
 	start, end float64
 	words      []glyphWord
-	side       int     // -1 izquierda, 0 centro, 1 derecha
-	halfH      float64 // media altura del bloque
+	side       int     // -1 left, 0 center, 1 right
+	halfH      float64 // half height of the block
 }
 
-// Item es una palabra visible en un cuadro, lista para dibujar
+// Item is a word visible in a frame, ready to draw
 type Item struct {
-	AX, AY, AW, AH float32 // rectángulo en el atlas
-	CX, CY         float32 // centro en pantalla
+	AX, AY, AW, AH float32 // rectangle in the atlas
+	CX, CY         float32 // center on screen
 	Scale, Alpha   float32
-	Fill           float32 // progreso karaoke 0..1 (1 = todo del color principal)
+	Fill           float32 // karaoke progress 0..1 (1 = all in the main color)
 	Pad            float32
 }
 
@@ -63,18 +63,18 @@ func loadFace(cfg *config.LyricsConfig) (font.Face, error) {
 	if cfg.Font != "" {
 		b, err := os.ReadFile(cfg.Font)
 		if err != nil {
-			return nil, fmt.Errorf("no se pudo leer la fuente '%s': %w", cfg.Font, err)
+			return nil, fmt.Errorf("could not read font '%s': %w", cfg.Font, err)
 		}
 		data = b
 	}
 	f, err := opentype.Parse(data)
 	if err != nil {
-		return nil, fmt.Errorf("fuente inválida: %w", err)
+		return nil, fmt.Errorf("invalid font: %w", err)
 	}
 	return opentype.NewFace(f, &opentype.FaceOptions{Size: cfg.Size, DPI: 72, Hinting: font.HintingNone})
 }
 
-// New carga la letra, maqueta las líneas (con saltos de fila) y construye el atlas SDF
+// New loads the lyrics, lays out the lines (with row wrapping) and builds the SDF atlas
 func New(cfg *config.LyricsConfig, w, h int) (*Engine, error) {
 	lines, err := Load(cfg.Path, cfg.Offset)
 	if err != nil {
@@ -90,7 +90,7 @@ func newEngine(cfg *config.LyricsConfig, lines []Line, w, h int) (*Engine, error
 	}
 	defer face.Close()
 
-	// Margen suficiente para contorno, glow y sombra
+	// Enough padding for outline, glow and shadow
 	pad := int(math.Ceil(math.Max(cfg.OutlineWidth+cfg.Glow.Radius, cfg.Shadow.Blur+cfg.OutlineWidth) + 4))
 	pad = min(max(pad, 6), 30)
 	e := &Engine{cfg: cfg, w: w, h: h, Pad: pad}
@@ -106,7 +106,7 @@ func newEngine(cfg *config.LyricsConfig, lines []Line, w, h int) (*Engine, error
 		maxW = float64(w) * 0.9
 	}
 
-	// Rasterizar cada palabra y empaquetarla en el atlas (estanterías)
+	// Rasterize each word and pack it into the atlas (shelves)
 	const atlasW = 2048
 	type bmp struct {
 		sdf    []byte
@@ -162,7 +162,7 @@ func newEngine(cfg *config.LyricsConfig, lines []Line, w, h int) (*Engine, error
 		e.lines = append(e.lines, ll)
 	}
 
-	// La línea anterior sale mientras entra la siguiente (no se pisan)
+	// The previous line exits while the next one enters (they don't overlap)
 	inD := math.Max(cfg.InDuration, 0.01)
 	for i := 0; i+1 < len(e.lines); i++ {
 		cur, next := &e.lines[i], &e.lines[i+1]
@@ -174,7 +174,7 @@ func newEngine(cfg *config.LyricsConfig, lines []Line, w, h int) (*Engine, error
 	e.Atlas = Atlas{W: atlasW, H: max(shelfY+shelfH, 1)}
 	e.Atlas.Pix = make([]byte, e.Atlas.W*e.Atlas.H)
 	for i := range e.Atlas.Pix {
-		e.Atlas.Pix[i] = 0 // lejos del texto
+		e.Atlas.Pix[i] = 0 // far from the text
 	}
 	k := 0
 	for _, ll := range e.lines {
@@ -189,7 +189,7 @@ func newEngine(cfg *config.LyricsConfig, lines []Line, w, h int) (*Engine, error
 	return e, nil
 }
 
-// layoutRows reparte las palabras en filas que caben en maxW y calcula su posición relativa al centro
+// layoutRows splits words into rows that fit in maxW and computes their position relative to the center
 func layoutRows(ll *layLine, space, maxW, lineH float64, align string) float64 {
 	var rows [][]int
 	var cur []int
@@ -240,7 +240,7 @@ func clamp01(v float64) float64 { return math.Max(0, math.Min(1, v)) }
 
 func easeOut(t float64) float64 { t = clamp01(t); return 1 - (1-t)*(1-t)*(1-t) }
 
-// anchor devuelve el centro en pantalla del bloque de una línea según la posición configurada
+// anchor returns the on-screen center of a line's block according to the configured position
 func (e *Engine) anchor(ll *layLine) (float64, float64) {
 	cfg := e.cfg
 	W, H := float64(e.w), float64(e.h)
@@ -266,8 +266,8 @@ func (e *Engine) anchor(ll *layLine) (float64, float64) {
 	}
 }
 
-// anim devuelve desplazamiento, escala y alfa de una animación de entrada/salida.
-// p = 0 oculto, 1 totalmente visible.
+// anim returns offset, scale and alpha of an enter/exit animation.
+// p = 0 hidden, 1 fully visible.
 func (e *Engine) anim(name string, p float64, side int, out bool) (dx, dy, scale, alpha float64) {
 	d := e.cfg.SlideDistance
 	q := 1 - p
@@ -278,7 +278,7 @@ func (e *Engine) anim(name string, p float64, side int, out bool) (dx, dy, scale
 		if p >= 1 {
 			alpha = 1
 		}
-	case "slide_up": // entra subiendo desde abajo / sale hacia arriba
+	case "slide_up": // enters rising from below / exits upward
 		dy = d * q
 		if out {
 			dy = -d * q
@@ -288,7 +288,7 @@ func (e *Engine) anim(name string, p float64, side int, out bool) (dx, dy, scale
 		if out {
 			dy = d * q
 		}
-	case "slide_left": // se mueve hacia la izquierda
+	case "slide_left": // moves to the left
 		dx = d * q
 		if out {
 			dx = -d * q
@@ -298,22 +298,22 @@ func (e *Engine) anim(name string, p float64, side int, out bool) (dx, dy, scale
 		if out {
 			dx = d * q
 		}
-	case "slide_side": // entra y sale por su propio lado
+	case "slide_side": // enters and exits on its own side
 		s := float64(side)
 		if s == 0 {
 			dy = d * q
 		} else {
 			dx = s * d * 2 * q
 		}
-	case "pop": // crece desde pequeño; al salir se encoge
+	case "pop": // grows from small; shrinks on exit
 		scale = 0.5 + 0.5*p
-	case "zoom": // llega desde grande; al salir se agranda
+	case "zoom": // arrives from large; grows on exit
 		scale = 1 + 0.6*q
 	}
 	return
 }
 
-// Frame calcula las palabras visibles en el instante t con sus animaciones
+// Frame computes the words visible at time t with their animations
 func (e *Engine) Frame(t float64, feat *audio.FrameFeatures) []Item {
 	cfg := e.cfg
 	band := 0.0
@@ -361,7 +361,7 @@ func (e *Engine) Frame(t float64, feat *audio.FrameFeatures) []Item {
 			wordDur := math.Max(g.end-g.start, 0.05)
 			switch cfg.Mode {
 			case "words":
-				// Cada palabra aparece cuando se canta
+				// Each word appears when it is sung
 				p := (t - g.start) / math.Min(inD, 0.25)
 				if p <= 0 {
 					continue
@@ -373,7 +373,7 @@ func (e *Engine) Frame(t float64, feat *audio.FrameFeatures) []Item {
 				fill = clamp01((t - g.start) / wordDur)
 			}
 			if cfg.Mode != "words" && cfg.WordPop > 0 && t >= g.start {
-				// Latido de la palabra al empezar a cantarse
+				// Word pulse when it starts being sung
 				if k := (t - g.start) / 0.3; k < 1 {
 					s *= 1 + cfg.WordPop*math.Sin(k*math.Pi)
 				}
@@ -391,7 +391,7 @@ func (e *Engine) Frame(t float64, feat *audio.FrameFeatures) []Item {
 	return items
 }
 
-// Band devuelve el valor de la banda a la que reacciona la letra (para flash / parpadeo)
+// Band returns the value of the band the lyrics react to (for flash / flicker)
 func (e *Engine) Band(feat *audio.FrameFeatures) float64 {
 	if feat == nil {
 		return 0
@@ -401,7 +401,7 @@ func (e *Engine) Band(feat *audio.FrameFeatures) float64 {
 
 const maxItems = 96
 
-// buildSDF calcula la distancia con signo (px, + fuera) a partir de la cobertura del texto
+// buildSDF computes the signed distance (px, + outside) from the text coverage
 func buildSDF(cov *image.Alpha, maxD float64) []byte {
 	w, h := cov.Rect.Dx(), cov.Rect.Dy()
 	inside := make([]float64, w*h)
@@ -414,14 +414,14 @@ func buildSDF(cov *image.Alpha, maxD float64) []byte {
 			inside[i], outside[i] = 0, inf
 		}
 	}
-	edt2D(outside, w, h) // distancia² al píxel de texto más cercano
-	edt2D(inside, w, h)  // distancia² al fondo más cercano
+	edt2D(outside, w, h) // distance² to the nearest text pixel
+	edt2D(inside, w, h)  // distance² to the nearest background pixel
 	out := make([]byte, w*h)
 	for i := range out {
 		var d float64
 		a := float64(cov.Pix[i]) / 255
 		if a > 0 && a < 1 {
-			d = 0.5 - a // borde antialias: distancia subpíxel
+			d = 0.5 - a // antialiased edge: subpixel distance
 		} else if outside[i] > 0 {
 			d = math.Sqrt(outside[i]) - 0.5
 		} else {
@@ -433,7 +433,7 @@ func buildSDF(cov *image.Alpha, maxD float64) []byte {
 	return out
 }
 
-// edt2D: transformada de distancia euclídea exacta (Felzenszwalb & Huttenlocher) in-place
+// edt2D: exact Euclidean distance transform (Felzenszwalb & Huttenlocher) in-place
 func edt2D(g []float64, w, h int) {
 	n := max(w, h)
 	f := make([]float64, n)
@@ -473,7 +473,7 @@ func edt1D(f, d []float64, v []int, z []float64) {
 			break
 		}
 		if s <= z[k] {
-			// k == 0 y la nueva parábola domina desde -inf
+			// k == 0 and the new parabola dominates from -inf
 			v[0] = q
 			z[0], z[1] = math.Inf(-1), math.Inf(1)
 			continue

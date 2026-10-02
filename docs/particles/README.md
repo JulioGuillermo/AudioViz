@@ -1,7 +1,7 @@
-# Partículas
+# Particles
 
-Una o varias **capas** de partículas. Cada capa tiene su tipo, colores y [banda](../reactividad.md): su
-cantidad, brillo, tamaño y velocidad siguen a esa banda.
+One or more particle **layers**. Each layer has its own type, colors and [band](../reactivity.md): its
+amount, brightness, size and speed follow that band.
 
 ```yaml
 particles:
@@ -19,29 +19,29 @@ particles:
       color: "#fff0a0"
 ```
 
-Sin `layers`, los campos se ponen directamente bajo `particles:` y forman una única capa (formato clásico).
+Without `layers`, the fields go directly under `particles:` and form a single layer (classic format).
 
-## Tipos
-| `type` | Página |
+## Types
+| `type` | Page |
 |---|---|
 | `rising_sparks` | [rising_sparks](rising_sparks.md) |
 | `radial_burst` | [radial_burst](radial_burst.md) |
 | `ambient_dust` | [ambient_dust](ambient_dust.md) |
 
-## Opciones de cada capa
-| Campo | Def. | Descripción |
+## Per-layer options
+| Field | Default | Description |
 |---|---|---|
-| `type` | radial_burst | Tipo de emisor |
-| `react_to` | bass | [Fuente](../reactividad.md) que controla la capa |
-| `count` | 100 | Número **máximo** de partículas (total de todas las capas ≤ 1024) |
-| `min_density` | 1 | Fracción de partículas vivas con la banda en silencio. 1 = siempre todas (clásico); 0.1 = casi ninguna en silencio y todas con la banda al máximo. Si es < 1 el brillo también sigue a la banda |
-| `min_size`, `max_size` | 2, 6 | Radio en px (crece hasta +50 % con la banda) |
-| `color` | #ffffff | Color al nacer |
-| `color_end` | — | Color al morir (se interpola durante la vida) |
-| `speed` | 1.0 | Velocidad base |
-| `audio_boost` | 0 | Aceleración extra con la banda (px/cuadro × banda × audio_boost) |
-| `turbulence` | 0 | Serpenteo lateral (0.5–1 = llama) |
-| `min_life`, `max_life` | 1, 3 | Vida en segundos |
-| `glow` | false | Halo suave (doble radio, 30 % de opacidad) |
+| `type` | radial_burst | Emitter type |
+| `react_to` | bass | [Source](../reactivity.md) that drives the layer |
+| `count` | 100 | **Maximum** number of particles (total across all layers ≤ 1024) |
+| `min_density` | 1 | Fraction of particles alive with the band silent. 1 = always all of them (classic); 0.1 = almost none in silence and all of them with the band at its maximum. If < 1, brightness also follows the band |
+| `min_size`, `max_size` | 2, 6 | Radius in px (grows by up to +50 % with the band) |
+| `color` | #ffffff | Color at birth |
+| `color_end` | — | Color at death (interpolated over the lifetime) |
+| `speed` | 1.0 | Base speed |
+| `audio_boost` | 0 | Extra acceleration with the band (px/frame × band × audio_boost) |
+| `turbulence` | 0 | Sideways wiggle (0.5–1 = flame) |
+| `min_life`, `max_life` | 1, 3 | Lifetime in seconds |
+| `glow` | false | Soft halo (double radius, 30 % opacity) |
 
-En las capas que reaccionan a `bass` o `beat`, cada golpe da un acelerón extra.
+In layers that react to `bass` or `beat`, each beat gives an extra burst of speed.

@@ -1,4 +1,4 @@
-# Salida
+# Output
 
 ```yaml
 output:
@@ -12,21 +12,21 @@ output:
   crf: 20
 ```
 
-| Campo | Def. | Descripción |
+| Field | Default | Description |
 |---|---|---|
-| `path` | output.mp4 | Archivo MP4 (H.264 + FLAC, `moov` al principio) |
-| `width`, `height` | 0 | Resolución; 0 = la del fondo. Se redondea a par |
-| `fps` | 60 | Cuadros por segundo |
-| `renderer` | auto | `auto`: GPU Vulkan y si falla CPU · `gpu`: obliga GPU · `cpu`: obliga CPU |
-| `gpu_device` | -1 | Índice de GPU (`audioviz --list-gpus`), -1 = la mejor (dedicada > integrada) |
-| `preset` | fast | Preset x264: `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, `veryslow`. Más lento = archivo más pequeño a igual calidad |
-| `crf` | 18 | Calidad: 18 muy alta, 23 estándar. Cada +6 ≈ la mitad de tamaño |
+| `path` | output.mp4 | MP4 file (H.264 + FLAC, `moov` at the start) |
+| `width`, `height` | 0 | Resolution; 0 = the background's. Rounded to an even number |
+| `fps` | 60 | Frames per second |
+| `renderer` | auto | `auto`: Vulkan GPU, falling back to CPU · `gpu`: force GPU · `cpu`: force CPU |
+| `gpu_device` | -1 | GPU index (`audioviz --list-gpus`), -1 = the best one (discrete > integrated) |
+| `preset` | fast | x264 preset: `ultrafast`, `superfast`, `veryfast`, `faster`, `fast`, `medium`, `slow`, `slower`, `veryslow`. Slower = smaller file at the same quality |
+| `crf` | 18 | Quality: 18 very high, 23 standard. Each +6 ≈ half the size |
 
-## Rendimiento
-La GPU dibuja cada cuadro en 1–2 ms. El resto del tiempo es la compresión H.264, que va por CPU
-(x264 con todos los núcleos). Para ir más rápido usa `preset: veryfast`/`superfast`; para archivos más
-pequeños sube `crf` o usa `medium`/`slow`.
+## Performance
+The GPU draws each frame in 1–2 ms. The rest of the time is H.264 compression, which runs on the CPU
+(x264 using all cores). To go faster use `preset: veryfast`/`superfast`; for smaller
+files raise `crf` or use `medium`/`slow`.
 
-## Compatibilidad
-El audio va en FLAC dentro del MP4. Lo reproducen mpv, VLC, Chrome, Firefox, Android, ffmpeg y
-YouTube (subida), pero no QuickTime/Safari de Apple.
+## Compatibility
+The audio is FLAC inside the MP4. It plays in mpv, VLC, Chrome, Firefox, Android, ffmpeg and
+YouTube (uploads), but not in Apple's QuickTime/Safari.

@@ -7,25 +7,25 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Línea de tiempo: cada pista es una lista de tramos. El tramo 0 es el bloque de nivel
-// superior del YAML (background, visualizer, ...); los siguientes vienen de `timeline:` y
-// solo necesitan los campos que cambian (se aplican sobre el tramo anterior).
+// Timeline: each track is a list of segments. Segment 0 is the top-level YAML block
+// (background, visualizer, ...); the following ones come from `timeline:` and
+// only need the fields that change (they are applied on top of the previous segment).
 //
 //	timeline:
 //	  visualizer:
 //	    - at: 86.4
-//	      label: "Estribillo"
+//	      label: "Chorus"
 //	      transition: { mode: fade, duration: 1.5 }
 //	      type: circular
 //	      radius: 220
 
-// Transition indica cómo se entra en un tramo
+// Transition describes how a segment is entered
 type Transition struct {
-	Mode     string  `yaml:"mode"`     // "cut" (de golpe) o "fade" (interpola/funde)
-	Duration float64 `yaml:"duration"` // segundos (solo fade)
+	Mode     string  `yaml:"mode"`     // "cut" (instant) or "fade" (interpolate/crossfade)
+	Duration float64 `yaml:"duration"` // seconds (fade only)
 }
 
-// Seg es un tramo de una pista
+// Seg is a segment of a track
 type Seg[T any] struct {
 	At         float64
 	Label      string
@@ -33,7 +33,7 @@ type Seg[T any] struct {
 	Cfg        T
 }
 
-// Marker es una marca con nombre en la línea de tiempo (secciones de la canción)
+// Marker is a named mark on the timeline (song sections)
 type Marker struct {
 	At    float64 `yaml:"at"`
 	Label string  `yaml:"label"`
@@ -52,17 +52,17 @@ type Timeline struct {
 	Lyrics     []Seg[LyricsConfig]
 }
 
-// TrackNames son las claves de las pistas en `timeline:` (y en la API del estudio)
+// TrackNames are the track keys in `timeline:` (and in the studio API)
 var TrackNames = []string{"background", "bass_zoom", "shake", "chromatic_aberration", "ripple",
 	"glitch", "color_flash", "visualizer", "particles", "lyrics"}
 
-// Active devuelve el índice del tramo activo en t (el último con At <= t)
+// Active returns the index of the segment active at t (the last one with At <= t)
 func Active[T any](segs []Seg[T], t float64) int {
 	i := sort.Search(len(segs), func(i int) bool { return segs[i].At > t }) - 1
 	return max(i, 0)
 }
 
-// Blend devuelve (anterior, actual, k): k = 1 fuera de transición; en un fade, k va de 0 a 1
+// Blend returns (previous, current, k): k = 1 outside a transition; during a fade, k goes from 0 to 1
 func Blend[T any](segs []Seg[T], t float64) (prev, cur *T, k float64) {
 	i := Active(segs, t)
 	cur = &segs[i].Cfg
@@ -77,7 +77,7 @@ func Blend[T any](segs []Seg[T], t float64) (prev, cur *T, k float64) {
 	return
 }
 
-// deepCopy clona un bloque de config (incluidos slices) vía YAML
+// deepCopy clones a config block (including slices) via YAML
 func deepCopy[T any](v T) T {
 	b, _ := yaml.Marshal(v)
 	var out T
@@ -85,7 +85,7 @@ func deepCopy[T any](v T) T {
 	return out
 }
 
-// buildTrack crea los tramos de una pista: base en t=0 y los nodos de timeline aplicados en cadena
+// buildTrack builds a track's segments: base at t=0 plus the timeline nodes applied in sequence
 func buildTrack[T any](base T, nodes []yaml.Node, fix func(*T)) ([]Seg[T], error) {
 	fix(&base)
 	segs := []Seg[T]{{At: 0, Cfg: base, Transition: Transition{Mode: "cut"}}}
@@ -104,7 +104,7 @@ func buildTrack[T any](base T, nodes []yaml.Node, fix func(*T)) ([]Seg[T], error
 			return nil, err
 		}
 		if h.At == nil {
-			return nil, fmt.Errorf("tramo de timeline sin 'at' (línea %d)", n.Line)
+			return nil, fmt.Errorf("timeline segment without 'at' (line %d)", n.Line)
 		}
 		parsed = append(parsed, struct {
 			h    head
@@ -115,7 +115,7 @@ func buildTrack[T any](base T, nodes []yaml.Node, fix func(*T)) ([]Seg[T], error
 	for _, p := range parsed {
 		prev := segs[len(segs)-1]
 		cfg := deepCopy(prev.Cfg)
-		// Quitar at/label/transition y aplicar el resto sobre la copia del tramo anterior
+		// Strip at/label/transition and apply the rest onto the copy of the previous segment
 		body := p.node
 		if body.Kind == yaml.MappingNode {
 			var kept []*yaml.Node
@@ -129,7 +129,7 @@ func buildTrack[T any](base T, nodes []yaml.Node, fix func(*T)) ([]Seg[T], error
 			body.Content = kept
 		}
 		if err := body.Decode(&cfg); err != nil {
-			return nil, fmt.Errorf("tramo en %.2fs: %w", *p.h.At, err)
+			return nil, fmt.Errorf("segment at %.2fs: %w", *p.h.At, err)
 		}
 		fix(&cfg)
 		tr := Transition{Mode: "cut"}
@@ -141,7 +141,7 @@ func buildTrack[T any](base T, nodes []yaml.Node, fix func(*T)) ([]Seg[T], error
 		}
 		seg := Seg[T]{At: *p.h.At, Label: p.h.Label, Transition: tr, Cfg: cfg}
 		if seg.At <= 0 {
-			// Un tramo en 0 sustituye a la base
+			// A segment at 0 replaces the base
 			segs[0].Cfg, segs[0].Label = cfg, p.h.Label
 			continue
 		}
@@ -152,12 +152,12 @@ func buildTrack[T any](base T, nodes []yaml.Node, fix func(*T)) ([]Seg[T], error
 
 func noFix[T any](*T) {}
 
-// BuildTimeline construye todas las pistas a partir de la config base y el bloque `timeline:`
+// BuildTimeline builds all tracks from the base config and the `timeline:` block
 func (c *ProjectConfig) BuildTimeline() error {
 	raw := map[string][]yaml.Node{}
 	if c.TimelineRaw.Kind != 0 {
 		if err := c.TimelineRaw.Decode(&raw); err != nil {
-			return fmt.Errorf("bloque 'timeline' inválido: %w", err)
+			return fmt.Errorf("invalid 'timeline' block: %w", err)
 		}
 	}
 	for k := range raw {
@@ -166,7 +166,7 @@ func (c *ProjectConfig) BuildTimeline() error {
 			known = known || k == n
 		}
 		if !known {
-			return fmt.Errorf("pista de timeline desconocida '%s' (válidas: %v)", k, TrackNames)
+			return fmt.Errorf("unknown timeline track '%s' (valid: %v)", k, TrackNames)
 		}
 	}
 	var err error
@@ -214,7 +214,7 @@ func (c *ProjectConfig) BuildTimeline() error {
 	return nil
 }
 
-// FixVisualizer normaliza un bloque de visualizador (límites de barras, tipo en minúsculas)
+// FixVisualizer normalizes a visualizer block (bar limits, lowercase type)
 func FixVisualizer(v *VisualizerConfig) {
 	if v.Bars <= 0 {
 		v.Bars = 48
@@ -225,16 +225,16 @@ func FixVisualizer(v *VisualizerConfig) {
 	v.Type = lower(v.Type)
 }
 
-// FixParticles asegura que haya al menos una capa
+// FixParticles ensures there is at least one layer
 func FixParticles(p *ParticlesConfig) {
 	if len(p.Layers) == 0 {
 		p.Layers = []ParticleLayer{p.ParticleLayer}
 	}
 }
 
-// ---------------------------------------------------------------- serialización
+// ---------------------------------------------------------------- serialization
 
-// segYAML es la forma de un tramo al guardar (cabecera + todos los campos del bloque)
+// segYAML is the shape of a segment when saving (header + all fields of the block)
 func segNode[T any](s Seg[T]) (*yaml.Node, error) {
 	var body yaml.Node
 	if err := body.Encode(s.Cfg); err != nil {
@@ -267,8 +267,8 @@ func trackNodes[T any](segs []Seg[T]) ([]*yaml.Node, error) {
 	return out, nil
 }
 
-// SyncFromTimeline copia el tramo 0 de cada pista a los bloques base y regenera `timeline:`
-// para que Save escriba un YAML coherente con c.Timeline
+// SyncFromTimeline copies segment 0 of each track into the base blocks and regenerates `timeline:`
+// so that Save writes a YAML consistent with c.Timeline
 func (c *ProjectConfig) SyncFromTimeline() error {
 	tl := &c.Timeline
 	if len(tl.Background) > 0 {

@@ -1,74 +1,74 @@
-# Motores de Visualización y Espectrogramas Estéreo Simétricos
+# Visualization Engines and Symmetric Stereo Spectrograms
 
-## 1. Principio de Simetría Estéreo (L vs R)
+## 1. Stereo Symmetry Principle (L vs R)
 
-Para reflejar la espacialidad real de la mezcla musical:
-- El **Canal Izquierdo (L)** comanda la mitad izquierda de la pantalla o del visualizador.
-- El **Canal Derecho (R)** comanda la mitad derecha.
-- Ambos flujos se alimentan de sus propios espectros FFT de forma independiente, haciendo evidente cuando un instrumento o efecto pasa de un auricular/altavoz al otro (*pan / estéreo ping-pong*).
+To reflect the real spatial image of the music mix:
+- The **Left Channel (L)** drives the left half of the screen or visualizer.
+- The **Right Channel (R)** drives the right half.
+- Both streams are fed from their own FFT spectra independently, making it obvious when an instrument or effect moves from one earphone/speaker to the other (*pan / stereo ping-pong*).
 
 ---
 
-## 2. Tipos de Visualizadores Diseñados
+## 2. Designed Visualizer Types
 
-### A. Espectrograma Circular Central (Radial Center)
-Un anillo o círculo centrado en el cuadro:
-- **Disposición Angular**:
-  - **Semicírculo Izquierdo ($90^\circ$ a $270^\circ$)**: Proyecta las frecuencias del Canal L. Desde el polo superior o inferior hacia los lados, mapeando graves cerca del polo y agudos hacia el ecuador (o viceversa).
-  - **Semicírculo Derecho ($-90^\circ$ a $90^\circ$)**: Proyecta las frecuencias del Canal R de manera exactamente simétrica.
-- **Variantes de Estilo**:
-  1. *Radial Bars*: Barras que irradian hacia afuera (o hacia adentro) desde el radio base $R_0$.
-  2. *Smooth Bezier Ring*: Un trazado continuo y cerrado que deforma una corona circular como una membrana viva.
-  3. *Filled Polygon with Glow*: Relleno semitransparente interior con degradado neón y contorno iluminado.
-  4. *Double Ring (Bass Pulse)*: Anillo interior que pulsa con los graves y anillo exterior que baila con el espectro completo.
+### A. Central Circular Spectrogram (Radial Center)
+A ring or circle centered in the frame:
+- **Angular Layout**:
+  - **Left Semicircle ($90^\circ$ to $270^\circ$)**: Projects the L Channel frequencies. From the top or bottom pole towards the sides, mapping bass near the pole and treble towards the equator (or vice versa).
+  - **Right Semicircle ($-90^\circ$ to $90^\circ$)**: Projects the R Channel frequencies in an exactly symmetric way.
+- **Style Variants**:
+  1. *Radial Bars*: Bars radiating outwards (or inwards) from the base radius $R_0$.
+  2. *Smooth Bezier Ring*: A continuous closed path that deforms a circular band like a living membrane.
+  3. *Filled Polygon with Glow*: Semi-transparent inner fill with a neon gradient and a glowing outline.
+  4. *Double Ring (Bass Pulse)*: Inner ring that pulses with the bass and outer ring that dances with the full spectrum.
 
 ```
-                  Polo Superior (Graves)
+                  Top Pole (Bass)
                        . - ~ ~ - .
                    .-'      |      '-.
                 .-'    L    |    R    '-.
               .'            |            '.
              /              |              \
-            |    Canal L    (C)   Canal R   |
+            |   L Channel   (C)  R Channel  |
              \              |              /
               '.            |            .'
                 '-.         |         .-'
                    '-. _    |    _ .-'
                          ~ - - ~
-                  Polo Inferior (Agudos)
+                  Bottom Pole (Treble)
 ```
 
-### B. Espectrograma Horizontal Lineal (Bottom / Center)
-- **Posición**: Ubicado usualmente en la base de la pantalla ($y \approx 0.85 \cdot H$) o centrado horizontalmente.
-- **Modos de Simetría**:
-  1. *Center-Out Mirrored*: El centro de la pantalla es el punto de inicio ($x = W/2$). El Canal L se despliega hacia la izquierda y el Canal R hacia la derecha. Las frecuencias graves parten del centro, creando un impacto visual expansivo en cada bombo.
-  2. *Dual Channel Bottom Split*: Pantalla dividida en dos mitades simétricas:
-     - $[0 \dots W/2]$: Canal L (Graves en el centro o en el extremo).
-     - $[W/2 \dots W]$: Canal R.
-  3. *Reflected Mirror*: Barras que crecen hacia arriba y se reflejan atenuadas hacia abajo con transparencia (*Water Reflection Effect*).
+### B. Linear Horizontal Spectrogram (Bottom / Center)
+- **Position**: Usually placed at the bottom of the screen ($y \approx 0.85 \cdot H$) or centered horizontally.
+- **Symmetry Modes**:
+  1. *Center-Out Mirrored*: The center of the screen is the starting point ($x = W/2$). The L Channel unfolds to the left and the R Channel to the right. Low frequencies start from the center, creating an expansive visual impact on every kick.
+  2. *Dual Channel Bottom Split*: Screen split into two symmetric halves:
+     - $[0 \dots W/2]$: L Channel (bass in the center or at the edge).
+     - $[W/2 \dots W]$: R Channel.
+  3. *Reflected Mirror*: Bars that grow upwards and are reflected, attenuated, downwards with transparency (*Water Reflection Effect*).
 
-### C. Espectrograma Vertical Lateral (Edge Inward)
-- Las barras se alinean verticalmente en los márgenes izquierdo y derecho de la pantalla:
-  - Margen izquierdo: Canal L proyectándose hacia el centro.
-  - Margen derecho: Canal R proyectándose hacia el centro.
-- Deja todo el centro de la imagen libre para destacar al sujeto o personaje principal.
+### C. Lateral Vertical Spectrogram (Edge Inward)
+- The bars are aligned vertically along the left and right margins of the screen:
+  - Left margin: L Channel projecting towards the center.
+  - Right margin: R Channel projecting towards the center.
+- Leaves the whole center of the image free to highlight the main subject or character.
 
-### D. Osciloscopio Estéreo (Waveform Neon Lines)
-- Dibuja la forma de onda cruda en el dominio del tiempo con atenuación y persistencia:
-  - Trazado de línea brillante con desenfoque gaussiano superpuesto para efecto neón (*bloom*).
-  - Dos líneas entrelazadas (color Cyan para L, Magenta para R, mezclándose en Blanco aditivo en el centro).
+### D. Stereo Oscilloscope (Waveform Neon Lines)
+- Draws the raw time-domain waveform with attenuation and persistence:
+  - Bright line trace with an overlaid Gaussian blur for a neon effect (*bloom*).
+  - Two interlaced lines (Cyan for L, Magenta for R, blending into additive White in the center).
 
 ---
 
-## 3. Paletas de Color y Efecto Glow (Resplandor)
+## 3. Color Palettes and Glow Effect
 
-- **Gradientes de Color Preconfigurados**:
+- **Preconfigured Color Gradients**:
   - *Cyberpunk*: Cyan `#00f0ff` $\rightarrow$ Deep Purple `#7928ca` $\rightarrow$ Hot Pink `#ff007f`.
   - *Fire / Inferno*: Dark Red `#8b0000` $\rightarrow$ Orange `#ff4500` $\rightarrow$ Gold Yellow `#ffd700`.
   - *Synthwave / Sunset*: Orange Sunset `#ff5e36` $\rightarrow$ Violet `#9b51e0` $\rightarrow$ Electric Blue `#00c9ff`.
   - *Matrix / Toxic*: Dark Emerald `#004d40` $\rightarrow$ Neon Green `#00e676` $\rightarrow$ Electric Lime `#ccff00`.
-  - *Monochrome Pure*: Blanco `#ffffff` con opacidades decrecientes y brillo suave.
-  - *Custom Hex Palette*: Definible por el usuario en el archivo de configuración.
-- **Renderizado Anti-Aliased & Glow**:
-  - Renderizado vectorial de alta precisión con curvas suaves.
-  - El resplandor neón se simula mediante pases múltiples con radio creciente y opacidad decreciente (*Multi-pass Alpha Convolution*).
+  - *Monochrome Pure*: White `#ffffff` with decreasing opacities and soft brightness.
+  - *Custom Hex Palette*: User-definable in the configuration file.
+- **Anti-Aliased Rendering & Glow**:
+  - High-precision vector rendering with smooth curves.
+  - The neon glow is simulated with multiple passes of increasing radius and decreasing opacity (*Multi-pass Alpha Convolution*).

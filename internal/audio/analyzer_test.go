@@ -11,28 +11,28 @@ func TestDecodeAndAnalyze(t *testing.T) {
 	testAudio := filepath.Join("..", "..", "I didnt ask to be the devil.flac")
 	decoded, err := audio.DecodeAudio(testAudio, 1.0)
 	if err != nil {
-		t.Fatalf("Error decodificando audio: %v", err)
+		t.Fatalf("Error decoding audio: %v", err)
 	}
 
 	if decoded.SampleRate != 48000 {
-		t.Errorf("Se esperaba 48000Hz, se obtuvo %d", decoded.SampleRate)
+		t.Errorf("Expected 48000Hz, got %d", decoded.SampleRate)
 	}
 	if decoded.DurationSec < 10.0 {
-		t.Errorf("Duración inesperada: %f", decoded.DurationSec)
+		t.Errorf("Unexpected duration: %f", decoded.DurationSec)
 	}
 
-	t.Logf("Audio decodificado correctamente: Duración = %.2f s, Muestras = %d", decoded.DurationSec, len(decoded.Samples))
+	t.Logf("Audio decoded successfully: Duration = %.2f s, Samples = %d", decoded.DurationSec, len(decoded.Samples))
 
 	analyzer := audio.NewAudioAnalyzer(decoded, 60, 48, 1.0, 0.75, 0.12)
-	// Analizar los primeros 60 cuadros (1 segundo)
+	// Analyze the first 60 frames (1 second)
 	frames := analyzer.AnalyzeAllFrames(60)
 	if len(frames) != 60 {
-		t.Fatalf("Esperados 60 cuadros, obtenidos %d", len(frames))
+		t.Fatalf("Expected 60 frames, got %d", len(frames))
 	}
 
 	f0 := frames[0]
 	if len(f0.LeftBars) != 48 || len(f0.RightBars) != 48 {
-		t.Errorf("Tamaño de barras incorrecto: L=%d, R=%d", len(f0.LeftBars), len(f0.RightBars))
+		t.Errorf("Incorrect bar count: L=%d, R=%d", len(f0.LeftBars), len(f0.RightBars))
 	}
 
 	t.Logf("Frame 30 Bass=%.3f, Mid=%.3f, Treble=%.3f, L[0]=%.3f, R[0]=%.3f",

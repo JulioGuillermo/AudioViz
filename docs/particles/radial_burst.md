@@ -1,7 +1,7 @@
 # radial_burst
 
-Nacen cerca del centro y salen disparadas en todas direcciones. Con `react_to: bass` o `beat`, cada golpe
-las acelera y queda como una explosión.
+They spawn near the center and shoot out in all directions. With `react_to: bass` or `beat`, each beat
+speeds them up, so it looks like an explosion.
 
 ```yaml
 particles:
@@ -13,4 +13,4 @@ particles:
   color: "#ffffff"
   glow: true
 ```
-Opciones: ver [capas](README.md#opciones-de-cada-capa).
+Options: see [layers](README.md#per-layer-options).

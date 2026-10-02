@@ -1,7 +1,7 @@
-// Puente de Vulkan para ggml (whisper.cpp): el backend Vulkan solo importa estas 4 funciones
-// (el resto las obtiene con vkGetInstanceProcAddr). Aquí se resuelven cargando libvulkan en
-// tiempo de ejecución; si no existe, vkCreateInstance falla con un error y ggml usa la CPU.
-// Así el binario no depende de libvulkan para arrancar.
+// Vulkan bridge for ggml (whisper.cpp): the Vulkan backend only imports these 4 functions
+// (it gets the rest via vkGetInstanceProcAddr). Here they are resolved by loading libvulkan at
+// runtime; if it is missing, vkCreateInstance fails with an error and ggml falls back to the CPU.
+// This way the binary does not depend on libvulkan to start.
 #define VK_NO_PROTOTYPES
 #include <dlfcn.h>
 #include <pthread.h>
@@ -15,7 +15,7 @@ static PFN_vkGetInstanceProcAddr real_gipa;
 static pthread_once_t once = PTHREAD_ONCE_INIT;
 
 static void load(void) {
-    // Para probar el modo sin GPU: AUDIOVIZ_NO_VULKAN=1 simula que no hay libvulkan
+    // To test the no-GPU mode: AUDIOVIZ_NO_VULKAN=1 simulates a missing libvulkan
     const char *nv = getenv("AUDIOVIZ_NO_VULKAN");
     if (nv && *nv && *nv != '0') return;
     const char *names[] = {"libvulkan.so.1", "libvulkan.so", NULL};
@@ -45,7 +45,7 @@ static VKAPI_ATTR VkResult VKAPI_CALL no_enum_layers(uint32_t *n, VkLayerPropert
 VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance inst, const char *name) {
     pthread_once(&once, load);
     if (real_gipa) return real_gipa(inst, name);
-    // Sin Vulkan: funciones globales que fallan limpiamente
+    // No Vulkan: global functions that fail cleanly
     if (!strcmp(name, "vkCreateInstance")) return (PFN_vkVoidFunction)no_create_instance;
     if (!strcmp(name, "vkEnumerateInstanceVersion")) return (PFN_vkVoidFunction)no_enum_version;
     if (!strcmp(name, "vkEnumerateInstanceExtensionProperties")) return (PFN_vkVoidFunction)no_enum_ext;
@@ -53,7 +53,7 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance inst, 
     return NULL;
 }
 
-// Las demás solo se usan con una instancia ya creada (es decir, con libvulkan cargada)
+// The others are only used with an already created instance (i.e. with libvulkan loaded)
 static void *sym(const char *name) {
     pthread_once(&once, load);
     return lib ? dlsym(lib, name) : NULL;

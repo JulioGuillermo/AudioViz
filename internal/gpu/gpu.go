@@ -1,6 +1,6 @@
-// Package gpu renderiza cuadros completos con un compute shader Vulkan.
-// Vulkan es agnóstico de fabricante (Intel, AMD, NVIDIA, Apple vía MoltenVK...).
-// libvulkan se carga en tiempo de ejecución: si no existe, el motor cae a CPU.
+// Package gpu renders complete frames with a Vulkan compute shader.
+// Vulkan is vendor-agnostic (Intel, AMD, NVIDIA, Apple via MoltenVK...).
+// libvulkan is loaded at runtime: if it is missing, the engine falls back to CPU.
 package gpu
 
 /*
@@ -28,7 +28,7 @@ const (
 	MaxTextItems = 96
 )
 
-// Params refleja exactamente el bloque std430 'Params' de render.comp (todo vec4/ivec4)
+// Params mirrors exactly the std430 'Params' block in render.comp (all vec4/ivec4)
 type Params struct {
 	Dims, Flags, Flags2, Flags3 [4]int32
 	ZoomRipple                  [4]float32
@@ -46,32 +46,32 @@ type Params struct {
 	Parts                       [MaxParts][4]float32
 	PartCol                     [MaxParts][4]float32
 
-	// Letra
-	TextInfo                                         [4]int32 // nItems, atlasW, chroma(0/1), gradCount
-	TextStyle                                        [4]float32 // outlineW, glowRadius, glowIntensity, chromaPx
+	// Lyrics
+	TextInfo                                        [4]int32   // nItems, atlasW, chroma(0/1), gradCount
+	TextStyle                                       [4]float32 // outlineW, glowRadius, glowIntensity, chromaPx
 	TextColor, TextUpcoming, TextOutline, TextGlowC [4]float32
-	TextShadow                                       [4]float32 // dx, dy, opacidad, blur
-	TextShadowC                                      [4]float32
-	TextGrad                                         [MaxGrad][4]float32
-	TItemA                                           [MaxTextItems][4]float32 // atlas x, y, w, h
-	TItemB                                           [MaxTextItems][4]float32 // centro x, y, escala, alfa
-	TItemC                                           [MaxTextItems][4]float32 // relleno karaoke, pad
+	TextShadow                                      [4]float32 // dx, dy, opacity, blur
+	TextShadowC                                     [4]float32
+	TextGrad                                        [MaxGrad][4]float32
+	TItemA                                          [MaxTextItems][4]float32 // atlas x, y, w, h
+	TItemB                                          [MaxTextItems][4]float32 // center x, y, scale, alpha
+	TItemC                                          [MaxTextItems][4]float32 // karaoke fill, pad
 
-	BgMix [4]float32 // fundido hacia el fondo 2 (0..1), opacidad del visualizador, -, -
-	Prev  [4]int32   // preview: escala, ancho, alto (escala 0/1 = render normal)
+	BgMix [4]float32 // crossfade towards background 2 (0..1), visualizer opacity, -, -
+	Prev  [4]int32   // preview: scale, width, height (scale 0/1 = normal render)
 }
 
 type Renderer struct {
-	r            *C.vkr
-	Width        int
-	Height       int
-	PadW, PadH   int
-	Slots        int
-	DeviceName   string
-	spirv        unsafe.Pointer
+	r          *C.vkr
+	Width      int
+	Height     int
+	PadW, PadH int
+	Slots      int
+	DeviceName string
+	spirv      unsafe.Pointer
 }
 
-// ListDevices devuelve la lista de GPUs Vulkan visibles
+// ListDevices returns the list of visible Vulkan GPUs
 func ListDevices() string {
 	buf := make([]byte, 4096)
 	C.vkr_list_devices((*C.char)(unsafe.Pointer(&buf[0])), C.int(len(buf)))
@@ -80,7 +80,7 @@ func ListDevices() string {
 
 func align(v, a int) int { return (v + a - 1) / a * a }
 
-// New crea el renderer. deviceIndex -1 = automático.
+// New creates the renderer. deviceIndex -1 = automatic.
 func New(width, height, slots, deviceIndex int, textSize int) (*Renderer, error) {
 	g := &Renderer{Width: width, Height: height, PadW: align(width, 16), PadH: align(height, 16), Slots: slots}
 	g.spirv = C.CBytes(renderSPV)
@@ -111,30 +111,35 @@ func (g *Renderer) bytes(slot int, which C.int, n int) []byte {
 	return unsafe.Slice((*byte)(C.vkr_map(g.r, C.int(slot), which)), n)
 }
 
-// Background devuelve el buffer RGBA (W*H*4) del fondo del slot
-func (g *Renderer) Background(slot int) []byte { return g.bytes(slot, C.VKR_BUF_BG, g.Width*g.Height*4) }
+// Background returns the slot's background RGBA buffer (W*H*4)
+func (g *Renderer) Background(slot int) []byte {
+	return g.bytes(slot, C.VKR_BUF_BG, g.Width*g.Height*4)
+}
 
-// PlaneY / PlaneUV: salida NV12 (stride = PadW)
+// PlaneY / PlaneUV: NV12 output (stride = PadW)
 func (g *Renderer) PlaneY(slot int) unsafe.Pointer  { return C.vkr_map(g.r, C.int(slot), C.VKR_BUF_Y) }
 func (g *Renderer) PlaneUV(slot int) unsafe.Pointer { return C.vkr_map(g.r, C.int(slot), C.VKR_BUF_UV) }
-// Background2 es el fondo destino durante un fundido cruzado
-func (g *Renderer) Background2(slot int) []byte { return g.bytes(slot, C.VKR_BUF_BG2, g.Width*g.Height*4) }
 
-// Text devuelve el buffer del atlas SDF de la letra del slot
+// Background2 is the target background during a crossfade
+func (g *Renderer) Background2(slot int) []byte {
+	return g.bytes(slot, C.VKR_BUF_BG2, g.Width*g.Height*4)
+}
+
+// Text returns the slot's lyrics SDF atlas buffer
 func (g *Renderer) Text(slot, n int) []byte { return g.bytes(slot, C.VKR_BUF_TEXT, n) }
 
-func (g *Renderer) RGBA(slot int) []byte            { return g.bytes(slot, C.VKR_BUF_RGBA, g.Width*g.Height*4) }
+func (g *Renderer) RGBA(slot int) []byte { return g.bytes(slot, C.VKR_BUF_RGBA, g.Width*g.Height*4) }
 
 func (g *Renderer) Submit(slot int) error {
 	if C.vkr_submit(g.r, C.int(slot)) != 0 {
-		return fmt.Errorf("vkQueueSubmit falló")
+		return fmt.Errorf("vkQueueSubmit failed")
 	}
 	return nil
 }
 
 func (g *Renderer) Wait(slot int) error {
 	if C.vkr_wait(g.r, C.int(slot)) != 0 {
-		return fmt.Errorf("error esperando a la GPU (¿dispositivo perdido?)")
+		return fmt.Errorf("error waiting for the GPU (device lost?)")
 	}
 	return nil
 }

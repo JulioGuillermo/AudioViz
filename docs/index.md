@@ -1,63 +1,63 @@
-# AudioViz — Documentación
+# AudioViz — Documentation
 
-Generador de videos musicales reactivos al audio. Un único binario sin dependencias:
-render por **GPU (Vulkan, cualquier fabricante)** con caída automática a CPU, H.264 (x264 integrado)
-y audio FLAC sin pérdidas dentro de un MP4.
+Audio-reactive music video generator. A single binary with no dependencies:
+**GPU rendering (Vulkan, any vendor)** with automatic CPU fallback, H.264 (built-in x264)
+and lossless FLAC audio inside an MP4.
 
-## Empezar
-- **[AudioViz Studio](studio.md)**: interfaz gráfica con preview y línea de tiempo (`audioviz studio`)
-- [Línea de tiempo en el YAML](timeline.md): cambiar efectos, fondo, visualizador o letra en cada sección
-- [Línea de comandos](cli.md) — render, previews, cuadro suelto, selección de GPU
-- [Compilar](build.md)
-- [Estructura del proyecto YAML](#estructura-del-yaml)
+## Getting started
+- **[AudioViz Studio](studio.md)**: graphical interface with preview and timeline (`audioviz studio`)
+- [Timeline in the YAML](timeline.md): change effects, background, visualizer or lyrics in each section
+- [Command line](cli.md) — rendering, previews, single frames, GPU selection
+- [Building](build.md)
+- [YAML project structure](#yaml-structure)
 
-## Audio y reactividad
-- [Audio](audio.md) — formatos, volumen, sensibilidad
-- [Reactividad y normalización](reactividad.md) — `react_to` (bass/mid/treble/...) y normalización adaptativa
+## Audio and reactivity
+- [Audio](audio.md) — formats, volume, sensitivity
+- [Reactivity and normalization](reactivity.md) — `react_to` (bass/mid/treble/...) and adaptive normalization
 
-## Fondo — [visión general](background/README.md)
-| Efecto | Qué hace | Reacciona por defecto a |
+## Background — [overview](background/README.md)
+| Effect | What it does | Reacts by default to |
 |---|---|---|
-| [bass_zoom](background/bass_zoom.md) | Zoom pulsante desde el centro | graves |
-| [shake](background/shake.md) | Temblor/movimiento de cámara | graves |
-| [chromatic_aberration](background/chromatic_aberration.md) | Separación de canales RGB | graves |
-| [ripple](background/ripple.md) | Ondulación tipo agua / aire caliente | medios |
-| [glitch](background/glitch.md) | Franjas desplazadas (VHS) | golpes |
-| [color_flash](background/color_flash.md) | Flash de brillo y contraste | graves |
+| [bass_zoom](background/bass_zoom.md) | Pulsing zoom from the center | bass |
+| [shake](background/shake.md) | Camera shake/movement | bass |
+| [chromatic_aberration](background/chromatic_aberration.md) | RGB channel separation | bass |
+| [ripple](background/ripple.md) | Water / heat-haze ripple | mids |
+| [glitch](background/glitch.md) | Displaced stripes (VHS) | beats |
+| [color_flash](background/color_flash.md) | Brightness and contrast flash | bass |
 
-## Visualizador — [visión general](visualizer/README.md)
-| Tipo | Descripción |
+## Visualizer — [overview](visualizer/README.md)
+| Type | Description |
 |---|---|
-| [circular](visualizer/circular.md) | Anillo central, L a la izquierda y R a la derecha |
-| [horizontal](visualizer/horizontal.md) | Barras desde el centro hacia los lados |
-| [vertical](visualizer/vertical.md) | Barras desde los bordes laterales hacia dentro |
-| [oscilloscope](visualizer/oscilloscope.md) | Dos líneas de neón onduladas |
+| [circular](visualizer/circular.md) | Central ring, L on the left and R on the right |
+| [horizontal](visualizer/horizontal.md) | Bars from the center outwards to the sides |
+| [vertical](visualizer/vertical.md) | Bars from the side edges inwards |
+| [oscilloscope](visualizer/oscilloscope.md) | Two wavy neon lines |
 
-- [Colores y gradientes](visualizer/gradients.md) — por barra o a lo largo de la barra, relativo a la barra o al máximo
+- [Colors and gradients](visualizer/gradients.md) — per bar or along the bar, relative to the bar or to the maximum
 - [Glow](visualizer/README.md#glow)
 
-## Partículas — [visión general y capas](particles/README.md)
-| Tipo | Descripción |
+## Particles — [overview and layers](particles/README.md)
+| Type | Description |
 |---|---|
-| [rising_sparks](particles/rising_sparks.md) | Chispas que suben desde abajo (fuego) |
-| [radial_burst](particles/radial_burst.md) | Explosión desde el centro |
-| [ambient_dust](particles/ambient_dust.md) | Polvo flotando por toda la imagen |
+| [rising_sparks](particles/rising_sparks.md) | Sparks rising from the bottom (fire) |
+| [radial_burst](particles/radial_burst.md) | Burst from the center |
+| [ambient_dust](particles/ambient_dust.md) | Dust floating across the whole image |
 
-## Letra
-- [Letra sincronizada](lyrics/README.md): `.srt`, `.lrc` y LRC con tiempo por palabra. Karaoke, posiciones (top/bottom/left/right/side...), animaciones de entrada y salida, colores de fuego y reacción al audio
-- [Generar el .lrc con tiempo por palabra](lyrics/generar.md) a partir del audio y la letra en texto (formato Suno admitido), integrado en el binario · [paso a paso](lyrics/paso-a-paso.md)
+## Lyrics
+- [Synced lyrics](lyrics/README.md): `.srt`, `.lrc` and LRC with per-word timing. Karaoke, positions (top/bottom/left/right/side...), in and out animations, fire colors and audio reactivity
+- [Generate the per-word `.lrc`](lyrics/generate.md) from the audio and the plain-text lyrics (Suno format supported), built into the binary · [step by step](lyrics/step-by-step.md)
 
-## Salida
-- [Video de salida](output.md) — resolución, fps, calidad, GPU/CPU
+## Output
+- [Output video](output.md) — resolution, fps, quality, GPU/CPU
 
-## Estructura del YAML
+## YAML structure
 ```yaml
-audio:              # audio.md, reactividad.md
+audio:              # audio.md, reactivity.md
 background:         # background/README.md
-background_effects: # un bloque por efecto: background/*.md
+background_effects: # one block per effect: background/*.md
 visualizer:         # visualizer/*.md
 particles:          # particles/*.md
 lyrics:             # lyrics/README.md
 output:             # output.md
 ```
-Genera una plantilla con todo: `audioviz --init nuevo.yaml`. Las rutas son relativas al YAML.
+Generate a template with everything: `audioviz --init nuevo.yaml`. Paths are relative to the YAML.

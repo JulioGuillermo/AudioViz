@@ -1,5 +1,5 @@
-// Package lyrics carga letras sincronizadas (.srt, .lrc y LRC mejorado con tiempo por palabra)
-// y las prepara para dibujarlas animadas.
+// Package lyrics loads synchronized lyrics (.srt, .lrc and enhanced LRC with per-word timing)
+// and prepares them to be drawn animated.
 package lyrics
 
 import (
@@ -22,15 +22,15 @@ type Word struct {
 type Line struct {
 	Start, End float64
 	Words      []Word
-	// WordTimed indica que los tiempos de palabra vienen del archivo (LRC mejorado)
+	// WordTimed indicates that word timings come from the file (enhanced LRC)
 	WordTimed bool
 }
 
-// Load lee un .srt o .lrc. offset (s) se suma a todos los tiempos.
+// Load reads a .srt or .lrc. offset (s) is added to all timings.
 func Load(path string, offset float64) ([]Line, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("no se pudo leer la letra '%s': %w", path, err)
+		return nil, fmt.Errorf("could not read lyrics '%s': %w", path, err)
 	}
 	text := strings.TrimPrefix(string(data), "\uFEFF")
 	text = strings.ReplaceAll(text, "\r\n", "\n")
@@ -52,7 +52,7 @@ func Load(path string, offset float64) ([]Line, error) {
 		return nil, err
 	}
 	if len(lines) == 0 {
-		return nil, fmt.Errorf("la letra '%s' no contiene líneas con tiempo", path)
+		return nil, fmt.Errorf("lyrics '%s' contain no timed lines", path)
 	}
 	for i := range lines {
 		l := &lines[i]
@@ -127,7 +127,7 @@ func parseLRC(text string) ([]Line, error) {
 		if row == "" {
 			continue
 		}
-		// Una línea puede tener varias marcas de tiempo: [00:10.00][01:20.00]texto
+		// A line may have several timestamps: [00:10.00][01:20.00]text
 		var starts []float64
 		for {
 			m := lrcTag.FindStringSubmatch(row)
@@ -140,7 +140,7 @@ func parseLRC(text string) ([]Line, error) {
 		if len(starts) == 0 {
 			if m := lrcMeta.FindStringSubmatch(row); m != nil && strings.EqualFold(m[1], "offset") {
 				if ms, err := strconv.ParseFloat(strings.TrimSpace(m[2]), 64); err == nil {
-					// En LRC un offset positivo adelanta la letra
+					// In LRC a positive offset shifts the lyrics earlier
 					globalOffset = -ms / 1000
 				}
 			}
@@ -155,7 +155,7 @@ func parseLRC(text string) ([]Line, error) {
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Start < out[j].Start })
 
-	// Líneas vacías con tiempo marcan el final de la anterior
+	// Empty timed lines mark the end of the previous one
 	var res []Line
 	for i := range out {
 		if len(out[i].Words) == 0 {
@@ -173,8 +173,8 @@ func parseLRC(text string) ([]Line, error) {
 			next = res[i+1].Start
 		}
 		if l.End == 0 || l.End > next {
-			// Sin final explícito: hasta la siguiente línea, pero sin quedarse eternamente
-			// durante un solo instrumental
+			// No explicit end: until the next line, but without lingering forever
+			// during an instrumental solo
 			est := l.Start + 1.5 + 0.45*float64(len(l.Words))
 			if l.WordTimed {
 				est = l.Words[len(l.Words)-1].End + 1.2
@@ -194,7 +194,7 @@ func parseLRC(text string) ([]Line, error) {
 	return res, nil
 }
 
-// parseLRCBody separa las palabras; si hay marcas <mm:ss.xx> (LRC mejorado) se usan como tiempos
+// parseLRCBody splits the words; if there are <mm:ss.xx> tags (enhanced LRC) they are used as timings
 func parseLRCBody(body string, start float64) Line {
 	l := Line{Start: start}
 	locs := wordTag.FindAllStringSubmatchIndex(body, -1)
@@ -205,7 +205,7 @@ func parseLRCBody(body string, start float64) Line {
 		return l
 	}
 	l.WordTimed = true
-	// Texto antes de la primera marca: empieza con la línea
+	// Text before the first tag: starts with the line
 	type seg struct {
 		t    float64
 		text string
@@ -225,7 +225,7 @@ func parseLRCBody(body string, start float64) Line {
 	for i, s := range segs {
 		words := strings.Fields(s.text)
 		if len(words) == 0 {
-			// Marca final sin texto: fin de la palabra anterior
+			// Trailing tag without text: end of the previous word
 			if n := len(l.Words); n > 0 {
 				l.Words[n-1].End = s.t
 				l.End = s.t
@@ -236,7 +236,7 @@ func parseLRCBody(body string, start float64) Line {
 		if i+1 < len(segs) {
 			segEnd = segs[i+1].t
 		}
-		// Varias palabras bajo una misma marca: se reparten
+		// Several words under the same tag: split the time among them
 		step := (segEnd - s.t) / float64(len(words))
 		for k, w := range words {
 			l.Words = append(l.Words, Word{Text: w, Start: s.t + step*float64(k), End: s.t + step*float64(k+1)})
@@ -245,7 +245,7 @@ func parseLRCBody(body string, start float64) Line {
 	return l
 }
 
-// distribute reparte los tiempos de palabra según su longitud cuando el archivo solo da tiempos por línea
+// distribute assigns word timings by length when the file only provides per-line timings
 func distribute(l *Line, end float64) {
 	if len(l.Words) == 0 {
 		return

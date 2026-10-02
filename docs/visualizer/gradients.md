@@ -1,4 +1,4 @@
-# Colores y gradientes
+# Colors and gradients
 
 ```yaml
 visualizer:
@@ -11,28 +11,28 @@ visualizer:
     - { offset: 1.0, color: "#ffc04d" }
 ```
 
-`gradient` es una lista de paradas (`offset` 0–1, `color` hex `#rrggbb` o `#rrggbbaa`) interpoladas linealmente.
+`gradient` is a list of stops (`offset` 0–1, `color` hex `#rrggbb` or `#rrggbbaa`) interpolated linearly.
 
-## `gradient_axis`: dirección
-| Valor | Resultado |
+## `gradient_axis`: direction
+| Value | Result |
 |---|---|
-| `index` (def.) | **A lo ancho**: cada barra tiene un color sólido según su posición (graves = primer color, agudos = último). En `circular` recorre el anillo de arriba abajo |
-| `length` | **A lo largo de cada barra**: el primer color en la base y el último hacia la punta |
+| `index` (default) | **Across**: each bar has a solid color based on its position (bass = first color, treble = last). In `circular` it runs around the ring from top to bottom |
+| `length` | **Along each bar**: the first color at the base and the last towards the tip |
 
-## `gradient_fit`: referencia (solo con `length`)
-| Valor | Resultado |
+## `gradient_fit`: reference (only with `length`)
+| Value | Result |
 |---|---|
-| `bar` (def.) | El gradiente se estira a la altura de cada barra: **el último color siempre está en la punta** y se mueve con la gráfica. Todas las barras muestran todos los colores |
-| `max` | El gradiente va de la base a `max_height`: **el último color solo aparece cuando la barra llega al máximo**. Las barras bajas solo muestran los primeros colores (efecto termómetro / llama) |
+| `bar` (default) | The gradient is stretched to each bar's height: **the last color is always at the tip** and moves with the graph. Every bar shows all the colors |
+| `max` | The gradient runs from the base to `max_height`: **the last color only appears when the bar reaches the maximum**. Low bars only show the first colors (thermometer / flame effect) |
 
-Por tipo de visualizador, "a lo largo" significa:
-- `horizontal`: de la línea base hacia arriba (el reflejo, hacia abajo).
-- `vertical`: desde el borde lateral hacia el centro.
-- `circular`: desde el anillo hacia fuera.
-- `oscilloscope`: según la distancia a la línea central (`max_height` = último color).
+Per visualizer type, "along" means:
+- `horizontal`: from the baseline upwards (the reflection, downwards).
+- `vertical`: from the side edge towards the center.
+- `circular`: from the ring outwards.
+- `oscilloscope`: by distance from the center line (`max_height` = last color).
 
-## Ejemplos
-Fuego (rojo abajo, amarillo solo en los picos):
+## Examples
+Fire (red at the bottom, yellow only at the peaks):
 ```yaml
 gradient_axis: length
 gradient_fit: max
@@ -42,7 +42,7 @@ gradient:
   - { offset: 0.8, color: "#ff7a1a" }
   - { offset: 1.0, color: "#ffc04d" }
 ```
-Neón con punta siempre blanca:
+Neon with an always-white tip:
 ```yaml
 gradient_axis: length
 gradient_fit: bar

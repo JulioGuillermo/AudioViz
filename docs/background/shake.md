@@ -1,7 +1,7 @@
-# shake — movimiento de cámara
+# shake — camera movement
 
-Desplaza la imagen con un vaivén suave pseudoaleatorio (suma de senos) cuya amplitud sigue a la banda.
-Se añade automáticamente el zoom justo para que nunca se vean los bordes.
+Moves the image with a smooth pseudo-random sway (a sum of sines) whose amplitude follows the band.
+Just enough zoom is added automatically so the edges are never visible.
 
 ```yaml
 background_effects:
@@ -12,9 +12,9 @@ background_effects:
     react_to: "bass"
 ```
 
-| Campo | Def. | Descripción |
+| Field | Default | Description |
 |---|---|---|
-| `enabled` | false | Activa el efecto |
-| `amplitude` | — | Desplazamiento máximo en píxeles (4–10 sutil, 15+ agresivo) |
-| `speed` | 1.0 | Velocidad del movimiento |
-| `react_to` | bass | [Fuente](../reactividad.md). `beat` da sacudidas secas en cada golpe |
+| `enabled` | false | Enables the effect |
+| `amplitude` | — | Maximum displacement in pixels (4–10 subtle, 15+ aggressive) |
+| `speed` | 1.0 | Movement speed |
+| `react_to` | bass | [Source](../reactivity.md). `beat` gives sharp jolts on every beat |

@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-// ApplyColorAndContrast aplica ajustes de brillo, contraste, oscurecimiento y viñeta in-place y en paralelo
+// ApplyColorAndContrast applies brightness, contrast, darkening and vignette adjustments in-place and in parallel
 func ApplyColorAndContrast(img *image.RGBA, brightnessBoost, contrastBoost, darken, opacity, vignette float64) {
 	w := img.Bounds().Dx()
 	h := img.Bounds().Dy()

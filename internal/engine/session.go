@@ -17,8 +17,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Session es un proyecto cargado y listo para renderizar cualquier cuadro (preview) o
-// exportarlo entero. La comparten el CLI y el estudio.
+// Session is a loaded project, ready to render any frame (preview) or
+// export it whole. Shared by the CLI and the studio.
 type Session struct {
 	Cfg    *config.ProjectConfig
 	W, H   int
@@ -28,28 +28,28 @@ type Session struct {
 
 	Logf func(format string, args ...any)
 
-	mu        sync.Mutex
-	audioKey  string
-	feats     map[anaKey][]audio.FrameFeatures
-	baseKey   anaKey
-	media     map[string]video.BackgroundReader
-	lyr       *lyrics.Multi
-	lyrKey    string
-	LyrVer    int // cambia cada vez que se reconstruye el atlas de la letra
-	sim       particleSim
-	silent    []audio.FrameFeatures // cuando el proyecto aún no tiene audio
+	mu       sync.Mutex
+	audioKey string
+	feats    map[anaKey][]audio.FrameFeatures
+	baseKey  anaKey
+	media    map[string]video.BackgroundReader
+	lyr      *lyrics.Multi
+	lyrKey   string
+	LyrVer   int // changes every time the lyrics atlas is rebuilt
+	sim      particleSim
+	silent   []audio.FrameFeatures // when the project has no audio yet
 }
 
 type anaKey struct {
-	bars                       int
-	smoothing, decay, sens     float64
-	normalize                  bool
-	window                     float64
+	bars                   int
+	smoothing, decay, sens float64
+	normalize              bool
+	window                 float64
 }
 
-const silentDuration = 30.0 // s de línea de tiempo cuando no hay audio
+const silentDuration = 30.0 // seconds of timeline when there is no audio
 
-// Open carga el proyecto: audio, análisis, fondos y letra
+// Open loads the project: audio, analysis, backgrounds and lyrics
 func Open(cfg *config.ProjectConfig, logf func(string, ...any)) (*Session, error) {
 	if logf == nil {
 		logf = func(string, ...any) {}
@@ -71,26 +71,26 @@ func (s *Session) Close() {
 	}
 }
 
-// Update aplica una config nueva reutilizando todo lo que no ha cambiado (audio, análisis, fondos)
+// Update applies a new config, reusing everything that hasn't changed (audio, analysis, backgrounds)
 func (s *Session) Update(cfg *config.ProjectConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Resolución: la de salida o la del primer fondo
+	// Resolution: the output one or that of the first background
 	w, h := cfg.Output.Width, cfg.Output.Height
 	if w <= 0 || h <= 0 {
 		w, h = 1080, 1920
 		if p := cfg.Timeline.Background[0].Cfg.Path; p != "" {
 			probe, err := video.ProbeMedia(p)
 			if err != nil {
-				return fmt.Errorf("fondo: %w", err)
+				return fmt.Errorf("background: %w", err)
 			}
 			w, h = probe.Width, probe.Height
 		}
 	}
 	w, h = max(w/2*2, 16), max(h/2*2, 16)
 	if w != s.W || h != s.H {
-		// Los fondos están escalados a la resolución: hay que recargarlos
+		// Backgrounds are scaled to the resolution: they must be reloaded
 		for k, r := range s.media {
 			r.Close()
 			delete(s.media, k)
@@ -134,7 +134,7 @@ func (s *Session) Update(cfg *config.ProjectConfig) error {
 		return err
 	}
 
-	// Letra: se reconstruye solo si cambia su pista
+	// Lyrics: rebuilt only if their track changes
 	lk := ""
 	if b, err := yaml.Marshal(cfg.Timeline.Lyrics); err == nil {
 		lk = fmt.Sprintf("%dx%d|%s", w, h, b)
@@ -155,7 +155,7 @@ func (s *Session) Update(cfg *config.ProjectConfig) error {
 				return err
 			}
 			s.lyr = m
-			s.Logf("🎤 Letra: atlas %dx%d (%v)", m.Atlas.W, m.Atlas.H, time.Since(t0).Round(time.Millisecond))
+			s.Logf("🎤 Lyrics: atlas %dx%d (%v)", m.Atlas.W, m.Atlas.H, time.Since(t0).Round(time.Millisecond))
 		}
 		s.lyrKey = lk
 		s.LyrVer++
@@ -169,7 +169,7 @@ func (s *Session) keyFor(v *config.VisualizerConfig) anaKey {
 	return anaKey{bars: v.Bars, smoothing: v.Smoothing, decay: v.DecayRate, sens: a.Sensitivity, normalize: a.Normalize, window: a.NormalizeWindow}
 }
 
-// featuresLocked devuelve (calculándolo una vez) el análisis para unos parámetros de barras
+// featuresLocked returns (computing it once) the analysis for a set of bar parameters
 func (s *Session) featuresLocked(k anaKey) ([]audio.FrameFeatures, error) {
 	if f, ok := s.feats[k]; ok {
 		return f, nil
@@ -192,11 +192,11 @@ func (s *Session) featuresLocked(k anaKey) ([]audio.FrameFeatures, error) {
 	an.WindowSec = k.window
 	f := an.AnalyzeAllFrames(s.Frames)
 	s.feats[k] = f
-	s.Logf("⚡ Análisis (%d bandas, %d cuadros) en %v", k.bars, s.Frames, time.Since(t0).Round(time.Millisecond))
+	s.Logf("⚡ Analysis (%d bands, %d frames) in %v", k.bars, s.Frames, time.Since(t0).Round(time.Millisecond))
 	return f, nil
 }
 
-// Features devuelve el análisis base (energías por cuadro) para el estudio
+// Features returns the base analysis (per-frame energies) for the studio
 func (s *Session) Features() []audio.FrameFeatures {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -220,18 +220,18 @@ func (s *Session) mediaFor(bg *config.BackgroundConfig) (video.BackgroundReader,
 	return r, nil
 }
 
-// ---------------------------------------------------------------- estado de un cuadro
+// ---------------------------------------------------------------- frame state
 
-// FrameState es todo lo necesario para dibujar un cuadro, ya resuelto en la línea de tiempo
+// FrameState is everything needed to draw a frame, already resolved on the timeline
 type FrameState struct {
 	Idx  int
 	T    float64
-	Feat *audio.FrameFeatures // energías (análisis base)
+	Feat *audio.FrameFeatures // energies (base analysis)
 
 	FX frameFX
-	BG config.BackgroundConfig // oscurecer/opacidad/viñeta (interpolados)
-	// Imágenes de fondo: A siempre; B y Mix durante un fundido cruzado. Ver* identifica la imagen
-	// para no volver a subirla a la GPU si no ha cambiado.
+	BG config.BackgroundConfig // darken/opacity/vignette (interpolated)
+	// Background images: A always; B and Mix during a crossfade. Ver* identifies the image
+	// so it isn't re-uploaded to the GPU if unchanged.
 	BgA, BgB     *image.RGBA
 	VerA, VerB   string
 	BgMix        float64
@@ -248,8 +248,8 @@ type FrameState struct {
 
 func lerp(a, b, k float64) float64 { return a + (b-a)*k }
 
-// Prepare calcula el estado del cuadro idx. Las partículas avanzan de forma continua si los
-// cuadros se piden en orden; si se salta en el tiempo se re-simulan unos segundos antes.
+// Prepare computes the state of frame idx. Particles advance continuously if frames
+// are requested in order; on a time jump they are re-simulated from a few seconds earlier.
 func (s *Session) Prepare(idx int) (*FrameState, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -263,10 +263,10 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 	}
 	fs := &FrameState{Idx: idx, T: t, Feat: &base[idx]}
 
-	// Efectos del fondo: se mezclan sus resultados (así activar/desactivar también se funde)
+	// Background effects: their results are blended (so enabling/disabling also fades)
 	fs.FX, fs.GlitchAmount = s.effectsAt(t, idx, fs.Feat)
 
-	// Fondo (con fundido cruzado entre medios)
+	// Background (with crossfade between media)
 	bi := config.Active(tl.Background, t)
 	pbg, cbg, k := config.Blend(tl.Background, t)
 	fs.BG = config.Lerp(pbg, cbg, k)
@@ -285,14 +285,14 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 		}
 		if rb != nil {
 			img, ver := rb.FrameAt(t - tl.Background[bi-1].At)
-			// A = anterior, B = nuevo, Mix = k
+			// A = previous, B = new, Mix = k
 			fs.BgB, fs.VerB = fs.BgA, fs.VerA
 			fs.BgA, fs.VerA = img, fmt.Sprintf("%p:%d", rb, ver)
 			fs.BgMix = k
 		}
 	}
 
-	// Visualizador: mismo tipo -> se interpola; cambio de tipo -> se apaga uno y se enciende el otro
+	// Visualizer: same type -> interpolate; type change -> one fades out and the other fades in
 	pv, cv, kv := config.Blend(tl.Visualizer, t)
 	fs.VizAlpha = 1
 	switch {
@@ -313,13 +313,13 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 	}
 	fs.VizFeat = &vf[idx]
 
-	// Partículas
+	// Particles
 	s.stepParticles(idx, base)
 	for _, e := range s.sim.entries {
 		fs.Parts = append(fs.Parts, e.ps)
 	}
 
-	// Letra
+	// Lyrics
 	if s.lyr != nil {
 		pl, cl, kl := config.Blend(tl.Lyrics, t)
 		fs.Lyr, fs.LyrSt = s.lyr, config.Lerp(pl, cl, kl)
@@ -327,7 +327,7 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 	return fs, nil
 }
 
-// ---------------------------------------------------------------- efectos de fondo
+// ---------------------------------------------------------------- background effects
 
 type fxPart struct {
 	zoom, shakeX, shakeY, shakeZoom float64
@@ -360,7 +360,7 @@ func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures) (fram
 		}
 		fx.zoom = lerp(z(a), z(b), k)
 	}
-	// Temblor
+	// Shake
 	{
 		a, b, k := config.Blend(tl.Shake, t)
 		sh := func(c *config.ShakeConfig) (float64, float64, float64) {
@@ -382,7 +382,7 @@ func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures) (fram
 		fx.shakeX, fx.shakeY = lerp(ax, bx, k), lerp(ay, by, k)
 		fx.zoom *= lerp(az, bz, k)
 	}
-	// Ondulación
+	// Ripple
 	{
 		a, b, k := config.Blend(tl.Ripple, t)
 		r := func(c *config.RippleConfig) (float64, float64, float64) {
@@ -400,7 +400,7 @@ func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures) (fram
 			fx.rippleFreq, fx.rTim = af, at
 		}
 	}
-	// Aberración cromática
+	// Chromatic aberration
 	{
 		a, b, k := config.Blend(tl.Chromatic, t)
 		ch := func(c *config.ChromaticAberrationConfig) (float64, int) {
@@ -441,7 +441,7 @@ func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures) (fram
 		fx.glitch = on(c)
 		glitchAmt = c.Intensity
 	}
-	// Flash de color
+	// Color flash
 	{
 		a, b, k := config.Blend(tl.ColorFlash, t)
 		fl := func(c *config.ColorFlashConfig) (float64, float64) {
@@ -458,7 +458,7 @@ func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures) (fram
 	return fx, glitchAmt
 }
 
-// ---------------------------------------------------------------- partículas
+// ---------------------------------------------------------------- particles
 
 type partEntry struct {
 	seg int
@@ -473,7 +473,7 @@ type particleSim struct {
 func (s *Session) stepParticles(idx int, feats []audio.FrameFeatures) {
 	from := s.sim.last + 1
 	if s.sim.last < 0 || idx < s.sim.last || idx-s.sim.last > 600 {
-		// Salto en el tiempo: re-simular desde unos segundos antes (las partículas viven < 5 s)
+		// Time jump: re-simulate from a few seconds earlier (particles live < 5 s)
 		s.sim = particleSim{last: -1}
 		from = max(0, idx-5*s.FPS)
 	}
@@ -527,8 +527,8 @@ func (s *Session) stepParticle(i int, feat *audio.FrameFeatures, fresh bool) {
 	s.sim.entries = alive
 }
 
-// Fork crea una sesión independiente con una copia de la config actual que reutiliza el audio
-// y los análisis ya calculados (para exportar mientras se sigue editando)
+// Fork creates an independent session with a copy of the current config, reusing the audio
+// and already computed analyses (to export while editing continues)
 func (s *Session) Fork() (*Session, error) {
 	s.mu.Lock()
 	b, err := s.Cfg.Marshal()
@@ -553,5 +553,5 @@ func (s *Session) Fork() (*Session, error) {
 	return ns, nil
 }
 
-// Duration devuelve la duración de la línea de tiempo en segundos
+// Duration returns the timeline duration in seconds
 func (s *Session) Duration() float64 { return float64(s.Frames) / float64(s.FPS) }

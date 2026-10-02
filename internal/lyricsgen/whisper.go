@@ -19,14 +19,14 @@ static void wh_progress(struct whisper_context *ctx, struct whisper_state *st, i
 static bool wh_abort(void *ud) { return *(volatile int *)ud != 0; }
 static bool wh_abort_enc(struct whisper_context *ctx, struct whisper_state *st, void *ud) {
     (void)ctx; (void)st;
-    return *(volatile int *)ud == 0; // true = continuar
+    return *(volatile int *)ud == 0; // true = continue
 }
 
 static struct whisper_context *wh_open(const char *path, int gpu, int aheads) {
     struct whisper_context_params cp = whisper_context_default_params();
     cp.use_gpu = gpu;
-    cp.flash_attn = false;              // DTW necesita las atenciones
-    cp.dtw_token_timestamps = true;      // tiempos por palabra precisos
+    cp.flash_attn = false;              // DTW needs the attention weights
+    cp.dtw_token_timestamps = true;      // accurate per-word timings
     cp.dtw_aheads_preset = (enum whisper_alignment_heads_preset)aheads;
     return whisper_init_from_file_with_params(path, cp);
 }
@@ -53,7 +53,7 @@ static int wh_run(struct whisper_context *ctx, const float *pcm, int n, int thre
     return whisper_full(ctx, p, pcm, n);
 }
 
-// Dispositivo de cálculo en uso (para mostrarlo en la interfaz)
+// Compute device in use (to show it in the UI)
 static const char *wh_device(void) {
     for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
         ggml_backend_dev_t d = ggml_backend_dev_get(i);
@@ -75,27 +75,27 @@ import (
 	"unsafe"
 )
 
-// Word es una palabra reconocida con su instante (s)
+// Word is a recognized word with its timestamp (s)
 type Word struct {
 	Text       string
 	Start, End float64
 	Prob       float64
-	T0, DTW    float64 // tiempos crudos de whisper (depuración)
+	T0, DTW    float64 // raw whisper timings (debugging)
 }
 
 type Whisper struct {
 	ctx *C.struct_whisper_context
 	mu  sync.Mutex
-	// Device es la GPU usada (o "CPU")
+	// Device is the GPU in use (or "CPU")
 	Device string
 }
 
 var silenceOnce sync.Once
 
-// DTWBias: adelanto aplicado a los tiempos DTW (s)
+// DTWBias: lead applied to the DTW timings (s)
 var DTWBias = 0.40
 
-// OpenWhisper carga un modelo ggml de whisper. aheads: preset de cabezas de alineamiento para DTW.
+// OpenWhisper loads a whisper ggml model. aheads: alignment-heads preset for DTW.
 func OpenWhisper(path string, aheads int, gpu bool) (*Whisper, error) {
 	silenceOnce.Do(func() { C.wh_silence() })
 	cp := C.CString(path)
@@ -106,7 +106,7 @@ func OpenWhisper(path string, aheads int, gpu bool) (*Whisper, error) {
 	}
 	ctx := C.wh_open(cp, g, C.int(aheads))
 	if ctx == nil {
-		return nil, fmt.Errorf("no se pudo cargar el modelo de reconocimiento %s", path)
+		return nil, fmt.Errorf("could not load the recognition model %s", path)
 	}
 	dev := "CPU"
 	if gpu {
@@ -122,8 +122,8 @@ func (w *Whisper) Close() {
 	}
 }
 
-// Transcribe reconoce pcm (16 kHz mono) y devuelve las palabras con tiempos (+offset s).
-// progress recibe 0..1. prompt orienta el reconocimiento (p. ej. la letra esperada).
+// Transcribe recognizes pcm (16 kHz mono) and returns the words with timings (+offset s).
+// progress receives 0..1. prompt guides the recognition (e.g. the expected lyrics).
 func (w *Whisper) Transcribe(ctx context.Context, pcm []float32, offset float64, lang, prompt string, progress func(float64)) ([]Word, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -134,7 +134,7 @@ func (w *Whisper) Transcribe(ctx context.Context, pcm []float32, offset float64,
 	cpcm := (*C.float)(C.malloc(C.size_t(n * 4)))
 	defer C.free(unsafe.Pointer(cpcm))
 	copy(unsafe.Slice((*float32)(unsafe.Pointer(cpcm)), n), pcm)
-	flags := (*C.int)(C.calloc(2, 4)) // [0] progreso %, [1] cancelar
+	flags := (*C.int)(C.calloc(2, 4)) // [0] progress %, [1] cancel
 	defer C.free(unsafe.Pointer(flags))
 	fl := unsafe.Slice((*int32)(unsafe.Pointer(flags)), 2)
 	clang := C.CString(lang)
@@ -171,13 +171,13 @@ loop:
 		return nil, ctx.Err()
 	}
 	if ret != 0 {
-		return nil, fmt.Errorf("el reconocimiento de voz falló (%d)", int(ret))
+		return nil, fmt.Errorf("speech recognition failed (%d)", int(ret))
 	}
 	if progress != nil {
 		progress(1)
 	}
 
-	// Agrupar tokens en palabras (un token que empieza por espacio abre palabra nueva)
+	// Group tokens into words (a token starting with a space opens a new word)
 	var words []Word
 	eot := C.whisper_token_eot(w.ctx)
 	nseg := int(C.whisper_full_n_segments(w.ctx))
@@ -195,10 +195,10 @@ loop:
 			}
 			t0 := float64(td.t0) / 100
 			dtw := float64(td.t_dtw) / 100
-			// El instante DTW llega sistemáticamente ~0,4 s tarde respecto al inicio real de la
-			// palabra (medido contra un alineado forzado); se compensa.
+			// The DTW timestamp is systematically ~0.4 s late relative to the real start of the
+			// word (measured against a forced alignment); compensate for it.
 			at := dtw - DTWBias
-			// DTW no fiable: sin dato, o fuera del segmento (pasa al final del audio)
+			// Unreliable DTW: no data, or outside the segment (happens at the end of the audio)
 			if td.t_dtw < 0 || dtw > segT1+0.5 {
 				at = t0
 			}
@@ -214,7 +214,7 @@ loop:
 			}
 		}
 	}
-	// Fin de cada palabra = inicio de la siguiente (se recorta luego con la energía de la voz)
+	// End of each word = start of the next one (trimmed later using the voice energy)
 	for i := 0; i+1 < len(words); i++ {
 		if words[i+1].Start > words[i].Start {
 			words[i].End = words[i+1].Start

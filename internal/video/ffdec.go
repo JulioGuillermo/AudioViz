@@ -17,12 +17,12 @@ typedef struct {
     AVFrame *frm;
     AVPacket *pkt;
     struct SwsContext *sws;
-    int sw, sh, sfmt;     // origen del sws actual
-    int dw, dh;           // tamaño escalado
+    int sw, sh, sfmt;     // source of the current sws
+    int dw, dh;           // scaled size
     double tb;
     double duration;
     double fps;
-    double pts;           // instante (s) del último cuadro decodificado
+    double pts;           // time (s) of the last decoded frame
     int eof;
 } vdec;
 
@@ -36,16 +36,16 @@ static int vd_err(char *err, int len, const char *what, int code) {
 static int vd_open(vdec *v, const char *path, char *err, int errlen) {
     memset(v, 0, sizeof *v);
     int r = avformat_open_input(&v->fmt, path, NULL, NULL);
-    if (r < 0) return vd_err(err, errlen, "no se pudo abrir el vídeo", r);
-    if ((r = avformat_find_stream_info(v->fmt, NULL)) < 0) return vd_err(err, errlen, "info del vídeo", r);
+    if (r < 0) return vd_err(err, errlen, "could not open video", r);
+    if ((r = avformat_find_stream_info(v->fmt, NULL)) < 0) return vd_err(err, errlen, "video info", r);
     const AVCodec *codec = NULL;
     v->vs = av_find_best_stream(v->fmt, AVMEDIA_TYPE_VIDEO, -1, -1, &codec, 0);
-    if (v->vs < 0 || !codec) { snprintf(err, errlen, "el archivo no tiene una pista de vídeo soportada"); return -1; }
+    if (v->vs < 0 || !codec) { snprintf(err, errlen, "the file has no supported video stream"); return -1; }
     AVStream *st = v->fmt->streams[v->vs];
     v->dec = avcodec_alloc_context3(codec);
     avcodec_parameters_to_context(v->dec, st->codecpar);
-    v->dec->thread_count = 0; // automático
-    if ((r = avcodec_open2(v->dec, codec, NULL)) < 0) return vd_err(err, errlen, "decodificador", r);
+    v->dec->thread_count = 0; // automatic
+    if ((r = avcodec_open2(v->dec, codec, NULL)) < 0) return vd_err(err, errlen, "decoder", r);
     v->tb = av_q2d(st->time_base);
     v->duration = v->fmt->duration > 0 ? v->fmt->duration / (double)AV_TIME_BASE
                 : (st->duration > 0 ? st->duration * v->tb : 0);
@@ -59,7 +59,7 @@ static int vd_open(vdec *v, const char *path, char *err, int errlen) {
 
 static void vd_size(vdec *v, int *w, int *h) { *w = v->dec->width; *h = v->dec->height; }
 
-// Decodifica el siguiente cuadro. 1 = ok, 0 = fin, <0 = error
+// Decodes the next frame. 1 = ok, 0 = end, <0 = error
 static int vd_next(vdec *v) {
     for (;;) {
         int r = avcodec_receive_frame(v->dec, v->frm);
@@ -89,7 +89,7 @@ static int vd_seek(vdec *v, double t) {
     return r;
 }
 
-// Escala el último cuadro a dw x dh RGBA en out (stride dw*4)
+// Scales the last frame to dw x dh RGBA into out (stride dw*4)
 static int vd_scale(vdec *v, int dw, int dh, uint8_t *out) {
     AVFrame *f = v->frm;
     if (!v->sws || v->sw != f->width || v->sh != f->height || v->sfmt != f->format || v->dw != dw || v->dh != dh) {
@@ -121,14 +121,14 @@ import (
 	"unsafe"
 )
 
-// videoReader decodifica un vídeo de fondo con el FFmpeg mínimo enlazado estáticamente
+// videoReader decodes a background video with the minimal statically linked FFmpeg
 type videoReader struct {
 	v        *C.vdec
-	w, h     int // salida
+	w, h     int // output
 	srcW     int
 	srcH     int
-	dw, dh   int // tamaño escalado
-	ox, oy   int // posición del escalado dentro de la salida (puede ser negativa: recorte)
+	dw, dh   int // scaled size
+	ox, oy   int // position of the scaled image within the output (may be negative: cropping)
 	canvas   *image.RGBA
 	scaled   []byte
 	sbuf     unsafe.Pointer
@@ -205,7 +205,7 @@ func (r *videoReader) decodeNext() bool {
 	return false
 }
 
-// FrameAt devuelve el cuadro del vídeo en el instante t (s desde que empieza su tramo)
+// FrameAt returns the video frame at time t (s since its segment starts)
 func (r *videoReader) FrameAt(t float64) (*image.RGBA, int) {
 	if t < 0 {
 		t = 0
@@ -216,7 +216,7 @@ func (r *videoReader) FrameAt(t float64) (*image.RGBA, int) {
 	cur := float64(r.v.pts)
 	half := 0.5 / math.Max(r.fps, 1)
 	if !r.have || t < cur-half || t > cur+2.0 {
-		// Salto: buscar el keyframe anterior y decodificar hasta t
+		// Seek: find the previous keyframe and decode up to t
 		C.vd_seek(r.v, C.double(t))
 		if !r.decodeNext() {
 			return r.canvas, r.ver
@@ -231,7 +231,7 @@ func (r *videoReader) FrameAt(t float64) (*image.RGBA, int) {
 		}
 		cur = float64(r.v.pts)
 		changed = true
-		if cur < before { // dio la vuelta (bucle)
+		if cur < before { // wrapped around (loop)
 			break
 		}
 	}
@@ -247,7 +247,7 @@ func (r *videoReader) blit() {
 	if C.vd_scale(r.v, C.int(r.dw), C.int(r.dh), (*C.uint8_t)(r.sbuf)) != 0 {
 		return
 	}
-	// Copiar la zona visible (recorte en cover, bandas negras en contain)
+	// Copy the visible area (crop in cover, black bars in contain)
 	x0, y0 := max(r.ox, 0), max(r.oy, 0)
 	x1, y1 := min(r.ox+r.dw, r.w), min(r.oy+r.dh, r.h)
 	for y := y0; y < y1; y++ {

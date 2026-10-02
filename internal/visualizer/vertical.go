@@ -10,8 +10,8 @@ import (
 )
 
 type VerticalVisualizer struct {
-	cfg    *config.VisualizerConfig
-	width  int
+	cfg     *config.VisualizerConfig
+	width   int
 	height  int
 	pattern gg.Pattern
 }
@@ -35,11 +35,11 @@ func (vv *VerticalVisualizer) Draw(dc *gg.Context, feat *audio.FrameFeatures) {
 	}
 
 	totalH := float64(vv.height) * 0.80
-	startY := float64(vv.height)*0.10
+	startY := float64(vv.height) * 0.10
 	totalBarSpan := totalH / float64(barCount)
 	barHeight := totalBarSpan * 0.70
 
-	// Glow si está activo
+	// Glow if enabled
 	if vv.cfg.Glow.Enabled {
 		glowPasses := 3
 		for p := glowPasses; p >= 1; p-- {
@@ -60,13 +60,13 @@ func (vv *VerticalVisualizer) renderBars(dc *gg.Context, feat *audio.FrameFeatur
 		t := float64(i) / float64(barCount)
 		col := vv.getColor(t, alpha)
 
-		// Canal L: Borde izquierdo proyectándose hacia adentro (+X)
+		// L channel: left edge projecting inward (+X)
 		magL := feat.LeftBars[i]
 		lenL := vv.cfg.MinHeight + magL*(vv.cfg.MaxHeight-vv.cfg.MinHeight)
 		vv.pattern = AlongPattern(vv.cfg, 0, y, 1, 0, lenL, alpha)
 		vv.drawHBar(dc, 0, y, lenL, barHeight, col)
 
-		// Canal R: Borde derecho proyectándose hacia adentro (-X)
+		// R channel: right edge projecting inward (-X)
 		magR := feat.RightBars[i]
 		lenR := vv.cfg.MinHeight + magR*(vv.cfg.MaxHeight-vv.cfg.MinHeight)
 		vv.pattern = AlongPattern(vv.cfg, float64(vv.width), y, -1, 0, lenR, alpha)

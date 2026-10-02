@@ -7,17 +7,17 @@ import (
 	"audioviz/internal/config"
 )
 
-// Multi reúne varios estilos de letra a lo largo de la canción (pista "lyrics" de la línea de tiempo).
-// Cada línea usa la maquetación (fuente, posición, animaciones) del tramo en el que empieza;
-// los colores y la reacción al audio siguen al tramo activo en cada instante.
+// Multi combines several lyrics styles across the song ("lyrics" track of the timeline).
+// Each line uses the layout (font, position, animations) of the segment it starts in;
+// colors and audio reaction follow the segment active at each instant.
 type Multi struct {
 	Atlas Atlas
 	subs  []*Engine
-	offs  []int // desplazamiento vertical de cada sub-atlas dentro del atlas combinado
+	offs  []int // vertical offset of each sub-atlas within the combined atlas
 	draw  *Engine
 }
 
-// NewMulti carga la letra (ruta y desfase del primer tramo) y la reparte entre los tramos
+// NewMulti loads the lyrics (path and offset of the first segment) and distributes them among the segments
 func NewMulti(segs []config.Seg[config.LyricsConfig], w, h int) (*Multi, error) {
 	base := &segs[0].Cfg
 	lines, err := Load(base.Path, base.Offset)
@@ -52,7 +52,7 @@ func NewMulti(segs []config.Seg[config.LyricsConfig], w, h int) (*Multi, error) 
 	return m, nil
 }
 
-// Frame devuelve las palabras visibles en t (coordenadas del atlas combinado)
+// Frame returns the words visible at t (combined atlas coordinates)
 func (m *Multi) Frame(t float64, feat *audio.FrameFeatures) []Item {
 	var items []Item
 	for i, e := range m.subs {
@@ -67,5 +67,5 @@ func (m *Multi) Frame(t float64, feat *audio.FrameFeatures) []Item {
 	return items
 }
 
-// DrawCPU compone la letra sobre la imagen (render por CPU)
+// DrawCPU composites the lyrics onto the image (CPU render)
 func (m *Multi) DrawCPU(img *image.RGBA, items []Item, st Style) { m.draw.DrawCPU(img, items, st) }

@@ -1,24 +1,24 @@
-# Compilar
+# Building
 
 ```bash
 ./build.sh
 ```
-Genera `./audioviz`, que solo depende de libc. x264 y un FFmpeg mínimo (solo decodificación de
-vídeo) se descargan y compilan una vez como librerías estáticas (`third_party/`) y quedan dentro
-del binario, igual que la interfaz web del estudio.
+Produces `./audioviz`, which depends only on libc. x264 and a minimal FFmpeg (video decoding
+only) are downloaded and built once as static libraries (`third_party/`) and end up inside
+the binary, just like the studio's web interface.
 
-Requisitos **solo para compilar**: `go`, `gcc`/`g++`, `cmake`, `nasm`, `git`, cabeceras de Vulkan
-(`vulkan-headers`) y `glslc` (para los shaders de Whisper y, si se modifica, `internal/gpu/shaders/render.comp`).
+Requirements **for building only**: `go`, `gcc`/`g++`, `cmake`, `nasm`, `git`, Vulkan headers
+(`vulkan-headers`) and `glslc` (for the Whisper shaders and, if you modify it, `internal/gpu/shaders/render.comp`).
 
-Se compilan como librerías estáticas, una sola vez:
-- `scripts/build-x264.sh`: x264 (codificación H.264)
-- `scripts/build-ffmpeg.sh`: FFmpeg mínimo (solo decodificar fondos de vídeo)
-- `scripts/build-ml.sh`: whisper.cpp con backend Vulkan (reconocimiento de voz) y demucs.cpp (separación de voz)
+These are built as static libraries, only once:
+- `scripts/build-x264.sh`: x264 (H.264 encoding)
+- `scripts/build-ffmpeg.sh`: minimal FFmpeg (only for decoding video backgrounds)
+- `scripts/build-ml.sh`: whisper.cpp with the Vulkan backend (speech recognition) and demucs.cpp (vocal separation)
 
-`libstdc++` y `libgcc` se enlazan estáticos y `libvulkan` se carga en ejecución solo si existe, así que el
-binario resultante solo depende de libc.
+`libstdc++` and `libgcc` are linked statically and `libvulkan` is loaded at runtime only if present, so the
+resulting binary depends only on libc.
 
-Para ejecutar no hace falta nada instalado. La GPU se usa a través del driver Vulkan del sistema
-(parte del driver gráfico); si no existe, el render cae a CPU automáticamente.
+Nothing needs to be installed to run it. The GPU is used through the system's Vulkan driver
+(part of the graphics driver); if there is none, rendering falls back to the CPU automatically.
 
-Licencia: x264 es GPL, por lo que el binario resultante también lo es (FFmpeg se compila en modo LGPL).
+License: x264 is GPL, so the resulting binary is GPL too (FFmpeg is built in LGPL mode).

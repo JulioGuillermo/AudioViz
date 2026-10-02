@@ -1,7 +1,7 @@
 # horizontal
 
-Barras verticales que salen de una línea base: canal L del centro hacia la izquierda, R del centro hacia la
-derecha (graves en el centro). Si no caben, el ancho se ajusta solo.
+Vertical bars rising from a baseline: the L channel from the center to the left, R from the center to the
+right (bass in the center). If they don't fit, the width adjusts automatically.
 
 ```yaml
 visualizer:
@@ -10,10 +10,10 @@ visualizer:
   mirror_bottom: true
 ```
 
-| Campo | Def. | Descripción |
+| Field | Default | Description |
 |---|---|---|
-| `position_y` | 0.85 | Altura relativa de la línea base (1.0 = borde inferior) |
-| `mirror_bottom` | true | Reflejo hacia abajo (mitad de altura, 35 % de opacidad) |
-| `center_gap` | 2 × `bar_gap` | Separación en px entre la primera barra L y la primera R, en el centro (0 = pegadas) |
+| `position_y` | 0.85 | Relative height of the baseline (1.0 = bottom edge) |
+| `mirror_bottom` | true | Downward reflection (half height, 35 % opacity) |
+| `center_gap` | 2 × `bar_gap` | Gap in px between the first L bar and the first R bar, in the center (0 = touching) |
 
-Más las [opciones comunes](README.md#opciones-comunes) (`bar_width`, `bar_gap`, `roundness`...).
+Plus the [common options](README.md#common-options) (`bar_width`, `bar_gap`, `roundness`...).

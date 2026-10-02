@@ -1,6 +1,6 @@
-// Envoltorio C de demucs.cpp: separa la voz de una canción estéreo a 44,1 kHz usando N hilos.
-// Cada hilo procesa un trozo con solape y se mezclan con rampas. El progreso de cada hilo se
-// escribe en progress[i] (0..1) y *cancel != 0 aborta en cuanto el modelo informa progreso.
+// C wrapper for demucs.cpp: separates the vocals of a 44.1 kHz stereo song using N threads.
+// Each thread processes an overlapping chunk and the chunks are blended with ramps. Each thread's
+// progress is written to progress[i] (0..1), and *cancel != 0 aborts as soon as the model reports progress.
 #include "dmx.h"
 #include "model.hpp"
 #include <Eigen/Dense>
@@ -16,13 +16,13 @@
 namespace {
 struct Cancelled : std::exception {};
 const int SR = 44100;
-const int OVERLAP = SR * 3 / 4; // 0,75 s de solape entre trozos
+const int OVERLAP = SR * 3 / 4; // 0.75 s of overlap between chunks
 }
 
 extern "C" void *dmx_load(const char *path, char *err, int errlen) {
     auto *m = new demucscpp::demucs_model();
     if (!demucscpp::load_demucs_model(path, m)) {
-        snprintf(err, errlen, "no se pudo cargar el modelo de separación %s", path);
+        snprintf(err, errlen, "could not load the separation model %s", path);
         delete m;
         return nullptr;
     }
@@ -77,15 +77,15 @@ extern "C" int dmx_vocals(void *model, const float *stereo, long n, int threads,
     }
     for (auto &th : pool) th.join();
     if (failed == 2) {
-        snprintf(err, errlen, "cancelado");
+        snprintf(err, errlen, "cancelled");
         return 2;
     }
     if (failed) {
-        snprintf(err, errlen, "error en la separación: %s", firstErr.c_str());
+        snprintf(err, errlen, "separation error: %s", firstErr.c_str());
         return 1;
     }
 
-    // Mezcla con rampas lineales en las zonas de solape
+    // Blend with linear ramps in the overlap regions
     std::vector<float> wsum(n, 0.0f);
     std::memset(out, 0, sizeof(float) * 2 * n);
     for (int t = 0; t < threads; t++) {

@@ -27,7 +27,7 @@ import (
 	"github.com/fogleman/gg"
 )
 
-// frameFX son los parámetros de efectos de fondo de un cuadro (comunes a CPU y GPU)
+// frameFX holds a frame's background effect parameters (shared by CPU and GPU)
 type frameFX struct {
 	zoom                        float64
 	rippleAmp, rippleFreq, rTim float64
@@ -38,15 +38,15 @@ type frameFX struct {
 	bright, contrast            float64
 }
 
-// RenderOptions opciones del CLI para previsualización o renderizado parcial
+// RenderOptions are CLI options for preview or partial rendering
 type RenderOptions struct {
-	MaxDurationSec float64 // Si > 0, limita la duración del video (ej. 10s para preview)
-	StartSec       float64 // Segundo inicial del preview
-	SingleFrameAt  float64 // Si >= 0, exporta solo ese cuadro como imagen PNG
-	SingleFrameOut string  // Ruta de salida de la imagen de cuadro único
+	MaxDurationSec float64 // If > 0, limits the video duration (e.g. 10s for preview)
+	StartSec       float64 // Preview start second
+	SingleFrameAt  float64 // If >= 0, exports only that frame as a PNG image
+	SingleFrameOut string  // Output path of the single-frame image
 }
 
-// Progress informa del avance de una exportación
+// Progress reports the progress of an export
 type Progress struct {
 	Done, Total int
 	FPS         float64
@@ -56,7 +56,7 @@ type Progress struct {
 
 // ---------------------------------------------------------------- renderer GPU/CPU
 
-// Renderer dibuja cuadros de una sesión con la GPU (Vulkan) o, si no hay, con la CPU
+// Renderer draws a session's frames on the GPU (Vulkan) or, if unavailable, on the CPU
 type Renderer struct {
 	G       *gpu.Renderer
 	s       *Session
@@ -66,7 +66,7 @@ type Renderer struct {
 	textCap int
 }
 
-// NewRenderer crea el backend de render ("auto", "gpu" o "cpu") para la resolución de la sesión
+// NewRenderer creates the render backend ("auto", "gpu" or "cpu") for the session's resolution
 func NewRenderer(s *Session, mode string, slots int) (*Renderer, error) {
 	r := &Renderer{s: s}
 	mode = strings.ToLower(mode)
@@ -78,22 +78,22 @@ func NewRenderer(s *Session, mode string, slots int) (*Renderer, error) {
 		g, err := gpu.New(s.W, s.H, slots, s.Cfg.Output.GPUDevice, textCap)
 		if err != nil {
 			if mode == "gpu" {
-				return nil, fmt.Errorf("GPU Vulkan no disponible: %w", err)
+				return nil, fmt.Errorf("Vulkan GPU not available: %w", err)
 			}
-			s.Logf("⚠️  GPU Vulkan no disponible (%v), usando CPU", err)
+			s.Logf("⚠️  Vulkan GPU not available (%v), using CPU", err)
 		} else {
 			r.G, r.textCap = g, textCap
 			r.verA, r.verB, r.lyrVer = make([]string, slots), make([]string, slots), make([]int, slots)
-			s.Logf("🖥️  Render por GPU (Vulkan): %s", g.DeviceName)
+			s.Logf("🖥️  GPU rendering (Vulkan): %s", g.DeviceName)
 		}
 	}
 	if r.G == nil {
-		s.Logf("🖥️  Render por CPU (%d hilos)", runtime.NumCPU())
+		s.Logf("🖥️  CPU rendering (%d threads)", runtime.NumCPU())
 	}
 	return r, nil
 }
 
-// Fits indica si el renderer sirve para la sesión tal como está ahora (resolución y atlas)
+// Fits reports whether the renderer suits the session as it is now (resolution and atlas)
 func (r *Renderer) Fits() bool {
 	if r.G == nil {
 		return true
@@ -112,7 +112,7 @@ func (r *Renderer) Close() {
 	}
 }
 
-// submit prepara y lanza el cuadro fs en el slot (solo GPU)
+// submit prepares and launches frame fs in the slot (GPU only)
 func (r *Renderer) submit(slot int, fs *FrameState, writeRGBA bool) error {
 	g := r.G
 	if fs.BgA != nil && r.verA[slot] != fs.VerA {
@@ -131,7 +131,7 @@ func (r *Renderer) submit(slot int, fs *FrameState, writeRGBA bool) error {
 	return g.Submit(slot)
 }
 
-// Still renderiza un único cuadro como imagen RGBA
+// Still renders a single frame as an RGBA image
 func (r *Renderer) Still(fs *FrameState) (*image.RGBA, error) {
 	if r.G == nil {
 		return r.s.cpuFrame(fs), nil
@@ -147,7 +147,7 @@ func (r *Renderer) Still(fs *FrameState) (*image.RGBA, error) {
 	return out, nil
 }
 
-// Preview renderiza un cuadro a 1/scale de resolución directamente en la GPU (más rápido)
+// Preview renders a frame at 1/scale resolution directly on the GPU (faster)
 func (r *Renderer) Preview(fs *FrameState, scale int) (*image.RGBA, error) {
 	if r.G == nil || scale <= 1 {
 		img, err := r.Still(fs)
@@ -158,7 +158,7 @@ func (r *Renderer) Preview(fs *FrameState, scale int) (*image.RGBA, error) {
 	}
 	pw, ph := (r.s.W+scale-1)/scale, (r.s.H+scale-1)/scale
 	r.G.Params(0).Prev = [4]int32{int32(scale), int32(pw), int32(ph)}
-	defer func() { r.G.Params(0).Prev = [4]int32{} }() // tras esperar a la GPU
+	defer func() { r.G.Params(0).Prev = [4]int32{} }() // after waiting for the GPU
 	if err := r.submit(0, fs, true); err != nil {
 		return nil, err
 	}
@@ -202,12 +202,12 @@ func downscale(src *image.RGBA, f int) *image.RGBA {
 	return dst
 }
 
-// ---------------------------------------------------------------- exportación
+// ---------------------------------------------------------------- export
 
-// ExportRange exporta los cuadros [start, end) al MP4 de salida
+// ExportRange exports frames [start, end) to the output MP4
 func (s *Session) ExportRange(ctx context.Context, mode string, start, end int, outPath string, progress func(Progress)) error {
 	if s.Audio == nil {
-		return fmt.Errorf("el proyecto no tiene audio")
+		return fmt.Errorf("the project has no audio")
 	}
 	if progress == nil {
 		progress = func(Progress) {}
@@ -251,7 +251,7 @@ func (s *Session) ExportRange(ctx context.Context, mode string, start, end int, 
 	}
 	mp4.SetAVCConfig(sps, pps)
 
-	// Audio: el tramo exacto, a FLAC sin pérdidas en paralelo al render
+	// Audio: the exact segment, to lossless FLAC in parallel with rendering
 	var audioWG sync.WaitGroup
 	audioWG.Add(1)
 	go func() {
@@ -364,19 +364,19 @@ func (s *Session) ExportRange(ctx context.Context, mode string, start, end int, 
 	return mp4.Close()
 }
 
-// Execute es el flujo del CLI: un PNG suelto o el video (completo o un tramo)
+// Execute is the CLI flow: a single PNG or the video (full or a segment)
 func Execute(cfg *config.ProjectConfig, opts RenderOptions) error {
 	startTime := time.Now()
 	logf := func(f string, a ...any) { fmt.Printf(f+"\n", a...) }
 	if cfg.Audio.Path == "" {
-		return fmt.Errorf("el campo 'audio.path' es obligatorio")
+		return fmt.Errorf("the 'audio.path' field is required")
 	}
 	s, err := Open(cfg, logf)
 	if err != nil {
 		return err
 	}
 	defer s.Close()
-	logf("📐 Resolución: %dx%d @ %d fps", s.W, s.H, s.FPS)
+	logf("📐 Resolution: %dx%d @ %d fps", s.W, s.H, s.FPS)
 
 	if opts.SingleFrameAt >= 0 {
 		idx := min(int(opts.SingleFrameAt*float64(s.FPS)), s.Frames-1)
@@ -403,19 +403,19 @@ func Execute(cfg *config.ProjectConfig, opts RenderOptions) error {
 	if opts.MaxDurationSec > 0 {
 		end = min(start+int(opts.MaxDurationSec*float64(s.FPS)), s.Frames)
 	}
-	logf("🚀 Renderizando %d cuadros (x264 preset %s, CRF %d)...", end-start, cfg.Output.Preset, cfg.Output.CRF)
+	logf("🚀 Rendering %d frames (x264 preset %s, CRF %d)...", end-start, cfg.Output.Preset, cfg.Output.CRF)
 	t0 := time.Now()
 	err = s.ExportRange(context.Background(), cfg.Output.Renderer, start, end, cfg.Output.Path, func(p Progress) {
 		if p.Stage == "mux" {
-			fmt.Printf("\n📦 Escribiendo MP4...\n")
+			fmt.Printf("\n📦 Writing MP4...\n")
 			return
 		}
-		fmt.Printf("\r⏳ [%5.1f%%] Cuadro %d/%d (%.1f FPS) | ETA: %.0fs    ", float64(p.Done)/float64(p.Total)*100, p.Done, p.Total, p.FPS, p.ETA)
+		fmt.Printf("\r⏳ [%5.1f%%] Frame %d/%d (%.1f FPS) | ETA: %.0fs    ", float64(p.Done)/float64(p.Total)*100, p.Done, p.Total, p.FPS, p.ETA)
 	})
 	if err != nil {
 		return err
 	}
-	logf("✨ Completado en %s (%.1f FPS medios)\n📁 %s", time.Since(startTime).Round(time.Millisecond),
+	logf("✨ Completed in %s (%.1f FPS average)\n📁 %s", time.Since(startTime).Round(time.Millisecond),
 		float64(end-start)/time.Since(t0).Seconds(), cfg.Output.Path)
 	return nil
 }
@@ -518,11 +518,11 @@ func savePNG(path string, img *image.RGBA) error {
 	if err := png.Encode(f, img); err != nil {
 		return err
 	}
-	fmt.Printf("✅ Cuadro guardado en: %s\n", path)
+	fmt.Printf("✅ Frame saved to: %s\n", path)
 	return nil
 }
 
-// ---------------------------------------------------------------- parámetros GPU
+// ---------------------------------------------------------------- GPU parameters
 
 func rgbaF(hex string) [4]float32 {
 	c, _ := visualizer.ParseHexColor(hex)
@@ -543,13 +543,13 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 
 	p.Dims = [4]int32{int32(s.W), int32(s.H), int32(padW), int32(padH)}
 
-	// Fondo
+	// Background
 	c := fx.contrast * 128.0
 	cf := (259.0 * (c + 255.0)) / (255.0 * (259.0 - c))
 	p.ZoomRipple = [4]float32{float32(fx.zoom), float32(fx.rippleAmp), float32(fx.rippleFreq), float32(fx.rTim)}
 	p.ColorAdj = [4]float32{float32(cf), float32(-fs.BG.Darken + fx.bright), float32(fs.BG.Opacity), float32(fs.BG.Vignette)}
 	if fs.BgA == nil {
-		p.ColorAdj[2] = 0 // sin fondo: negro
+		p.ColorAdj[2] = 0 // no background: black
 	}
 	p.Chroma = [4]float32{float32(fx.chromaShift)}
 	nGlitch := 0
@@ -567,7 +567,7 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 		p.BgMix[0] = float32(fs.BgMix)
 	}
 
-	// Partículas
+	// Particles
 	np := 0
 	for _, ps := range fs.Parts {
 		ps.Each(func(x, y, size, alpha float64, col color.RGBA, glow bool) {
@@ -584,7 +584,7 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 	}
 	p.Shake = [4]float32{float32(fx.shakeX), float32(fx.shakeY)}
 
-	// Visualizador
+	// Visualizer
 	vizType := int32(0)
 	if v.Enabled && fs.VizAlpha > 0 {
 		switch v.Type {
@@ -683,7 +683,7 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 	p.Viz2[0] = float32(v.Glow.Radius)
 	p.Viz2[1] = float32(v.Glow.Intensity)
 
-	// Letra
+	// Lyrics
 	p.TextInfo = [4]int32{}
 	if fs.Lyr != nil {
 		items := fs.Lyr.Frame(fs.T, fs.Feat)
@@ -695,7 +695,9 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 			p.TItemB[i] = [4]float32{it.CX, it.CY, it.Scale, it.Alpha}
 			p.TItemC[i] = [4]float32{it.Fill, it.Pad}
 		}
-		f4 := func(c [4]float64) [4]float32 { return [4]float32{float32(c[0]), float32(c[1]), float32(c[2]), float32(c[3])} }
+		f4 := func(c [4]float64) [4]float32 {
+			return [4]float32{float32(c[0]), float32(c[1]), float32(c[2]), float32(c[3])}
+		}
 		ng := min(len(st.Grad), gpu.MaxGrad)
 		for i := 0; i < ng; i++ {
 			g := st.Grad[i]

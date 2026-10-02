@@ -1,6 +1,6 @@
-// Capa mínima de Vulkan (compute) para AudioViz.
-// libvulkan se carga en tiempo de ejecución con dlopen: el binario no enlaza contra ella
-// y puede caer al render por CPU si no hay GPU/driver Vulkan.
+// Minimal Vulkan (compute) layer for AudioViz.
+// libvulkan is loaded at runtime with dlopen: the binary does not link against it
+// and can fall back to CPU rendering if there is no Vulkan GPU/driver.
 #ifndef AUDIOVIZ_VK_H
 #define AUDIOVIZ_VK_H
 
@@ -21,12 +21,12 @@ enum {
 };
 
 typedef struct {
-    int width, height;   // resolución visible
-    int pad_w, pad_h;    // resolución rellenada (múltiplo de 16)
-    int slots;           // cuadros en vuelo
-    int device_index;    // -1 = automático
+    int width, height;   // visible resolution
+    int pad_w, pad_h;    // padded resolution (multiple of 16)
+    int slots;           // frames in flight
+    int device_index;    // -1 = automatic
     size_t params_size;
-    size_t text_size;    // bytes del atlas de texto (SDF)
+    size_t text_size;    // text atlas size in bytes (SDF)
     const uint32_t *spirv;
     size_t spirv_size;
 } vkr_config;

@@ -16,13 +16,13 @@ type GradStop struct {
 	C   [3]float64
 }
 
-// Style son los colores y parámetros de la letra en un cuadro concreto (ya con la reacción al audio)
+// Style holds the lyrics colors and parameters for a given frame (audio reaction already applied)
 type Style struct {
-	OutlineW, GlowR, GlowI, Chroma      float64
-	Color, Upcoming, Outline, GlowC     [4]float64
-	ShadowDX, ShadowDY, ShadowOp, Blur  float64
-	ShadowC                             [4]float64
-	Grad                                []GradStop
+	OutlineW, GlowR, GlowI, Chroma     float64
+	Color, Upcoming, Outline, GlowC    [4]float64
+	ShadowDX, ShadowDY, ShadowOp, Blur float64
+	ShadowC                            [4]float64
+	Grad                               []GradStop
 }
 
 func rgba(hex string, def [4]float64) [4]float64 {
@@ -40,12 +40,12 @@ func mix3(a, b [3]float64, t float64) [3]float64 {
 	return [3]float64{a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t, a[2] + (b[2]-a[2])*t}
 }
 
-// StyleAt calcula el estilo del cuadro: flash de color, parpadeo tipo llama y glow reactivo
+// StyleAt computes the frame style: color flash, flame-like flicker and reactive glow
 func (e *Engine) StyleAt(t float64, feat *audio.FrameFeatures) Style {
 	return StyleFor(e.cfg, t, feat)
 }
 
-// StyleFor calcula el estilo de un cuadro con la config indicada (la del tramo activo en t)
+// StyleFor computes a frame style with the given config (that of the segment active at t)
 func StyleFor(cfg *config.LyricsConfig, t float64, feat *audio.FrameFeatures) Style {
 	band := 0.0
 	if feat != nil {
@@ -80,7 +80,7 @@ func StyleFor(cfg *config.LyricsConfig, t float64, feat *audio.FrameFeatures) St
 	}
 	st.Chroma = cfg.React.Chromatic * band
 
-	// Flash hacia otro color con la banda
+	// Flash toward another color with the band
 	if cfg.React.Flash > 0 && cfg.React.FlashColor != "" {
 		fc := rgba(cfg.React.FlashColor, white)
 		f3 := [3]float64{fc[0], fc[1], fc[2]}
@@ -91,7 +91,7 @@ func StyleFor(cfg *config.LyricsConfig, t float64, feat *audio.FrameFeatures) St
 			st.Grad[i].C = mix3(st.Grad[i].C, f3, k)
 		}
 	}
-	// Parpadeo de llama: brillo con ruido rápido proporcional a la banda
+	// Flame flicker: brightness with fast noise proportional to the band
 	if cfg.React.Flicker > 0 {
 		n := 0.5*math.Sin(t*31.0) + 0.3*math.Sin(t*57.0+1.1) + 0.2*math.Sin(t*89.0+2.3)
 		b := 1 + cfg.React.Flicker*(0.35+0.65*band)*n*0.5
@@ -114,7 +114,7 @@ func StyleFor(cfg *config.LyricsConfig, t float64, feat *audio.FrameFeatures) St
 	return st
 }
 
-// ---------------------------------------------------------------- render por CPU
+// ---------------------------------------------------------------- CPU render
 
 func (e *Engine) sdfAt(ax, ay float64, it *Item) float64 {
 	x0, y0 := float64(it.AX), float64(it.AY)
@@ -157,7 +157,7 @@ func smoothstep(a, b, x float64) float64 {
 	return t * t * (3 - 2*t)
 }
 
-// textAt replica drawText del shader
+// textAt replicates the shader's drawText
 func (e *Engine) textAt(col [3]float64, px, py float64, items []Item, st *Style) [3]float64 {
 	ow := st.OutlineW
 	gr := math.Max(st.GlowR, 0.5)
@@ -198,13 +198,13 @@ func (e *Engine) textAt(col [3]float64, px, py float64, items []Item, st *Style)
 	return col
 }
 
-// DrawCPU compone la letra sobre la imagen (render por CPU), idéntico al shader
+// DrawCPU composites the lyrics onto the image (CPU render), identical to the shader
 func (e *Engine) DrawCPU(img *image.RGBA, items []Item, st Style) {
 	if len(items) == 0 {
 		return
 	}
 	W, H := img.Bounds().Dx(), img.Bounds().Dy()
-	// Caja que cubre todas las palabras (con escala, glow, sombra y aberración)
+	// Box covering all words (with scale, glow, shadow and aberration)
 	x0, y0, x1, y1 := float64(W), float64(H), 0.0, 0.0
 	for _, it := range items {
 		hw, hh := float64(it.AW)*float64(it.Scale)/2, float64(it.AH)*float64(it.Scale)/2

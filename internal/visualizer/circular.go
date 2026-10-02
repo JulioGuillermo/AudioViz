@@ -49,25 +49,25 @@ func (cv *CircularVisualizer) Draw(dc *gg.Context, feat *audio.FrameFeatures) {
 		return
 	}
 
-	// El radio pulsa ligeramente con el bombo/graves
+	// The radius pulses slightly with the kick/bass
 	baseRadius := cv.radius * (1.0 + feat.BassEnergy*0.08 + feat.BeatPulse*0.04)
 	barCount := len(feat.LeftBars)
 	if barCount == 0 {
 		return
 	}
 
-	// Dibujar anillo base central con glow
+	// Draw the central base ring with glow
 	cv.drawCenterRing(dc, baseRadius, feat)
 
-	// Dibujar barras estéreo
-	// Canal Izquierdo: de -PI/2 (arriba) a +PI/2 (abajo) pasando por la izquierda (-PI)
-	// Canal Derecho: de -PI/2 (arriba) a +PI/2 (abajo) pasando por la derecha (0)
+	// Draw stereo bars
+	// Left channel: from -PI/2 (top) to +PI/2 (bottom) via the left (-PI)
+	// Right channel: from -PI/2 (top) to +PI/2 (bottom) via the right (0)
 	barWidth := cv.cfg.BarWidth
 	if barWidth <= 0 {
 		barWidth = 4.0
 	}
 
-	// Pase 1: Glow exterior si está habilitado
+	// Pass 1: outer glow if enabled
 	if cv.cfg.Glow.Enabled {
 		glowPasses := 3
 		for p := glowPasses; p >= 1; p-- {
@@ -77,7 +77,7 @@ func (cv *CircularVisualizer) Draw(dc *gg.Context, feat *audio.FrameFeatures) {
 		}
 	}
 
-	// Pase 2: Barras principales nítidas
+	// Pass 2: sharp main bars
 	cv.renderBars(dc, feat, baseRadius, barWidth, 1.0)
 }
 
@@ -85,12 +85,12 @@ func (cv *CircularVisualizer) renderBars(dc *gg.Context, feat *audio.FrameFeatur
 	barCount := len(feat.LeftBars)
 	angleStep := math.Pi / float64(barCount)
 
-	// Canal Izquierdo (L): Semicírculo izquierdo
+	// Left channel (L): left semicircle
 	for i := 0; i < barCount; i++ {
 		magL := feat.LeftBars[i]
 		h := cv.cfg.MinHeight + magL*(cv.cfg.MaxHeight-cv.cfg.MinHeight)
 
-		// Ángulo: inicia en el polo superior (-PI/2) y gira hacia la izquierda hacia el polo inferior (+PI/2)
+		// Angle: starts at the top pole (-PI/2) and turns left toward the bottom pole (+PI/2)
 		angle := -math.Pi/2.0 - (float64(i)+0.5)*angleStep
 		t := float64(i) / float64(barCount)
 
@@ -98,12 +98,12 @@ func (cv *CircularVisualizer) renderBars(dc *gg.Context, feat *audio.FrameFeatur
 		cv.drawRadialBar(dc, angle, baseRadius, h, barWidth, col)
 	}
 
-	// Canal Derecho (R): Semicírculo derecho
+	// Right channel (R): right semicircle
 	for i := 0; i < barCount; i++ {
 		magR := feat.RightBars[i]
 		h := cv.cfg.MinHeight + magR*(cv.cfg.MaxHeight-cv.cfg.MinHeight)
 
-		// Ángulo: inicia en el polo superior (-PI/2) y gira hacia la derecha hacia el polo inferior (+PI/2)
+		// Angle: starts at the top pole (-PI/2) and turns right toward the bottom pole (+PI/2)
 		angle := -math.Pi/2.0 + (float64(i)+0.5)*angleStep
 		t := float64(i) / float64(barCount)
 
@@ -130,7 +130,7 @@ func (cv *CircularVisualizer) drawRadialBar(dc *gg.Context, angle, r0, length, w
 }
 
 func (cv *CircularVisualizer) drawCenterRing(dc *gg.Context, radius float64, feat *audio.FrameFeatures) {
-	// Anillo interior sutil que delimita la base del visualizador
+	// Subtle inner ring marking the base of the visualizer
 	dc.Push()
 	ringCol := cv.getColor(0.5, 0.4+feat.BassEnergy*0.3)
 	dc.SetRGBA255(int(ringCol.R), int(ringCol.G), int(ringCol.B), int(ringCol.A))

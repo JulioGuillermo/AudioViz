@@ -17,7 +17,7 @@ type Particle struct {
 	MaxLife  float64
 	Size     float64
 	BaseSize float64
-	Phase    float64 // fase para la turbulencia
+	Phase    float64 // phase for turbulence
 	Active   bool
 }
 
@@ -30,11 +30,11 @@ type layer struct {
 	energy     float64
 }
 
-// ParticleSystem simula una o varias capas de partículas, cada una reactiva a su banda
+// ParticleSystem simulates one or more particle layers, each reacting to its band
 type ParticleSystem struct {
-	// Draining: deja de emitir; las partículas vivas terminan su vida (cambio de tramo)
+	// Draining: stops emitting; live particles finish their lifetime (segment change)
 	Draining bool
-	// Alpha multiplica la opacidad de todas las partículas (fundidos entre tramos)
+	// Alpha multiplies the opacity of all particles (fades between segments)
 	Alpha   float64
 	enabled bool
 	width   int
@@ -48,7 +48,7 @@ func NewParticleSystem(cfg *config.ParticlesConfig, width, height int) *Particle
 	return newSystem(cfg, width, height, false, 1337)
 }
 
-// NewEmptyParticleSystem crea un sistema sin partículas vivas: van naciendo poco a poco
+// NewEmptyParticleSystem creates a system with no live particles: they spawn gradually
 func NewEmptyParticleSystem(cfg *config.ParticlesConfig, width, height int, seed int64) *ParticleSystem {
 	return newSystem(cfg, width, height, true, seed)
 }
@@ -77,7 +77,7 @@ func newSystem(cfg *config.ParticlesConfig, width, height int, empty bool, seed 
 		for i := range l.particles {
 			p := &Particle{}
 			ps.respawn(l, p, true)
-			// Arrancar con la densidad mínima para no tener un estallido inicial
+			// Start at minimum density to avoid an initial burst
 			p.Active = !empty && ps.rng.Float64() < math.Max(l.minDensity, 0.3)
 			l.particles[i] = p
 		}
@@ -143,18 +143,18 @@ func (ps *ParticleSystem) respawn(l *layer, p *Particle, randomLife bool) {
 			p.VY = -(1.5 + ps.rng.Float64()*2.5) * speed
 			break
 		}
-		// Dirección libre: nacen en el borde opuesto y viajan hacia direction (± spread)
+		// Free direction: spawn on the opposite edge and travel toward direction (± spread)
 		spread := c.Spread
 		if spread <= 0 {
 			spread = 25
 		}
 		ang := (*c.Direction + (ps.rng.Float64()*2-1)*spread) * math.Pi / 180
-		dx, dy := math.Cos(ang), -math.Sin(ang) // eje Y de pantalla hacia abajo
+		dx, dy := math.Cos(ang), -math.Sin(ang) // screen Y axis points down
 		sp := (1.5 + ps.rng.Float64()*2.5) * speed
 		p.VX, p.VY = dx*sp, dy*sp
 		mainA := *c.Direction * math.Pi / 180
 		mx, my := math.Cos(mainA), -math.Sin(mainA)
-		// Punto de nacimiento: a lo largo del borde por el que "entran"
+		// Spawn point: along the edge they "enter" through
 		if math.Abs(mx) > math.Abs(my) {
 			p.Y = ps.rng.Float64() * h
 			p.X = -10 - ps.rng.Float64()*20
@@ -181,7 +181,7 @@ func (ps *ParticleSystem) respawn(l *layer, p *Particle, randomLife bool) {
 	}
 }
 
-// Update avanza la simulación un cuadro
+// Update advances the simulation by one frame
 func (ps *ParticleSystem) Update(feat *audio.FrameFeatures, dt float64) {
 	if !ps.enabled {
 		return
@@ -200,7 +200,7 @@ func (ps *ParticleSystem) Update(feat *audio.FrameFeatures, dt float64) {
 			audioBoost += 2.0
 		}
 
-		// Densidad objetivo según la energía de la banda
+		// Target density based on the band energy
 		n := len(l.particles)
 		target := int(float64(n) * (l.minDensity + (1-l.minDensity)*energy))
 		active := 0
@@ -245,7 +245,7 @@ func (ps *ParticleSystem) Update(feat *audio.FrameFeatures, dt float64) {
 	}
 }
 
-// Each recorre las partículas visibles: posición, radio, alfa (0..1), color y halo
+// Each iterates over visible particles: position, radius, alpha (0..1), color and halo
 func (ps *ParticleSystem) Each(fn func(x, y, size, alpha float64, col color.RGBA, glow bool)) {
 	if !ps.enabled || ps.Alpha <= 0 {
 		return
@@ -279,7 +279,7 @@ func (ps *ParticleSystem) Each(fn func(x, y, size, alpha float64, col color.RGBA
 	}
 }
 
-// Draw dibuja con gg (render por CPU)
+// Draw draws with gg (CPU render)
 func (ps *ParticleSystem) Draw(dc *gg.Context) {
 	ps.Each(func(x, y, size, alpha float64, col color.RGBA, glow bool) {
 		a := alpha * 255
@@ -319,7 +319,7 @@ func parseColor(s string) color.RGBA {
 	return color.RGBA{R: v[0], G: v[1], B: v[2], A: 255}
 }
 
-// Alive indica si queda alguna partícula viva
+// Alive reports whether any particle is still alive
 func (ps *ParticleSystem) Alive() bool {
 	for _, l := range ps.layers {
 		for _, p := range l.particles {

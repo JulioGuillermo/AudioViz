@@ -8,7 +8,7 @@ import (
 	"sync"
 )
 
-// parallelFor divide las filas de 0 a height entre runtime.NumCPU() goroutines
+// parallelFor splits rows 0 to height across runtime.NumCPU() goroutines
 func parallelFor(height int, fn func(startY, endY int)) {
 	numCPU := runtime.NumCPU()
 	if numCPU > height {
@@ -37,7 +37,7 @@ func parallelFor(height int, fn func(startY, endY int)) {
 	wg.Wait()
 }
 
-// ApplyBassZoom aplica un zoom concéntrico desde el centro de la imagen en paralelo
+// ApplyBassZoom applies a concentric zoom from the image center in parallel
 func ApplyBassZoom(src *image.RGBA, zoom, shiftX, shiftY float64) *image.RGBA {
 	if zoom <= 1.001 && shiftX == 0 && shiftY == 0 {
 		return src
@@ -112,7 +112,7 @@ func ApplyBassZoom(src *image.RGBA, zoom, shiftX, shiftY float64) *image.RGBA {
 	return dst
 }
 
-// ApplyChromaticAberration separa los canales Rojo y Azul horizontal o radialmente en paralelo
+// ApplyChromaticAberration separates the Red and Blue channels horizontally or radially in parallel
 func ApplyChromaticAberration(src *image.RGBA, shift float64, mode string) *image.RGBA {
 	if shift <= 0.5 {
 		return src
@@ -171,7 +171,7 @@ func ApplyChromaticAberration(src *image.RGBA, shift float64, mode string) *imag
 	return dst
 }
 
-// ApplyRipple aplica una distorsión senoidal reactiva de agua / onda en paralelo
+// ApplyRipple applies a reactive sinusoidal water / wave distortion in parallel
 func ApplyRipple(src *image.RGBA, amplitude float64, frequency float64, timeVal float64) *image.RGBA {
 	if amplitude <= 0.2 {
 		return src
@@ -216,12 +216,12 @@ func ApplyRipple(src *image.RGBA, amplitude float64, frequency float64, timeVal 
 	return dst
 }
 
-// GlitchSlice es una franja desplazada horizontalmente
+// GlitchSlice is a horizontally shifted strip
 type GlitchSlice struct {
 	Y0, Y1, ShiftX int
 }
 
-// GlitchSlices genera las franjas deterministas para una semilla (compartido CPU/GPU)
+// GlitchSlices generates the deterministic strips for a seed (shared CPU/GPU)
 func GlitchSlices(w, h int, intensity float64, seed int64) []GlitchSlice {
 	rng := rand.New(rand.NewSource(seed))
 	numSlices := int(float64(h) * 0.04 * intensity)
@@ -242,7 +242,7 @@ func GlitchSlices(w, h int, intensity float64, seed int64) []GlitchSlice {
 	return out
 }
 
-// ApplyGlitch aplica desplazamiento de franjas
+// ApplyGlitch applies strip displacement
 func ApplyGlitch(src *image.RGBA, intensity float64, seed int64) *image.RGBA {
 	if intensity <= 0.05 {
 		return src

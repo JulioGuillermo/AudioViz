@@ -1,9 +1,9 @@
 #!/bin/bash
-# Compila las librerías de IA para generar letras, estáticas en third_party/build:
-#   - whisper.cpp (reconocimiento de voz) con backend Vulkan (GPU) + CPU
-#   - demucs.cpp (separación de la voz)
-# Quedan dentro del binario: en ejecución no hace falta Python, ni nada instalado.
-# Requisitos solo para compilar: git, cmake, g++, glslc y cabeceras de Vulkan.
+# Builds the AI libraries for lyrics generation, as static libs in third_party/build:
+#   - whisper.cpp (speech recognition) with Vulkan (GPU) + CPU backend
+#   - demucs.cpp (vocal separation)
+# They end up inside the binary: no Python or anything else needed at runtime.
+# Build-time requirements only: git, cmake, g++, glslc and Vulkan headers.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TP="$ROOT/third_party"
@@ -17,7 +17,7 @@ if [ ! -f "$OUT/lib/libwhisper.a" ]; then
     git clone https://github.com/ggml-org/whisper.cpp "$TP/whisper.cpp"
   fi
   git -C "$TP/whisper.cpp" checkout -q "$WHISPER_REV"
-  # x86-64-v3 (AVX2/FMA): portable a cualquier CPU de los últimos ~10 años
+  # x86-64-v3 (AVX2/FMA): portable to any CPU from the last ~10 years
   cmake -S "$TP/whisper.cpp" -B "$TP/whisper.cpp/build" -DCMAKE_BUILD_TYPE=Release \
     -DBUILD_SHARED_LIBS=OFF -DGGML_OPENMP=OFF -DGGML_NATIVE=OFF \
     -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON -DGGML_VULKAN=ON \
@@ -46,4 +46,4 @@ if [ ! -f "$OUT/lib/libdemucs.a" ]; then
   for p in "${pids[@]}"; do wait "$p"; done
   ar rcs "$OUT/lib/libdemucs.a" "$OBJ/"*.o
 fi
-echo "librerías de IA listas en $OUT/lib"
+echo "AI libraries ready in $OUT/lib"

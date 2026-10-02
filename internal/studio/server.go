@@ -1,5 +1,5 @@
-// Package studio es la interfaz gráfica de AudioViz: un servidor web local (embebido en el
-// binario) con editor de línea de tiempo, preview renderizado por la GPU y exportación.
+// Package studio is the AudioViz graphical interface: a local web server (embedded in the
+// binary) with a timeline editor, GPU-rendered preview and export.
 package studio
 
 import (
@@ -51,12 +51,12 @@ type Server struct {
 }
 
 type Options struct {
-	Addr     string
-	Project  string // project.yaml o carpeta a abrir al arrancar
-	Version  string
+	Addr    string
+	Project string // project.yaml or folder to open at startup
+	Version string
 }
 
-// Run arranca el estudio y bloquea hasta que se cierra el servidor
+// Run starts the studio and blocks until the server is closed
 func Run(opt Options, ready func(url string)) error {
 	s := &Server{hub: newHub(), version: opt.Version}
 	s.startDir, _ = os.Getwd()
@@ -95,6 +95,7 @@ func Run(opt Options, ready func(url string)) error {
 	mux.HandleFunc("GET /api/probe", s.hProbe)
 	mux.HandleFunc("POST /api/export", s.hExport)
 	mux.HandleFunc("POST /api/lyrics/generate", s.hGenLyrics)
+	mux.HandleFunc("POST /api/lyrics/resync", s.hResync)
 	mux.HandleFunc("POST /api/job/cancel", s.hCancel)
 	mux.HandleFunc("GET /api/events", s.hub.serve)
 
@@ -112,7 +113,7 @@ func Run(opt Options, ready func(url string)) error {
 	return http.Serve(ln, mux)
 }
 
-// ---------------------------------------------------------------- utilidades HTTP
+// ---------------------------------------------------------------- HTTP utilities
 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -141,7 +142,7 @@ func (s *Server) logf(format string, args ...any) {
 	s.hub.send("log", msg)
 }
 
-// ---------------------------------------------------------------- proyecto
+// ---------------------------------------------------------------- project
 
 func (s *Server) open(path string) error {
 	abs, _ := filepath.Abs(path)
@@ -166,7 +167,7 @@ func (s *Server) open(path string) error {
 	if old != nil {
 		old.Close()
 	}
-	s.logf("📂 Proyecto abierto: %s", abs)
+	s.logf("📂 Project opened: %s", abs)
 	s.hub.send("project", "open")
 	return nil
 }
@@ -215,7 +216,7 @@ func (s *Server) hNew(w http.ResponseWriter, r *http.Request) {
 		dir = filepath.Join(req.Dir, req.Name)
 	}
 	if dir == "" {
-		fail(w, 400, errors.New("indica una carpeta"))
+		fail(w, 400, errors.New("specify a folder"))
 		return
 	}
 	if err := os.MkdirAll(filepath.Join(dir, "assets"), 0755); err != nil {
@@ -224,7 +225,7 @@ func (s *Server) hNew(w http.ResponseWriter, r *http.Request) {
 	}
 	path := filepath.Join(dir, "project.yaml")
 	if _, err := os.Stat(path); err == nil {
-		fail(w, 409, fmt.Errorf("ya existe un proyecto en %s", dir))
+		fail(w, 409, fmt.Errorf("a project already exists in %s", dir))
 		return
 	}
 	cfg := config.DefaultConfig()
@@ -266,13 +267,13 @@ func (s *Server) hGetProject(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.cfg == nil {
-		fail(w, 404, errors.New("no hay proyecto abierto"))
+		fail(w, 404, errors.New("no project is open"))
 		return
 	}
 	writeJSON(w, map[string]any{"meta": s.meta(), "project": ProjectToJSON(s.cfg)})
 }
 
-// hPutProject recibe el proyecto editado, lo aplica a la sesión y lo guarda
+// hPutProject receives the edited project, applies it to the session and saves it
 func (s *Server) hPutProject(w http.ResponseWriter, r *http.Request) {
 	var p ProjectJSON
 	if err := readJSON(r, &p); err != nil {
@@ -282,7 +283,7 @@ func (s *Server) hPutProject(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	if s.sess == nil {
 		s.mu.Unlock()
-		fail(w, 404, errors.New("no hay proyecto abierto"))
+		fail(w, 404, errors.New("no project is open"))
 		return
 	}
 	dir := filepath.Dir(s.projPath)
@@ -315,7 +316,7 @@ func (s *Server) hPutProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"meta": m, "saved": time.Now().Format("15:04:05")})
 }
 
-// ---------------------------------------------------------------- análisis y letra
+// ---------------------------------------------------------------- analysis and lyrics
 
 func b64u8(vals []float64) string {
 	b := make([]byte, len(vals))
@@ -330,7 +331,7 @@ func (s *Server) hAnalysis(w http.ResponseWriter, r *http.Request) {
 	sess := s.sess
 	s.mu.Unlock()
 	if sess == nil {
-		fail(w, 404, errors.New("no hay proyecto abierto"))
+		fail(w, 404, errors.New("no project is open"))
 		return
 	}
 	feats := sess.Features()
@@ -343,7 +344,7 @@ func (s *Server) hAnalysis(w http.ResponseWriter, r *http.Request) {
 			beats = append(beats, i)
 		}
 	}
-	// Forma de onda: pico por columna (2 por segundo de cuadro)
+	// Waveform: peak per column (2 per frame second)
 	wave := []float64{}
 	if a := sess.Audio; a != nil {
 		cols := n
@@ -388,7 +389,7 @@ func (s *Server) hGetLyrics(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"path": "", "lines": []lineJSON{}})
 		return
 	}
-	// Los tiempos se muestran sin el desfase (el desfase se aplica al renderizar)
+	// Times are shown without the offset (the offset is applied when rendering)
 	lines, err := lyrics.Load(path, 0)
 	if err != nil {
 		fail(w, 400, err)
@@ -411,7 +412,7 @@ func lrcTime(t float64) string {
 	return fmt.Sprintf("%02d:%05.2f", m, t-float64(m)*60)
 }
 
-// hPutLyrics guarda la letra editada como LRC con tiempo por palabra
+// hPutLyrics saves the edited lyrics as LRC with per-word timing
 func (s *Server) hPutLyrics(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Lines []lineJSON `json:"lines"`
@@ -427,7 +428,7 @@ func (s *Server) hPutLyrics(w http.ResponseWriter, r *http.Request) {
 	}
 	if path == "" {
 		s.mu.Lock()
-		path = filepath.Join(filepath.Dir(s.projPath), "letra.lrc")
+		path = filepath.Join(filepath.Dir(s.projPath), "lyrics.lrc")
 		s.mu.Unlock()
 	}
 	if !strings.HasSuffix(strings.ToLower(path), ".lrc") {
@@ -458,7 +459,7 @@ func (s *Server) hPutLyrics(w http.ResponseWriter, r *http.Request) {
 
 // ---------------------------------------------------------------- preview
 
-// hFrame renderiza un cuadro y lo devuelve como JPEG (?f=cuadro&scale=1|2|3|4)
+// hFrame renders a frame and returns it as JPEG (?f=frame&scale=1|2|3|4)
 func (s *Server) hFrame(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	sess := s.sess
@@ -468,7 +469,7 @@ func (s *Server) hFrame(w http.ResponseWriter, r *http.Request) {
 	}
 	s.mu.Unlock()
 	if sess == nil {
-		fail(w, 404, errors.New("no hay proyecto abierto"))
+		fail(w, 404, errors.New("no project is open"))
 		return
 	}
 	idx, _ := strconv.Atoi(r.URL.Query().Get("f"))
@@ -506,14 +507,14 @@ func (s *Server) hFrame(w http.ResponseWriter, r *http.Request) {
 	w.Write(buf.Bytes())
 }
 
-// ---------------------------------------------------------------- archivos
+// ---------------------------------------------------------------- files
 
 var kindExts = map[string][]string{
-	"audio":  {".flac", ".wav", ".mp3", ".ogg"},
-	"bg":     {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"},
-	"lyrics": {".lrc", ".srt"},
-	"txt":    {".txt"},
-	"font":   {".ttf", ".otf"},
+	"audio":   {".flac", ".wav", ".mp3", ".ogg"},
+	"bg":      {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"},
+	"lyrics":  {".lrc", ".srt"},
+	"txt":     {".txt"},
+	"font":    {".ttf", ".otf"},
 	"project": {".yaml", ".yml"},
 }
 
@@ -561,7 +562,7 @@ func (s *Server) hFS(w http.ResponseWriter, r *http.Request) {
 			for _, x := range exts {
 				ok = ok || x == ext
 			}
-			// Imágenes sin extensión (como el fondo del ejemplo) cuentan como fondo
+			// Images without an extension (like the example background) count as backgrounds
 			if !ok && kind == "bg" && ext == "" {
 				if _, err := video.ProbeMedia(filepath.Join(dir, e.Name())); err == nil {
 					ok = true
@@ -582,13 +583,13 @@ func (s *Server) hFS(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"path": dir, "parent": filepath.Dir(dir), "entries": out})
 }
 
-// hUpload guarda un archivo subido en <proyecto>/assets
+// hUpload saves an uploaded file to <project>/assets
 func (s *Server) hUpload(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	proj := s.projPath
 	s.mu.Unlock()
 	if proj == "" {
-		fail(w, 400, errors.New("abre o crea un proyecto primero"))
+		fail(w, 400, errors.New("open or create a project first"))
 		return
 	}
 	file, hdr, err := r.FormFile("file")
@@ -633,7 +634,7 @@ func (s *Server) hProbe(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, res)
 }
 
-// ---------------------------------------------------------------- trabajos
+// ---------------------------------------------------------------- jobs
 
 type job struct {
 	mu       sync.Mutex
@@ -664,7 +665,7 @@ func (s *Server) startJob(kind string, run func(ctx context.Context, j *job) err
 	s.mu.Lock()
 	if s.job != nil && s.job.snapshot()["status"] == "running" {
 		s.mu.Unlock()
-		return nil, errors.New("ya hay un trabajo en marcha")
+		return nil, errors.New("a job is already running")
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	j := &job{ID: fmt.Sprintf("%d", time.Now().UnixNano()), Kind: kind, Status: "running", Started: time.Now(), cancel: cancel}
@@ -675,7 +676,7 @@ func (s *Server) startJob(kind string, run func(ctx context.Context, j *job) err
 		j.mu.Lock()
 		switch {
 		case errors.Is(err, context.Canceled):
-			j.Status, j.Message = "canceled", "Cancelado"
+			j.Status, j.Message = "canceled", "Canceled"
 		case err != nil:
 			j.Status, j.Message = "error", err.Error()
 		default:
@@ -698,7 +699,7 @@ func (s *Server) hExport(w http.ResponseWriter, r *http.Request) {
 	sess, cfg := s.sess, s.cfg
 	s.mu.Unlock()
 	if sess == nil {
-		fail(w, 400, errors.New("no hay proyecto abierto"))
+		fail(w, 400, errors.New("no project is open"))
 		return
 	}
 	out := req.Path
@@ -727,9 +728,9 @@ func (s *Server) hExport(w http.ResponseWriter, r *http.Request) {
 			j.mu.Lock()
 			j.Progress = float64(p.Done) / float64(max(p.Total, 1))
 			if p.Stage == "mux" {
-				j.Message = "Escribiendo MP4..."
+				j.Message = "Writing MP4..."
 			} else {
-				j.Message = fmt.Sprintf("Cuadro %d/%d · %.0f FPS · quedan %.0f s", p.Done, p.Total, p.FPS, p.ETA)
+				j.Message = fmt.Sprintf("Frame %d/%d · %.0f FPS · %.0f s left", p.Done, p.Total, p.FPS, p.ETA)
 			}
 			j.mu.Unlock()
 			if time.Since(last) > 300*time.Millisecond || p.Stage == "mux" {
@@ -739,9 +740,9 @@ func (s *Server) hExport(w http.ResponseWriter, r *http.Request) {
 		})
 		if err == nil {
 			j.mu.Lock()
-			j.Message = "Exportado en " + out
+			j.Message = "Exported to " + out
 			j.mu.Unlock()
-			s.logf("✨ Exportado: %s", out)
+			s.logf("✨ Exported: %s", out)
 		}
 		return err
 	})
@@ -752,7 +753,63 @@ func (s *Server) hExport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, j.snapshot())
 }
 
-// hGenLyrics genera la letra sincronizada dentro del propio binario (Demucs + Whisper + alineado)
+// hResync re-aligns only some lines of the current lyric (the client sends its edited lines)
+func (s *Server) hResync(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Lines   []lineJSON `json:"lines"`
+		Targets []int      `json:"targets"`
+		Lang    string     `json:"lang"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		fail(w, 400, err)
+		return
+	}
+	s.mu.Lock()
+	sess, cfg := s.sess, s.cfg
+	s.mu.Unlock()
+	if sess == nil || sess.Audio == nil {
+		fail(w, 400, errors.New("the project has no audio"))
+		return
+	}
+	d := sess.Audio
+	stereo := make([]float32, len(d.PCM))
+	sc := float32(1.0 / float64(int64(1)<<(d.BitsPerSample-1)))
+	for i, v := range d.PCM {
+		stereo[i] = float32(v) * sc
+	}
+	in := make([]lyricsgen.LLine, len(req.Lines))
+	for i, l := range req.Lines {
+		for _, wd := range l.Words {
+			in[i].Words = append(in[i].Words, lyricsgen.LWord{Text: wd.Text, Line: i, Start: wd.Start, End: wd.End})
+		}
+	}
+	out, source, err := lyricsgen.Resync(r.Context(), lyricsgen.ResyncOptions{Stereo: stereo, SampleRate: d.SampleRate,
+		AudioKey: audioKey(cfg.Audio.Path), Lang: req.Lang, Lines: in, Targets: req.Targets})
+	if err != nil {
+		fail(w, 500, err)
+		return
+	}
+	res := make([]lineJSON, len(out))
+	for i, l := range out {
+		for _, wd := range l.Words {
+			res[i].Words = append(res[i].Words, wordJSON{wd.Text, wd.Start, wd.End})
+		}
+		if len(l.Words) > 0 {
+			res[i].Start, res[i].End = l.Words[0].Start, l.Words[len(l.Words)-1].End
+		}
+	}
+	writeJSON(w, map[string]any{"lines": res, "source": source})
+}
+
+// audioKey identifies an audio file for the separated-vocals cache (path, size, mtime)
+func audioKey(path string) string {
+	if st, err := os.Stat(path); err == nil {
+		return fmt.Sprintf("%s|%d|%d", path, st.Size(), st.ModTime().Unix())
+	}
+	return path
+}
+
+// hGenLyrics generates the synchronized lyrics inside the binary itself (Demucs + Whisper + alignment)
 func (s *Server) hGenLyrics(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Txt  string `json:"txt"`
@@ -760,7 +817,7 @@ func (s *Server) hGenLyrics(w http.ResponseWriter, r *http.Request) {
 		Fast bool   `json:"fast"`
 	}
 	if err := readJSON(r, &req); err != nil || req.Txt == "" {
-		fail(w, 400, errors.New("indica el archivo .txt con la letra"))
+		fail(w, 400, errors.New("specify the .txt file with the lyrics"))
 		return
 	}
 	txt, err := os.ReadFile(req.Txt)
@@ -772,15 +829,12 @@ func (s *Server) hGenLyrics(w http.ResponseWriter, r *http.Request) {
 	sess, cfg, proj := s.sess, s.cfg, s.projPath
 	s.mu.Unlock()
 	if sess == nil || sess.Audio == nil {
-		fail(w, 400, errors.New("el proyecto no tiene audio"))
+		fail(w, 400, errors.New("the project has no audio"))
 		return
 	}
 	d := sess.Audio
-	key := cfg.Audio.Path
-	if st, err := os.Stat(cfg.Audio.Path); err == nil {
-		key = fmt.Sprintf("%s|%d|%d", cfg.Audio.Path, st.Size(), st.ModTime().Unix())
-	}
-	out := filepath.Join(filepath.Dir(proj), "letra.lrc")
+	key := audioKey(cfg.Audio.Path)
+	out := filepath.Join(filepath.Dir(proj), "lyrics.lrc")
 	j, err := s.startJob("lyrics", func(ctx context.Context, j *job) error {
 		stereo := make([]float32, len(d.PCM))
 		sc := float32(1.0 / float64(int64(1)<<(d.BitsPerSample-1)))
@@ -803,7 +857,7 @@ func (s *Server) hGenLyrics(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		// Si ya había una letra, se conserva una copia
+		// If lyrics already existed, keep a backup copy
 		if _, err := os.Stat(out); err == nil {
 			_ = os.Rename(out, strings.TrimSuffix(out, ".lrc")+time.Now().Format("-20060102-150405")+".lrc")
 		}
@@ -812,9 +866,9 @@ func (s *Server) hGenLyrics(w http.ResponseWriter, r *http.Request) {
 		}
 		j.mu.Lock()
 		j.Output = out
-		j.Message = fmt.Sprintf("Letra generada: %d líneas", len(res.Lines))
+		j.Message = fmt.Sprintf("Lyrics generated: %d lines", len(res.Lines))
 		j.mu.Unlock()
-		s.logf("🎤 Letra generada: %s", out)
+		s.logf("🎤 Lyrics generated: %s", out)
 		return nil
 	})
 	if err != nil {
@@ -834,7 +888,7 @@ func (s *Server) hCancel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]bool{"ok": true})
 }
 
-// ---------------------------------------------------------------- eventos (SSE)
+// ---------------------------------------------------------------- events (SSE)
 
 type hub struct {
 	mu      sync.Mutex
@@ -858,7 +912,7 @@ func (h *hub) send(kind string, data any) {
 func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 	fl, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming no soportado", 500)
+		http.Error(w, "streaming not supported", 500)
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -874,7 +928,7 @@ func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 	}()
 	tick := time.NewTicker(20 * time.Second)
 	defer tick.Stop()
-	fmt.Fprint(w, ": hola\n\n")
+	fmt.Fprint(w, ": hello\n\n")
 	fl.Flush()
 	for {
 		select {

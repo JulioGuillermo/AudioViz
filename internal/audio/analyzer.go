@@ -10,45 +10,45 @@ import (
 
 const FFTWindowSize = 2048 // 2048 samples = ~42.6ms at 48kHz (resolution ~23.4Hz)
 
-// FrameFeatures contiene los datos espectrales y de energía analizados para un cuadro de video específico
+// FrameFeatures holds the analyzed spectral and energy data for a specific video frame
 type FrameFeatures struct {
 	FrameIndex   int
 	TimestampSec float64
 
-	// Barras espectrales normalizadas [0.0, 1.0] independientes para cada canal
-	LeftBars     []float64
-	RightBars    []float64
+	// Normalized spectral bars [0.0, 1.0], independent per channel
+	LeftBars  []float64
+	RightBars []float64
 
-	// Indicadores agregados de reactividad
+	// Aggregated reactivity indicators
 	BassEnergy   float64 // 20 - 150 Hz
 	MidEnergy    float64 // 150 - 3000 Hz
 	TrebleEnergy float64 // 3000 - 16000 Hz
-	OverallRMS   float64 // Nivel global de amplitud
-	
-	// Reactividad dinámica
-	SpectralFlux float64 // Cambio repentino de energía espectral
-	IsBeat       bool    // Disparo de golpe de batería / transitorio fuerte
-	BeatPulse    float64 // Pulso amortiguado de golpe (1.0 en pico, decae a 0.0)
+	OverallRMS   float64 // Overall amplitude level
+
+	// Dynamic reactivity
+	SpectralFlux float64 // Sudden change in spectral energy
+	IsBeat       bool    // Drum hit / strong transient trigger
+	BeatPulse    float64 // Damped hit pulse (1.0 at peak, decays to 0.0)
 }
 
-// AudioAnalyzer procesa cuadros sucesivos manteniendo estado de amortiguación temporal
+// AudioAnalyzer processes successive frames, keeping temporal smoothing state
 type AudioAnalyzer struct {
-	audio          *DecodedAudio
-	fps            int
-	barCount       int
-	sensitivity    float64
-	smoothing      float64
-	decayRate      float64
+	audio       *DecodedAudio
+	fps         int
+	barCount    int
+	sensitivity float64
+	smoothing   float64
+	decayRate   float64
 
-	// Normalización adaptativa: cada señal se reescala según su rango local (ventana ±WindowSec)
+	// Adaptive normalization: each signal is rescaled to its local range (window ±WindowSec)
 	Normalize bool
 	WindowSec float64
 
-	// Tablas precalculadas
+	// Precomputed tables
 	hannWindow     []float64
 	binFrequencies []binRange
 
-	// Estado temporal previo para suavizado
+	// Previous temporal state for smoothing
 	prevLeftBars   []float64
 	prevRightBars  []float64
 	prevBassEnergy float64
@@ -61,7 +61,7 @@ type binRange struct {
 	endBin   int
 }
 
-// NewAudioAnalyzer inicializa el analizador con precomputación de ventanas y frecuencias
+// NewAudioAnalyzer initializes the analyzer, precomputing windows and frequencies
 func NewAudioAnalyzer(audio *DecodedAudio, fps int, barCount int, sensitivity float64, smoothing float64, decayRate float64) *AudioAnalyzer {
 	if smoothing <= 0 {
 		smoothing = 0.75
@@ -76,14 +76,14 @@ func NewAudioAnalyzer(audio *DecodedAudio, fps int, barCount int, sensitivity fl
 		sensitivity = 1.0
 	}
 
-	// 1. Precomputar ventana Hann
+	// 1. Precompute Hann window
 	hann := make([]float64, FFTWindowSize)
 	for i := 0; i < FFTWindowSize; i++ {
 		hann[i] = 0.5 * (1.0 - math.Cos(2.0*math.Pi*float64(i)/float64(FFTWindowSize-1)))
 	}
 
-	// 2. Precomputar rangos de frecuencia logarítmicos
-	// Desde 25 Hz hasta 18000 Hz
+	// 2. Precompute logarithmic frequency ranges
+	// From 25 Hz to 18000 Hz
 	minFreq := 25.0
 	maxFreq := 18000.0
 	hzPerBin := float64(audio.SampleRate) / float64(FFTWindowSize)
@@ -91,7 +91,7 @@ func NewAudioAnalyzer(audio *DecodedAudio, fps int, barCount int, sensitivity fl
 
 	ranges := make([]binRange, barCount)
 	for i := 0; i < barCount; i++ {
-		// Distribución exponencial / logarítmica
+		// Exponential / logarithmic distribution
 		fStart := minFreq * math.Pow(maxFreq/minFreq, float64(i)/float64(barCount))
 		fEnd := minFreq * math.Pow(maxFreq/minFreq, float64(i+1)/float64(barCount))
 
@@ -126,8 +126,8 @@ func NewAudioAnalyzer(audio *DecodedAudio, fps int, barCount int, sensitivity fl
 	}
 }
 
-// AnalyzeAllFrames preanaliza todos los cuadros del video. Las FFT (independientes por cuadro)
-// se calculan en paralelo en todos los núcleos; el suavizado temporal se aplica después en orden.
+// AnalyzeAllFrames pre-analyzes all video frames. The FFTs (independent per frame)
+// are computed in parallel on all cores; temporal smoothing is applied afterwards in order.
 func (a *AudioAnalyzer) AnalyzeAllFrames(totalVideoFrames int) []FrameFeatures {
 	results := make([]FrameFeatures, totalVideoFrames)
 	samplesPerVideoFrame := float64(a.audio.SampleRate) / float64(a.fps)
@@ -195,7 +195,7 @@ func (a *AudioAnalyzer) AnalyzeAllFrames(totalVideoFrames int) []FrameFeatures {
 	}
 	if a.Normalize && totalVideoFrames > 1 {
 		win := int(a.WindowSec * float64(a.fps))
-		// Energías: cada una contra su propio rango local
+		// Energies: each against its own local range
 		normalizeSeries(win, series(func(r *rawFrame) *float64 { return &r.bass }))
 		normalizeSeries(win, series(func(r *rawFrame) *float64 { return &r.mid }))
 		normalizeSeries(win, series(func(r *rawFrame) *float64 { return &r.treble }))
@@ -216,12 +216,12 @@ func (a *AudioAnalyzer) AnalyzeAllFrames(totalVideoFrames int) []FrameFeatures {
 		raw := &raws[frameIdx]
 		rawBarsL, rawBarsR := raw.barsL, raw.barsR
 
-		// Suavizado temporal con balística (Attack rápido, Decay suave)
+		// Temporal smoothing with ballistics (fast Attack, smooth Decay)
 		smoothBarsL := make([]float64, a.barCount)
 		smoothBarsR := make([]float64, a.barCount)
 
 		for b := 0; b < a.barCount; b++ {
-			// Canal L
+			// Channel L
 			valL := rawBarsL[b] * a.sensitivity
 			prevL := a.prevLeftBars[b]
 			if valL >= prevL {
@@ -231,7 +231,7 @@ func (a *AudioAnalyzer) AnalyzeAllFrames(totalVideoFrames int) []FrameFeatures {
 			}
 			a.prevLeftBars[b] = smoothBarsL[b]
 
-			// Canal R
+			// Channel R
 			valR := rawBarsR[b] * a.sensitivity
 			prevR := a.prevRightBars[b]
 			if valR >= prevR {
@@ -250,7 +250,7 @@ func (a *AudioAnalyzer) AnalyzeAllFrames(totalVideoFrames int) []FrameFeatures {
 		isBeat := false
 		beatThresh := 0.08
 		if a.Normalize {
-			beatThresh = 0.15 // el rango normalizado es mayor
+			beatThresh = 0.15 // the normalized range is larger
 		}
 		if flux > beatThresh && flux > a.prevFlux*1.2 {
 			isBeat = true
@@ -289,7 +289,7 @@ func (a *AudioAnalyzer) extractBars(magnitudes []float64) []float64 {
 		}
 		if count > 0 {
 			avg := sum / float64(count)
-			// Escala de compresión perceptual (logarítmica suave con normalización)
+			// Perceptual compression scale (soft logarithmic with normalization)
 			bars[i] = math.Log10(1.0+avg*9.0) / 1.5
 		}
 	}
@@ -331,8 +331,8 @@ func raws2bars(raws []rawFrame) (l, r [][]float64) {
 	return
 }
 
-// rollingRange calcula para cada cuadro el suelo (p10) y techo (p97) de x en una ventana centrada
-// de ±win cuadros. Se evalúa en una rejilla y se interpola para que sea barato.
+// rollingRange computes, for each frame, the floor (p10) and ceiling (p97) of x in a centered window
+// of ±win frames. It is evaluated on a grid and interpolated to keep it cheap.
 func rollingRange(x []float64, win int) (lo, hi []float64) {
 	n := len(x)
 	lo, hi = make([]float64, n), make([]float64, n)
@@ -379,7 +379,7 @@ func rollingRange(x []float64, win int) (lo, hi []float64) {
 	return
 }
 
-// softKnee comprime suavemente por encima de 0.85 en lugar de recortar en seco
+// softKnee compresses smoothly above 0.85 instead of hard clipping
 func softKnee(v float64) float64 {
 	if v < 0 {
 		return 0
@@ -390,8 +390,8 @@ func softKnee(v float64) float64 {
 	return 0.85 + 0.15*math.Tanh((v-0.85)/0.15)
 }
 
-// normalizeSeries reescala in-place una señal a su rango local [p10, p97].
-// Así un bajo constantemente alto sigue "respirando" en vez de dejar el efecto clavado al máximo.
+// normalizeSeries rescales a signal in-place to its local range [p10, p97].
+// This way a constantly loud bass keeps "breathing" instead of pinning the effect at maximum.
 func normalizeSeries(win int, ptrs []*float64) {
 	x := make([]float64, len(ptrs))
 	gmax := 0.0
@@ -402,15 +402,15 @@ func normalizeSeries(win int, ptrs []*float64) {
 	for _, h := range hi {
 		gmax = math.Max(gmax, h)
 	}
-	minSpan := math.Max(gmax*0.25, 1e-4) // evita amplificar ruido en pasajes casi silenciosos
+	minSpan := math.Max(gmax*0.25, 1e-4) // avoids amplifying noise in near-silent passages
 	for i, p := range ptrs {
 		*p = softKnee((x[i] - lo[i]) / math.Max(hi[i]-lo[i], minSpan))
 	}
 }
 
-// normalizeBars normaliza cada banda contra su propio rango local (compartido entre L y R para
-// conservar el balance estéreo), con un mínimo relativo al espectro completo para no inflar
-// bandas prácticamente vacías.
+// normalizeBars normalizes each band against its own local range (shared between L and R to
+// preserve stereo balance), with a minimum relative to the full spectrum to avoid inflating
+// nearly empty bands.
 func (a *AudioAnalyzer) normalizeBars(win int, left, right [][]float64) {
 	n := len(left)
 	nb := a.barCount
@@ -443,7 +443,7 @@ func (a *AudioAnalyzer) normalizeBars(win int, left, right [][]float64) {
 	}
 }
 
-// fftPlan es una FFT radix-2 iterativa in-place con tablas precalculadas (sin asignaciones por llamada)
+// fftPlan is an iterative in-place radix-2 FFT with precomputed tables (no per-call allocations)
 type fftPlan struct {
 	n      int
 	rev    []int

@@ -1,41 +1,41 @@
-# Resumen Ejecutivo del Proyecto: Audio-Reactive Music Video Generator
+# Project Executive Summary: Audio-Reactive Music Video Generator
 
-## 1. Visión del Proyecto
-Desarrollar una herramienta CLI de alto rendimiento en **Go (Golang)** capaz de compilarse en un binario autónomo y multiplataforma. La herramienta toma una pista de audio (FLAC, MP3, WAV, etc.) y un fondo visual (imagen estática o archivo de video), y genera un video musical con efectos visuales dinámicos que reaccionan matemáticamente a la música en tiempo real.
+## 1. Project Vision
+Build a high-performance CLI tool in **Go (Golang)** that compiles into a self-contained, cross-platform binary. The tool takes an audio track (FLAC, MP3, WAV, etc.) and a visual background (static image or video file), and generates a music video with dynamic visual effects that react mathematically to the music in real time.
 
-## 2. Características Clave
-- **Binario Nativo en Go**: Empaquetable sin dependencias complejas de CGO para facilitar la distribución, aprovechando el pipeline de FFmpeg para la decodificación y codificación acelerada por hardware o software.
-- **Soporte de Fondos Duales**:
-  - **Imagen Estática**: Escalado inteligente (*cover*, *contain*, *blur padding*), animación continua reactiva.
-  - **Video de Fondo**: Decodificación frame a frame, soporte de *looping* infinito si el audio excede la duración del video, procesamiento reactivo en cada cuadro.
-- **Efectos de Distorsión Reactivos al Audio**:
-  - *Bass Pulse / Zoom*: Golpe de zoom reactivo a las frecuencias graves y transitorios de percusión.
-  - *Chromatic Aberration (Separación RGB)*: Desfase de canales de color en función de la intensidad y picos de audio.
-  - *Distorsión de Ondas / Ripple*: Deformación fluida del fondo basada en frecuencias medias/altas.
-  - *Glitch / VHS Shakes*: Salto de líneas, ruido y cortes activados por transitorios agudos o drops.
-  - *Ajuste de Color y Contraste*: Variación reactiva de brillo, contraste, saturación, viñeteado y tintes de color.
-- **Espectrogramas y Visualizadores Estéreo Simétricos**:
-  - **Canal L (Izquierda) y Canal R (Derecha)**: Procesamiento FFT estéreo independiente para visualización simétrica fidedigna.
-  - **Modo Circular Central**: Círculo o anillo en el centro donde el semicírculo izquierdo representa el canal L y el derecho el canal R, con barras radiales o líneas suaves.
-  - **Modo Horizontal Lineal**: Disposición en la parte inferior o central (L hacia la izquierda, R hacia la derecha, o divididos lado a lado).
-  - **Modo Vertical Lateral**: Barras reactivas saliendo desde los bordes laterales hacia el centro.
-  - **Modo Osciloscopio / Onda**: Trazo continuo de forma de onda estéreo con resplandor neón (*glow*).
-- **Sistema de Partículas Reactivo (Opcional)**:
-  - Generación de polvo ambiental, chispas o explosiones radiales (*bursts*) en cada beat kick.
-  - Velocidad, tamaño, tiempo de vida y turbulencia guiadas por la energía de audio.
-- **100% Configurable y Modular**:
-  - Archivos de configuración en formato YAML o JSON.
-  - Sistema de *Presets* listos para usar (Cyberpunk, Synthwave, Dark Ambient, Minimalist, Bass Monster).
-  - Soporte de banderas CLI para sobreescribir cualquier parámetro al instante.
-  - Modo *Preview*: Renderizado de un cuadro único (`--frame N`) o un clip corto (`--preview -ss 30 -t 5`) para iteración ultrarrápida.
+## 2. Key Features
+- **Native Go Binary**: Packageable without complex CGO dependencies for easy distribution, leveraging the FFmpeg pipeline for hardware- or software-accelerated decoding and encoding.
+- **Dual Background Support**:
+  - **Static Image**: Smart scaling (*cover*, *contain*, *blur padding*), continuous reactive animation.
+  - **Background Video**: Frame-by-frame decoding, infinite *looping* support if the audio is longer than the video, reactive processing on every frame.
+- **Audio-Reactive Distortion Effects**:
+  - *Bass Pulse / Zoom*: Zoom hit reacting to low frequencies and percussion transients.
+  - *Chromatic Aberration (RGB Separation)*: Color channel offset driven by audio intensity and peaks.
+  - *Wave Distortion / Ripple*: Fluid background deformation based on mid/high frequencies.
+  - *Glitch / VHS Shakes*: Line jumps, noise and cuts triggered by sharp transients or drops.
+  - *Color and Contrast Adjustment*: Reactive variation of brightness, contrast, saturation, vignetting and color tints.
+- **Symmetric Stereo Spectrograms and Visualizers**:
+  - **L Channel (Left) and R Channel (Right)**: Independent stereo FFT processing for a faithful symmetric visualization.
+  - **Central Circular Mode**: Circle or ring in the center where the left semicircle represents the L channel and the right one the R channel, with radial bars or smooth lines.
+  - **Linear Horizontal Mode**: Layout at the bottom or center (L to the left, R to the right, or split side by side).
+  - **Lateral Vertical Mode**: Reactive bars coming out from the side edges towards the center.
+  - **Oscilloscope / Wave Mode**: Continuous stereo waveform trace with neon *glow*.
+- **Reactive Particle System (Optional)**:
+  - Generation of ambient dust, sparks or radial *bursts* on every beat kick.
+  - Speed, size, lifetime and turbulence driven by the audio energy.
+- **100% Configurable and Modular**:
+  - Configuration files in YAML or JSON format.
+  - Ready-to-use *Presets* system (Cyberpunk, Synthwave, Dark Ambient, Minimalist, Bass Monster).
+  - CLI flag support to override any parameter on the fly.
+  - *Preview* mode: rendering of a single frame (`--frame N`) or a short clip (`--preview -ss 30 -t 5`) for ultra-fast iteration.
 
-## 3. Entorno y Archivos de Prueba Detectados
-- **Imagen de fondo**: `I didn't ask to be the devil` (PNG, 832x1248, vertical / formato póster).
-- **Audio de prueba**: `I didnt ask to be the devil.flac` (FLAC estéreo, 48000 Hz, 16-bit, duración: 4 min 29 seg).
-- **Entorno del sistema**:
-  - SO: Linux x86_64
+## 3. Detected Environment and Test Files
+- **Background image**: `I didn't ask to be the devil` (PNG, 832x1248, vertical / poster format).
+- **Test audio**: `I didnt ask to be the devil.flac` (stereo FLAC, 48000 Hz, 16-bit, duration: 4 min 29 s).
+- **System environment**:
+  - OS: Linux x86_64
   - Go: `go1.26.6-X:nodwarf5`
-  - FFmpeg: `Lavf62.12.102` disponible en `/usr/bin/ffmpeg` y `/usr/bin/ffprobe`.
+  - FFmpeg: `Lavf62.12.102` available at `/usr/bin/ffmpeg` and `/usr/bin/ffprobe`.
 
 ---
-*Consulte los documentos detallados en la carpeta `planning/` para especificaciones técnicas profundas.*
+*See the detailed documents in the `planning/` folder for in-depth technical specifications.*

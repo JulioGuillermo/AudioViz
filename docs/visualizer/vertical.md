@@ -1,7 +1,7 @@
 # vertical
 
-Barras horizontales que salen de los bordes laterales hacia el centro: L desde el borde izquierdo, R desde el
-derecho, graves arriba. Ocupan el 80 % central de la altura.
+Horizontal bars coming out of the side edges towards the center: L from the left edge, R from the
+right one, bass at the top. They take up the central 80 % of the height.
 
 ```yaml
 visualizer:
@@ -10,4 +10,4 @@ visualizer:
   max_height: 250.0
 ```
 
-Usa las [opciones comunes](README.md#opciones-comunes). `max_height` es la longitud máxima hacia dentro.
+Uses the [common options](README.md#common-options). `max_height` is the maximum inward length.

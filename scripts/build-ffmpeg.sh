@@ -1,11 +1,11 @@
 #!/bin/bash
-# Compila un FFmpeg mínimo (solo decodificación de vídeo) como librerías estáticas en
-# third_party/build. Se enlaza dentro del binario: no hace falta ffmpeg instalado.
+# Builds a minimal FFmpeg (video decoding only) as static libraries in
+# third_party/build. It is linked into the binary: no installed ffmpeg needed.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/third_party/ffmpeg"
 OUT="$ROOT/third_party/build"
-if [ -f "$OUT/lib/libavcodec.a" ] && [ -f "$OUT/lib/libswscale.a" ]; then echo "ffmpeg ya compilado"; exit 0; fi
+if [ -f "$OUT/lib/libavcodec.a" ] && [ -f "$OUT/lib/libswscale.a" ]; then echo "ffmpeg already built"; exit 0; fi
 mkdir -p "$ROOT/third_party"
 if [ ! -d "$SRC" ]; then
   git clone --depth 1 -b release/7.1 https://git.ffmpeg.org/ffmpeg.git "$SRC"

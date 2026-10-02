@@ -1,13 +1,13 @@
-# Sistema de Configuración y CLI
+# Configuration System and CLI
 
-## 1. Diseño del Archivo de Configuración (YAML / JSON)
+## 1. Configuration File Design (YAML / JSON)
 
-El comportamiento de renderizado se controla mediante un esquema declarativo:
+Rendering behavior is controlled through a declarative schema:
 
 ```yaml
 # audio-bg-config.yaml
 
-# 1. Parámetros de Video de Salida
+# 1. Output Video Parameters
 output:
   width: 1920
   height: 1080
@@ -17,23 +17,23 @@ output:
   preset: "fast"
   crf: 18
 
-# 2. Ajustes del Fondo (Imagen o Video)
+# 2. Background Settings (Image or Video)
 background:
   fit_mode: "cover"           # cover, contain, blur_padding
-  opacity: 0.85               # 0.0 a 1.0 (permite oscurecer para resaltar espectro)
-  darken: 0.20                # Viñeta oscura o tinte oscuro base
-  loop_video: true            # Si el fondo es video y es más corto que el audio
+  opacity: 0.85               # 0.0 to 1.0 (lets you darken it to make the spectrum stand out)
+  darken: 0.20                # Dark vignette or base dark tint
+  loop_video: true            # If the background is a video and is shorter than the audio
 
-# 3. Efectos Reactivos sobre el Fondo
+# 3. Reactive Effects on the Background
 distortion:
   enabled: true
   bass_pulse:
     enabled: true
-    max_zoom: 1.08            # Zoom máximo en los bombos (1.0 = sin zoom)
+    max_zoom: 1.08            # Maximum zoom on kicks (1.0 = no zoom)
     decay_speed: 0.15
   chromatic_aberration:
     enabled: true
-    intensity: 12.0           # Desplazamiento máximo en píxeles de canales R y B
+    intensity: 12.0           # Maximum shift in pixels of the R and B channels
     react_to: "treble"        # bass, treble, overall
   ripple:
     enabled: false
@@ -41,27 +41,27 @@ distortion:
     frequency: 0.05
   glitch:
     enabled: true
-    trigger_threshold: 0.75   # Umbral de transitorio para disparar glitch
+    trigger_threshold: 0.75   # Transient threshold to trigger the glitch
     intensity: 0.5
   color_reactive:
-    brightness_boost: 0.20    # Flash de brillo en drops
+    brightness_boost: 0.20    # Brightness flash on drops
     contrast_boost: 0.15
 
-# 4. Espectrograma de Audio
+# 4. Audio Spectrogram
 visualizer:
   enabled: true
   type: "circular"            # circular, horizontal_bottom, horizontal_center, vertical_edges, wave_oscilloscope
-  stereo_symmetric: true      # L a la izquierda, R a la derecha
-  bars: 64                    # Número de bandas de frecuencia por canal
-  smoothing: 0.80             # Suavizado temporal entre cuadros
+  stereo_symmetric: true      # L on the left, R on the right
+  bars: 64                    # Number of frequency bands per channel
+  smoothing: 0.80             # Temporal smoothing between frames
   min_height: 4.0
   max_height: 220.0
   bar_width: 6.0
   bar_gap: 4.0
-  bar_roundness: 3.0          # Esquinas redondeadas
-  center_x: 0.5               # Coordenadas relativas (0.5 = centro)
+  bar_roundness: 3.0          # Rounded corners
+  center_x: 0.5               # Relative coordinates (0.5 = center)
   center_y: 0.5
-  radius: 200.0               # Radio base para tipo circular
+  radius: 200.0               # Base radius for the circular type
   glow:
     enabled: true
     radius: 15.0
@@ -70,13 +70,13 @@ visualizer:
   palette:
     gradient_stops:
       - offset: 0.0
-        color: "#00f0ff"      # Cyan neón
+        color: "#00f0ff"      # Neon cyan
       - offset: 0.5
-        color: "#7928ca"      # Violeta profundo
+        color: "#7928ca"      # Deep violet
       - offset: 1.0
-        color: "#ff007f"      # Rosa eléctrico
+        color: "#ff007f"      # Electric pink
 
-# 5. Sistema de Partículas
+# 5. Particle System
 particles:
   enabled: true
   count: 150
@@ -84,38 +84,38 @@ particles:
   min_size: 2.0
   max_size: 6.0
   color: "#ffffff"
-  audio_boost: 2.5            # Multiplicador de velocidad ante picos de audio
+  audio_boost: 2.5            # Speed multiplier on audio peaks
 ```
 
 ---
 
-## 2. Línea de Comandos (CLI Flags)
+## 2. Command Line (CLI Flags)
 
-El binario `audio-bg` cuenta con una interfaz ergonómica:
+The `audio-bg` binary has an ergonomic interface:
 
 ```bash
-# Uso estándar usando configuración automática / presets:
+# Standard usage with automatic configuration / presets:
 audio-bg --audio track.flac --bg background.png --output video.mp4
 
-# Uso con video como fondo y preset Cyberpunk:
+# Usage with a video background and the Cyberpunk preset:
 audio-bg --audio track.flac --bg clip.mp4 --preset cyberpunk --output output.mp4
 
-# Modo de Previsualización Ultrarrápida (genera solo 5 segundos a partir del minuto 1:00):
+# Ultra-fast Preview Mode (renders only 5 seconds starting at 1:00):
 audio-bg --audio track.flac --bg bg.png -ss 00:01:00 -t 5 -o preview.mp4
 
-# Renderizado de un cuadro único como imagen para calibrar visualmente el diseño:
+# Render a single frame as an image to visually calibrate the design:
 audio-bg --audio track.flac --bg bg.png --frame-at 00:01:15 -o preview_frame.png
 
-# Sobrescritura de parámetros al vuelo:
+# Override parameters on the fly:
 audio-bg -a track.flac -b bg.png --visualizer circular --glow-intensity 1.2 --no-particles
 ```
 
 ---
 
-## 3. Presets Integrados (Out-of-the-Box)
+## 3. Built-in Presets (Out-of-the-Box)
 
-1. `cyberpunk` (Anillo circular cyan/magenta, aberración cromática agresiva, glitch sutil, destello en graves).
-2. `synthwave` (Espectro horizontal reflejado en la base con gradiente atardecer, ondas suaves en fondo).
-3. `dark_ambient` (Oscuro, viñeta profunda, partículas de polvo flotante, osciloscopio blanco puro minimalista).
-4. `bass_monster` (Zoom de choque violento, explosiones radiales masivas de partículas, barras anchas de alta energía).
-5. `clean_minimal` (Visualizador delgado y elegante sin distorsiones agresivas, ideal para podcasts musicales o lofi).
+1. `cyberpunk` (Cyan/magenta circular ring, aggressive chromatic aberration, subtle glitch, flash on the bass).
+2. `synthwave` (Horizontal spectrum mirrored at the bottom with a sunset gradient, gentle ripples on the background).
+3. `dark_ambient` (Dark, deep vignette, floating dust particles, minimalist pure-white oscilloscope).
+4. `bass_monster` (Violent impact zoom, massive radial particle bursts, wide high-energy bars).
+5. `clean_minimal` (Thin, elegant visualizer without aggressive distortions, ideal for music podcasts or lofi).

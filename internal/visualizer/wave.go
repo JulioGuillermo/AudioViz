@@ -34,8 +34,8 @@ func (wv *WaveVisualizer) Draw(dc *gg.Context, feat *audio.FrameFeatures) {
 		return
 	}
 
-	colL := color.RGBA{R: 0, G: 240, B: 255, A: 255}  // Cyan para L
-	colR := color.RGBA{R: 255, G: 0, B: 127, A: 255}  // Magenta para R
+	colL := color.RGBA{R: 0, G: 240, B: 255, A: 255} // Cyan for L
+	colR := color.RGBA{R: 255, G: 0, B: 127, A: 255} // Magenta for R
 
 	if len(wv.cfg.Gradient) >= 2 {
 		colL, _ = ParseHexColor(wv.cfg.Gradient[0].Color)
@@ -47,7 +47,7 @@ func (wv *WaveVisualizer) Draw(dc *gg.Context, feat *audio.FrameFeatures) {
 		lineWidth = 3.0
 	}
 
-	// Glow si está activo
+	// Glow if enabled
 	if wv.cfg.Glow.Enabled {
 		glowPasses := 3
 		for p := glowPasses; p >= 1; p-- {
@@ -58,7 +58,7 @@ func (wv *WaveVisualizer) Draw(dc *gg.Context, feat *audio.FrameFeatures) {
 		}
 	}
 
-	// Líneas principales
+	// Main lines
 	wv.drawWaveLine(dc, feat.LeftBars, -1.0, lineWidth, colL, 1.0)
 	wv.drawWaveLine(dc, feat.RightBars, 1.0, lineWidth, colR, 1.0)
 }
@@ -78,7 +78,7 @@ func (wv *WaveVisualizer) drawWaveLine(dc *gg.Context, bars []float64, dir float
 	dc.MoveTo(0, wv.baseY)
 	for i := 0; i < n; i++ {
 		x := float64(i) * stepX
-		// Amplitud modulada
+		// Modulated amplitude
 		y := wv.baseY + dir*bars[i]*amp*math.Sin(float64(i)*0.4)
 		dc.LineTo(x, y)
 	}

@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// Model es un archivo de pesos que se descarga una vez a la caché local
+// Model is a weights file downloaded once to the local cache
 type Model struct {
 	Name  string
 	File  string
@@ -21,17 +21,17 @@ type Model struct {
 }
 
 var (
-	// Whisper large-v3-turbo cuantizado: casi la precisión de large-v3, mucho más rápido
-	WhisperModel = Model{Name: "whisper", Label: "Reconocimiento de voz (Whisper large-v3-turbo)", File: "ggml-large-v3-turbo-q5_0.bin",
+	// Quantized Whisper large-v3-turbo: nearly the accuracy of large-v3, much faster
+	WhisperModel = Model{Name: "whisper", Label: "Speech recognition (Whisper large-v3-turbo)", File: "ggml-large-v3-turbo-q5_0.bin",
 		URL: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin", Size: 574041195}
-	DemucsModel = Model{Name: "demucs", Label: "Separación de voz (Demucs htdemucs)", File: "ggml-model-htdemucs-4s-f16.bin",
+	DemucsModel = Model{Name: "demucs", Label: "Vocal separation (Demucs htdemucs)", File: "ggml-model-htdemucs-4s-f16.bin",
 		URL: "https://huggingface.co/datasets/Retrobear/demucs.cpp/resolve/main/ggml-model-htdemucs-4s-f16.bin", Size: 83994361}
 )
 
-// aheadsLargeV3Turbo = WHISPER_AHEADS_LARGE_V3_TURBO en whisper.h
+// aheadsLargeV3Turbo = WHISPER_AHEADS_LARGE_V3_TURBO in whisper.h
 const aheadsLargeV3Turbo = 14
 
-// CacheDir es la carpeta de modelos y cachés (~/.cache/audioviz)
+// CacheDir is the folder for models and caches (~/.cache/audioviz)
 func CacheDir() string {
 	if d := os.Getenv("AUDIOVIZ_CACHE"); d != "" {
 		return d
@@ -45,13 +45,13 @@ func CacheDir() string {
 
 func (m Model) Path() string { return filepath.Join(CacheDir(), "models", m.File) }
 
-// Present indica si el modelo ya está descargado completo
+// Present reports whether the model is already fully downloaded
 func (m Model) Present() bool {
 	st, err := os.Stat(m.Path())
 	return err == nil && (m.Size == 0 || st.Size() == m.Size)
 }
 
-// Ensure descarga el modelo si falta (reanudable). progress(hechos, total, bytes/s)
+// Ensure downloads the model if missing (resumable). progress(done, total, bytes/s)
 func (m Model) Ensure(ctx context.Context, progress func(done, total int64, rate float64)) (string, error) {
 	path := m.Path()
 	if m.Present() {
@@ -74,7 +74,7 @@ func (m Model) Ensure(ctx context.Context, progress func(done, total int64, rate
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("descargando %s: %w", m.File, err)
+		return "", fmt.Errorf("downloading %s: %w", m.File, err)
 	}
 	defer resp.Body.Close()
 	switch resp.StatusCode {
@@ -82,7 +82,7 @@ func (m Model) Ensure(ctx context.Context, progress func(done, total int64, rate
 		have = 0
 	case http.StatusPartialContent:
 	default:
-		return "", fmt.Errorf("descargando %s: HTTP %s", m.File, resp.Status)
+		return "", fmt.Errorf("downloading %s: HTTP %s", m.File, resp.Status)
 	}
 	flag := os.O_CREATE | os.O_WRONLY
 	if have > 0 {
@@ -119,14 +119,14 @@ func (m Model) Ensure(ctx context.Context, progress func(done, total int64, rate
 		}
 		if rerr != nil {
 			f.Close()
-			return "", fmt.Errorf("descargando %s: %w", m.File, rerr)
+			return "", fmt.Errorf("downloading %s: %w", m.File, rerr)
 		}
 	}
 	if err := f.Close(); err != nil {
 		return "", err
 	}
 	if m.Size > 0 && done != m.Size {
-		return "", fmt.Errorf("descarga incompleta de %s (%d de %d bytes)", m.File, done, m.Size)
+		return "", fmt.Errorf("incomplete download of %s (%d of %d bytes)", m.File, done, m.Size)
 	}
 	if progress != nil {
 		progress(done, total, 0)

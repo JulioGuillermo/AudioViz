@@ -1,67 +1,67 @@
-# Efectos Visuales y Tratamiento del Fondo (Imagen y Video)
+# Visual Effects and Background Handling (Image and Video)
 
-## 1. Modos de Fondo Admitidos
+## 1. Supported Background Modes
 
-### A. Imagen Estática (PNG, JPG, WebP)
-- **Modos de Ajuste (Aspect Ratio Fit)**:
-  - `Cover`: Escala la imagen para llenar la resolución destino (ej. 1920x1080 o 1080x1920 para formato vertical), recortando excesos sin bandas negras.
-  - `Contain`: Ajusta la imagen dentro de los límites manteniendo su proporción completa.
-  - `Blur Padding`: La imagen original se muestra centrada y las barras laterales/superiores se rellenan con una versión ampliada y desenfocada (*Gaussian Blur*) de la misma imagen.
-- **Preparación de Buffer**: La imagen se pre-renderiza en memoria una sola vez en la resolución objetivo con formato RGBA rápido.
+### A. Static Image (PNG, JPG, WebP)
+- **Fit Modes (Aspect Ratio Fit)**:
+  - `Cover`: Scales the image to fill the target resolution (e.g. 1920x1080, or 1080x1920 for vertical format), cropping the excess with no black bars.
+  - `Contain`: Fits the image within the bounds while keeping its full proportions.
+  - `Blur Padding`: The original image is shown centered and the side/top bars are filled with an enlarged, blurred (*Gaussian Blur*) version of the same image.
+- **Buffer Preparation**: The image is pre-rendered in memory only once at the target resolution in a fast RGBA format.
 
-### B. Video de Fondo (MP4, MKV, MOV, WebM)
-- **Decodificación en Streaming Continuo**:
-  Un pipe de lectura conectado a FFmpeg extrae los cuadros secuenciales a la velocidad de fotogramas del video resultante.
-- **Looping Inteligente**:
-  Si el audio dura más que el video (ej. audio de 4:30 min y video de 30 segundos), el lector de video reinicia el flujo automáticamente sin cortes perceptibles o con una transición suave.
+### B. Background Video (MP4, MKV, MOV, WebM)
+- **Continuous Streaming Decoding**:
+  A read pipe connected to FFmpeg extracts sequential frames at the output video's frame rate.
+- **Smart Looping**:
+  If the audio is longer than the video (e.g. 4:30 min of audio and a 30-second video), the video reader restarts the stream automatically with no noticeable cuts, or with a smooth transition.
 
 ---
 
-## 2. Efectos de Distorsión Reactivos al Audio
+## 2. Audio-Reactive Distortion Effects
 
-Cada efecto está parametrizado con intensidades mínimas y multiplicadores según las frecuencias de audio:
+Each effect is parameterized with minimum intensities and multipliers based on the audio frequencies:
 
 ```mermaid
 flowchart TD
-    AudioFeatures["Características del Audio (Frame N)"]
+    AudioFeatures["Audio Features (Frame N)"]
     AudioFeatures --> Bass["Sub-Bass & Kicks (20-150Hz)"]
     AudioFeatures --> Mids["Mids & Vocals (300-3000Hz)"]
     AudioFeatures --> Treble["Treble & Snares (4000-16000Hz)"]
     
     Bass --> ZoomPulse["1. Bass Pulse / Zoom"]
     Bass --> Shake["2. Screen Shake"]
-    Treble --> ChromaticAberration["3. Aberración Cromática (RGB Shift)"]
-    Mids --> WaveRipple["4. Deformación Líquida (Ripple/Wave)"]
+    Treble --> ChromaticAberration["3. Chromatic Aberration (RGB Shift)"]
+    Mids --> WaveRipple["4. Liquid Deformation (Ripple/Wave)"]
     Treble --> Glitch["5. Glitch / VHS Displacement"]
-    Bass --> ColorLighting["6. Flash de Brillo / Contraste"]
+    Bass --> ColorLighting["6. Brightness / Contrast Flash"]
 ```
 
-### 1. Bass Pulse / Zoom Dinámico
-- Al detectar un aumento de energía en graves ($E_{\text{bass}}$), el fondo se amplía desde el centro mediante interpolación bilineal:
+### 1. Dynamic Bass Pulse / Zoom
+- When an increase in bass energy ($E_{\text{bass}}$) is detected, the background is enlarged from the center using bilinear interpolation:
   $$\text{Scale} = 1.0 + (\text{MaxZoom} - 1.0) \cdot E_{\text{bass}}^{\gamma}$$
-- Se aplica amortiguación elástica de retorno para que el efecto "respire" como un diafragma de altavoz.
+- Elastic return damping is applied so the effect "breathes" like a speaker diaphragm.
 
-### 2. Aberración Cromática (Separación de Canales RGB)
-- Desplaza las coordenadas de lectura de los canales Rojo ($R$) y Azul ($B$) respecto al Verde ($G$):
+### 2. Chromatic Aberration (RGB Channel Separation)
+- Shifts the read coordinates of the Red ($R$) and Blue ($B$) channels relative to Green ($G$):
   - $R(x, y) = \text{Image}(x + \delta_x, y + \delta_y).R$
   - $G(x, y) = \text{Image}(x, y).G$
   - $B(x, y) = \text{Image}(x - \delta_x, y - \delta_y).B$
-- $\delta_x, \delta_y$ pueden ser radiales (desde el centro) o direccionales horizontales, modulados por la intensidad del transitorio.
+- $\delta_x, \delta_y$ can be radial (from the center) or horizontal-directional, modulated by the transient's intensity.
 
-### 3. Deformación Líquida y Ondas (Ripple / Sine Displacement)
-- Aplica una función de desplazamiento senoidal a las coordenadas de píxeles:
+### 3. Liquid Deformation and Waves (Ripple / Sine Displacement)
+- Applies a sinusoidal displacement function to the pixel coordinates:
   $$x' = x + A \cdot \sin(k_y \cdot y + \omega t) \cdot E_{\text{mids}}$$
   $$y' = y + A \cdot \cos(k_x \cdot x + \omega t) \cdot E_{\text{mids}}$$
-- Produce un efecto de ondulación acuática o distorsión psicodélica durante pasajes instrumentales.
+- Produces a watery ripple effect or psychedelic distortion during instrumental passages.
 
-### 4. Glitch y Desplazamiento VHS
-- Activado opcionalmente cuando el *Spectral Flux* supera un umbral crítico (drops, golpes de platillos o cajas fuertes):
-  - Desplazamiento horizontal aleatorio de franjas de scanlines ($\text{Scanline Jitter}$).
-  - Inversión selectiva o ruido estático en bloques rectangulares.
-  - Tiempo de decaimiento ultracorto (1 a 3 cuadros) para dar sensación de fallo eléctrico instantáneo.
+### 4. Glitch and VHS Displacement
+- Optionally triggered when the *Spectral Flux* exceeds a critical threshold (drops, cymbal hits or loud snares):
+  - Random horizontal displacement of scanline stripes ($\text{Scanline Jitter}$).
+  - Selective inversion or static noise in rectangular blocks.
+  - Ultra-short decay time (1 to 3 frames) to give the feel of an instant electrical fault.
 
-### 5. Ajustes de Iluminación y Color Reactivo
-- **Brillo & Contraste**: El contraste se acentúa en momentos de calma y el brillo estalla en los picos de percusión.
-- **Tinte / Color Grading**:
-  - Matriz de tinte reactiva o viñeta oscura en los bordes para resaltar el visualizador central.
-  - Opacidad configurable del fondo para no competir visualmente con el espectrograma.
+### 5. Reactive Lighting and Color Adjustments
+- **Brightness & Contrast**: Contrast is accentuated in calm moments and brightness bursts on percussion peaks.
+- **Tint / Color Grading**:
+  - Reactive tint matrix or dark vignette at the edges to highlight the central visualizer.
+  - Configurable background opacity so it doesn't compete visually with the spectrogram.

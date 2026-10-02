@@ -1,7 +1,7 @@
 # oscilloscope
 
-Dos líneas de neón que cruzan la pantalla (L hacia arriba, R hacia abajo). La altura de cada punto es la de
-su banda por una onda seno, así que es un espectro ondulado, no la forma de onda real del audio.
+Two neon lines crossing the screen (L upwards, R downwards). The height of each point is its
+band's level times a sine wave, so it is a wavy spectrum, not the actual audio waveform.
 
 ```yaml
 visualizer:
@@ -11,11 +11,11 @@ visualizer:
   bar_width: 3.0
 ```
 
-| Campo | Def. | Descripción |
+| Field | Default | Description |
 |---|---|---|
-| `position_y` | 0.5 | Altura relativa de la línea central |
-| `max_height` | — | Amplitud máxima (px) |
-| `bar_width` | 3 | Grosor de línea |
+| `position_y` | 0.5 | Relative height of the center line |
+| `max_height` | — | Maximum amplitude (px) |
+| `bar_width` | 3 | Line thickness |
 
-Colores: con `gradient_axis: index` la línea L usa el primer color del gradiente y la R el último.
-Con `length` el color depende de la distancia a la línea central.
+Colors: with `gradient_axis: index` the L line uses the first gradient color and R the last one.
+With `length` the color depends on the distance from the center line.

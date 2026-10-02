@@ -1,6 +1,6 @@
-# ripple — ondulación
+# ripple — wave distortion
 
-Deformación sinusoidal de la imagen (agua, calor). La amplitud va del 30 % (en silencio) al 100 % según la banda.
+Sinusoidal distortion of the image (water, heat). The amplitude goes from 30 % (in silence) to 100 % depending on the band.
 
 ```yaml
 background_effects:
@@ -12,10 +12,10 @@ background_effects:
     react_to: "treble"
 ```
 
-| Campo | Def. | Descripción |
+| Field | Default | Description |
 |---|---|---|
-| `enabled` | false | Activa el efecto |
-| `amplitude` | 6.0 | Amplitud máxima en píxeles (2–3 = aire caliente sutil) |
-| `frequency` | 0.04 | Frecuencia espacial (más alto = ondas más juntas) |
-| `speed` | 1.5 | Velocidad de avance de la onda |
-| `react_to` | mid | [Fuente](../reactividad.md) |
+| `enabled` | false | Enables the effect |
+| `amplitude` | 6.0 | Maximum amplitude in pixels (2–3 = subtle heat haze) |
+| `frequency` | 0.04 | Spatial frequency (higher = waves closer together) |
+| `speed` | 1.5 | Wave travel speed |
+| `react_to` | mid | [Source](../reactivity.md) |

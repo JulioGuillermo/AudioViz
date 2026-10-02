@@ -6,22 +6,22 @@ import (
 	"sync"
 )
 
-// Codificador FLAC mínimo en Go puro (predictores fijos + Rice particionado, estéreo
-// con decorrelación L/S, R/S o M/S). Se usa para meter el audio sin pérdidas en el MP4
-// de salida sin depender de ffmpeg.
+// Minimal pure-Go FLAC encoder (fixed predictors + partitioned Rice, stereo
+// with L/S, R/S or M/S decorrelation). Used to put lossless audio into the output
+// MP4 without depending on ffmpeg.
 
 const FLACBlockSize = 4096
 
-// FLACStream es el resultado de codificar: STREAMINFO + frames independientes.
+// FLACStream is the encoding result: STREAMINFO + independent frames.
 type FLACStream struct {
 	StreamInfo [34]byte
 	Frames     [][]byte
-	// Muestras por frame (todas FLACBlockSize excepto quizá la última)
+	// Samples per frame (all FLACBlockSize except perhaps the last one)
 	FrameSamples []int
 	SampleRate   int
 }
 
-// EncodeFLAC codifica PCM estéreo entrelazado (bps = 16 o 24). maxFrames limita la duración (<=0 = todo).
+// EncodeFLAC encodes interleaved stereo PCM (bps = 16 or 24). maxFrames limits the duration (<=0 = all).
 func EncodeFLAC(pcm []int32, sampleRate, bps int, maxSamples int) *FLACStream {
 	total := len(pcm) / 2
 	if maxSamples > 0 && maxSamples < total {
@@ -64,7 +64,7 @@ func EncodeFLAC(pcm []int32, sampleRate, bps int, maxSamples int) *FLACStream {
 		}
 	}
 
-	// MD5 de la señal sin codificar (muestras little-endian entrelazadas)
+	// MD5 of the unencoded signal (interleaved little-endian samples)
 	h := md5.New()
 	bytesPer := bps / 8
 	buf := make([]byte, 0, 1<<16)
@@ -94,10 +94,10 @@ func EncodeFLAC(pcm []int32, sampleRate, bps int, maxSamples int) *FLACStream {
 	return st
 }
 
-// FileBytes serializa el stream como archivo .flac nativo (útil para pruebas)
+// FileBytes serializes the stream as a native .flac file (useful for testing)
 func (s *FLACStream) FileBytes() []byte {
 	out := []byte("fLaC")
-	out = append(out, 0x80, 0, 0, 34) // último bloque de metadatos, STREAMINFO, 34 bytes
+	out = append(out, 0x80, 0, 0, 34) // last metadata block, STREAMINFO, 34 bytes
 	out = append(out, s.StreamInfo[:]...)
 	for _, f := range s.Frames {
 		out = append(out, f...)
@@ -135,13 +135,13 @@ func (e *frameEncoder) encode(pcm []int32, frameNum int) []byte {
 		S[i] = l - r
 	}
 
-	// Estimación de coste de cada canal con su mejor predictor
+	// Cost estimate of each channel with its best predictor
 	cost := [4]uint64{}
 	order := [4]int{}
 	for c := 0; c < 4; c++ {
 		order[c], cost[c] = e.bestFixedOrder(e.chans[c][:n])
 	}
-	// 0001 independiente, 1000 left/side, 1001 right/side, 1010 mid/side
+	// 0001 independent, 1000 left/side, 1001 right/side, 1010 mid/side
 	type choice struct {
 		assign uint64
 		a, b   int
@@ -158,7 +158,7 @@ func (e *frameEncoder) encode(pcm []int32, frameNum int) []byte {
 	bw := &e.bw
 	bw.reset()
 	bw.write(0xFFF8, 16)
-	bw.write(7, 4) // tamaño de bloque: 16 bits (n-1) al final de la cabecera
+	bw.write(7, 4) // block size: 16 bits (n-1) at the end of the header
 	bw.write(e.rateCode, 4)
 	bw.write(best.assign, 4)
 	if e.bps == 16 {
@@ -173,7 +173,7 @@ func (e *frameEncoder) encode(pcm []int32, frameNum int) []byte {
 
 	for idx, c := range []int{best.a, best.b} {
 		sideBits := 0
-		// El canal "side" necesita un bit extra (canal 2º en L/S y M/S, 1º en R/S)
+		// The "side" channel needs an extra bit (2nd channel in L/S and M/S, 1st in R/S)
 		if (best.assign == 8 || best.assign == 10) && idx == 1 || best.assign == 9 && idx == 0 {
 			sideBits = 1
 		}
@@ -245,7 +245,7 @@ func (e *frameEncoder) writeSubframe(x []int64, bps, ord int) {
 	}
 
 	bw.write(0, 1)
-	bw.write(uint64(8|ord), 6) // 001xxx = predictor fijo de orden xxx
+	bw.write(uint64(8|ord), 6) // 001xxx = fixed predictor of order xxx
 	bw.write(0, 1)
 	for i := 0; i < ord; i++ {
 		bw.writeSigned(x[i], bps)
@@ -257,7 +257,7 @@ func (e *frameEncoder) writeSubframe(x []int64, bps, ord int) {
 		u[i] = uint64((r << 1) ^ (r >> 63))
 	}
 
-	// Elegir el orden de partición y parámetros Rice óptimos
+	// Choose the optimal partition order and Rice parameters
 	bestPO, bestBits := 0, ^uint64(0)
 	var bestParams [256]int
 	var params [256]int
@@ -273,7 +273,7 @@ func (e *frameEncoder) writeSubframe(x []int64, bps, ord int) {
 			if p == 0 {
 				s = ord
 			}
-			k, bits := bestRice(u[s:(p+1)*plen])
+			k, bits := bestRice(u[s : (p+1)*plen])
 			params[p] = k
 			total += bits + 5
 		}
@@ -314,7 +314,7 @@ func (e *frameEncoder) writeSubframe(x []int64, bps, ord int) {
 	}
 }
 
-// bestRice elige el parámetro Rice óptimo para un bloque de residuos plegados
+// bestRice picks the optimal Rice parameter for a block of folded residuals
 func bestRice(u []uint64) (int, uint64) {
 	if len(u) == 0 {
 		return 0, 0
@@ -369,7 +369,7 @@ func writeUTF8(bw *bitWriter, v uint64) {
 	}
 }
 
-// bitWriter escribe bits MSB primero
+// bitWriter writes bits MSB first
 type bitWriter struct {
 	buf   []byte
 	acc   uint64
@@ -403,7 +403,7 @@ func (b *bitWriter) writeRice(v uint64, k uint) {
 		b.write(0, 32)
 		q -= 32
 	}
-	b.write(1, uint(q)+1) // q ceros y un 1
+	b.write(1, uint(q)+1) // q zeros and a 1
 	if k > 0 {
 		b.write(v&(1<<k-1), k)
 	}

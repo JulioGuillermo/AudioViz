@@ -10,14 +10,14 @@ import (
 	"github.com/fogleman/gg"
 )
 
-// ParseHexColor convierte una cadena hex ("#ff007f" o "ff007f" o "#fff") a color.RGBA
+// ParseHexColor converts a hex string ("#ff007f" or "ff007f" or "#fff") to color.RGBA
 func ParseHexColor(s string) (color.RGBA, error) {
 	s = strings.TrimPrefix(s, "#")
 	if len(s) == 3 {
 		s = fmt.Sprintf("%c%c%c%c%c%c", s[0], s[0], s[1], s[1], s[2], s[2])
 	}
 	if len(s) != 6 && len(s) != 8 {
-		return color.RGBA{R: 255, G: 255, B: 255, A: 255}, fmt.Errorf("formato hex inválido: %s", s)
+		return color.RGBA{R: 255, G: 255, B: 255, A: 255}, fmt.Errorf("invalid hex format: %s", s)
 	}
 
 	val, err := strconv.ParseUint(s, 16, 32)
@@ -42,7 +42,7 @@ func ParseHexColor(s string) (color.RGBA, error) {
 	}, nil
 }
 
-// ColorAtOffset interpola linealmente el color en la posición t [0.0, 1.0] según la paleta de gradientes
+// ColorAtOffset linearly interpolates the color at position t [0.0, 1.0] along the gradient palette
 func ColorAtOffset(stops []config.GradientStop, t float64) color.RGBA {
 	if len(stops) == 0 {
 		return color.RGBA{R: 0, G: 240, B: 255, A: 255}
@@ -78,10 +78,10 @@ func ColorAtOffset(stops []config.GradientStop, t float64) color.RGBA {
 	return c
 }
 
-// RenderGlow aplica un resplandor neón dibujando pases concéntricos con opacidad decreciente
+// RenderGlow applies a neon glow by drawing concentric passes with decreasing opacity
 func RenderGlow(dc *gg.Context, drawFunc func(ctx *gg.Context, alpha float64), glowRadius float64, intensity float64) {
 	if glowRadius <= 1.0 || intensity <= 0.05 {
-		// Solo dibujo principal
+		// Main drawing only
 		drawFunc(dc, 1.0)
 		return
 	}
@@ -98,7 +98,7 @@ func RenderGlow(dc *gg.Context, drawFunc func(ctx *gg.Context, alpha float64), g
 		dc.Pop()
 	}
 
-	// Dibujo central nítido
+	// Sharp central drawing
 	dc.Push()
 	drawFunc(dc, 1.0)
 	dc.Pop()
@@ -118,8 +118,8 @@ func lerp(a, b, t float64) float64 {
 	return a*(1.0-t) + b*t
 }
 
-// AlongPattern devuelve el gradiente a lo largo de una barra (gradient_axis: length) o nil.
-// (bx,by) es la base, (dx,dy) la dirección unitaria hacia la punta, h la altura actual.
+// AlongPattern returns the gradient along a bar (gradient_axis: length) or nil.
+// (bx,by) is the base, (dx,dy) the unit direction toward the tip, h the current height.
 func AlongPattern(cfg *config.VisualizerConfig, bx, by, dx, dy, h, alpha float64) gg.Pattern {
 	if cfg.GradientAxis != "length" || cfg.ColorMode == "solid" || len(cfg.Gradient) == 0 {
 		return nil
@@ -139,7 +139,7 @@ func AlongPattern(cfg *config.VisualizerConfig, bx, by, dx, dy, h, alpha float64
 	return g
 }
 
-// CenterGap es la separación entre la primera barra L y la primera R en el visualizador horizontal
+// CenterGap is the spacing between the first L bar and the first R bar in the horizontal visualizer
 func CenterGap(cfg *config.VisualizerConfig) float64 {
 	if cfg.CenterGap != nil {
 		return *cfg.CenterGap

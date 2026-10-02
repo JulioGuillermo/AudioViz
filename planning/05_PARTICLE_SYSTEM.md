@@ -1,60 +1,60 @@
-# Sistema de Partículas Reactivo (Opcional)
+# Reactive Particle System (Optional)
 
-## 1. Concepto y Objetivos del Módulo
+## 1. Module Concept and Goals
 
-El sistema de partículas aporta dinamismo tridimensional y profundidad visual sin recargar el fondo:
-- Es totalmente opcional y conmutable mediante configuración (`particles.enabled: true/false`).
-- Integra un motor de física 2D ligero en Go (posición, velocidad, aceleración, fricción, tiempo de vida y desvanecimiento alfa).
-- Reacciona dinámicamente tanto a la energía constante de la pista como a los golpes de percusión puntuales.
+The particle system adds three-dimensional dynamism and visual depth without cluttering the background:
+- It is fully optional and can be toggled via configuration (`particles.enabled: true/false`).
+- It integrates a lightweight 2D physics engine in Go (position, velocity, acceleration, friction, lifetime and alpha fade-out).
+- It reacts dynamically both to the track's sustained energy and to individual percussion hits.
 
 ---
 
-## 2. Tipos de Emisores de Partículas
+## 2. Particle Emitter Types
 
 ```mermaid
 flowchart TD
-    EmitterSelect{"Tipo de Emisor"}
-    EmitterSelect --> RadialBurst["Radial Burst (Explosión Central)"]
-    EmitterSelect --> AmbientDrift["Ambient Floating Dust (Polvo Atmosférico)"]
-    EmitterSelect --> RisingSparks["Rising Sparks / Fireflies (Chispas Ascendentes)"]
+    EmitterSelect{"Emitter Type"}
+    EmitterSelect --> RadialBurst["Radial Burst (Central Explosion)"]
+    EmitterSelect --> AmbientDrift["Ambient Floating Dust (Atmospheric Dust)"]
+    EmitterSelect --> RisingSparks["Rising Sparks / Fireflies (Rising Sparks)"]
     
-    RadialBurst --> ReactBeat["Activado por Beats & Kicks"]
-    AmbientDrift --> ReactRMS["Velocidad guiada por Energía RMS"]
-    RisingSparks --> ReactTreble["Turbulencia guiada por Agudos"]
+    RadialBurst --> ReactBeat["Triggered by Beats & Kicks"]
+    AmbientDrift --> ReactRMS["Speed driven by RMS Energy"]
+    RisingSparks --> ReactTreble["Turbulence driven by Treble"]
 ```
 
-### A. Radial Burst (Explosión Central)
-- **Origen**: Centro del cuadro o centro del visualizador circular.
-- **Comportamiento**:
-  - En reposo: Emite una cantidad moderada de partículas lentas.
-  - En un pico de graves (*Bass Kick / Drop*): Dispara una ráfaga radial de 50 a 200 partículas a gran velocidad hacia los extremos de la pantalla.
-- **Efecto Visual**: Sensación de onda expansiva o supernova sincronizada con la batería.
+### A. Radial Burst (Central Explosion)
+- **Origin**: Center of the frame or center of the circular visualizer.
+- **Behavior**:
+  - At rest: Emits a moderate number of slow particles.
+  - On a bass peak (*Bass Kick / Drop*): Fires a radial burst of 50 to 200 particles at high speed towards the edges of the screen.
+- **Visual Effect**: A shockwave or supernova feel synchronized with the drums.
 
-### B. Ambient Floating Dust (Polvo Atmosférico / Bokeh)
-- **Origen**: Dispersas por todo el lienzo.
-- **Comportamiento**:
-  - Movimiento browniano suave con turbulencia armónica basada en ruido Simplex/Perlin.
-  - El tamaño y el brillo de cada mota de polvo palpitan sutilmente con la amplitud general de la música.
-- **Efecto Visual**: Crea una atmósfera cinematográfica envolvente, similar a partículas de luz en el aire.
+### B. Ambient Floating Dust (Atmospheric Dust / Bokeh)
+- **Origin**: Scattered across the whole canvas.
+- **Behavior**:
+  - Smooth Brownian motion with harmonic turbulence based on Simplex/Perlin noise.
+  - The size and brightness of each dust speck pulse subtly with the overall amplitude of the music.
+- **Visual Effect**: Creates an immersive cinematic atmosphere, similar to specks of light in the air.
 
-### C. Rising Sparks (Chispas Ascendentes)
-- **Origen**: Borde inferior de la pantalla.
-- **Comportamiento**:
-  - Ascienden con aceleración negativa (gravedad inversa) y oscilación senoidal horizontal.
-  - La cantidad de chispas aumenta exponencialmente en los estribillos o pasajes de alta energía.
+### C. Rising Sparks
+- **Origin**: Bottom edge of the screen.
+- **Behavior**:
+  - They rise with negative acceleration (inverse gravity) and horizontal sinusoidal oscillation.
+  - The number of sparks increases exponentially in choruses or high-energy passages.
 
 ---
 
-## 3. Modelo Matemático y Reactividad al Audio
+## 3. Mathematical Model and Audio Reactivity
 
-Cada partícula $p$ en el instante $t$ se actualiza según:
+Each particle $p$ at time $t$ is updated as follows:
 
 $$\vec{v}_t = (\vec{v}_{t-1} + \vec{a} \cdot \Delta t) \cdot (1 - \text{drag})$$
 $$\vec{x}_t = \vec{x}_{t-1} + \vec{v}_t \cdot (1.0 + k_{\text{audio}} \cdot E_{\text{bass}})$$
 $$\text{Life}_t = \text{Life}_{t-1} - \Delta t$$
 $$\alpha_t = \alpha_{\max} \cdot \left(\frac{\text{Life}_t}{\text{Life}_{\text{total}}}\right)^{\gamma}$$
 
-### Renderizado de Partículas:
-- Trazado como círculos con degradado radial suave (*soft glow*).
-- Opcionalmente con estela de movimiento (*motion blur tail*) conectando $\vec{x}_{t-1}$ con $\vec{x}_t$.
-- Modo de mezcla aditiva (*Additive Blending*): cuando varias partículas se superponen, sus colores se suman generando destellos luminosos intensos.
+### Particle Rendering:
+- Drawn as circles with a smooth radial gradient (*soft glow*).
+- Optionally with a motion trail (*motion blur tail*) connecting $\vec{x}_{t-1}$ to $\vec{x}_t$.
+- Additive blend mode (*Additive Blending*): when several particles overlap, their colors add up, producing intense bright flashes.

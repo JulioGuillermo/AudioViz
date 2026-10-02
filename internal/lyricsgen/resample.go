@@ -6,11 +6,11 @@ import (
 	"sync"
 )
 
-// Remuestreo de calidad (sinc con ventana de Kaiser, tabla de fases) en Go puro.
+// High-quality resampling (Kaiser-windowed sinc, phase table) in pure Go.
 
 const (
-	rsTaps   = 32  // por lado
-	rsPhases = 512 // resolución de la tabla
+	rsTaps   = 32  // per side
+	rsPhases = 512 // table resolution
 )
 
 func besselI0(x float64) float64 {
@@ -22,7 +22,7 @@ func besselI0(x float64) float64 {
 	return s
 }
 
-// Resample convierte ch canales entrelazados de srcRate a dstRate
+// Resample converts ch interleaved channels from srcRate to dstRate
 func Resample(in []float32, ch, srcRate, dstRate int) []float32 {
 	if srcRate == dstRate {
 		out := make([]float32, len(in))
@@ -32,9 +32,9 @@ func Resample(in []float32, ch, srcRate, dstRate int) []float32 {
 	n := len(in) / ch
 	ratio := float64(srcRate) / float64(dstRate)
 	outN := int(float64(n) / ratio)
-	cut := math.Min(1, 1/ratio) * 0.94 // frecuencia de corte relativa (antialias)
+	cut := math.Min(1, 1/ratio) * 0.94 // relative cutoff frequency (anti-aliasing)
 	beta := 8.6
-	// Tabla h[fase][k] para k en [-taps+1, taps]
+	// Table h[phase][k] for k in [-taps+1, taps]
 	table := make([]float32, (rsPhases+1)*2*rsTaps)
 	for ph := 0; ph <= rsPhases; ph++ {
 		frac := float64(ph) / rsPhases
@@ -92,7 +92,7 @@ func Resample(in []float32, ch, srcRate, dstRate int) []float32 {
 	return out
 }
 
-// ToMono mezcla estéreo entrelazado a mono
+// ToMono downmixes interleaved stereo to mono
 func ToMono(stereo []float32) []float32 {
 	out := make([]float32, len(stereo)/2)
 	for i := range out {

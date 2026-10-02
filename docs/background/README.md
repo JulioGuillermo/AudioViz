@@ -1,4 +1,4 @@
-# Fondo
+# Background
 
 ```yaml
 background:
@@ -10,24 +10,24 @@ background:
   loop_video: true
 ```
 
-| Campo | Def. | Descripción |
+| Field | Default | Description |
 |---|---|---|
-| `path` | — | Imagen PNG, JPEG, WebP, BMP, GIF animado o **vídeo** (mp4, mov, mkv, webm, avi; H.264, H.265, VP8, VP9, ProRes...) |
-| `fit_mode` | cover | `cover` (rellena y recorta), `contain` (cabe entera, bandas negras), `stretch` (deforma) |
-| `opacity` | 0.88 | Multiplica el brillo del fondo (0–1) |
-| `darken` | 0.15 | Oscurecimiento constante (0–1) para resaltar el visualizador |
-| `vignette` | 0.25 | Oscurece los bordes (0–1) |
-| `loop_video` | true | Repite el vídeo/GIF si dura menos que su tramo |
+| `path` | — | PNG, JPEG, WebP, BMP image, animated GIF or **video** (mp4, mov, mkv, webm, avi; H.264, H.265, VP8, VP9, ProRes...) |
+| `fit_mode` | cover | `cover` (fills and crops), `contain` (fits entirely, black bars), `stretch` (distorts) |
+| `opacity` | 0.88 | Scales the background brightness (0–1) |
+| `darken` | 0.15 | Constant darkening (0–1) to make the visualizer stand out |
+| `vignette` | 0.25 | Darkens the edges (0–1) |
+| `loop_video` | true | Loops the video/GIF if it is shorter than its segment |
 
-## Efectos (`background_effects`)
-Se aplican en este orden: glitch → aberración cromática → ripple → zoom/shake → color.
-Cada uno puede reaccionar a una banda distinta con [`react_to`](../reactividad.md).
+## Effects (`background_effects`)
+They are applied in this order: glitch → chromatic aberration → ripple → zoom/shake → color.
+Each one can react to a different band with [`react_to`](../reactivity.md).
 
-| Efecto | Descripción |
+| Effect | Description |
 |---|---|
-| [bass_zoom](bass_zoom.md) | Zoom pulsante |
-| [shake](shake.md) | Movimiento de cámara |
-| [chromatic_aberration](chromatic_aberration.md) | Separación RGB |
-| [ripple](ripple.md) | Ondulación |
-| [glitch](glitch.md) | Franjas desplazadas |
-| [color_flash](color_flash.md) | Flash de brillo/contraste |
+| [bass_zoom](bass_zoom.md) | Pulsing zoom |
+| [shake](shake.md) | Camera movement |
+| [chromatic_aberration](chromatic_aberration.md) | RGB separation |
+| [ripple](ripple.md) | Ripple |
+| [glitch](glitch.md) | Displaced stripes |
+| [color_flash](color_flash.md) | Brightness/contrast flash |

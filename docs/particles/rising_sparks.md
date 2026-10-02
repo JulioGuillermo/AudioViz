@@ -1,9 +1,9 @@
 # rising_sparks
 
-Nacen en el borde inferior repartidas a lo ancho y suben con algo de deriva lateral. Con `turbulence`
-y `color_end` imitan chispas de fuego.
+They spawn along the bottom edge, spread across its width, and rise with some sideways drift. With `turbulence`
+and `color_end` they mimic fire sparks.
 
-Ejemplo de fuego por bandas (graves = brasas rojas grandes, medios = chispas naranjas, agudos = chispitas amarillas):
+Fire example by band (bass = large red embers, mids = orange sparks, treble = tiny yellow sparks):
 ```yaml
 particles:
   enabled: true
@@ -18,4 +18,4 @@ particles:
         color: "#fff0a0", color_end: "#ff9500", speed: 1.8, audio_boost: 2.0, turbulence: 1.0,
         min_life: 0.8, max_life: 2.2, glow: true }
 ```
-Opciones: ver [capas](README.md#opciones-de-cada-capa). `speed` controla la velocidad de subida.
+Options: see [layers](README.md#per-layer-options). `speed` controls the rise speed.

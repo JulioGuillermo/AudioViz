@@ -1,5 +1,5 @@
-// Package video carga el fondo: imágenes y GIF en Go puro; vídeos con un FFmpeg mínimo
-// enlazado estáticamente (no hace falta nada instalado).
+// Package video loads the background: images and GIFs in pure Go; videos with a minimal
+// statically linked FFmpeg (nothing needs to be installed).
 package video
 
 import (
@@ -18,31 +18,31 @@ import (
 	_ "golang.org/x/image/webp"
 )
 
-// BackgroundReader es la interfaz común para alimentar cuadros de fondo
+// BackgroundReader is the common interface for feeding background frames
 type BackgroundReader interface {
 	Width() int
 	Height() int
-	// FrameAt devuelve el cuadro de fondo para el instante t (segundos) y un índice
-	// que cambia solo cuando cambia la imagen (para no re-subirla a la GPU)
+	// FrameAt returns the background frame for time t (seconds) and an index
+	// that changes only when the image changes (to avoid re-uploading it to the GPU)
 	FrameAt(t float64) (*image.RGBA, int)
 	Close() error
 }
 
-// ProbeResult contiene dimensiones y tipo detectado de un medio
+// ProbeResult holds the dimensions and detected type of a media file
 type ProbeResult struct {
 	IsAnimated bool
 	IsVideo    bool
 	Width      int
 	Height     int
-	Duration   float64 // s (vídeo)
+	Duration   float64 // s (video)
 }
 
 var videoExts = map[string]bool{".mp4": true, ".mkv": true, ".mov": true, ".webm": true, ".avi": true, ".m4v": true, ".ts": true}
 
-// IsVideo indica si la ruta es un vídeo por su extensión
+// IsVideo reports whether the path is a video based on its extension
 func IsVideo(path string) bool { return videoExts[strings.ToLower(filepath.Ext(path))] }
 
-// ProbeMedia determina las dimensiones del fondo
+// ProbeMedia determines the background dimensions
 func ProbeMedia(filePath string) (*ProbeResult, error) {
 	if IsVideo(filePath) {
 		w, h, dur, err := probeVideo(filePath)
@@ -58,12 +58,12 @@ func ProbeMedia(filePath string) (*ProbeResult, error) {
 	defer f.Close()
 	cfg, format, err := image.DecodeConfig(f)
 	if err != nil {
-		return nil, fmt.Errorf("no se reconoce '%s' como imagen (PNG, JPEG, WebP, BMP, GIF): %w", filePath, err)
+		return nil, fmt.Errorf("'%s' is not recognized as an image (PNG, JPEG, WebP, BMP, GIF): %w", filePath, err)
 	}
 	return &ProbeResult{IsAnimated: format == "gif", Width: cfg.Width / 2 * 2, Height: cfg.Height / 2 * 2}, nil
 }
 
-// fit escala src a (w, h) según el modo cover/contain/stretch
+// fit scales src to (w, h) according to the cover/contain/stretch mode
 func fit(src image.Image, w, h int, mode string) *image.RGBA {
 	out := image.NewRGBA(image.Rect(0, 0, w, h))
 	draw.Draw(out, out.Bounds(), image.Black, image.Point{}, draw.Src)
@@ -87,14 +87,14 @@ type staticReader struct {
 	frame *image.RGBA
 }
 
-func (r *staticReader) Width() int                             { return r.frame.Bounds().Dx() }
-func (r *staticReader) Height() int                            { return r.frame.Bounds().Dy() }
-func (r *staticReader) FrameAt(float64) (*image.RGBA, int)     { return r.frame, 0 }
-func (r *staticReader) Close() error                           { return nil }
+func (r *staticReader) Width() int                         { return r.frame.Bounds().Dx() }
+func (r *staticReader) Height() int                        { return r.frame.Bounds().Dy() }
+func (r *staticReader) FrameAt(float64) (*image.RGBA, int) { return r.frame, 0 }
+func (r *staticReader) Close() error                       { return nil }
 
 type gifReader struct {
 	frames []*image.RGBA
-	ends   []float64 // instante (s) en que termina cada cuadro
+	ends   []float64 // time (s) at which each frame ends
 	total  float64
 	loop   bool
 }
@@ -118,14 +118,14 @@ func (r *gifReader) FrameAt(t float64) (*image.RGBA, int) {
 	return r.frames[last], last
 }
 
-// NewBackgroundReader carga la imagen o el GIF animado ya escalado a la salida
+// NewBackgroundReader loads the image or animated GIF already scaled to the output
 func NewBackgroundReader(filePath string, w, h int, fitMode string, loop bool) (BackgroundReader, error) {
 	if IsVideo(filePath) {
 		return newVideoReader(filePath, w, h, fitMode, loop)
 	}
 	f, err := os.Open(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("no se pudo abrir el fondo '%s': %w", filePath, err)
+		return nil, fmt.Errorf("could not open background '%s': %w", filePath, err)
 	}
 	defer f.Close()
 
@@ -142,7 +142,7 @@ func NewBackgroundReader(filePath string, w, h int, fitMode string, loop bool) (
 	f.Seek(0, 0)
 	img, _, err := image.Decode(f)
 	if err != nil {
-		return nil, fmt.Errorf("error decodificando imagen '%s': %w", filePath, err)
+		return nil, fmt.Errorf("error decoding image '%s': %w", filePath, err)
 	}
 	return &staticReader{frame: fit(img, w, h, fitMode)}, nil
 }

@@ -1,68 +1,68 @@
-# Letra (lyrics)
+# Lyrics
 
-Muestra una letra sincronizada, palabra a palabra si el archivo lo permite, con animaciones, colores y
-reacción al audio. El texto se dibuja en la GPU a partir de un campo de distancias (SDF), así que las
-palabras escalan nítidas y el contorno, el glow y la sombra salen muy baratos.
+Shows synced lyrics, word by word if the file allows it, with animations, colors and
+audio reactivity. The text is drawn on the GPU from a signed distance field (SDF), so
+words scale crisply and the outline, glow and shadow are very cheap.
 
 ```yaml
 lyrics:
   enabled: true
-  path: "letra.lrc"
+  path: "lyrics.lrc"
 ```
-O desde la línea de comandos: `audioviz project.yaml --lyrics letra.lrc`.
+Or from the command line: `audioviz project.yaml --lyrics lyrics.lrc`.
 
-¿No tienes el `.lrc`? [Genéralo a partir del audio y la letra en texto](generar.md).
+Don't have the `.lrc`? [Generate it from the audio and the plain-text lyrics](generate.md).
 
-## Formatos
-| Formato | Tiempos | Ejemplo |
+## Formats
+| Format | Timing | Example |
 |---|---|---|
-| `.srt` | inicio y fin de cada línea | `00:00:58,000 --> 00:01:00,500` |
-| `.lrc` | inicio de cada línea | `[00:58.00]Texto de la línea` |
-| `.lrc` mejorado | **inicio de cada palabra** | `[00:58.00]<00:58.00>Texto <00:58.40>de <00:58.60>la <00:58.90>línea <00:59.60>` |
+| `.srt` | start and end of each line | `00:00:58,000 --> 00:01:00,500` |
+| `.lrc` | start of each line | `[00:58.00]Text of the line` |
+| enhanced `.lrc` | **start of each word** | `[00:58.00]<00:58.00>Text <00:58.40>of <00:58.60>the <00:58.90>line <00:59.60>` |
 
-- Si solo hay tiempos por línea, las palabras se reparten según su longitud.
-- En LRC, una marca final sin texto (`<00:59.60>`) indica cuándo acaba la última palabra. Una línea vacía con tiempo (`[01:06.00]`) cierra la anterior.
-- Sin final explícito, una línea dura hasta la siguiente, pero se oculta sola si llega un instrumental largo.
-- Se respetan `[offset:+/-ms]` del LRC y varias marcas en una línea (`[00:10.00][01:20.00]Estribillo`).
+- If there are only per-line timings, words are distributed according to their length.
+- In LRC, a final tag with no text (`<00:59.60>`) marks when the last word ends. An empty line with a timestamp (`[01:06.00]`) closes the previous one.
+- Without an explicit end, a line lasts until the next one, but it hides itself if a long instrumental comes along.
+- `[offset:+/-ms]` in the LRC and multiple tags on one line (`[00:10.00][01:20.00]Chorus`) are honored.
 
-## Opciones
-| Campo | Def. | Descripción |
+## Options
+| Field | Default | Description |
 |---|---|---|
-| `enabled` | false | Muestra la letra |
-| `path` | — | Archivo `.lrc` / `.srt` |
-| `offset` | 0 | Segundos a sumar a todos los tiempos (+ = más tarde). Útil para corregir desfases |
-| `font` | Go Bold integrada | Fuente `.ttf` / `.otf` |
-| `size` | 56 | Tamaño en px |
-| `uppercase` | false | Pasa el texto a mayúsculas |
-| `max_width` | 0.9 | Ancho máximo relativo; las líneas más largas se parten en varias filas |
-| `line_spacing` | 1.15 | Interlineado entre filas |
-| `word_spacing` | 0.12 | Espacio extra entre palabras (fracción de `size`) |
-| `align` | center | Alineación de las filas con `position` `top`/`bottom`/`center`/`custom`: center, left, right |
+| `enabled` | false | Shows the lyrics |
+| `path` | — | `.lrc` / `.srt` file |
+| `offset` | 0 | Seconds added to all timings (+ = later). Useful to correct offsets |
+| `font` | built-in Go Bold | `.ttf` / `.otf` font |
+| `size` | 56 | Size in px |
+| `uppercase` | false | Converts the text to uppercase |
+| `max_width` | 0.9 | Relative maximum width; longer lines are wrapped onto several rows |
+| `line_spacing` | 1.15 | Spacing between rows |
+| `word_spacing` | 0.12 | Extra space between words (fraction of `size`) |
+| `align` | center | Row alignment with `position` `top`/`bottom`/`center`/`custom`: center, left, right |
 
-## Posición
-| `position` | Resultado |
+## Position
+| `position` | Result |
 |---|---|
-| `top` | Centrada arriba, a `margin` px del borde |
-| `bottom` (def.) | Centrada abajo, a `margin` px del borde |
-| `center` | En el centro de la imagen |
-| `left` | Pegada a la izquierda (a `margin` px), alineada a la izquierda, a la altura `position_y` |
-| `right` | Igual, a la derecha |
-| `side` | **Alterna izquierda y derecha en cada línea** |
-| `custom` | En `position_x`, `position_y` (0–1) |
+| `top` | Centered at the top, `margin` px from the edge |
+| `bottom` (default) | Centered at the bottom, `margin` px from the edge |
+| `center` | In the center of the image |
+| `left` | Against the left side (at `margin` px), left-aligned, at height `position_y` |
+| `right` | Same, on the right |
+| `side` | **Alternates left and right on each line** |
+| `custom` | At `position_x`, `position_y` (0–1) |
 
-`margin` (def. 60 px) es la distancia a los bordes. Con `left`/`right`/`side`, `position_y` (0–1) da la
-altura (0.5 = centro) y conviene un `max_width` menor (≤ 0.45 en imágenes verticales, para que los bloques izquierdo y derecho no se crucen).
+`margin` (default 60 px) is the distance to the edges. With `left`/`right`/`side`, `position_y` (0–1) sets the
+height (0.5 = center) and a smaller `max_width` is advisable (≤ 0.45 on vertical images, so the left and right blocks don't overlap).
 
-## Modo de palabras (`mode`)
-| Valor | Resultado |
+## Word mode (`mode`)
+| Value | Result |
 |---|---|
-| `karaoke` (def.) | La línea entera visible en `upcoming_color`; cada palabra se rellena de izquierda a derecha con el color principal mientras se canta |
-| `words` | Cada palabra aparece (con un pequeño pop) justo cuando se canta |
-| `line` | La línea entera en el color principal |
+| `karaoke` (default) | The whole line is visible in `upcoming_color`; each word fills from left to right with the main color as it is sung |
+| `words` | Each word appears (with a small pop) right when it is sung |
+| `line` | The whole line in the main color |
 
-`word_pop` (def. 0.12) es el latido de escala de cada palabra al empezar a cantarse (0 = sin latido).
+`word_pop` (default 0.12) is the scale pulse of each word when it starts being sung (0 = no pulse).
 
-## Animaciones de entrada y salida
+## In and out animations
 ```yaml
   in_animation: "slide_up"
   out_animation: "zoom"
@@ -70,47 +70,47 @@ altura (0.5 = centro) y conviene un `max_width` menor (≤ 0.45 en imágenes ver
   out_duration: 0.4
   slide_distance: 40
 ```
-| Valor | Entrada | Salida |
+| Value | In | Out |
 |---|---|---|
-| `fade` | aparece gradualmente | se desvanece |
-| `slide_up` | sube desde abajo | se va hacia arriba |
-| `slide_down` | baja desde arriba | se va hacia abajo |
-| `slide_left` | se desliza hacia la izquierda | se va por la izquierda |
-| `slide_right` | se desliza hacia la derecha | se va por la derecha |
-| `slide_side` | entra desde su lado (ideal con `position: side`) | sale por su lado |
-| `pop` | crece desde pequeña | se encoge |
-| `zoom` | llega desde grande | se agranda y desaparece |
-| `none` | corte seco | corte seco |
+| `fade` | fades in | fades out |
+| `slide_up` | rises from below | leaves upwards |
+| `slide_down` | drops from above | leaves downwards |
+| `slide_left` | slides in to the left | leaves to the left |
+| `slide_right` | slides in to the right | leaves to the right |
+| `slide_side` | enters from its side (ideal with `position: side`) | leaves through its side |
+| `pop` | grows from small | shrinks |
+| `zoom` | arrives from large | grows and disappears |
+| `none` | hard cut | hard cut |
 
-Todas incluyen fundido. `animation` sirve de atajo para poner la misma en ambas. La entrada empieza
-`in_duration` segundos antes del inicio de la línea para que esté completa al cantarse.
+All of them include a fade. `animation` is a shortcut to set the same one for both. The in animation starts
+`in_duration` seconds before the line's start so it is complete when sung.
 
-## Colores
-| Campo | Def. | Descripción |
+## Colors
+| Field | Default | Description |
 |---|---|---|
-| `color` | #ffffff | Color principal (palabra cantada) |
-| `gradient` | — | Gradiente vertical en las letras, de arriba (`offset: 0`) a abajo (`1`). Sustituye a `color` |
-| `upcoming_color` | #ffffff66 | Palabras aún no cantadas (karaoke); admite alfa `#rrggbbaa` |
-| `outline_color`, `outline_width` | #000000, 2 | Contorno (px; 0 = sin contorno) |
-| `glow.enabled`, `glow.color`, `glow.radius`, `glow.intensity` | true, color del texto, 12, 0.6 | Halo |
-| `shadow.enabled`, `color`, `offset_x`, `offset_y`, `opacity`, `blur` | true, negro, 3, 4, 0.6, 4 | Sombra difuminada |
+| `color` | #ffffff | Main color (sung word) |
+| `gradient` | — | Vertical gradient across the letters, from top (`offset: 0`) to bottom (`1`). Replaces `color` |
+| `upcoming_color` | #ffffff66 | Words not yet sung (karaoke); accepts alpha `#rrggbbaa` |
+| `outline_color`, `outline_width` | #000000, 2 | Outline (px; 0 = no outline) |
+| `glow.enabled`, `glow.color`, `glow.radius`, `glow.intensity` | true, text color, 12, 0.6 | Halo |
+| `shadow.enabled`, `color`, `offset_x`, `offset_y`, `opacity`, `blur` | true, black, 3, 4, 0.6, 4 | Blurred drop shadow |
 
-## Reacción al audio (`react`)
-| Campo | Def. | Descripción |
+## Audio reactivity (`react`)
+| Field | Default | Description |
 |---|---|---|
-| `react_to` | bass | [Fuente](../reactividad.md) |
-| `scale` | 0.05 | Latido: aumento de escala máximo |
-| `glow` | 0 | Glow extra con la banda |
-| `shake` | 0 | Temblor en px |
-| `chromatic` | 0 | Separación RGB en px |
-| `flicker` | 0 | Parpadeo de brillo tipo llama (0–1) |
-| `flash`, `flash_color` | 0, — | Vira el color hacia `flash_color` con la banda (0–1) |
+| `react_to` | bass | [Source](../reactivity.md) |
+| `scale` | 0.05 | Pulse: maximum scale increase |
+| `glow` | 0 | Extra glow with the band |
+| `shake` | 0 | Shake in px |
+| `chromatic` | 0 | RGB separation in px |
+| `flicker` | 0 | Flame-like brightness flicker (0–1) |
+| `flash`, `flash_color` | 0, — | Shifts the color towards `flash_color` with the band (0–1) |
 
-## Ejemplo: letra de fuego
+## Example: fire lyrics
 ```yaml
 lyrics:
   enabled: true
-  path: "letra.lrc"
+  path: "lyrics.lrc"
   font: "fonts/NotoSerifDisplay-CondensedBold.ttf"
   size: 58
   uppercase: true

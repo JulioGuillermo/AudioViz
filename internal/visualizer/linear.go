@@ -10,9 +10,9 @@ import (
 )
 
 type LinearVisualizer struct {
-	cfg    *config.VisualizerConfig
-	width  int
-	height int
+	cfg     *config.VisualizerConfig
+	width   int
+	height  int
 	baseY   float64
 	pattern gg.Pattern
 }
@@ -47,7 +47,7 @@ func (lv *LinearVisualizer) Draw(dc *gg.Context, feat *audio.FrameFeatures) {
 	barGap := lv.cfg.BarGap
 	totalBarSpan := barWidth + barGap
 
-	// Si no cabe en media pantalla, reajustar ancho automáticamente
+	// If it doesn't fit in half the screen, readjust the width automatically
 	cg := CenterGap(lv.cfg)
 	if avail := halfW*0.95 - cg/2; float64(barCount)*totalBarSpan > avail {
 		totalBarSpan = avail / float64(barCount)
@@ -55,7 +55,7 @@ func (lv *LinearVisualizer) Draw(dc *gg.Context, feat *audio.FrameFeatures) {
 		barGap = totalBarSpan * 0.25
 	}
 
-	// Glow si está activo
+	// Glow if enabled
 	if lv.cfg.Glow.Enabled {
 		glowPasses := 3
 		for p := glowPasses; p >= 1; p-- {
@@ -65,7 +65,7 @@ func (lv *LinearVisualizer) Draw(dc *gg.Context, feat *audio.FrameFeatures) {
 		}
 	}
 
-	// Barras nítidas principales
+	// Sharp main bars
 	lv.renderBars(dc, feat, halfW, barWidth, barGap, 1.0)
 }
 
@@ -73,7 +73,7 @@ func (lv *LinearVisualizer) renderBars(dc *gg.Context, feat *audio.FrameFeatures
 	barCount := len(feat.LeftBars)
 	totalSpan := barWidth + barGap
 
-	// Canal Izquierdo (L): desde el centro hacia la izquierda
+	// Left channel (L): from the center to the left
 	for i := 0; i < barCount; i++ {
 		magL := feat.LeftBars[i]
 		h := lv.cfg.MinHeight + magL*(lv.cfg.MaxHeight-lv.cfg.MinHeight)
@@ -82,11 +82,11 @@ func (lv *LinearVisualizer) renderBars(dc *gg.Context, feat *audio.FrameFeatures
 		t := float64(i) / float64(barCount)
 		col := lv.getColor(t, alpha)
 
-		// Barra hacia arriba
+		// Bar upward
 		lv.pattern = AlongPattern(lv.cfg, x, lv.baseY, 0, -1, h, alpha)
 		lv.drawBar(dc, x, lv.baseY, barWidth, -h, col)
 
-		// Reflejo hacia abajo si está activo
+		// Downward reflection if enabled
 		if lv.cfg.MirrorBottom {
 			mirrorCol := col
 			mirrorCol.A = uint8(float64(mirrorCol.A) * 0.35)
@@ -95,7 +95,7 @@ func (lv *LinearVisualizer) renderBars(dc *gg.Context, feat *audio.FrameFeatures
 		}
 	}
 
-	// Canal Derecho (R): desde el centro hacia la derecha
+	// Right channel (R): from the center to the right
 	for i := 0; i < barCount; i++ {
 		magR := feat.RightBars[i]
 		h := lv.cfg.MinHeight + magR*(lv.cfg.MaxHeight-lv.cfg.MinHeight)
@@ -104,11 +104,11 @@ func (lv *LinearVisualizer) renderBars(dc *gg.Context, feat *audio.FrameFeatures
 		t := float64(i) / float64(barCount)
 		col := lv.getColor(t, alpha)
 
-		// Barra hacia arriba
+		// Bar upward
 		lv.pattern = AlongPattern(lv.cfg, x, lv.baseY, 0, -1, h, alpha)
 		lv.drawBar(dc, x, lv.baseY, barWidth, -h, col)
 
-		// Reflejo hacia abajo si está activo
+		// Downward reflection if enabled
 		if lv.cfg.MirrorBottom {
 			mirrorCol := col
 			mirrorCol.A = uint8(float64(mirrorCol.A) * 0.35)

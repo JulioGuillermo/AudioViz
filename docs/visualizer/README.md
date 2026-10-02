@@ -1,6 +1,6 @@
-# Visualizador
+# Visualizer
 
-Espectro estéreo: `bars` bandas logarítmicas (25 Hz – 18 kHz) por canal, L y R separados.
+Stereo spectrum: `bars` logarithmic bands (25 Hz – 18 kHz) per channel, L and R separate.
 
 ```yaml
 visualizer:
@@ -19,33 +19,33 @@ visualizer:
   glow: { enabled: true, radius: 12.0, intensity: 0.65 }
 ```
 
-## Tipos
-| `type` | Alias | Página |
+## Types
+| `type` | Aliases | Page |
 |---|---|---|
 | `circular` | `circle`, `radial` | [circular](circular.md) |
 | `horizontal` | `linear`, `bottom` | [horizontal](horizontal.md) |
 | `vertical` | `edges` | [vertical](vertical.md) |
 | `oscilloscope` | `wave`, `waveform` | [oscilloscope](oscilloscope.md) |
 
-## Opciones comunes
-| Campo | Def. | Descripción |
+## Common options
+| Field | Default | Description |
 |---|---|---|
-| `enabled` | true | Muestra el visualizador |
-| `bars` | 56 | Bandas por canal (máx. 256) |
-| `min_height` | 4 | Altura en silencio (px) |
-| `max_height` | 200 | Altura con la banda al máximo (px) |
-| `bar_width` | 5 | Grosor de barra / línea (px) |
-| `bar_gap` | 4 | Separación entre barras (horizontal) |
-| `roundness` | 2.5 | Radio de las esquinas (px) |
-| `smoothing` | 0.75 | Velocidad de subida (0.1 lenta … 0.95 instantánea) |
-| `decay_rate` | 0.12 | Velocidad de bajada por cuadro (0.05 lenta … 0.3 rápida) |
-| `color_mode` | gradient | `gradient` o `solid` |
-| `solid_color` | #00f0ff | Color si `color_mode: solid` (admite `#rrggbbaa`) |
-| `gradient` | cian→púrpura→rosa | Paradas de color, ver [gradientes](gradients.md) |
-| `gradient_axis` | index | `index` (un color por barra) o `length` (a lo largo de la barra), ver [gradientes](gradients.md) |
-| `gradient_fit` | bar | Con `length`: `bar` o `max`, ver [gradientes](gradients.md) |
+| `enabled` | true | Shows the visualizer |
+| `bars` | 56 | Bands per channel (max. 256) |
+| `min_height` | 4 | Height in silence (px) |
+| `max_height` | 200 | Height with the band at its maximum (px) |
+| `bar_width` | 5 | Bar / line thickness (px) |
+| `bar_gap` | 4 | Gap between bars (horizontal) |
+| `roundness` | 2.5 | Corner radius (px) |
+| `smoothing` | 0.75 | Rise speed (0.1 slow … 0.95 instant) |
+| `decay_rate` | 0.12 | Fall speed per frame (0.05 slow … 0.3 fast) |
+| `color_mode` | gradient | `gradient` or `solid` |
+| `solid_color` | #00f0ff | Color when `color_mode: solid` (accepts `#rrggbbaa`) |
+| `gradient` | cyan→purple→pink | Color stops, see [gradients](gradients.md) |
+| `gradient_axis` | index | `index` (one color per bar) or `length` (along the bar), see [gradients](gradients.md) |
+| `gradient_fit` | bar | With `length`: `bar` or `max`, see [gradients](gradients.md) |
 
-La altura de las barras está [normalizada por banda](../reactividad.md#normalización-adaptativa).
+Bar height is [normalized per band](../reactivity.md#adaptive-normalization).
 
 ## Glow
 ```yaml
@@ -54,8 +54,8 @@ La altura de las barras está [normalizada por banda](../reactividad.md#normaliz
     radius: 12.0
     intensity: 0.65
 ```
-| Campo | Def. | Descripción |
+| Field | Default | Description |
 |---|---|---|
-| `enabled` | true | Halo de neón alrededor de barras y líneas |
-| `radius` | 12 | Alcance del halo (px) |
-| `intensity` | 0.65 | Opacidad del halo (0–1+) |
+| `enabled` | true | Neon halo around bars and lines |
+| `radius` | 12 | Halo reach (px) |
+| `intensity` | 0.65 | Halo opacity (0–1+) |

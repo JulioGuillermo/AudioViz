@@ -9,7 +9,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ProjectConfig representa la configuración completa de un proyecto
+// ProjectConfig represents the complete configuration of a project
 type ProjectConfig struct {
 	Audio             AudioConfig             `yaml:"audio"`
 	Background        BackgroundConfig        `yaml:"background"`
@@ -19,31 +19,31 @@ type ProjectConfig struct {
 	Lyrics            LyricsConfig            `yaml:"lyrics"`
 	Output            OutputConfig            `yaml:"output"`
 
-	// Cambios a lo largo de la canción (ver timeline.go). Al cargar se construye Timeline.
+	// Changes over the course of the song (see timeline.go). Timeline is built on load.
 	TimelineRaw yaml.Node `yaml:"timeline,omitempty"`
 	Timeline    Timeline  `yaml:"-"`
 	Markers     []Marker  `yaml:"-"`
-	// Carpeta del proyecto (las rutas relativas del YAML se resuelven contra ella)
+	// Project folder (relative paths in the YAML are resolved against it)
 	Dir string `yaml:"-"`
 }
 
 type AudioConfig struct {
 	Path        string  `yaml:"path"`
-	Volume      float64 `yaml:"volume"`       // Multiplicador de volumen (1.0 = normal)
-	Sensitivity float64 `yaml:"sensitivity"`  // Multiplicador global de reactividad (1.0 = normal)
-	// Normalización adaptativa: cada efecto y cada barra se reescala a su rango local
-	// para que no se queden saturados (ni muertos) cuando una banda está siempre alta/baja.
+	Volume      float64 `yaml:"volume"`      // Volume multiplier (1.0 = normal)
+	Sensitivity float64 `yaml:"sensitivity"` // Global reactivity multiplier (1.0 = normal)
+	// Adaptive normalization: each effect and each bar is rescaled to its local range
+	// so they don't stay saturated (or dead) when a band is always high/low.
 	Normalize       bool    `yaml:"normalize"`
-	NormalizeWindow float64 `yaml:"normalize_window"` // segundos a cada lado de la ventana (def. 4)
+	NormalizeWindow float64 `yaml:"normalize_window"` // seconds on each side of the window (def. 4)
 }
 
 type BackgroundConfig struct {
-	Path      string  `yaml:"path"`      // Ruta a imagen (.png, .jpg) o video (.mp4, .mkv)
-	FitMode   string  `yaml:"fit_mode"`  // "cover", "contain", "stretch"
-	Opacity   float64 `yaml:"opacity"`   // 0.0 a 1.0 (para atenuar la imagen de fondo)
-	Darken    float64 `yaml:"darken"`    // 0.0 a 1.0 (oscurecimiento base constante)
-	Vignette  float64 `yaml:"vignette"`  // 0.0 a 1.0 (viñeta oscura en bordes)
-	LoopVideo bool    `yaml:"loop_video"`// Si el video de fondo se repite en bucle
+	Path      string  `yaml:"path"`       // Path to an image (.png, .jpg) or video (.mp4, .mkv)
+	FitMode   string  `yaml:"fit_mode"`   // "cover", "contain", "stretch"
+	Opacity   float64 `yaml:"opacity"`    // 0.0 to 1.0 (to fade the background image)
+	Darken    float64 `yaml:"darken"`     // 0.0 to 1.0 (constant base darkening)
+	Vignette  float64 `yaml:"vignette"`   // 0.0 to 1.0 (dark vignette at the edges)
+	LoopVideo bool    `yaml:"loop_video"` // Whether the background video loops
 }
 
 type BackgroundEffectsConfig struct {
@@ -57,100 +57,100 @@ type BackgroundEffectsConfig struct {
 
 type BassZoomConfig struct {
 	Enabled     bool    `yaml:"enabled"`
-	MaxZoom     float64 `yaml:"max_zoom"`     // ej. 1.08 = 8% de zoom máximo
-	Sensitivity float64 `yaml:"sensitivity"`  // Multiplicador de reacción a graves
-	DecaySpeed  float64 `yaml:"decay_speed"`  // Velocidad de amortiguación (0.1 a 0.5)
-	ReactTo     string  `yaml:"react_to"`     // bass (def.), mid, treble, overall, transient, beat
+	MaxZoom     float64 `yaml:"max_zoom"`    // e.g. 1.08 = 8% maximum zoom
+	Sensitivity float64 `yaml:"sensitivity"` // Bass reaction multiplier
+	DecaySpeed  float64 `yaml:"decay_speed"` // Damping speed (0.1 to 0.5)
+	ReactTo     string  `yaml:"react_to"`    // bass (def.), mid, treble, overall, transient, beat
 }
 
-// ShakeConfig: movimiento de cámara (traslación suave pseudoaleatoria) guiado por una banda
+// ShakeConfig: camera motion (smooth pseudo-random translation) driven by a band
 type ShakeConfig struct {
 	Enabled   bool    `yaml:"enabled"`
-	Amplitude float64 `yaml:"amplitude"` // desplazamiento máximo en píxeles
-	Speed     float64 `yaml:"speed"`     // velocidad del vaivén (1.0 = normal)
+	Amplitude float64 `yaml:"amplitude"` // maximum displacement in pixels
+	Speed     float64 `yaml:"speed"`     // sway speed (1.0 = normal)
 	ReactTo   string  `yaml:"react_to"`  // bass (def.), mid, treble, overall, transient, beat
 }
 
 type ChromaticAberrationConfig struct {
-	Enabled    bool    `yaml:"enabled"`
-	MaxShift   float64 `yaml:"max_shift"`   // Desplazamiento máximo en píxeles de R y B
-	Mode       string  `yaml:"mode"`        // "horizontal" o "radial"
-	ReactTo    string  `yaml:"react_to"`    // "bass", "treble", "transient", "overall"
+	Enabled  bool    `yaml:"enabled"`
+	MaxShift float64 `yaml:"max_shift"` // Maximum R and B shift in pixels
+	Mode     string  `yaml:"mode"`      // "horizontal" or "radial"
+	ReactTo  string  `yaml:"react_to"`  // "bass", "treble", "transient", "overall"
 }
 
 type RippleConfig struct {
 	Enabled   bool    `yaml:"enabled"`
-	Amplitude float64 `yaml:"amplitude"` // Amplitud máxima de onda en píxeles
-	Frequency float64 `yaml:"frequency"` // Frecuencia espacial de la onda
-	Speed     float64 `yaml:"speed"`     // Velocidad de propagación temporal
+	Amplitude float64 `yaml:"amplitude"` // Maximum wave amplitude in pixels
+	Frequency float64 `yaml:"frequency"` // Spatial frequency of the wave
+	Speed     float64 `yaml:"speed"`     // Temporal propagation speed
 	ReactTo   string  `yaml:"react_to"`  // mid (def.), bass, treble, overall, transient, beat
 }
 
 type GlitchConfig struct {
 	Enabled   bool    `yaml:"enabled"`
-	Threshold float64 `yaml:"threshold"` // Umbral de energía de transitorios (0.0 a 1.0)
-	Intensity float64 `yaml:"intensity"` // Intensidad del desplazamiento de franjas
-	ReactTo   string  `yaml:"react_to"`  // "" = golpes/transitorios (def.); o una banda que dispara al superar threshold
+	Threshold float64 `yaml:"threshold"` // Transient energy threshold (0.0 to 1.0)
+	Intensity float64 `yaml:"intensity"` // Strip displacement intensity
+	ReactTo   string  `yaml:"react_to"`  // "" = hits/transients (def.); or a band that triggers when exceeding threshold
 }
 
 type ColorFlashConfig struct {
 	Enabled         bool    `yaml:"enabled"`
-	BrightnessBoost float64 `yaml:"brightness_boost"` // ej. 0.20
-	ContrastBoost   float64 `yaml:"contrast_boost"`   // ej. 0.15
+	BrightnessBoost float64 `yaml:"brightness_boost"` // e.g. 0.20
+	ContrastBoost   float64 `yaml:"contrast_boost"`   // e.g. 0.15
 	ReactTo         string  `yaml:"react_to"`         // bass (def.), mid, treble, overall, transient, beat
 }
 
 type VisualizerConfig struct {
-	Enabled         bool          `yaml:"enabled"`
-	Type            string        `yaml:"type"`            // "circular", "horizontal", "vertical", "oscilloscope"
-	StereoSymmetric bool          `yaml:"stereo_symmetric"`// true: L a la izquierda, R a la derecha
-	Bars            int           `yaml:"bars"`            // Barras por canal (ej. 48 o 64)
-	MinHeight       float64       `yaml:"min_height"`      // Altura mínima de barra
-	MaxHeight       float64       `yaml:"max_height"`      // Altura máxima de barra en pico
-	BarWidth        float64       `yaml:"bar_width"`       // Ancho o grosor de cada barra
-	BarGap          float64       `yaml:"bar_gap"`         // Separación entre barras
-	Roundness       float64       `yaml:"roundness"`       // Redondeo de las puntas
-	Smoothing       float64       `yaml:"smoothing"`       // 0.0 (reactivo duro) a 0.95 (muy suave)
-	DecayRate       float64       `yaml:"decay_rate"`      // Caída de picos (0.05 a 0.3)
-	
-	// Para tipo "circular":
-	Radius          float64       `yaml:"radius"`          // Radio base del círculo
-	CenterX         float64       `yaml:"center_x"`        // Posición relativa 0.0 a 1.0 (0.5 = centro)
-	CenterY         float64       `yaml:"center_y"`        // Posición relativa 0.0 a 1.0 (0.5 = centro)
-	DrawMode        string        `yaml:"draw_mode"`       // "bars", "smooth_curve", "filled"
+	Enabled         bool    `yaml:"enabled"`
+	Type            string  `yaml:"type"`             // "circular", "horizontal", "vertical", "oscilloscope"
+	StereoSymmetric bool    `yaml:"stereo_symmetric"` // true: L on the left, R on the right
+	Bars            int     `yaml:"bars"`             // Bars per channel (e.g. 48 or 64)
+	MinHeight       float64 `yaml:"min_height"`       // Minimum bar height
+	MaxHeight       float64 `yaml:"max_height"`       // Maximum bar height at peak
+	BarWidth        float64 `yaml:"bar_width"`        // Width or thickness of each bar
+	BarGap          float64 `yaml:"bar_gap"`          // Gap between bars
+	Roundness       float64 `yaml:"roundness"`        // Tip rounding
+	Smoothing       float64 `yaml:"smoothing"`        // 0.0 (hard reactive) to 0.95 (very smooth)
+	DecayRate       float64 `yaml:"decay_rate"`       // Peak decay (0.05 to 0.3)
 
-	// Para tipo "horizontal":
-	PositionY       float64       `yaml:"position_y"`      // Posición Y relativa (ej. 0.85 para abajo)
-	MirrorBottom    bool          `yaml:"mirror_bottom"`   // Reflejo hacia abajo
-	CenterGap       *float64      `yaml:"center_gap"`      // Separación entre L y R en el centro (px, def. 2×bar_gap)
+	// For type "circular":
+	Radius   float64 `yaml:"radius"`    // Base radius of the circle
+	CenterX  float64 `yaml:"center_x"`  // Relative position 0.0 to 1.0 (0.5 = center)
+	CenterY  float64 `yaml:"center_y"`  // Relative position 0.0 to 1.0 (0.5 = center)
+	DrawMode string  `yaml:"draw_mode"` // "bars", "smooth_curve", "filled"
 
-	// Colores y Glow
-	ColorMode       string        `yaml:"color_mode"`      // "gradient", "solid"
-	SolidColor      string        `yaml:"solid_color"`     // Hex ej "#00f0ff"
-	Gradient        []GradientStop `yaml:"gradient"`
-	// Dirección del gradiente: "index" (def., a lo ancho: una barra de cada color)
-	// o "length" (a lo largo de cada barra: de la base a la punta)
+	// For type "horizontal":
+	PositionY    float64  `yaml:"position_y"`    // Relative Y position (e.g. 0.85 for bottom)
+	MirrorBottom bool     `yaml:"mirror_bottom"` // Downward mirror
+	CenterGap    *float64 `yaml:"center_gap"`    // Gap between L and R at the center (px, def. 2×bar_gap)
+
+	// Colors and Glow
+	ColorMode  string         `yaml:"color_mode"`  // "gradient", "solid"
+	SolidColor string         `yaml:"solid_color"` // Hex e.g. "#00f0ff"
+	Gradient   []GradientStop `yaml:"gradient"`
+	// Gradient direction: "index" (def., across: one bar per color)
+	// or "length" (along each bar: from base to tip)
 	GradientAxis string `yaml:"gradient_axis"`
-	// Solo con gradient_axis: length. "bar" = el último color siempre en la punta (se mueve con la barra);
-	// "max" = el último color está en max_height (las barras bajas solo muestran los primeros colores)
-	GradientFit string `yaml:"gradient_fit"`
-	Glow            GlowConfig    `yaml:"glow"`
+	// Only with gradient_axis: length. "bar" = last color always at the tip (moves with the bar);
+	// "max" = last color is at max_height (short bars only show the first colors)
+	GradientFit string     `yaml:"gradient_fit"`
+	Glow        GlowConfig `yaml:"glow"`
 }
 
 type GradientStop struct {
-	Offset float64 `yaml:"offset"` // 0.0 a 1.0
-	Color  string  `yaml:"color"`  // Hex ej "#ff007f"
+	Offset float64 `yaml:"offset"` // 0.0 to 1.0
+	Color  string  `yaml:"color"`  // Hex e.g. "#ff007f"
 }
 
 type GlowConfig struct {
 	Enabled   bool    `yaml:"enabled"`
-	Radius    float64 `yaml:"radius"`    // Radio del resplandor neón
-	Intensity float64 `yaml:"intensity"` // Intensidad / opacidad del glow
+	Radius    float64 `yaml:"radius"`    // Neon glow radius
+	Intensity float64 `yaml:"intensity"` // Glow intensity / opacity
 }
 
 type ParticlesConfig struct {
 	Enabled bool `yaml:"enabled"`
-	// Capas: cada una con su tipo, color y banda. Si está vacío se usa una única capa con los campos de abajo.
+	// Layers: each with its own type, color and band. If empty, a single layer with the fields below is used.
 	Layers []ParticleLayer `yaml:"layers"`
 
 	ParticleLayer `yaml:",inline"`
@@ -158,63 +158,63 @@ type ParticlesConfig struct {
 
 type ParticleLayer struct {
 	Type       string  `yaml:"type"`        // "radial_burst", "ambient_dust", "rising_sparks"
-	Count      int     `yaml:"count"`       // Número máximo de partículas de la capa
-	MinSize    float64 `yaml:"min_size"`    // Tamaño mínimo
-	MaxSize    float64 `yaml:"max_size"`    // Tamaño máximo
-	Color      string  `yaml:"color"`       // Hex "#ffffff" (color al nacer)
-	ColorEnd   string  `yaml:"color_end"`   // Hex opcional: color al morir (se interpola con la vida)
-	Speed      float64 `yaml:"speed"`       // Velocidad base
-	AudioBoost float64 `yaml:"audio_boost"` // Multiplicador de velocidad con el audio
-	Glow       bool    `yaml:"glow"`        // Halo suave
+	Count      int     `yaml:"count"`       // Maximum number of particles in the layer
+	MinSize    float64 `yaml:"min_size"`    // Minimum size
+	MaxSize    float64 `yaml:"max_size"`    // Maximum size
+	Color      string  `yaml:"color"`       // Hex "#ffffff" (color at birth)
+	ColorEnd   string  `yaml:"color_end"`   // Optional hex: color at death (interpolated over lifetime)
+	Speed      float64 `yaml:"speed"`       // Base speed
+	AudioBoost float64 `yaml:"audio_boost"` // Speed multiplier driven by audio
+	Glow       bool    `yaml:"glow"`        // Soft halo
 	ReactTo    string  `yaml:"react_to"`    // bass (def.), mid, treble, overall, transient, beat
-	// Densidad reactiva: fracción mínima de partículas vivas en silencio (0..1).
-	// 1 = siempre todas (comportamiento clásico); 0.1 = casi ninguna si la banda está en silencio.
-	MinDensity *float64 `yaml:"min_density"` // sin definir = 1
-	Turbulence float64 `yaml:"turbulence"` // Serpenteo lateral (0 = recto; 0.5-1 = llama)
-	MinLife    float64 `yaml:"min_life"`   // Vida mínima en segundos (def. 1)
-	MaxLife    float64 `yaml:"max_life"`   // Vida máxima en segundos (def. 3)
-	// Dirección del movimiento en grados (0 = derecha, 90 = arriba, 180 = izquierda, 270 = abajo).
-	// rising_sparks: def. 90 y nacen en el borde opuesto; ambient_dust: deriva común en esa dirección.
+	// Reactive density: minimum fraction of live particles during silence (0..1).
+	// 1 = always all of them (classic behaviour); 0.1 = almost none if the band is silent.
+	MinDensity *float64 `yaml:"min_density"` // unset = 1
+	Turbulence float64  `yaml:"turbulence"`  // Lateral wiggle (0 = straight; 0.5-1 = flame)
+	MinLife    float64  `yaml:"min_life"`    // Minimum lifetime in seconds (def. 1)
+	MaxLife    float64  `yaml:"max_life"`    // Maximum lifetime in seconds (def. 3)
+	// Movement direction in degrees (0 = right, 90 = up, 180 = left, 270 = down).
+	// rising_sparks: def. 90, spawning at the opposite edge; ambient_dust: common drift in that direction.
 	Direction *float64 `yaml:"direction"`
-	Spread    float64  `yaml:"spread"` // apertura en grados alrededor de direction (def. 25)
+	Spread    float64  `yaml:"spread"` // spread in degrees around direction (def. 25)
 }
 
-// LyricsConfig: letra sincronizada (.srt / .lrc / LRC con tiempo por palabra) dibujada animada
+// LyricsConfig: synced lyrics (.srt / .lrc / LRC with per-word timing) drawn animated
 type LyricsConfig struct {
 	Enabled bool    `yaml:"enabled"`
 	Path    string  `yaml:"path"`
-	Offset  float64 `yaml:"offset"` // segundos a sumar a todos los tiempos (+ = más tarde)
+	Offset  float64 `yaml:"offset"` // seconds added to all timestamps (+ = later)
 
-	Font        string  `yaml:"font"`         // .ttf/.otf; vacío = fuente integrada (Go Bold)
-	Size        float64 `yaml:"size"`         // tamaño en px
-	Uppercase   bool    `yaml:"uppercase"`    // pasar a mayúsculas
-	// Posición: top, bottom, center, left, right, side (alterna izquierda/derecha por línea)
-	// o custom (usa position_x / position_y)
+	Font      string  `yaml:"font"`      // .ttf/.otf; empty = built-in font (Go Bold)
+	Size      float64 `yaml:"size"`      // size in px
+	Uppercase bool    `yaml:"uppercase"` // convert to uppercase
+	// Position: top, bottom, center, left, right, side (alternates left/right per line)
+	// or custom (uses position_x / position_y)
 	Position    string  `yaml:"position"`
-	Margin      float64 `yaml:"margin"`       // px de margen a los bordes (posiciones top/bottom/left/right/side)
-	PositionX   float64 `yaml:"position_x"`   // centro relativo (0-1), solo con position: custom
-	PositionY   float64 `yaml:"position_y"`   // centro relativo (0-1), custom; o altura para left/right/side
-	MaxWidth    float64 `yaml:"max_width"`    // ancho máximo relativo antes de partir en varias filas
-	LineSpacing float64 `yaml:"line_spacing"` // interlineado (1.0 = altura de la fuente)
-	WordSpacing float64 `yaml:"word_spacing"` // espacio extra entre palabras, fracción del tamaño (def. 0.12)
+	Margin      float64 `yaml:"margin"`       // px margin to the edges (positions top/bottom/left/right/side)
+	PositionX   float64 `yaml:"position_x"`   // relative center (0-1), only with position: custom
+	PositionY   float64 `yaml:"position_y"`   // relative center (0-1), custom; or height for left/right/side
+	MaxWidth    float64 `yaml:"max_width"`    // maximum relative width before wrapping into several rows
+	LineSpacing float64 `yaml:"line_spacing"` // line spacing (1.0 = font height)
+	WordSpacing float64 `yaml:"word_spacing"` // extra space between words, fraction of size (def. 0.12)
 	Align       string  `yaml:"align"`        // center, left, right
 
-	Mode        string  `yaml:"mode"`         // karaoke, words, line
-	// Animaciones de entrada/salida de cada línea: fade, slide_up, slide_down, slide_left, slide_right,
-	// slide_side (desde su lado), pop, zoom, none
-	InAnimation  string `yaml:"in_animation"`
-	OutAnimation string `yaml:"out_animation"`
-	Animation    string `yaml:"animation"` // atajo: la misma para entrada y salida
-	InDuration  float64 `yaml:"in_duration"`  // s
-	OutDuration float64 `yaml:"out_duration"` // s
-	SlideDistance float64 `yaml:"slide_distance"` // px para animation: slide
-	WordPop     float64 `yaml:"word_pop"`     // aumento de escala de la palabra al cantarse (0.15 = +15 %)
+	Mode string `yaml:"mode"` // karaoke, words, line
+	// In/out animations for each line: fade, slide_up, slide_down, slide_left, slide_right,
+	// slide_side (from its side), pop, zoom, none
+	InAnimation   string  `yaml:"in_animation"`
+	OutAnimation  string  `yaml:"out_animation"`
+	Animation     string  `yaml:"animation"`      // shortcut: same for in and out
+	InDuration    float64 `yaml:"in_duration"`    // s
+	OutDuration   float64 `yaml:"out_duration"`   // s
+	SlideDistance float64 `yaml:"slide_distance"` // px for animation: slide
+	WordPop       float64 `yaml:"word_pop"`       // word scale boost while sung (0.15 = +15 %)
 
-	Color         string         `yaml:"color"`          // color de la palabra cantada / visible
-	UpcomingColor string         `yaml:"upcoming_color"` // color de las palabras aún no cantadas (karaoke), admite alfa #rrggbbaa
-	Gradient      []GradientStop `yaml:"gradient"`       // opcional: gradiente vertical de arriba (0) a abajo (1) en vez de color
+	Color         string         `yaml:"color"`          // color of the sung / visible word
+	UpcomingColor string         `yaml:"upcoming_color"` // color of words not yet sung (karaoke), supports alpha #rrggbbaa
+	Gradient      []GradientStop `yaml:"gradient"`       // optional: vertical gradient from top (0) to bottom (1) instead of color
 	OutlineColor  string         `yaml:"outline_color"`
-	OutlineWidth  float64        `yaml:"outline_width"` // px, 0 = sin contorno
+	OutlineWidth  float64        `yaml:"outline_width"` // px, 0 = no outline
 	Glow          TextGlowConfig `yaml:"glow"`
 	Shadow        ShadowConfig   `yaml:"shadow"`
 	React         TextReact      `yaml:"react"`
@@ -222,8 +222,8 @@ type LyricsConfig struct {
 
 type TextGlowConfig struct {
 	Enabled   bool    `yaml:"enabled"`
-	Color     string  `yaml:"color"`     // vacío = color del texto
-	Radius    float64 `yaml:"radius"`    // px (máx. ~24)
+	Color     string  `yaml:"color"`     // empty = text color
+	Radius    float64 `yaml:"radius"`    // px (max. ~24)
 	Intensity float64 `yaml:"intensity"` // 0-1+
 }
 
@@ -233,35 +233,35 @@ type ShadowConfig struct {
 	OffsetX float64 `yaml:"offset_x"`
 	OffsetY float64 `yaml:"offset_y"`
 	Opacity float64 `yaml:"opacity"`
-	Blur    float64 `yaml:"blur"` // px de difuminado
+	Blur    float64 `yaml:"blur"` // blur in px
 }
 
-// TextReact: cómo reacciona la letra al audio
+// TextReact: how the lyrics react to the audio
 type TextReact struct {
-	ReactTo   string  `yaml:"react_to"`  // bass (def.), mid, treble, overall, transient, beat
-	Scale     float64 `yaml:"scale"`     // latido: +escala máxima (0.08 = +8 %)
-	Glow      float64 `yaml:"glow"`      // intensidad de glow extra con la banda
-	Shake     float64 `yaml:"shake"`     // temblor en px
-	Chromatic float64 `yaml:"chromatic"` // separación RGB en px
-	Flicker   float64 `yaml:"flicker"`   // parpadeo de brillo tipo llama (0-1)
-	Flash     float64 `yaml:"flash"`     // cuánto vira hacia flash_color con la banda (0-1)
-	FlashColor string `yaml:"flash_color"`
+	ReactTo    string  `yaml:"react_to"`  // bass (def.), mid, treble, overall, transient, beat
+	Scale      float64 `yaml:"scale"`     // pulse: +max scale (0.08 = +8 %)
+	Glow       float64 `yaml:"glow"`      // extra glow intensity with the band
+	Shake      float64 `yaml:"shake"`     // shake in px
+	Chromatic  float64 `yaml:"chromatic"` // RGB split in px
+	Flicker    float64 `yaml:"flicker"`   // flame-like brightness flicker (0-1)
+	Flash      float64 `yaml:"flash"`     // how much it shifts toward flash_color with the band (0-1)
+	FlashColor string  `yaml:"flash_color"`
 }
 
 type OutputConfig struct {
-	Path        string `yaml:"path"`
-	Width       int    `yaml:"width"`       // 0 = automático (según imagen/video de fondo)
-	Height      int    `yaml:"height"`      // 0 = automático
-	FPS         int    `yaml:"fps"`         // ej. 30 o 60
-	Codec       string `yaml:"codec"`       // obsoleto: siempre H.264 (x264 integrado)
-	Preset      string `yaml:"preset"`      // preset x264: "ultrafast" ... "veryslow"
-	Renderer    string `yaml:"renderer"`    // "auto" (GPU Vulkan si hay), "gpu", "cpu"
-	GPUDevice   int    `yaml:"gpu_device"`  // -1 = automático
-	CRF         int    `yaml:"crf"`         // 18-23
+	Path         string `yaml:"path"`
+	Width        int    `yaml:"width"`         // 0 = automatic (from background image/video)
+	Height       int    `yaml:"height"`        // 0 = automatic
+	FPS          int    `yaml:"fps"`           // e.g. 30 or 60
+	Codec        string `yaml:"codec"`         // deprecated: always H.264 (built-in x264)
+	Preset       string `yaml:"preset"`        // x264 preset: "ultrafast" ... "veryslow"
+	Renderer     string `yaml:"renderer"`      // "auto" (Vulkan GPU if available), "gpu", "cpu"
+	GPUDevice    int    `yaml:"gpu_device"`    // -1 = automatic
+	CRF          int    `yaml:"crf"`           // 18-23
 	AudioBitrate string `yaml:"audio_bitrate"` // "320k"
 }
 
-// DefaultConfig retorna la configuración base recomendada
+// DefaultConfig returns the recommended base configuration
 func DefaultConfig() ProjectConfig {
 	return ProjectConfig{
 		Audio: AudioConfig{
@@ -378,8 +378,8 @@ func DefaultConfig() ProjectConfig {
 		},
 		Output: OutputConfig{
 			Path:         "output.mp4",
-			Width:        0, // 0 = inferir de fondo
-			Height:       0, // 0 = inferir de fondo
+			Width:        0, // 0 = infer from background
+			Height:       0, // 0 = infer from background
 			FPS:          60,
 			Preset:       "fast",
 			Renderer:     "auto",
@@ -390,21 +390,21 @@ func DefaultConfig() ProjectConfig {
 	}
 }
 
-// LoadConfig carga un archivo de configuración YAML y aplica valores predeterminados
+// LoadConfig loads a YAML configuration file and applies default values
 func LoadConfig(filePath string) (*ProjectConfig, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("error leyendo archivo de proyecto '%s': %w", filePath, err)
+		return nil, fmt.Errorf("error reading project file '%s': %w", filePath, err)
 	}
 	abs, _ := filepath.Abs(filePath)
 	return ParseConfig(data, filepath.Dir(abs))
 }
 
-// ParseConfig interpreta un YAML de proyecto cuyas rutas relativas cuelgan de dir
+// ParseConfig parses a project YAML whose relative paths are rooted at dir
 func ParseConfig(data []byte, dir string) (*ProjectConfig, error) {
 	cfg := DefaultConfig()
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("error parseando YAML de proyecto: %w", err)
+		return nil, fmt.Errorf("error parsing project YAML: %w", err)
 	}
 	cfg.Dir = dir
 	if err := cfg.Validate(); err != nil {
@@ -422,7 +422,7 @@ func ParseConfig(data []byte, dir string) (*ProjectConfig, error) {
 	return &cfg, nil
 }
 
-// mapPaths aplica fn a todas las rutas de archivos del proyecto (base y tramos)
+// mapPaths applies fn to every file path in the project (base and segments)
 func (c *ProjectConfig) mapPaths(fn func(string) string) {
 	c.Audio.Path = fn(c.Audio.Path)
 	c.Output.Path = fn(c.Output.Path)
@@ -437,13 +437,13 @@ func (c *ProjectConfig) mapPaths(fn func(string) string) {
 	}
 }
 
-// Marshal serializa el proyecto a YAML con las rutas relativas a c.Dir cuando están dentro
+// Marshal serializes the project to YAML with paths relative to c.Dir when they are inside it
 func (c *ProjectConfig) Marshal() ([]byte, error) {
 	cp := *c
 	if err := cp.SyncFromTimeline(); err != nil {
 		return nil, err
 	}
-	// Copia profunda de las pistas para no alterar las rutas del original
+	// Deep copy of the tracks so the original's paths are not altered
 	b, err := yaml.Marshal(&cp)
 	if err != nil {
 		return nil, err
@@ -472,14 +472,14 @@ func (c *ProjectConfig) Marshal() ([]byte, error) {
 	return yaml.Marshal(&tmp)
 }
 
-// Save escribe el proyecto en path (de forma atómica)
+// Save writes the project to path (atomically)
 func (c *ProjectConfig) Save(path string) error {
 	b, err := c.Marshal()
 	if err != nil {
 		return err
 	}
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append([]byte("# Proyecto AudioViz (editable a mano; ver docs/index.md)\n"), b...), 0644); err != nil {
+	if err := os.WriteFile(tmp, append([]byte("# AudioViz project (hand-editable; see docs/index.md)\n"), b...), 0644); err != nil {
 		return err
 	}
 	return os.Rename(tmp, path)
@@ -487,7 +487,7 @@ func (c *ProjectConfig) Save(path string) error {
 
 func lower(s string) string { return strings.ToLower(s) }
 
-// Validate comprueba consistencia básica de la configuración
+// Validate checks basic configuration consistency
 func (c *ProjectConfig) Validate() error {
 	if c.Output.Path == "" {
 		c.Output.Path = "output.mp4"

@@ -1,115 +1,126 @@
-# AudioViz Studio (interfaz gráfica)
+# AudioViz Studio (graphical interface)
 
 ```bash
-./audioviz studio                 # abre el project.yaml de la carpeta actual (si hay)
-./audioviz studio ruta/proyecto   # abre ese proyecto (carpeta o .yaml)
-./audioviz studio --addr 0.0.0.0:8787   # accesible desde otro equipo de la red
-./audioviz studio --no-open       # no abrir el navegador
+./audioviz studio                 # opens the project.yaml in the current folder (if any)
+./audioviz studio path/to/project   # opens that project (folder or .yaml)
+./audioviz studio --addr 0.0.0.0:8787   # reachable from another machine on the network
+./audioviz studio --no-open       # don't open the browser
 ```
-El estudio va **dentro del mismo binario**: arranca un servidor local y abre el navegador en
-`http://localhost:8787`. No hace falta instalar nada. El preview lo renderiza la misma GPU y el
-mismo motor que la exportación, así que lo que ves es lo que se exporta.
+The studio ships **inside the same binary**: it starts a local server and opens the browser at
+`http://localhost:8787`. Nothing needs to be installed. The preview is rendered by the same GPU and the
+same engine as the export, so what you see is what gets exported.
 
-> `--addr 0.0.0.0:...` permite entrar desde la red, y cualquiera en ella podría ver tus carpetas.
-> Úsalo solo en redes de confianza.
+> `--addr 0.0.0.0:...` allows access from the network, and anyone on it could browse your folders.
+> Only use it on trusted networks.
 
-## Empezar un proyecto nuevo
-1. **Nuevo** → eliges la carpeta y el nombre. Se crea `nombre/project.yaml` y `nombre/assets/`.
-2. Sobre el preview aparece **Primeros pasos**:
-   - **Elegir audio…**: la canción. Se analiza al momento y la línea de tiempo pasa a durar lo mismo
-     que la canción (sin audio dura 30 s, para poder ir montando lo visual).
-   - **Elegir fondo…**: imagen, GIF o vídeo. La resolución del vídeo será la del fondo (se puede
-     fijar otra en **Salida**). Hasta elegirlo es 1080×1920 con fondo negro.
-   - **Letra** (opcional): un `.lrc`/`.srt`, o *Generar desde .txt…*.
-3. La guía se oculta sola cuando ya hay audio y fondo. Desde ahí todo se ajusta en las pistas.
+## Starting a new project
+1. **New** → choose the folder and the name. This creates `name/project.yaml` and `name/assets/`.
+2. **Getting started** appears over the preview:
+   - **Choose audio…**: the song. It is analyzed right away and the timeline becomes as long
+     as the song (without audio it lasts 30 s, so you can start building the visuals).
+   - **Choose background…**: image, GIF or video. The video resolution will be the background's (you can
+     set a different one in **Output**). Until you pick one it is 1080×1920 with a black background.
+   - **Lyrics** (optional): a `.lrc`/`.srt`, or *Generate from .txt…*.
+3. The guide hides itself once there is audio and a background. From then on everything is adjusted in the tracks.
 
-**Arrastrar y soltar**: suelta archivos en cualquier parte de la ventana. Se copian a `assets/`
-y se colocan según su tipo:
+**Drag and drop**: drop files anywhere in the window. They are copied to `assets/`
+and placed according to their type:
 
-| Archivo | Va a |
+| File | Goes to |
 |---|---|
-| FLAC, WAV, MP3, OGG | Audio del proyecto |
-| Imagen, GIF o vídeo | Fondo (el tramo activo en el cursor; el primero si aún no hay fondo) |
-| `.lrc`, `.srt` | Letra (y la activa) |
-| `.txt` | Abre *Generar letra* con ese texto |
-| `.ttf`, `.otf` | Fuente de la letra |
+| FLAC, WAV, MP3, OGG | Project audio |
+| Image, GIF or video | Background (the segment active at the cursor; the first one if there is no background yet) |
+| `.lrc`, `.srt` | Lyrics (and enables them) |
+| `.txt` | Opens *Generate lyrics* with that text |
+| `.ttf`, `.otf` | Lyrics font |
 
-Un proyecto nuevo arranca con valores por defecto razonables (visualizador circular, zoom con los
-graves, aberración, glitch en los golpes, partículas). Cambia lo que quieras desde cada pista.
+A new project starts with sensible defaults (circular visualizer, zoom on the
+bass, aberration, glitch on beats, particles). Change whatever you like from each track.
 
-## Pantalla
+## Screen layout
 
-| Zona | Qué hay |
+| Area | What's there |
 |---|---|
-| Arriba | Nombre del proyecto, estado de guardado, progreso de trabajos (exportar / generar letra), **Nuevo**, **Abrir**, **Exportar** |
-| Izquierda | Lista de pistas: Audio, Salida, Fondo, cada efecto del fondo, Visualizador, Partículas y Letra. Tachadas si están apagadas en el instante actual |
-| Centro | **Preview** y transporte (reproducir, cuadro a cuadro, calidad del preview) |
-| Derecha | **Inspector**: todos los parámetros del tramo seleccionado |
-| Abajo | **Línea de tiempo**: regla con marcas, forma de onda con las curvas de graves/medios/agudos, líneas de la letra y una pista por efecto |
+| Top | Project name, save status, job progress (export / generate lyrics), **New**, **Open**, **Export** |
+| Left | Track list: Audio, Output, Background, each background effect, Visualizer, Particles and Lyrics. Struck through if they are off at the current instant |
+| Center | **Preview** and transport (play, frame by frame, preview quality) |
+| Right | **Inspector**: all the parameters of the selected segment |
+| Bottom | **Timeline**: ruler with markers, waveform with the bass/mid/treble curves, lyric lines and one track per effect |
 
-Todo se **guarda solo** en `project.yaml` (lo indica "Guardado hh:mm:ss"), que sigue siendo editable
-a mano y renderizable con `audioviz project.yaml`.
+Everything is **saved automatically** to `project.yaml` (shown as "Saved hh:mm:ss"), which remains editable
+by hand and renderable with `audioviz project.yaml`.
 
-## Tramos: cambiar efectos a lo largo de la canción
+## Segments: changing effects over the song
 
-Cada pista es una lista de **tramos**. El primero dura desde el principio hasta el siguiente; cada
-tramo nuevo empieza en su instante y sustituye la configuración de esa pista desde ahí.
+Each track is a list of **segments**. The first one lasts from the beginning until the next one; each
+new segment starts at its own instant and replaces that track's configuration from there on.
 
-- **Crear un tramo**: doble clic en la pista en el punto deseado, o botón **＋ Tramo en …** del
-  inspector (usa la posición del cursor), o tecla **N**. El tramo nuevo copia la config del que
-  estaba activo, así que solo cambias lo que quieras.
-- **Moverlo**: arrástralo en la línea de tiempo. Se pega (imán) a marcas, golpes, al cursor y a
-  otros tramos; mantén **Alt** para moverlo libre. También puedes escribir el instante exacto en
-  "Empieza en".
-- **Transición**: *De golpe* o *Suave (fundido)* con su duración:
-  - números y colores se interpolan (p. ej. el gradiente cambia de rojo a azul poco a poco);
-  - activar/desactivar un efecto se funde;
-  - un cambio de tipo de visualizador o de número de barras hace un fundido de salida y entrada;
-  - un cambio de fondo hace un fundido cruzado;
-  - las partículas del tramo anterior dejan de nacer y se apagan mientras nacen las nuevas.
-- **Eliminar**: botón *Eliminar tramo* o tecla **Supr** (el primero no se puede borrar).
-- **Nombre**: pon nombres ("Estribillo", "Puente") para verlos en la línea de tiempo.
+- **Create a segment**: double-click the track at the desired point, or the inspector's **＋ Add segment at cursor**
+  button (uses the cursor position), or press **N**. The new segment copies the config of the one
+  that was active, so you only change what you want.
+- **Move it**: drag it on the timeline. It snaps (magnet) to markers, beats, the cursor and
+  other segments; hold **Alt** to move it freely. You can also type the exact instant in
+  "Starts at".
+- **Transition**: *Cut* or *Fade* with its duration:
+  - numbers and colors are interpolated (e.g. the gradient gradually changes from red to blue);
+  - turning an effect on/off fades;
+  - a change of visualizer type or bar count fades out and back in;
+  - a background change cross-fades;
+  - particles from the previous segment stop spawning and fade out while the new ones spawn.
+- **Delete**: the *Delete segment* button or the **Del** key (the first one cannot be deleted).
+- **Name**: give segments names ("Chorus", "Bridge") to see them on the timeline.
 
-La **letra** funciona igual: un tramo de letra cambia el estilo (fuente, posición, colores,
-animaciones…). Cada línea usa la maquetación del tramo en que empieza a cantarse, para que no
-cambie de sitio a mitad de frase.
+**Lyrics** work the same way: a lyrics segment changes the style (font, position, colors,
+animations…). Each line uses the layout of the segment in which it starts being sung, so it doesn't
+move around mid-phrase.
 
-## Marcas
-Botón **⚑ Marca** o tecla **M** en el cursor. Clic en una marca para ir a ella, doble clic para
-renombrarla, clic derecho para borrarla. Sirven de referencia para colocar los tramos.
+## Markers
+The **⚑ Marker** button or the **M** key at the cursor. Click a marker to jump to it, double-click to
+rename it, right-click to delete it. They serve as references for placing segments.
 
-## Letra
-- Importa un `.lrc` / `.srt` en la pista **Letra** → *Archivo*.
-- **Generar letra sincronizada…** (en el inspector de la letra, o arrastrando el `.txt`): eliges el
-  `.txt` (vale el formato de Suno), el idioma y el modo (preciso / rápido). Va integrado en el binario
-  (Demucs + Whisper en la GPU); el progreso muestra cada paso con su tiempo. Ver [generar.md](lyrics/generar.md).
-- **Retocar tiempos**: clic en una línea de la pista "Letra (líneas)". El inspector muestra cada
-  palabra con su inicio y fin; ⇤ pone el inicio en el cursor, y hay botones para mover la línea
-  entera. Luego **Guardar letra** (escribe un `.lrc` con tiempo por palabra).
+## Lyrics
+- Import a `.lrc` / `.srt` in the **Lyrics** track → *File*.
+- **Generate synced lyrics…** (in the lyrics inspector, or by dragging in the `.txt`): choose the
+  `.txt` (Suno format works), the language and the mode (accurate / fast). It is built into the binary
+  (Demucs + Whisper on the GPU); the progress shows each step with its time. See [generate.md](lyrics/generate.md).
+- **Fine-tune timings on the timeline** ("Lyric lines" track):
+  - drag a line to move it; **Shift+click** selects a range of lines that then move together;
+  - with a single line selected, its words appear as blocks: drag a word to move it, or its
+    left edge to change only its start;
+  - the inspector shows each word with its start and end, the crosshair button sets a start at the
+    cursor and ±0.05 s buttons shift the selected lines.
+- **Resync**: with one or more lines selected, *Resync line(s)* recognizes that part of the song again
+  (around the lines' current position, ±5 s, without crossing the neighbouring lines unless they overlap) and re-aligns the
+  words. If a line is far off, drag it roughly into place first and then resync. It uses the separated
+  vocals from the cache when available and takes a couple of seconds.
+- Lyric edits are **saved automatically** to the project's `.lrc` (per-word timing).
 
-## Archivos
-Los selectores de archivo navegan por las carpetas del equipo donde corre el estudio. Con
-**⬆ Subir desde este equipo…** copias un archivo a `assets/` del proyecto (útil si abres el
-estudio desde otro ordenador).
+## Files
+The file pickers browse the folders of the machine where the studio runs. With
+**⬆ Upload from this computer…** you copy a file into the project's `assets/` (useful if you open the
+studio from another computer).
 
-## Exportar
-**🎬 Exportar** → canción completa o solo una parte. Se exporta una copia del proyecto tal como
-está, así que puedes seguir editando mientras tanto. El progreso aparece arriba.
+## Export
+**🎬 Export** → the full song or just a part. A copy of the project is exported as it
+is, so you can keep editing in the meantime. Progress appears at the top.
 
-## Atajos
-| Tecla | Acción |
+## Language
+The interface language (English / Español) is chosen in the top bar and remembered by the browser.
+
+## Shortcuts
+| Key | Action |
 |---|---|
-| Espacio | Reproducir / pausa |
-| ← / → | Cuadro anterior / siguiente (con Mayús: ±1 s) |
-| Inicio / Fin | Principio / final |
-| N | Nuevo tramo en el cursor (pista seleccionada) |
-| Supr | Borrar el tramo seleccionado |
-| M | Marca en el cursor |
-| Ctrl + rueda | Zoom de la línea de tiempo |
+| Space | Play / pause |
+| ← / → | Previous / next frame (with Shift: ±1 s) |
+| Home / End | Beginning / end |
+| N | New segment at the cursor (selected track) |
+| Del | Delete the selected segment |
+| M | Marker at the cursor |
+| Ctrl + wheel | Timeline zoom |
 
 ## Preview
-- *Calidad preview* (1/2 por defecto) renderiza directamente a menos resolución en la GPU.
-- En el mismo equipo va a 50–60 fps. Desde otro equipo pide varios cuadros por adelantado para
-  compensar la latencia de la red.
-- Al saltar a otro punto, las partículas se re-simulan unos segundos para que se vean como
-  en la exportación.
+- *Preview quality* (1/2 by default) renders directly at a lower resolution on the GPU.
+- On the same machine it runs at 50–60 fps. From another machine it requests several frames ahead to
+  compensate for network latency.
+- When jumping to another point, particles are re-simulated for a few seconds so they look like
+  they do in the export.

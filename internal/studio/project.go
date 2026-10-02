@@ -8,8 +8,8 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// Forma JSON del proyecto para la interfaz: mismas claves que el YAML, pero cada pista
-// como lista explícita de tramos (el primero en at=0 es el bloque base).
+// JSON shape of the project for the UI: same keys as the YAML, but each track
+// as an explicit list of segments (the first one, at at=0, is the base block).
 
 type TransJSON struct {
 	Mode     string  `json:"mode"`
@@ -35,7 +35,7 @@ type ProjectJSON struct {
 	Markers []MarkerJSON         `json:"markers"`
 }
 
-// toMap convierte un bloque de config en un mapa con las claves del YAML
+// toMap converts a config block into a map with the YAML keys
 func toMap(v any) map[string]any {
 	b, _ := yaml.Marshal(v)
 	m := map[string]any{}
@@ -43,7 +43,7 @@ func toMap(v any) map[string]any {
 	return normalize(m).(map[string]any)
 }
 
-// normalize convierte map[any]any anidados (yaml) en map[string]any (json)
+// normalize converts nested map[any]any (yaml) into map[string]any (json)
 func normalize(v any) any {
 	switch t := v.(type) {
 	case map[string]any:
@@ -66,7 +66,7 @@ func normalize(v any) any {
 	return v
 }
 
-// fromMap aplica un mapa sobre dst (que ya contiene los valores por defecto)
+// fromMap applies a map onto dst (which already holds the default values)
 func fromMap(m map[string]any, dst any) error {
 	b, err := yaml.Marshal(m)
 	if err != nil {
@@ -91,11 +91,11 @@ func segsFromJSON[T any](name string, in []SegJSON, def T, fix func(*T)) ([]conf
 	out := make([]config.Seg[T], 0, len(in))
 	for i, s := range in {
 		cfg := def
-		// Copia limpia del valor por defecto (los slices no deben compartirse)
+		// Clean copy of the default value (slices must not be shared)
 		b, _ := yaml.Marshal(def)
 		_ = yaml.Unmarshal(b, &cfg)
 		if err := fromMap(s.Cfg, &cfg); err != nil {
-			return nil, fmt.Errorf("%s tramo %d: %w", name, i+1, err)
+			return nil, fmt.Errorf("%s segment %d: %w", name, i+1, err)
 		}
 		fix(&cfg)
 		at := s.At
@@ -108,7 +108,7 @@ func segsFromJSON[T any](name string, in []SegJSON, def T, fix func(*T)) ([]conf
 		}
 		out = append(out, config.Seg[T]{At: at, Label: s.Label, Transition: config.Transition{Mode: mode, Duration: s.Transition.Duration}, Cfg: cfg})
 	}
-	// Orden por tiempo (el primero siempre en 0)
+	// Sort by time (the first one always at 0)
 	for i := 1; i < len(out); i++ {
 		for j := i; j > 1 && out[j].At < out[j-1].At; j-- {
 			out[j], out[j-1] = out[j-1], out[j]
@@ -119,7 +119,7 @@ func segsFromJSON[T any](name string, in []SegJSON, def T, fix func(*T)) ([]conf
 
 func noFix[T any](*T) {}
 
-// ProjectToJSON prepara el proyecto para la interfaz
+// ProjectToJSON prepares the project for the UI
 func ProjectToJSON(c *config.ProjectConfig) *ProjectJSON {
 	tl := &c.Timeline
 	p := &ProjectJSON{
@@ -145,7 +145,7 @@ func ProjectToJSON(c *config.ProjectConfig) *ProjectJSON {
 	return p
 }
 
-// ProjectFromJSON reconstruye la config completa a partir de lo que envía la interfaz
+// ProjectFromJSON rebuilds the full config from what the UI sends
 func ProjectFromJSON(p *ProjectJSON, dir string) (*config.ProjectConfig, error) {
 	c := config.DefaultConfig()
 	c.Dir = dir
@@ -189,7 +189,7 @@ func ProjectFromJSON(p *ProjectJSON, dir string) (*config.ProjectConfig, error) 
 	if tl.Lyrics, err = segsFromJSON("lyrics", p.Tracks["lyrics"], d.Lyrics, noFix[config.LyricsConfig]); err != nil {
 		return nil, err
 	}
-	// La ruta y el desfase de la letra son globales: los marca el primer tramo
+	// The lyrics path and offset are global: the first segment sets them
 	for i := range tl.Lyrics {
 		tl.Lyrics[i].Cfg.Path, tl.Lyrics[i].Cfg.Offset = tl.Lyrics[0].Cfg.Path, tl.Lyrics[0].Cfg.Offset
 	}

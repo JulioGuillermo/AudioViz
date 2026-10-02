@@ -1,7 +1,7 @@
 # ambient_dust
 
-Motas repartidas por toda la imagen que flotan lentamente en direcciones aleatorias. Van bien con
-`speed` bajo (0.3–0.8), tamaños pequeños y `react_to: overall` para que "respiren" con el volumen.
+Specks spread over the whole image that drift slowly in random directions. They work well with a
+low `speed` (0.3–0.8), small sizes and `react_to: overall` so they "breathe" with the volume.
 
 ```yaml
 particles:
@@ -17,4 +17,4 @@ particles:
       color: "#ffe9c4"
       glow: true
 ```
-Opciones: ver [capas](README.md#opciones-de-cada-capa).
+Options: see [layers](README.md#per-layer-options).

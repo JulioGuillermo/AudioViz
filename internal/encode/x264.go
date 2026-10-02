@@ -1,4 +1,4 @@
-// Package encode envuelve libx264 enlazada estáticamente (third_party/build/lib/libx264.a).
+// Package encode wraps statically linked libx264 (third_party/build/lib/libx264.a).
 package encode
 
 /*
@@ -17,7 +17,7 @@ typedef struct {
 } enc_t;
 
 static const char *enc_open(enc_t *e, int w, int h, int fps, const char *preset, float crf, int threads) {
-    if (x264_param_default_preset(&e->param, preset, NULL) < 0) return "preset x264 inválido";
+    if (x264_param_default_preset(&e->param, preset, NULL) < 0) return "invalid x264 preset";
     x264_param_t *p = &e->param;
     p->i_width = w; p->i_height = h;
     p->i_csp = X264_CSP_NV12;
@@ -33,9 +33,9 @@ static const char *enc_open(enc_t *e, int w, int h, int fps, const char *preset,
     p->vui.i_colorprim = 1; p->vui.i_transfer = 1; p->vui.i_colmatrix = 1; // BT.709
     p->vui.b_fullrange = 0;
     p->i_log_level = X264_LOG_ERROR;
-    if (x264_param_apply_profile(p, "high") < 0) return "perfil x264 inválido";
+    if (x264_param_apply_profile(p, "high") < 0) return "invalid x264 profile";
     e->h = x264_encoder_open(p);
-    if (!e->h) return "x264_encoder_open falló";
+    if (!e->h) return "x264_encoder_open failed";
     x264_picture_init(&e->pic);
     e->pic.img.i_csp = X264_CSP_NV12;
     e->pic.img.i_plane = 2;
@@ -50,7 +50,7 @@ static int enc_headers(enc_t *e, uint8_t **out) {
     return sz;
 }
 
-// Devuelve bytes de salida (>0), 0 si el cuadro quedó retenido, <0 error
+// Returns output bytes (>0), 0 if the frame was held back, <0 on error
 static int enc_frame(enc_t *e, uint8_t *y, uint8_t *uv, int stride, int64_t pts, uint8_t **out) {
     x264_nal_t *nals; int n;
     x264_picture_t *in = NULL;
@@ -76,7 +76,7 @@ import (
 	"unsafe"
 )
 
-// Packet es una unidad de acceso H.264 codificada (Annex B)
+// Packet is an encoded H.264 access unit (Annex B)
 type Packet struct {
 	Data     []byte
 	PTS, DTS int64
@@ -98,7 +98,7 @@ func NewX264(width, height, fps int, preset string, crf float64) (*X264, error) 
 	return &X264{e: e}, nil
 }
 
-// Headers devuelve SPS/PPS/SEI en Annex B
+// Headers returns SPS/PPS/SEI in Annex B
 func (x *X264) Headers() []byte {
 	var out *C.uint8_t
 	n := C.enc_headers(x.e, &out)
@@ -120,24 +120,24 @@ func (x *X264) packet(n C.int, out *C.uint8_t) *Packet {
 	}
 }
 
-// Encode codifica un cuadro NV12. y/uv deben apuntar a memoria no gestionada por Go
-// (buffers mapeados de Vulkan o C.malloc). x264 copia la imagen antes de volver.
+// Encode encodes an NV12 frame. y/uv must point to memory not managed by Go
+// (mapped Vulkan buffers or C.malloc). x264 copies the image before returning.
 func (x *X264) Encode(y, uv unsafe.Pointer, stride int, pts int64) (*Packet, error) {
 	var out *C.uint8_t
 	n := C.enc_frame(x.e, (*C.uint8_t)(y), (*C.uint8_t)(uv), C.int(stride), C.int64_t(pts), &out)
 	if n < 0 {
-		return nil, fmt.Errorf("x264_encoder_encode falló")
+		return nil, fmt.Errorf("x264_encoder_encode failed")
 	}
 	return x.packet(n, out), nil
 }
 
-// Flush vacía los cuadros retenidos (B-frames / lookahead)
+// Flush drains the held-back frames (B-frames / lookahead)
 func (x *X264) Flush(emit func(*Packet) error) error {
 	for C.enc_delayed(x.e) > 0 {
 		var out *C.uint8_t
 		n := C.enc_frame(x.e, nil, nil, 0, 0, &out)
 		if n < 0 {
-			return fmt.Errorf("x264 flush falló")
+			return fmt.Errorf("x264 flush failed")
 		}
 		if p := x.packet(n, out); p != nil {
 			if err := emit(p); err != nil {
@@ -156,6 +156,6 @@ func (x *X264) Close() {
 	}
 }
 
-// Alloc reserva memoria C para planos NV12 en el camino de render por CPU
+// Alloc allocates C memory for NV12 planes on the CPU render path
 func Alloc(n int) unsafe.Pointer { return C.malloc(C.size_t(n)) }
 func Free(p unsafe.Pointer)      { C.free(p) }

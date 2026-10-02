@@ -108,18 +108,18 @@ static int load_lib(char *err, int errlen) {
     const char *names[] = {"libvulkan.so.1", "libvulkan.so", "libvulkan.1.dylib", "libMoltenVK.dylib", NULL};
     for (int i = 0; names[i] && !g_lib; i++) g_lib = dlopen(names[i], RTLD_NOW | RTLD_LOCAL);
     if (!g_lib) {
-        snprintf(err, errlen, "no se encontró libvulkan (driver Vulkan no instalado)");
+        snprintf(err, errlen, "libvulkan not found (Vulkan driver not installed)");
         return -1;
     }
     p_vkGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)dlsym(g_lib, "vkGetInstanceProcAddr");
     if (!p_vkGetInstanceProcAddr) {
-        snprintf(err, errlen, "libvulkan sin vkGetInstanceProcAddr");
+        snprintf(err, errlen, "libvulkan has no vkGetInstanceProcAddr");
         return -1;
     }
 #define LOADG(name) p_##name = (PFN_##name)p_vkGetInstanceProcAddr(NULL, #name);
     VK_GLOBAL_FUNCS(LOADG)
     if (!p_vkCreateInstance) {
-        snprintf(err, errlen, "libvulkan inválida");
+        snprintf(err, errlen, "invalid libvulkan");
         return -1;
     }
     return 0;
@@ -134,14 +134,14 @@ static int create_instance(VkInstance *inst, char *err, int errlen) {
     const char *exts[] = {"VK_KHR_portability_enumeration"};
     VkResult res = p_vkCreateInstance(&ci, NULL, inst);
     if (res != VK_SUCCESS) {
-        // MoltenVK requiere portabilidad
+        // MoltenVK requires portability
         ci.flags = 0x00000001; // VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR
         ci.enabledExtensionCount = 1;
         ci.ppEnabledExtensionNames = exts;
         res = p_vkCreateInstance(&ci, NULL, inst);
     }
     if (res != VK_SUCCESS) {
-        snprintf(err, errlen, "vkCreateInstance falló (%d)", res);
+        snprintf(err, errlen, "vkCreateInstance failed (%d)", res);
         return -1;
     }
 #define LOADI(name) p_##name = (PFN_##name)p_vkGetInstanceProcAddr(*inst, #name);
@@ -169,10 +169,10 @@ int vkr_list_devices(char *out, int len) {
     for (uint32_t i = 0; i < n; i++) {
         VkPhysicalDeviceProperties p;
         p_vkGetPhysicalDeviceProperties(devs[i], &p);
-        const char *t = p.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU     ? "dedicada"
-                        : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? "integrada"
+        const char *t = p.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU     ? "discrete"
+                        : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU ? "integrated"
                         : p.deviceType == VK_PHYSICAL_DEVICE_TYPE_CPU            ? "cpu"
-                                                                                 : "otra";
+                                                                                 : "other";
         size_t l = strlen(out);
         snprintf(out + l, len - l, "  [%u] %s (%s)\n", i, p.deviceName, t);
     }
@@ -235,12 +235,12 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
 
     uint32_t n = 0;
     p_vkEnumeratePhysicalDevices(r->inst, &n, NULL);
-    if (n == 0) FAIL("no hay dispositivos Vulkan");
+    if (n == 0) FAIL("no Vulkan devices");
     VkPhysicalDevice devs[16];
     if (n > 16) n = 16;
     p_vkEnumeratePhysicalDevices(r->inst, &n, devs);
 
-    // Elegir dispositivo: el indicado, o el mejor (dedicada > integrada > otra, nunca CPU si hay GPU)
+    // Pick device: the requested one, or the best (discrete > integrated > other, never CPU if a GPU exists)
     int best = -1, bestScore = -1;
     for (uint32_t i = 0; i < n; i++) {
         VkPhysicalDeviceProperties p;
@@ -256,7 +256,7 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
             best = (int)i;
         }
     }
-    if (best < 0) FAIL("dispositivo Vulkan %d no existe", cfg->device_index);
+    if (best < 0) FAIL("Vulkan device %d does not exist", cfg->device_index);
     r->phys = devs[best];
     VkPhysicalDeviceProperties props;
     p_vkGetPhysicalDeviceProperties(r->phys, &props);
@@ -275,7 +275,7 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
             break;
         }
     }
-    if (fam < 0) FAIL("sin cola de compute");
+    if (fam < 0) FAIL("no compute queue");
     r->qfam = (uint32_t)fam;
 
     float prio = 1.0f;
@@ -286,19 +286,19 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
     VkDeviceCreateInfo dci = {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     dci.queueCreateInfoCount = 1;
     dci.pQueueCreateInfos = &qci;
-    if (p_vkCreateDevice(r->phys, &dci, NULL, &r->dev) != VK_SUCCESS) FAIL("vkCreateDevice falló");
+    if (p_vkCreateDevice(r->phys, &dci, NULL, &r->dev) != VK_SUCCESS) FAIL("vkCreateDevice failed");
 #define LOADD(name)                                                    \
     p_##name = (PFN_##name)p_vkGetDeviceProcAddr(r->dev, #name);       \
     if (!p_##name) p_##name = (PFN_##name)p_vkGetInstanceProcAddr(r->inst, #name);
     VK_DEVICE_FUNCS(LOADD)
     p_vkGetDeviceQueue(r->dev, r->qfam, 0, &r->queue);
 
-    // Pipeline de compute
+    // Compute pipeline
     VkShaderModuleCreateInfo smi = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
     smi.codeSize = cfg->spirv_size;
     smi.pCode = cfg->spirv;
     VkShaderModule sm;
-    if (p_vkCreateShaderModule(r->dev, &smi, NULL, &sm) != VK_SUCCESS) FAIL("shader inválido");
+    if (p_vkCreateShaderModule(r->dev, &smi, NULL, &sm) != VK_SUCCESS) FAIL("invalid shader");
 
     VkDescriptorSetLayoutBinding binds[VKR_NUM_BUFS];
     for (int i = 0; i < VKR_NUM_BUFS; i++) {
@@ -321,7 +321,7 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
     cpi.layout = r->layout;
     VkResult pres = p_vkCreateComputePipelines(r->dev, VK_NULL_HANDLE, 1, &cpi, NULL, &r->pipe);
     p_vkDestroyShaderModule(r->dev, sm, NULL);
-    if (pres != VK_SUCCESS) FAIL("vkCreateComputePipelines falló (%d)", pres);
+    if (pres != VK_SUCCESS) FAIL("vkCreateComputePipelines failed (%d)", pres);
 
     VkDescriptorPoolSize ps = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)(VKR_NUM_BUFS * r->nslots)};
     VkDescriptorPoolCreateInfo dpi = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -357,7 +357,7 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
     for (int s = 0; s < r->nslots; s++) {
         slot_t *sl = &r->slots[s];
         for (int i = 0; i < VKR_NUM_BUFS; i++) {
-            if (make_buf(r, &sl->b[i], sizes[i], prefs[i]) != 0) FAIL("sin memoria GPU para buffers");
+            if (make_buf(r, &sl->b[i], sizes[i], prefs[i]) != 0) FAIL("out of GPU memory for buffers");
         }
         VkDescriptorSetAllocateInfo dai = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
         dai.descriptorPool = r->dpool;
@@ -377,7 +377,7 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
         }
         p_vkUpdateDescriptorSets(r->dev, VKR_NUM_BUFS, wr, 0, NULL);
 
-        // Command buffer pregrabado: los buffers de cada slot son fijos
+        // Pre-recorded command buffer: each slot's buffers are fixed
         VkCommandBufferAllocateInfo cai = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
         cai.commandPool = r->cpool;
         cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -393,7 +393,7 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
         mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
         p_vkCmdPipelineBarrier(sl->cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb,
                                0, NULL, 0, NULL);
-        if (p_vkEndCommandBuffer(sl->cmd) != VK_SUCCESS) FAIL("grabación de comandos");
+        if (p_vkEndCommandBuffer(sl->cmd) != VK_SUCCESS) FAIL("command recording");
 
         VkFenceCreateInfo fci = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
         if (p_vkCreateFence(r->dev, &fci, NULL, &sl->fence) != VK_SUCCESS) FAIL("fence");

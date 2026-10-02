@@ -9,7 +9,7 @@ import (
 	"unicode"
 )
 
-// ---------------------------------------------------------------- letra
+// ---------------------------------------------------------------- lyrics
 
 var (
 	reBracketLine = regexp.MustCompile(`^\[[^\]]*\]$`)
@@ -17,7 +17,7 @@ var (
 	reBracket     = regexp.MustCompile(`\[[^\]]*\]`)
 )
 
-// CleanLyrics quita etiquetas tipo Suno/Udio ([Verse], [Soft piano...], (whispered)) y líneas vacías
+// CleanLyrics removes Suno/Udio-style tags ([Verse], [Soft piano...], (whispered)) and empty lines
 func CleanLyrics(text string) []string {
 	var out []string
 	for _, raw := range strings.Split(strings.ReplaceAll(text, "\r", ""), "\n") {
@@ -64,7 +64,7 @@ func levenshtein(a, b []rune) int {
 	return prev[len(b)]
 }
 
-// similarity 0..1 entre dos palabras normalizadas
+// similarity 0..1 between two normalized words
 func similarity(a, b string) float64 {
 	if a == b {
 		return 1
@@ -76,16 +76,16 @@ func similarity(a, b string) float64 {
 	return 1 - float64(levenshtein(ra, rb))/float64(max(len(ra), len(rb)))
 }
 
-// ---------------------------------------------------------------- voz (energía)
+// ---------------------------------------------------------------- voice (energy)
 
-// voice describe en qué instantes hay voz (tramos de 20 ms)
+// voice describes at which instants there is voice (20 ms frames)
 type voice struct {
 	on    []bool
 	frame float64
 }
 
 func newVoice(mono16 []float32) *voice {
-	const fr = 320 // 20 ms a 16 kHz
+	const fr = 320 // 20 ms at 16 kHz
 	n := len(mono16) / fr
 	rms := make([]float64, n)
 	for i := 0; i < n; i++ {
@@ -111,7 +111,7 @@ func newVoice(mono16 []float32) *voice {
 
 func (v *voice) idx(t float64) int { return max(0, min(len(v.on)-1, int(t/v.frame))) }
 
-// voicedSpans devuelve los tramos con voz dentro de [a, b]
+// voicedSpans returns the voiced spans within [a, b]
 func (v *voice) voicedSpans(a, b float64) [][2]float64 {
 	var out [][2]float64
 	i0, i1 := v.idx(a), v.idx(b)
@@ -132,7 +132,7 @@ func (v *voice) voicedSpans(a, b float64) [][2]float64 {
 	return out
 }
 
-// voiceEnd: primer silencio de al menos 0,3 s a partir de t (fin natural de la voz)
+// voiceEnd: first silence of at least 0.3 s from t on (natural end of the voice)
 func (v *voice) voiceEnd(t, limit float64) float64 {
 	run := 0
 	for i := v.idx(t); i < len(v.on) && float64(i)*v.frame < limit; i++ {
@@ -148,7 +148,7 @@ func (v *voice) voiceEnd(t, limit float64) float64 {
 	return limit
 }
 
-// voicedFrac: fracción de [a, b] con voz
+// voicedFrac: fraction of [a, b] that is voiced
 func (v *voice) voicedFrac(a, b float64) float64 {
 	i0, i1 := v.idx(a), v.idx(b)
 	n, on := 0, 0
@@ -164,8 +164,8 @@ func (v *voice) voicedFrac(a, b float64) float64 {
 	return float64(on) / float64(n)
 }
 
-// dropSilent quita palabras reconocidas donde la voz está en silencio: Whisper tiende a
-// "alucinar" letra durante los instrumentales
+// dropSilent removes recognized words where the voice is silent: Whisper tends to
+// "hallucinate" lyrics during instrumentals
 func dropSilent(rec []Word, v *voice) []Word {
 	out := rec[:0:0]
 	for _, w := range rec {
@@ -176,7 +176,7 @@ func dropSilent(rec []Word, v *voice) []Word {
 	return out
 }
 
-// trim recorta [a, b] al primer y último instante con voz
+// trim trims [a, b] to the first and last voiced instants
 func (v *voice) trim(a, b float64) (float64, float64) {
 	sp := v.voicedSpans(a, b)
 	if len(sp) == 0 {
@@ -185,9 +185,9 @@ func (v *voice) trim(a, b float64) (float64, float64) {
 	return math.Max(a, sp[0][0]-0.25), math.Min(b, sp[len(sp)-1][1]+0.25)
 }
 
-// ---------------------------------------------------------------- alineado
+// ---------------------------------------------------------------- alignment
 
-// LWord es una palabra de la letra con su tiempo
+// LWord is a lyrics word with its timing
 type LWord struct {
 	Text       string
 	Line       int
@@ -196,7 +196,7 @@ type LWord struct {
 	n          string
 }
 
-// LLine es una línea de la letra ya sincronizada
+// LLine is an already synchronized lyrics line
 type LLine struct {
 	Words []LWord
 }
@@ -211,8 +211,8 @@ func lyricWords(lines []string) []LWord {
 	return out
 }
 
-// alignNW alinea (Needleman-Wunsch) las palabras de la letra lw[a:b] con las reconocidas rec y
-// fija el inicio de las que coinciden. Devuelve cuántas se anclaron.
+// alignNW aligns (Needleman-Wunsch) the lyrics words lw[a:b] with the recognized ones rec and
+// sets the start of those that match. Returns how many were anchored.
 func alignNW(lw []LWord, rec []Word) int {
 	n, m := len(lw), len(rec)
 	if n == 0 || m == 0 {
@@ -233,9 +233,9 @@ func alignNW(lw []LWord, rec []Word) int {
 		}
 		return -2
 	}
-	// dp[i][j]: mejor puntuación alineando lw[:i] con rec[:j]
+	// dp[i][j]: best score aligning lw[:i] with rec[:j]
 	dp := make([][]float64, n+1)
-	bt := make([][]uint8, n+1) // 0 diag, 1 arriba (salta letra), 2 izquierda (salta reconocida)
+	bt := make([][]uint8, n+1) // 0 diag, 1 up (skip lyrics word), 2 left (skip recognized word)
 	for i := range dp {
 		dp[i] = make([]float64, m+1)
 		bt[i] = make([]uint8, m+1)
@@ -251,8 +251,8 @@ func alignNW(lw []LWord, rec []Word) int {
 			d := dp[i-1][j-1] + score(i-1, j-1)
 			u := dp[i-1][j] + gap
 			l := dp[i][j-1] + gap
-			// En empate se prefiere saltar la palabra reconocida: así una línea repetida se
-			// asocia a su aparición más temprana (y no a un eco o alucinación del final)
+			// On a tie, prefer skipping the recognized word: this way a repeated line is
+			// matched to its earliest occurrence (not to an echo or hallucination at the end)
 			switch {
 			case l >= d && l >= u:
 				dp[i][j], bt[i][j] = l, 2
@@ -283,7 +283,7 @@ func alignNW(lw []LWord, rec []Word) int {
 	return anchored
 }
 
-// fillUnanchored reparte las palabras sin ancla entre sus vecinas, solo en tramos con voz
+// fillUnanchored distributes unanchored words between their neighbors, only over voiced spans
 func fillUnanchored(lw []LWord, v *voice, total float64) {
 	i := 0
 	for i < len(lw) {
@@ -313,7 +313,7 @@ func fillUnanchored(lw []LWord, v *voice, total float64) {
 		if b < a+0.05*float64(cnt) {
 			b = a + 0.05*float64(cnt)
 		}
-		// Peso por longitud; se reparte sobre el tiempo con voz (no sobre los instrumentales)
+		// Weight by length; distributed over voiced time (not over instrumentals)
 		spans := v.voicedSpans(a, b)
 		voiced := 0.0
 		for _, s := range spans {
@@ -328,7 +328,7 @@ func fillUnanchored(lw []LWord, v *voice, total float64) {
 			weights[k] = float64(len([]rune(lw[i+k].Text)) + 1)
 			wsum += weights[k]
 		}
-		at := func(x float64) float64 { // x en [0, voiced] -> instante real
+		at := func(x float64) float64 { // x in [0, voiced] -> real instant
 			for _, s := range spans {
 				if x <= s[1]-s[0] {
 					return s[0] + x
@@ -347,7 +347,7 @@ func fillUnanchored(lw []LWord, v *voice, total float64) {
 	}
 }
 
-// lineCoverage: fracción de palabras ancladas por línea
+// lineCoverage: fraction of anchored words per line
 func lineCoverage(lw []LWord, nlines int) []float64 {
 	tot := make([]int, nlines)
 	anc := make([]int, nlines)
@@ -366,7 +366,7 @@ func lineCoverage(lw []LWord, nlines int) []float64 {
 	return cov
 }
 
-// finish fija los finales (con la energía de la voz) y garantiza tiempos crecientes
+// finish sets the end times (using voice energy) and guarantees increasing times
 func finish(lw []LWord, v *voice, total float64) []LLine {
 	for i := range lw {
 		if i > 0 && lw[i].Start < lw[i-1].Start+0.02 {
@@ -381,7 +381,7 @@ func finish(lw []LWord, v *voice, total float64) []LLine {
 		if i+1 < len(lw) && lw[i+1].Line == lw[i].Line {
 			lw[i].End = math.Min(next, lw[i].Start+2.0)
 		} else {
-			// Última palabra de la línea: hasta que se apaga la voz
+			// Last word of the line: until the voice fades out
 			e := v.voiceEnd(lw[i].Start+0.15, math.Min(next, lw[i].Start+3.0))
 			lw[i].End = math.Max(e, math.Min(lw[i].Start+0.25, next))
 		}
@@ -396,7 +396,7 @@ func finish(lw []LWord, v *voice, total float64) []LLine {
 	return lines
 }
 
-// LRC genera el .lrc con tiempo por palabra
+// LRC generates the .lrc with per-word timing
 func LRC(lines []LLine) string {
 	ts := func(t float64) string {
 		t = math.Max(t, 0)

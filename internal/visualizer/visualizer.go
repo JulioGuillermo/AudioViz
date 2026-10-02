@@ -9,12 +9,12 @@ import (
 	"github.com/fogleman/gg"
 )
 
-// Visualizer es la interfaz común para renderizar cualquier tipo de espectrograma
+// Visualizer is the common interface for rendering any type of spectrogram
 type Visualizer interface {
 	Draw(dc *gg.Context, feat *audio.FrameFeatures)
 }
 
-// NewVisualizer crea una instancia del visualizador según el tipo especificado
+// NewVisualizer creates a visualizer instance for the specified type
 func NewVisualizer(cfg *config.VisualizerConfig, width, height int) (Visualizer, error) {
 	if !cfg.Enabled {
 		return &noopVisualizer{}, nil
@@ -30,7 +30,7 @@ func NewVisualizer(cfg *config.VisualizerConfig, width, height int) (Visualizer,
 	case "oscilloscope", "wave", "waveform":
 		return NewWaveVisualizer(cfg, width, height), nil
 	default:
-		return nil, fmt.Errorf("tipo de visualizador desconocido: '%s'. Opciones: circular, horizontal, vertical, oscilloscope", cfg.Type)
+		return nil, fmt.Errorf("unknown visualizer type: '%s'. Options: circular, horizontal, vertical, oscilloscope", cfg.Type)
 	}
 }
 

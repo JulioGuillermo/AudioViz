@@ -1,45 +1,45 @@
-# Hoja de Ruta de Implementación y Fases de Trabajo
+# Implementation Roadmap and Work Phases
 
-## Fase 1: Inicialización del Módulo Go y Pipeline de Audio
-- [ ] Inicializar módulo `go.mod` (ej. `github.com/jg/audio-bg`).
-- [ ] Implementar decodificador de audio vía streaming PCM (soporte FLAC, MP3, WAV a 48kHz estéreo Float32).
-- [ ] Implementar motor FFT con ventana Hann y separación estricta de canales L y R.
-- [ ] Crear convertidor a escalas perceptivas (Log/Mel bins) y detector de transitorios (*Spectral Flux / Bass Energy*).
-- [ ] **Test de Verificación**: Script de prueba que procese `I didnt ask to be the devil.flac` y verifique la salida de magnitudes L y R en consola o volcado de datos.
+## Phase 1: Go Module Initialization and Audio Pipeline
+- [ ] Initialize the `go.mod` module (e.g. `github.com/jg/audio-bg`).
+- [ ] Implement a streaming PCM audio decoder (FLAC, MP3, WAV support at 48kHz stereo Float32).
+- [ ] Implement an FFT engine with a Hann window and strict L and R channel separation.
+- [ ] Create a converter to perceptual scales (Log/Mel bins) and a transient detector (*Spectral Flux / Bass Energy*).
+- [ ] **Verification Test**: Test script that processes `I didnt ask to be the devil.flac` and checks the L and R magnitude output on the console or in a data dump.
 
-## Fase 2: Motor de Fondos e Ingesta de Video/Imagen
-- [ ] Implementar cargador de imagen fija con modos `cover`, `contain` y `blur_padding`.
-- [ ] Implementar lector de video en streaming mediante pipe de FFmpeg con soporte de *looping* infinito.
-- [ ] **Test de Verificación**: Carga y escalado correcto de `"I didn't ask to be the devil"` (832x1248) a resolución Full HD (1920x1080) y resolución vertical (1080x1920).
+## Phase 2: Background Engine and Video/Image Ingestion
+- [ ] Implement a still image loader with `cover`, `contain` and `blur_padding` modes.
+- [ ] Implement a streaming video reader through an FFmpeg pipe with infinite *looping* support.
+- [ ] **Verification Test**: Correct loading and scaling of `"I didn't ask to be the devil"` (832x1248) to Full HD resolution (1920x1080) and vertical resolution (1080x1920).
 
-## Fase 3: Efectos de Distorsión Reactivos
-- [ ] Implementar *Bass Zoom / Pulse* con interpolación bilineal suave.
-- [ ] Implementar separación de canales RGB (*Chromatic Aberration*) horizontal y radial.
-- [ ] Implementar deformación senoidal (*Ripple / Wave*).
-- [ ] Implementar *Glitch / VHS displacement* controlado por umbral de golpe.
-- [ ] Implementar modulación de brillo, contraste y viñeteado reactivo.
-- [ ] **Test de Verificación**: Generación de cuadros de prueba con diferentes niveles de intensidad reactiva aplicados a la imagen de prueba.
+## Phase 3: Reactive Distortion Effects
+- [ ] Implement *Bass Zoom / Pulse* with smooth bilinear interpolation.
+- [ ] Implement horizontal and radial RGB channel separation (*Chromatic Aberration*).
+- [ ] Implement sinusoidal deformation (*Ripple / Wave*).
+- [ ] Implement *Glitch / VHS displacement* controlled by a hit threshold.
+- [ ] Implement reactive brightness, contrast and vignetting modulation.
+- [ ] **Verification Test**: Generation of test frames with different reactive intensity levels applied to the test image.
 
-## Fase 4: Espectrogramas Estéreo Simétricos (L vs R)
-- [ ] Motor de dibujo 2D anti-aliased vectorial y rasterizado.
-- [ ] Implementar visualizador **Circular Central** (Semicírculo L a la izquierda, Semicírculo R a la derecha).
-- [ ] Implementar visualizador **Horizontal Lineal** (Center-out mirrored y Dual split).
-- [ ] Implementar visualizador **Vertical Lateral** (bordes hacia el centro).
-- [ ] Implementar visualizador de **Forma de Onda / Osciloscopio**.
-- [ ] Implementar capas de resplandor neón (*Glow / Bloom*) y soporte de gradientes de color.
+## Phase 4: Symmetric Stereo Spectrograms (L vs R)
+- [ ] Anti-aliased vector and raster 2D drawing engine.
+- [ ] Implement the **Central Circular** visualizer (L semicircle on the left, R semicircle on the right).
+- [ ] Implement the **Linear Horizontal** visualizer (Center-out mirrored and Dual split).
+- [ ] Implement the **Lateral Vertical** visualizer (edges towards the center).
+- [ ] Implement the **Waveform / Oscilloscope** visualizer.
+- [ ] Implement neon glow layers (*Glow / Bloom*) and color gradient support.
 
-## Fase 5: Sistema de Partículas Reactivo
-- [ ] Implementar simulación de partículas 2D en Go (velocidad, vida, desvanecimiento alfa, blending aditivo).
-- [ ] Implementar emisor de explosión radial (*Radial Burst*) accionado por golpes de bombo/bajos.
-- [ ] Implementar polvo atmosférico ambiental (*Ambient Drift*).
+## Phase 5: Reactive Particle System
+- [ ] Implement 2D particle simulation in Go (velocity, lifetime, alpha fade-out, additive blending).
+- [ ] Implement a radial burst emitter (*Radial Burst*) triggered by kick/bass hits.
+- [ ] Implement ambient atmospheric dust (*Ambient Drift*).
 
-## Fase 6: Orquestador Concurrente, FFmpeg Encoder Pipe y CLI
-- [ ] Diseñar el worker pool de Go (`runtime.NumCPU()`) con búfer secuencial para escritura continua en el encoder FFmpeg.
-- [ ] Barra de progreso en terminal con FPS de renderizado, porcentaje y tiempo estimado (ETA).
-- [ ] Parser de banderas CLI (`--audio`, `--bg`, `--output`, `--preset`, `--preview`, `--frame-at`).
-- [ ] Integrar presets YAML en el binario mediante `embed.FS`.
+## Phase 6: Concurrent Orchestrator, FFmpeg Encoder Pipe and CLI
+- [ ] Design the Go worker pool (`runtime.NumCPU()`) with a sequential buffer for continuous writing to the FFmpeg encoder.
+- [ ] Terminal progress bar with render FPS, percentage and estimated time (ETA).
+- [ ] CLI flag parser (`--audio`, `--bg`, `--output`, `--preset`, `--preview`, `--frame-at`).
+- [ ] Embed YAML presets in the binary via `embed.FS`.
 
-## Fase 7: Validación con los Archivos de Prueba y Calibración
-- [ ] Generar un video de prueba corto de 10-15 segundos usando `"I didnt ask to be the devil.flac"` y `"I didn't ask to be the devil"`.
-- [ ] Validar sincronización milimétrica entre picos de audio y efectos visuales.
-- [ ] Validar que la compilación con `go build` genere un binario autónomo y funcional.
+## Phase 7: Validation with the Test Files and Calibration
+- [ ] Generate a short 10-15 second test video using `"I didnt ask to be the devil.flac"` and `"I didn't ask to be the devil"`.
+- [ ] Validate frame-accurate synchronization between audio peaks and visual effects.
+- [ ] Validate that building with `go build` produces a self-contained, working binary.

@@ -9,11 +9,11 @@ import (
 	"path/filepath"
 	"strings"
 
-	"audioviz/internal/config"
 	"audioviz/internal/audio"
+	"audioviz/internal/config"
 	"audioviz/internal/engine"
-	"audioviz/internal/lyricsgen"
 	"audioviz/internal/gpu"
+	"audioviz/internal/lyricsgen"
 	"audioviz/internal/studio"
 	"gopkg.in/yaml.v3"
 )
@@ -46,29 +46,29 @@ func main() {
 	)
 
 	fs := flag.NewFlagSet("audioviz", flag.ContinueOnError)
-	fs.StringVar(&flagOutput, "o", "", "Sobrescribir ruta del video de salida")
-	fs.StringVar(&flagOutput, "output", "", "Sobrescribir ruta del video de salida")
-	fs.StringVar(&flagAudio, "a", "", "Sobrescribir ruta del archivo de audio")
-	fs.StringVar(&flagAudio, "audio", "", "Sobrescribir ruta del archivo de audio")
-	fs.StringVar(&flagBg, "b", "", "Sobrescribir ruta del fondo imagen/video")
-	fs.StringVar(&flagBg, "bg", "", "Sobrescribir ruta del fondo imagen/video")
-	fs.Float64Var(&flagPreview, "p", 0, "Duración en segundos para renderizar un preview corto (ej. -p 10)")
-	fs.Float64Var(&flagPreview, "preview", 0, "Duración en segundos para renderizar un preview corto")
-	fs.Float64Var(&flagFrameAt, "frame-at", -1, "Segundo exacto del cual extraer un cuadro estático (ej. --frame-at 25.5)")
-	fs.StringVar(&flagFrameOut, "frame-out", "preview_frame.png", "Ruta del cuadro estático a exportar")
-	fs.StringVar(&flagRenderer, "renderer", "", "Backend de render: auto, gpu, cpu")
-	fs.Float64Var(&flagStart, "ss", 0, "Segundo inicial del preview")
-	fs.IntVar(&flagGPU, "gpu-device", -2, "Índice de GPU Vulkan (ver --list-gpus)")
-	fs.BoolVar(&flagListGPUs, "list-gpus", false, "Lista las GPUs Vulkan disponibles")
-	fs.StringVar(&flagLyrics, "l", "", "Letra sincronizada (.srt / .lrc) a mostrar")
-	fs.StringVar(&flagLyrics, "lyrics", "", "Letra sincronizada (.srt / .lrc) a mostrar")
-	fs.StringVar(&flagInit, "init", "", "Crea un archivo de proyecto plantilla YAML listo para editar")
-	fs.BoolVar(&flagHelp, "h", false, "Muestra la ayuda")
-	fs.BoolVar(&flagHelp, "help", false, "Muestra la ayuda")
+	fs.StringVar(&flagOutput, "o", "", "Override output video path")
+	fs.StringVar(&flagOutput, "output", "", "Override output video path")
+	fs.StringVar(&flagAudio, "a", "", "Override audio file path")
+	fs.StringVar(&flagAudio, "audio", "", "Override audio file path")
+	fs.StringVar(&flagBg, "b", "", "Override background image/video path")
+	fs.StringVar(&flagBg, "bg", "", "Override background image/video path")
+	fs.Float64Var(&flagPreview, "p", 0, "Duration in seconds to render a short preview (e.g. -p 10)")
+	fs.Float64Var(&flagPreview, "preview", 0, "Duration in seconds to render a short preview")
+	fs.Float64Var(&flagFrameAt, "frame-at", -1, "Exact second to extract a still frame from (e.g. --frame-at 25.5)")
+	fs.StringVar(&flagFrameOut, "frame-out", "preview_frame.png", "Path of the still frame to export")
+	fs.StringVar(&flagRenderer, "renderer", "", "Render backend: auto, gpu, cpu")
+	fs.Float64Var(&flagStart, "ss", 0, "Preview start second")
+	fs.IntVar(&flagGPU, "gpu-device", -2, "Vulkan GPU index (see --list-gpus)")
+	fs.BoolVar(&flagListGPUs, "list-gpus", false, "List available Vulkan GPUs")
+	fs.StringVar(&flagLyrics, "l", "", "Synced lyrics (.srt / .lrc) to display")
+	fs.StringVar(&flagLyrics, "lyrics", "", "Synced lyrics (.srt / .lrc) to display")
+	fs.StringVar(&flagInit, "init", "", "Create a template YAML project file ready to edit")
+	fs.BoolVar(&flagHelp, "h", false, "Show help")
+	fs.BoolVar(&flagHelp, "help", false, "Show help")
 
 	fs.Usage = printHelp
 
-	// Reordenar argumentos para permitir que el archivo de proyecto esté antes o después de las opciones
+	// Reorder arguments so the project file may come before or after the options
 	rawArgs := os.Args[1:]
 	var flagArgs []string
 	var positionalArgs []string
@@ -77,9 +77,9 @@ func main() {
 		arg := rawArgs[i]
 		if strings.HasPrefix(arg, "-") {
 			flagArgs = append(flagArgs, arg)
-			// Si el flag toma valor y no contiene '=', tomar el siguiente argumento si existe
+			// If the flag takes a value and has no '=', take the next argument if present
 			if !strings.Contains(arg, "=") && i+1 < len(rawArgs) && !strings.HasPrefix(rawArgs[i+1], "-") {
-				// Comprobar si es un flag booleano
+				// Check whether it is a boolean flag
 				if arg != "-h" && arg != "--help" && arg != "--list-gpus" && arg != "-list-gpus" {
 					i++
 					flagArgs = append(flagArgs, rawArgs[i])
@@ -106,10 +106,10 @@ func main() {
 
 	if flagInit != "" {
 		if err := createTemplateProject(flagInit); err != nil {
-			fmt.Printf("❌ Error creando plantilla: %v\n", err)
+			fmt.Printf("❌ Error creating template: %v\n", err)
 			os.Exit(1)
 		}
-		fmt.Printf("✅ Plantilla de proyecto creada en: %s\n", flagInit)
+		fmt.Printf("✅ Project template created at: %s\n", flagInit)
 		os.Exit(0)
 	}
 
@@ -119,16 +119,16 @@ func main() {
 	}
 
 	if _, err := os.Stat(projectFile); os.IsNotExist(err) {
-		fmt.Printf("⚠️  No se encontró el archivo de proyecto '%s'\n", projectFile)
-		fmt.Printf("💡 Crea uno nuevo con: audioviz --init %s\n\n", projectFile)
+		fmt.Printf("⚠️  Project file '%s' not found\n", projectFile)
+		fmt.Printf("💡 Create a new one with: audioviz --init %s\n\n", projectFile)
 		printHelp()
 		os.Exit(1)
 	}
 
-	fmt.Printf("🚀 AudioViz v%s - Cargando proyecto: %s\n", version, projectFile)
+	fmt.Printf("🚀 AudioViz v%s - Loading project: %s\n", version, projectFile)
 	cfg, err := config.LoadConfig(projectFile)
 	if err != nil {
-		fmt.Printf("❌ Error cargando configuración: %v\n", err)
+		fmt.Printf("❌ Error loading configuration: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -163,17 +163,17 @@ func main() {
 	}
 
 	if err := engine.Execute(cfg, renderOpts); err != nil {
-		fmt.Printf("\n❌ Error durante el renderizado: %v\n", err)
+		fmt.Printf("\n❌ Error during rendering: %v\n", err)
 		os.Exit(1)
 	}
 }
 
-// runLyrics genera un .lrc con tiempo por palabra a partir del audio y la letra en texto
+// runLyrics generates a .lrc with per-word timing from the audio and the plain-text lyrics
 func runLyrics(args []string) {
 	fs := flag.NewFlagSet("lyrics", flag.ExitOnError)
-	out := fs.String("o", "letra.lrc", "Archivo .lrc de salida")
-	lang := fs.String("lang", "en", "Idioma de la letra (en, es, fr...)")
-	fast := fs.Bool("fast", false, "Modo rápido: no separar la voz (menos preciso)")
+	out := fs.String("o", "lyrics.lrc", "Output .lrc file")
+	lang := fs.String("lang", "en", "Lyrics language (en, es, fr...)")
+	fast := fs.Bool("fast", false, "Fast mode: skip vocal separation (less accurate)")
 	var pos []string
 	for len(args) > 0 {
 		if strings.HasPrefix(args[0], "-") {
@@ -185,7 +185,7 @@ func runLyrics(args []string) {
 		args = args[1:]
 	}
 	if len(pos) != 2 {
-		fmt.Println("Uso: audioviz lyrics <audio> <letra.txt> [-o letra.lrc] [--lang en] [--fast]")
+		fmt.Println("Usage: audioviz lyrics <audio> <lyrics.txt> [-o lyrics.lrc] [--lang en] [--fast]")
 		os.Exit(1)
 	}
 	txt, err := os.ReadFile(pos[1])
@@ -215,7 +215,7 @@ func runLyrics(args []string) {
 		step := s.Steps[s.Current]
 		eta := ""
 		if step.ETA > 0 {
-			eta = fmt.Sprintf(" · quedan %s", fmtDur(step.ETA))
+			eta = fmt.Sprintf(" · %s left", fmtDur(step.ETA))
 		}
 		line := fmt.Sprintf("[%3.0f%%] %d/%d %s %3.0f%% · %s%s · %s", s.Progress*100, s.Current+1, len(s.Steps), step.Label, step.Progress*100, fmtDur(step.Elapsed), eta, step.Detail)
 		if line != lastLine {
@@ -235,7 +235,7 @@ func runLyrics(args []string) {
 		fmt.Printf("❌ %v\n", err)
 		os.Exit(1)
 	}
-	fmt.Printf("✅ %d líneas → %s\n", len(res.Lines), *out)
+	fmt.Printf("✅ %d lines → %s\n", len(res.Lines), *out)
 }
 
 func fmtDur(s float64) string {
@@ -246,12 +246,12 @@ func fmtDur(s float64) string {
 	return fmt.Sprintf("%d:%02d", m, int(s)%60)
 }
 
-// runStudio arranca la interfaz gráfica (servidor web local embebido en el binario)
+// runStudio starts the GUI (local web server embedded in the binary)
 func runStudio(args []string) {
 	fs := flag.NewFlagSet("studio", flag.ExitOnError)
-	addr := fs.String("addr", "127.0.0.1:8787", "Dirección de escucha (usa 0.0.0.0:8787 para abrirlo desde otro equipo de la red)")
-	noOpen := fs.Bool("no-open", false, "No abrir el navegador automáticamente")
-	// El proyecto puede ir antes o después de las opciones
+	addr := fs.String("addr", "127.0.0.1:8787", "Listen address (use 0.0.0.0:8787 to open it from another machine on the network)")
+	noOpen := fs.Bool("no-open", false, "Do not open the browser automatically")
+	// The project may come before or after the options
 	var project string
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		project, args = args[0], args[1:]
@@ -261,7 +261,7 @@ func runStudio(args []string) {
 		project = fs.Arg(0)
 	}
 	err := studio.Run(studio.Options{Addr: *addr, Project: project, Version: version}, func(url string) {
-		fmt.Printf("🎛️  AudioViz Studio en %s  (Ctrl+C para salir)\n", url)
+		fmt.Printf("🎛️  AudioViz Studio at %s  (Ctrl+C to quit)\n", url)
 		if !*noOpen {
 			for _, opener := range []string{"xdg-open", "open"} {
 				if p, err := exec.LookPath(opener); err == nil {
@@ -278,33 +278,33 @@ func runStudio(args []string) {
 }
 
 func printHelp() {
-	fmt.Printf(`AudioViz - Generador de Videos Musicales Reactivos al Audio
-Uso:
-  audioviz [ruta_al_proyecto.yaml] [opciones]
-  audioviz studio [proyecto] [--addr 127.0.0.1:8787] [--no-open]   # interfaz gráfica
-  audioviz lyrics <audio> <letra.txt> [-o letra.lrc] [--lang en] [--fast]   # letra sincronizada
+	fmt.Printf(`AudioViz - Audio-Reactive Music Video Generator
+Usage:
+  audioviz [path_to_project.yaml] [options]
+  audioviz studio [project] [--addr 127.0.0.1:8787] [--no-open]   # GUI
+  audioviz lyrics <audio> <lyrics.txt> [-o lyrics.lrc] [--lang en] [--fast]   # synced lyrics
 
-Ejemplos:
-  audioviz project.yaml                       # Renderiza el video completo (GPU Vulkan si hay)
-  audioviz project.yaml -p 10 --ss 60         # Preview de 10 s empezando en el segundo 60
-  audioviz project.yaml --frame-at 35.0       # Exporta el fotograma exacto en el segundo 35
-  audioviz project.yaml --renderer cpu        # Fuerza render por CPU
-  audioviz --list-gpus                        # Lista GPUs Vulkan
-  audioviz --init nuevo.yaml                  # Genera una plantilla con todos los efectos
+Examples:
+  audioviz project.yaml                       # Render the full video (Vulkan GPU if available)
+  audioviz project.yaml -p 10 --ss 60         # 10 s preview starting at second 60
+  audioviz project.yaml --frame-at 35.0       # Export the exact frame at second 35
+  audioviz project.yaml --renderer cpu        # Force CPU rendering
+  audioviz --list-gpus                        # List Vulkan GPUs
+  audioviz --init new.yaml                    # Generate a template with all effects
 
-Opciones:
-  -p, --preview <segundos>      Renderiza solo los primeros N segundos
-  --frame-at <segundo>          Exporta un fotograma individual en PNG
-  --frame-out <ruta>            Nombre del fotograma extraído (default: preview_frame.png)
-  --ss <segundo>                Inicio del preview
-  --renderer <auto|gpu|cpu>     Backend de render (auto = GPU Vulkan con caída a CPU)
-  --gpu-device <n>              GPU Vulkan a usar (--list-gpus)
-  -o, --output <ruta>           Sobrescribe la ruta del video final en el YAML
-  -a, --audio <ruta>            Sobrescribe la ruta del audio en el YAML
-  -b, --bg <ruta>               Sobrescribe la ruta del fondo (imagen o GIF) en el YAML
-  -l, --lyrics <ruta>           Muestra una letra sincronizada (.srt / .lrc) y la activa
-  --init <archivo.yaml>         Crea una plantilla YAML completa con comentarios
-  -h, --help                    Muestra este mensaje de ayuda
+Options:
+  -p, --preview <seconds>       Render only the first N seconds
+  --frame-at <second>           Export a single frame as PNG
+  --frame-out <path>            Name of the extracted frame (default: preview_frame.png)
+  --ss <second>                 Preview start
+  --renderer <auto|gpu|cpu>     Render backend (auto = Vulkan GPU with CPU fallback)
+  --gpu-device <n>              Vulkan GPU to use (--list-gpus)
+  -o, --output <path>           Override the final video path from the YAML
+  -a, --audio <path>            Override the audio path from the YAML
+  -b, --bg <path>               Override the background path (image or GIF) from the YAML
+  -l, --lyrics <path>           Show synced lyrics (.srt / .lrc) and enable them
+  --init <file.yaml>            Create a full commented YAML template
+  -h, --help                    Show this help message
 `)
 }
 

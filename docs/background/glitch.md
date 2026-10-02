@@ -1,6 +1,6 @@
-# glitch — franjas desplazadas
+# glitch — displaced stripes
 
-Desplaza horizontalmente franjas aleatorias de la imagen durante el cuadro en que se dispara.
+Shifts random stripes of the image horizontally during the frame in which it fires.
 
 ```yaml
 background_effects:
@@ -8,12 +8,12 @@ background_effects:
     enabled: true
     threshold: 0.65
     intensity: 0.35
-    react_to: ""        # vacío = golpes/transitorios
+    react_to: ""        # empty = beats/transients
 ```
 
-| Campo | Def. | Descripción |
+| Field | Default | Description |
 |---|---|---|
-| `enabled` | true | Activa el efecto |
-| `intensity` | 0.4 | Cantidad de franjas y desplazamiento |
-| `threshold` | 0.7 | Umbral de disparo |
-| `react_to` | "" | Vacío: se dispara con cada golpe o cuando el transitorio supera `threshold` (clásico). Con una [fuente](../reactividad.md) (`treble`, `mid`...): se dispara mientras la banda supere `threshold` (0.9+ = solo picos) |
+| `enabled` | true | Enables the effect |
+| `intensity` | 0.4 | Number of stripes and amount of displacement |
+| `threshold` | 0.7 | Trigger threshold |
+| `react_to` | "" | Empty: fires on every beat or when the transient exceeds `threshold` (classic). With a [source](../reactivity.md) (`treble`, `mid`...): fires while the band exceeds `threshold` (0.9+ = peaks only) |

@@ -17,8 +17,8 @@ import (
 	"unsafe"
 )
 
-// SeparateVocals extrae la voz de una canción estéreo entrelazada a 44,1 kHz con Demucs (htdemucs).
-// progress recibe 0..1.
+// SeparateVocals extracts the vocals from an interleaved stereo song at 44.1 kHz with Demucs (htdemucs).
+// progress receives 0..1.
 func SeparateVocals(ctx context.Context, modelPath string, stereo44 []float32, progress func(float64)) ([]float32, error) {
 	cp := C.CString(modelPath)
 	defer C.free(unsafe.Pointer(cp))
@@ -62,7 +62,7 @@ loop:
 				*cancel = 1
 			}
 			if progress != nil {
-				// Los hilos realmente usados escriben progreso; el resto queda a 0 si no se usan
+				// Only the threads actually used write progress; the rest stay at 0 if unused
 				used := min(threads, n/(44100*10)+1)
 				s := 0.0
 				for i := 0; i < used; i++ {

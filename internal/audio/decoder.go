@@ -14,23 +14,23 @@ import (
 	"github.com/mewkiz/flac"
 )
 
-// DecodedAudio contiene las muestras de audio PCM estéreo decodificadas.
-// Todo se decodifica en Go puro (sin ffmpeg): FLAC, WAV, MP3 y OGG Vorbis.
+// DecodedAudio holds the decoded stereo PCM audio samples.
+// Everything is decoded in pure Go (no ffmpeg): FLAC, WAV, MP3 and OGG Vorbis.
 type DecodedAudio struct {
 	SampleRate int
 	Channels   int
-	// Samples contiene las muestras normalizadas [-1.0, 1.0] entrelazadas: [L0, R0, L1, R1, ...]
-	// (con el volumen de análisis aplicado)
+	// Samples holds the interleaved normalized samples [-1.0, 1.0]: [L0, R0, L1, R1, ...]
+	// (with the analysis volume applied)
 	Samples     []float32
 	DurationSec float64
 
-	// PCM entero original entrelazado estéreo (sin volumen), usado para codificar
-	// la pista de audio del video final sin pérdidas.
+	// Original interleaved stereo integer PCM (no volume), used to losslessly encode
+	// the audio track of the final video.
 	PCM           []int32
 	BitsPerSample int
 }
 
-// LeftSample retorna la muestra en el canal izquierdo para el índice de frame de audio i
+// LeftSample returns the left-channel sample for audio frame index i
 func (d *DecodedAudio) LeftSample(i int) float32 {
 	idx := i * 2
 	if idx < 0 || idx >= len(d.Samples) {
@@ -39,7 +39,7 @@ func (d *DecodedAudio) LeftSample(i int) float32 {
 	return d.Samples[idx]
 }
 
-// RightSample retorna la muestra en el canal derecho para el índice de frame de audio i
+// RightSample returns the right-channel sample for audio frame index i
 func (d *DecodedAudio) RightSample(i int) float32 {
 	idx := i*2 + 1
 	if idx < 0 || idx >= len(d.Samples) {
@@ -48,17 +48,17 @@ func (d *DecodedAudio) RightSample(i int) float32 {
 	return d.Samples[idx]
 }
 
-// TotalFrames retorna la cantidad de frames de audio (pares estéreo)
+// TotalFrames returns the number of audio frames (stereo pairs)
 func (d *DecodedAudio) TotalFrames() int {
 	return len(d.Samples) / 2
 }
 
-// DecodeAudio decodifica el archivo a PCM estéreo a su frecuencia de muestreo nativa.
-// El volumen solo afecta a las muestras de análisis, no al audio del video final.
+// DecodeAudio decodes the file to stereo PCM at its native sample rate.
+// The volume only affects the analysis samples, not the final video's audio.
 func DecodeAudio(filePath string, volume float64) (*DecodedAudio, error) {
 	f, err := os.Open(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("no se pudo abrir el audio '%s': %w", filePath, err)
+		return nil, fmt.Errorf("could not open audio '%s': %w", filePath, err)
 	}
 	defer f.Close()
 
@@ -80,15 +80,15 @@ func DecodeAudio(filePath string, volume float64) (*DecodedAudio, error) {
 	case ext == ".mp3" || (n >= 3 && string(magic[:3]) == "ID3") || (n >= 2 && magic[0] == 0xFF && magic[1]&0xE0 == 0xE0):
 		d, err = decodeMP3(f)
 	default:
-		return nil, fmt.Errorf("formato de audio no soportado '%s' (soportados: FLAC, WAV, MP3, OGG Vorbis)", filePath)
+		return nil, fmt.Errorf("unsupported audio format '%s' (supported: FLAC, WAV, MP3, OGG Vorbis)", filePath)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("error decodificando '%s': %w", filePath, err)
+		return nil, fmt.Errorf("error decoding '%s': %w", filePath, err)
 	}
 
 	stereoFrames := len(d.PCM) / 2
 	if stereoFrames == 0 {
-		return nil, fmt.Errorf("el archivo de audio decodificado está vacío")
+		return nil, fmt.Errorf("the decoded audio file is empty")
 	}
 
 	scale := float32(1.0 / float64(int64(1)<<(d.BitsPerSample-1)))
@@ -108,7 +108,7 @@ func DecodeAudio(filePath string, volume float64) (*DecodedAudio, error) {
 	return d, nil
 }
 
-// toStereo convierte muestras planas por canal a estéreo entrelazado (mezcla si hay >2 canales).
+// toStereo converts planar per-channel samples to interleaved stereo (downmixes if >2 channels).
 func toStereo(dst []int32, frame [][]int32) []int32 {
 	nch := len(frame)
 	n := len(frame[0])
@@ -119,7 +119,7 @@ func toStereo(dst []int32, frame [][]int32) []int32 {
 		case 2:
 			dst = append(dst, frame[0][i], frame[1][i])
 		default:
-			// Downmix simple: canales pares a L, impares a R
+			// Simple downmix: even channels to L, odd to R
 			var l, r int64
 			var nl, nr int64
 			for c := 0; c < nch; c++ {
@@ -165,7 +165,7 @@ func decodeFLAC(r io.Reader) (*DecodedAudio, error) {
 	return &DecodedAudio{SampleRate: int(info.SampleRate), PCM: pcm, BitsPerSample: bps}, nil
 }
 
-// normalizeDepth lleva la profundidad a 16 o 24 bits (las que admite el codificador FLAC de salida).
+// normalizeDepth brings the bit depth to 16 or 24 bits (those supported by the output FLAC encoder).
 func normalizeDepth(pcm []int32, bps int) ([]int32, int) {
 	switch {
 	case bps == 16 || bps == 24:
@@ -196,7 +196,7 @@ func decodeMP3(r io.Reader) (*DecodedAudio, error) {
 	if err != nil {
 		return nil, err
 	}
-	// go-mp3 siempre entrega 16-bit estéreo entrelazado little-endian
+	// go-mp3 always outputs 16-bit interleaved stereo little-endian
 	raw, err := io.ReadAll(dec)
 	if err != nil && err != io.ErrUnexpectedEOF {
 		return nil, err
@@ -257,7 +257,7 @@ func decodeWAV(r io.Reader) (*DecodedAudio, error) {
 	for {
 		var ch [8]byte
 		if _, err := io.ReadFull(br, ch[:]); err != nil {
-			return nil, fmt.Errorf("WAV sin bloque 'data'")
+			return nil, fmt.Errorf("WAV without 'data' chunk")
 		}
 		id := string(ch[:4])
 		size := le32(ch[4:])
@@ -274,12 +274,12 @@ func decodeWAV(r io.Reader) (*DecodedAudio, error) {
 			haveFmt = true
 		case "data":
 			if !haveFmt {
-				return nil, fmt.Errorf("WAV con 'data' antes de 'fmt '")
+				return nil, fmt.Errorf("WAV with 'data' before 'fmt '")
 			}
 			if nch == 0 {
-				return nil, fmt.Errorf("WAV sin canales")
+				return nil, fmt.Errorf("WAV without channels")
 			}
-			if size == 0 || size == 0xFFFFFFFF { // streaming/tamaño desconocido
+			if size == 0 || size == 0xFFFFFFFF { // streaming/unknown size
 				size = 0x7FFFFFFF
 			}
 			raw, err := io.ReadAll(io.LimitReader(br, int64(size)))
@@ -298,7 +298,7 @@ func decodeWAV(r io.Reader) (*DecodedAudio, error) {
 func wavSamples(raw []byte, format uint16, nch, rate, bps int) (*DecodedAudio, error) {
 	bytesPer := bps / 8
 	if bytesPer == 0 {
-		return nil, fmt.Errorf("WAV con %d bits por muestra no soportado", bps)
+		return nil, fmt.Errorf("WAV with %d bits per sample not supported", bps)
 	}
 	n := len(raw) / (bytesPer * nch)
 	planes := make([][]int32, nch)
@@ -334,7 +334,7 @@ func wavSamples(raw []byte, format uint16, nch, rate, bps int) (*DecodedAudio, e
 			case format == 1 && bps == 32:
 				v = int32(uint32(b[0])|uint32(b[1])<<8|uint32(b[2])<<16|uint32(b[3])<<24) >> 8
 			default:
-				return nil, fmt.Errorf("WAV formato %d / %d bits no soportado", format, bps)
+				return nil, fmt.Errorf("WAV format %d / %d bits not supported", format, bps)
 			}
 			planes[c][i] = v
 		}
@@ -342,8 +342,8 @@ func wavSamples(raw []byte, format uint16, nch, rate, bps int) (*DecodedAudio, e
 	return &DecodedAudio{SampleRate: rate, PCM: toStereo(make([]int32, 0, n*2), planes), BitsPerSample: outBps}, nil
 }
 
-// ExtractChannelSamples extrae un slice de muestras consecutivas para un canal (0 = L, 1 = R)
-// con centro en centerSampleIndex y longitud windowSize. Si excede los límites, se rellena con 0.
+// ExtractChannelSamples extracts a slice of consecutive samples for a channel (0 = L, 1 = R)
+// centered on centerSampleIndex with length windowSize. Out-of-bounds positions are zero-filled.
 func (d *DecodedAudio) ExtractChannelSamples(channel int, centerSampleIndex int, windowSize int, dest []float32) {
 	halfWin := windowSize / 2
 	start := centerSampleIndex - halfWin
@@ -358,7 +358,7 @@ func (d *DecodedAudio) ExtractChannelSamples(channel int, centerSampleIndex int,
 	}
 }
 
-// ComputeRMS calcula el valor cuadrático medio en una ventana de muestras
+// ComputeRMS computes the root mean square over a window of samples
 func ComputeRMS(samples []float32) float64 {
 	if len(samples) == 0 {
 		return 0

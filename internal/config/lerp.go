@@ -8,8 +8,8 @@ import (
 	"strings"
 )
 
-// Lerp interpola dos bloques de config del mismo tipo: números y colores hex de forma continua,
-// listas de igual longitud elemento a elemento, y el resto (textos, booleanos) cambia a mitad (k=0.5).
+// Lerp interpolates two config blocks of the same type: numbers and hex colors continuously,
+// equal-length lists element by element, and the rest (strings, booleans) switches halfway (k=0.5).
 func Lerp[T any](a, b *T, k float64) T {
 	if k <= 0 {
 		return deepCopy(*a)
@@ -62,7 +62,7 @@ func lerpValue(dst, a, b reflect.Value, k float64) {
 		} else if k >= 0.5 {
 			dst.Set(b)
 		}
-	default: // bool y demás: cambio a mitad
+	default: // bool and others: switch halfway
 		if k >= 0.5 {
 			dst.Set(b)
 		}

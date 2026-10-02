@@ -2,8 +2,8 @@ package audio
 
 import "math"
 
-// Band devuelve el valor (0..1) de la fuente de reactividad indicada:
-// bass, mid, treble, overall, transient o beat. def se usa si name está vacío.
+// Band returns the value (0..1) of the given reactivity source:
+// bass, mid, treble, overall, transient or beat. def is used if name is empty.
 func (f *FrameFeatures) Band(name, def string) float64 {
 	if name == "" {
 		name = def

@@ -1,9 +1,9 @@
-# Línea de tiempo en el YAML
+# Timeline in the YAML
 
-Lo que el estudio guarda al crear tramos también se puede escribir a mano. Los bloques de siempre
-(`background`, `visualizer`, `background_effects.*`, `particles`, `lyrics`) son el **primer tramo**.
-Los cambios posteriores van en `timeline:`, una lista por pista. Cada tramo solo necesita los campos
-que cambian: el resto se hereda del tramo anterior.
+What the studio saves when you create segments can also be written by hand. The usual blocks
+(`background`, `visualizer`, `background_effects.*`, `particles`, `lyrics`) are the **first segment**.
+Later changes go in `timeline:`, one list per track. Each segment only needs the fields
+that change: the rest is inherited from the previous segment.
 
 ```yaml
 timeline:
@@ -12,7 +12,7 @@ timeline:
   visualizer:
     - at: 86.4
       label: "Estribillo"
-      transition: { mode: fade, duration: 1.5 }   # o mode: cut (por defecto)
+      transition: { mode: fade, duration: 1.5 }   # or mode: cut (default)
       type: circular
       radius: 220
   background:
@@ -31,15 +31,15 @@ timeline:
       position: top
 ```
 
-| Pista | Bloque que cambia |
+| Track | Block it changes |
 |---|---|
-| `background` | `background` (imagen, GIF o vídeo, ajuste, oscurecer...) |
-| `bass_zoom`, `shake`, `chromatic_aberration`, `ripple`, `glitch`, `color_flash` | `background_effects.<efecto>` |
+| `background` | `background` (image, GIF or video, fit, darken...) |
+| `bass_zoom`, `shake`, `chromatic_aberration`, `ripple`, `glitch`, `color_flash` | `background_effects.<effect>` |
 | `visualizer` | `visualizer` |
-| `particles` | `particles` (las capas se sustituyen completas) |
-| `lyrics` | estilo de `lyrics` (la ruta y el desfase son siempre los del primer tramo) |
+| `particles` | `particles` (layers are replaced as a whole) |
+| `lyrics` | `lyrics` style (the path and the offset are always those of the first segment) |
 
-Cada tramo admite `at` (segundos, obligatorio), `label` (nombre) y `transition`. Las reglas de las
-transiciones están en [studio.md](studio.md#tramos-cambiar-efectos-a-lo-largo-de-la-canción).
+Each segment accepts `at` (seconds, required), `label` (name) and `transition`. The transition rules
+are in [studio.md](studio.md#segments-changing-effects-over-the-song).
 
-Los fondos de vídeo empiezan desde su principio al empezar su tramo y se repiten si `loop_video: true`.
+Video backgrounds start from their beginning when their segment starts, and loop if `loop_video: true`.

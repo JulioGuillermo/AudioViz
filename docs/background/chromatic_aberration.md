@@ -1,6 +1,6 @@
-# chromatic_aberration — separación RGB
+# chromatic_aberration — RGB separation
 
-Desplaza el canal rojo y el azul en sentidos opuestos.
+Shifts the red and blue channels in opposite directions.
 
 ```yaml
 background_effects:
@@ -11,9 +11,9 @@ background_effects:
     react_to: "mid"
 ```
 
-| Campo | Def. | Descripción |
+| Field | Default | Description |
 |---|---|---|
-| `enabled` | true | Activa el efecto |
-| `max_shift` | 10.0 | Desplazamiento máximo en píxeles |
-| `mode` | radial | `radial` (crece hacia los bordes, como una lente) u `horizontal` |
-| `react_to` | bass | [Fuente](../reactividad.md) |
+| `enabled` | true | Enables the effect |
+| `max_shift` | 10.0 | Maximum shift in pixels |
+| `mode` | radial | `radial` (grows towards the edges, like a lens) or `horizontal` |
+| `react_to` | bass | [Source](../reactivity.md) |

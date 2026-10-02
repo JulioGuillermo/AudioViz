@@ -1,6 +1,6 @@
-// Package lyricsgen genera la letra sincronizada (tiempo por palabra) a partir del audio y la
-// letra en texto, todo dentro del binario: Demucs (separación de voz) + Whisper (reconocimiento)
-// + alineado con la letra conocida. Los modelos se descargan una vez a ~/.cache/audioviz.
+// Package lyricsgen generates synchronized lyrics (per-word timing) from the audio and the
+// plain-text lyrics, all inside the binary: Demucs (vocal separation) + Whisper (recognition)
+// + alignment with the known lyrics. Models are downloaded once to ~/.cache/audioviz.
 package lyricsgen
 
 import (
@@ -17,7 +17,7 @@ import (
 	"unsafe"
 )
 
-// Step es un paso del proceso, con su estado y progreso
+// Step is one step of the process, with its state and progress
 type Step struct {
 	ID       string  `json:"id"`
 	Label    string  `json:"label"`
@@ -25,26 +25,26 @@ type Step struct {
 	Progress float64 `json:"progress"`
 	Detail   string  `json:"detail"`
 	Elapsed  float64 `json:"elapsed"` // s
-	ETA      float64 `json:"eta"`     // s restantes estimados (-1 = desconocido)
+	ETA      float64 `json:"eta"`     // estimated remaining s (-1 = unknown)
 	started  time.Time
 }
 
-// Status es el estado completo que se envía a la interfaz
+// Status is the full state sent to the UI
 type Status struct {
 	Steps    []Step  `json:"steps"`
 	Current  int     `json:"current"`
 	Progress float64 `json:"progress"` // global 0..1
-	Device   string  `json:"device"`   // GPU/CPU del reconocimiento
+	Device   string  `json:"device"`   // GPU/CPU used for recognition
 	Elapsed  float64 `json:"elapsed"`
 }
 
 type Options struct {
-	Stereo     []float32 // audio estéreo entrelazado
+	Stereo     []float32 // interleaved stereo audio
 	SampleRate int
-	AudioKey   string // identifica el audio para la caché de la voz separada (p. ej. ruta)
-	Lyrics     string // letra en texto (vale el formato de Suno)
+	AudioKey   string // identifies the audio for the separated-vocals cache (e.g. path)
+	Lyrics     string // plain-text lyrics (Suno format is accepted)
 	Lang       string
-	Separate   bool // separar la voz antes de reconocer (más preciso, más lento)
+	Separate   bool // separate the vocals before recognizing (more accurate, slower)
 }
 
 type Result struct {
@@ -53,7 +53,7 @@ type Result struct {
 	Device string
 }
 
-// Pesos de cada paso en el progreso global (aprox. proporcional a su duración)
+// Weight of each step in the global progress (roughly proportional to its duration)
 var stepWeights = map[string]float64{"models": 0.05, "prepare": 0.03, "separate": 0.62, "recognize": 0.22, "align": 0.08}
 
 type tracker struct {
@@ -175,22 +175,22 @@ func saveF32(path string, v []float32) {
 	_ = os.WriteFile(path, b, 0644)
 }
 
-// Generate ejecuta todo el proceso
+// Generate runs the whole process
 func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, error) {
 	lines := CleanLyrics(opt.Lyrics)
 	if len(lines) == 0 {
-		return nil, fmt.Errorf("la letra está vacía (después de quitar las etiquetas [ ])")
+		return nil, fmt.Errorf("the lyrics are empty (after removing the [ ] tags)")
 	}
 	if opt.Lang == "" {
 		opt.Lang = "en"
 	}
 	t := &tracker{t0: time.Now(), report: report}
 	t.st.Steps = []Step{
-		{ID: "models", Label: "Modelos", State: "pending"},
-		{ID: "prepare", Label: "Preparar audio", State: "pending"},
-		{ID: "separate", Label: "Separar la voz", State: "pending"},
-		{ID: "recognize", Label: "Reconocer la voz", State: "pending"},
-		{ID: "align", Label: "Alinear con la letra", State: "pending"},
+		{ID: "models", Label: "Models", State: "pending"},
+		{ID: "prepare", Label: "Prepare audio", State: "pending"},
+		{ID: "separate", Label: "Separate the vocals", State: "pending"},
+		{ID: "recognize", Label: "Recognize the vocals", State: "pending"},
+		{ID: "align", Label: "Align with the lyrics", State: "pending"},
 	}
 	cachePath := vocalsCachePath(fmt.Sprintf("%s|%d|%d", opt.AudioKey, opt.SampleRate, len(opt.Stereo)))
 	var vocals16 []float32
@@ -198,8 +198,8 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 		vocals16 = loadF32(cachePath)
 	}
 
-	// 1. Modelos (descarga la primera vez)
-	t.start("models", "Comprobando…")
+	// 1. Models (downloaded the first time)
+	t.start("models", "Checking…")
 	need := []Model{WhisperModel}
 	if opt.Separate && vocals16 == nil {
 		need = append(need, DemucsModel)
@@ -217,7 +217,7 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 		}
 		base := got
 		_, err := m.Ensure(ctx, func(done, total int64, rate float64) {
-			d := fmt.Sprintf("%s · %s de %s", m.Label, mb(done), mb(total))
+			d := fmt.Sprintf("%s · %s of %s", m.Label, mb(done), mb(total))
 			if rate > 0 {
 				d += fmt.Sprintf(" · %.1f MB/s", rate/1e6)
 			}
@@ -230,30 +230,30 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 		got += m.Size
 	}
 	if missing == 0 {
-		t.end("models", "done", "Ya descargados")
+		t.end("models", "done", "Already downloaded")
 	} else {
-		t.end("models", "done", "Descargados ("+mb(missing)+")")
+		t.end("models", "done", "Downloaded ("+mb(missing)+")")
 	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
 
-	// 2. Preparar audio (remuestreo)
-	t.start("prepare", "Remuestreando…")
+	// 2. Prepare audio (resampling)
+	t.start("prepare", "Resampling…")
 	var stereo44 []float32
 	mix16 := ToMono(Resample(opt.Stereo, 2, opt.SampleRate, 16000))
 	if opt.Separate && vocals16 == nil {
 		stereo44 = Resample(opt.Stereo, 2, opt.SampleRate, 44100)
 	}
-	t.end("prepare", "done", fmt.Sprintf("%.0f s de audio", float64(len(mix16))/16000))
+	t.end("prepare", "done", fmt.Sprintf("%.0f s of audio", float64(len(mix16))/16000))
 
-	// 3. Separar la voz
+	// 3. Separate the vocals
 	switch {
 	case !opt.Separate:
-		t.end("separate", "skipped", "Modo rápido: se usa la mezcla completa")
+		t.end("separate", "skipped", "Fast mode: using the full mix")
 		vocals16 = mix16
 	case vocals16 != nil:
-		t.end("separate", "skipped", "Reutilizada de la caché")
+		t.end("separate", "skipped", "Reused from the cache")
 	default:
 		t.start("separate", "Demucs htdemucs · CPU")
 		v44, err := SeparateVocals(ctx, DemucsModel.Path(), stereo44, func(p float64) { t.progress("separate", p, "") })
@@ -270,8 +270,8 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 	total := float64(len(vocals16)) / 16000
 	v := newVoice(vocals16)
 
-	// 4. Reconocer
-	t.start("recognize", "Cargando el modelo…")
+	// 4. Recognize
+	t.start("recognize", "Loading the model…")
 	w, err := OpenWhisper(WhisperModel.Path(), aheadsLargeV3Turbo, true)
 	if err != nil {
 		t.end("recognize", "error", err.Error())
@@ -287,7 +287,7 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 		t.end("recognize", "error", err.Error())
 		return nil, err
 	}
-	t.end("recognize", "done", fmt.Sprintf("%d palabras reconocidas · %s", len(rec), w.Device))
+	t.end("recognize", "done", fmt.Sprintf("%d words recognized · %s", len(rec), w.Device))
 	if dbg := os.Getenv("AUDIOVIZ_DEBUG_REC"); dbg != "" {
 		if f, err := os.Create(dbg); err == nil {
 			for _, x := range rec {
@@ -297,15 +297,15 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 		}
 	}
 
-	// 5. Alinear con la letra (+ reparación de las líneas mal reconocidas)
-	t.start("align", "Alineando…")
+	// 5. Align with the lyrics (+ repair of poorly recognized lines)
+	t.start("align", "Aligning…")
 	lw := lyricWords(lines)
 	nrec := len(rec)
 	rec = dropSilent(rec, v)
 	dropped := nrec - len(rec)
 	alignNW(lw, rec)
 	cov := lineCoverage(lw, len(lines))
-	type group struct{ a, b int } // líneas [a, b)
+	type group struct{ a, b int } // lines [a, b)
 	var groups []group
 	for i := 0; i < len(lines); i++ {
 		if cov[i] >= 0.5 {
@@ -324,8 +324,8 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		t.progress("align", float64(gi)/float64(len(groups)), fmt.Sprintf("Revisando %d de %d tramos dudosos", gi+1, len(groups)))
-		// Ventana: desde el final de la línea buena anterior hasta el inicio de la siguiente
+		t.progress("align", float64(gi)/float64(len(groups)), fmt.Sprintf("Reviewing %d of %d doubtful sections", gi+1, len(groups)))
+		// Window: from the end of the previous good line to the start of the next one
 		var wb []int
 		for k := range lw {
 			if lw[k].Line >= g.a && lw[k].Line < g.b {
@@ -374,7 +374,7 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 			repaired++
 		}
 	}
-	// Recolocar las palabras que siguen sin ancla con los anclajes definitivos
+	// Reposition the still-unanchored words using the final anchors
 	for k := range lw {
 		if !lw[k].anchored {
 			lw[k].Start, lw[k].End = 0, 0
@@ -388,7 +388,7 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 			anchored++
 		}
 	}
-	t.end("align", "done", fmt.Sprintf("%d líneas · %d de %d palabras reconocidas (%.0f%%) · %d tramos revisados · %d palabras descartadas en silencio",
+	t.end("align", "done", fmt.Sprintf("%d lines · %d of %d words recognized (%.0f%%) · %d sections reviewed · %d words discarded in silence",
 		len(out), anchored, len(lw), 100*float64(anchored)/float64(len(lw)), repaired, dropped))
 	return &Result{Lines: out, LRC: LRC(out), Device: w.Device}, nil
 }
