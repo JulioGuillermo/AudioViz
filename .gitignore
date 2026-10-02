@@ -9,3 +9,5 @@ I didn*t ask to be the devil
 tools/lyrics/.venv/
 tools/lyrics/cache/
 /third_party/ffmpeg/
+/third_party/whisper.cpp/
+/third_party/demucs.cpp/

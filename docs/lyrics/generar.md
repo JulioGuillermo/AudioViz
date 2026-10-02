@@ -1,40 +1,50 @@
 # Generar la letra sincronizada (LRC por palabra)
 
-Herramienta **aparte del binario** (`tools/lyrics/`), solo para preparar el `.lrc` una vez.
-El binario no la necesita para renderizar.
+Todo va **dentro del binario**: no hace falta Python, ni Whisper, ni nada instalado. Solo los modelos
+se descargan una vez (≈ 660 MB) a `~/.cache/audioviz/models` y después funciona sin conexión.
 
+## Desde el estudio
+Pista **Letra** → *Generar letra sincronizada…* (o arrastra el `.txt` a la ventana). Eliges el `.txt`, el
+idioma y el modo. El progreso muestra una barra total, otra del paso en curso (con tiempo transcurrido
+y restante) y la lista de pasos. Al terminar, la letra se guarda en `letra.lrc` del proyecto y se
+carga sola; si ya había una, la anterior se guarda con la fecha en el nombre.
+
+## Desde la terminal
 ```bash
-tools/lyrics/run.sh "cancion.flac" "letra.txt" letra.lrc
+./audioviz lyrics "cancion.flac" letra.txt -o letra.lrc            # modo preciso
+./audioviz lyrics "cancion.flac" letra.txt -o letra.lrc --fast     # modo rápido
+./audioviz lyrics "cancion.flac" letra.txt -o letra.lrc --lang es  # otro idioma
 ```
-La primera vez crea un entorno Python propio en `tools/lyrics/.venv` (torch CPU, Demucs y stable-ts)
-y descarga los modelos: ~3 GB para Whisper large-v3 y ~80 MB para Demucs.
 
-**Receta completa con todos los comandos (revisar, detectar fallos y corregir): [paso a paso](paso-a-paso.md).**
-
-## Qué hace
-1. **Limpia la letra**. Acepta el formato de Suno/Udio: quita `[Verse 1]`, `[Chorus]`,
-   `[Soft piano, whispered vocals]`, `(...)` y las líneas vacías. Cada línea que queda es una línea del LRC.
-2. **Separa la voz** con Demucs (`htdemucs`), que mejora mucho la precisión con música densa (orquesta, batería).
-3. **Alinea** tu texto contra la voz con stable-ts (Whisper). No transcribe: el texto es exactamente el tuyo
-   y solo calcula cuándo se canta cada palabra.
-4. Escribe un **LRC mejorado**: `[00:58.00]<00:58.00>I <00:58.31>didn't <00:58.62>ask ... <01:00.90>`.
-
-## Opciones
-| Opción | Def. | Descripción |
+## Qué hace (pasos)
+| Paso | Qué hace | Dónde corre |
 |---|---|---|
-| `--model` | large-v3 | Modelo Whisper (`medium` es más rápido pero menos preciso) |
-| `--lang` | en | Idioma de la letra (`es`, `en`...) |
-| `--no-separate` | — | No separar la voz (si ya es una pista a capela) |
-| `--vocals <wav>` | — | Usar una voz ya separada |
+| 1. Modelos | Descarga la primera vez Whisper large-v3-turbo (574 MB) y Demucs htdemucs (84 MB). Reanudable | Red |
+| 2. Preparar audio | Remuestrea a 16 kHz (y a 44,1 kHz para Demucs) | CPU |
+| 3. Separar la voz | **Demucs** aísla la voz de la música. Se guarda en caché: la segunda vez con la misma canción se salta | CPU, ≈ la duración de la canción |
+| 4. Reconocer la voz | **Whisper** transcribe la voz con el instante de cada palabra | **GPU (Vulkan)** si hay, si no CPU |
+| 5. Alinear con la letra | Empareja las palabras reconocidas con **tu letra** (tolera palabras mal oídas), descarta "alucinaciones" en los silencios, vuelve a reconocer los tramos dudosos usando la letra como pista y coloca las palabras que falten en las zonas con voz | CPU, instantáneo |
 
-## Herramientas de diagnóstico
-```bash
-tools/lyrics/py energy.py tools/lyrics/cache/vocals.wav 100 132      # dónde hay voz y dónde silencio
-tools/lyrics/py transcribe.py tools/lyrics/cache/vocals.wav 235 270  # qué oye Whisper en un tramo
-```
-La voz separada queda en `tools/lyrics/cache/vocals.wav` y se reutiliza con `--vocals`.
+El texto final es siempre **tu letra** (no lo que oye Whisper); solo se calculan los tiempos.
+La letra puede venir en formato Suno: se quitan las líneas `[Verse]`, `[Chorus]`, `[Soft piano...]`,
+las etiquetas `[...]` dentro de una línea y las líneas que son solo `( ... )`.
+
+## Modos
+| Modo | Cuándo |
+|---|---|
+| **Preciso** (por defecto) | Separa la voz antes de reconocer. Mucho más fiable con música densa (orquesta, guitarras, coros) |
+| **Rápido** | Reconoce sobre la mezcla completa. Segundos, pero puede saltarse frases enteras si la música tapa la voz |
+
+## Precisión
+Medido con *I didn't ask to be the devil* frente a un alineado forzado de referencia: error mediano de
+**0,10 s** por palabra, 83 % de las palabras a menos de 0,25 s y 97 % a menos de 0,5 s.
 
 ## Afinar el resultado
-- Si todo va adelantado o retrasado lo mismo, usa `lyrics.offset` en el YAML (p. ej. `0.1`).
-- Para una palabra concreta, edita su marca `<mm:ss.xx>` en el `.lrc` (es texto plano).
-- Repeticiones que no se cantan o partes improvisadas confunden al alineado: quítalas o añádelas al `.txt`.
+- Si todo va igual de adelantado o retrasado: `lyrics.offset` en el YAML.
+- Una palabra concreta: en el estudio, clic en la línea (pista *Líneas de letra*) y ajusta su inicio; o edita
+  su marca `<mm:ss.xx>` en el `.lrc`.
+- Si una frase se canta más veces de las que aparece en el `.txt`, añádela al `.txt` y vuelve a generar
+  (con la voz ya en caché tarda unos segundos).
+
+## Sin GPU
+Funciona igual por CPU (el reconocimiento tarda más). Para forzarlo: `AUDIOVIZ_NO_VULKAN=1`.

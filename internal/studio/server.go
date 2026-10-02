@@ -3,7 +3,6 @@
 package studio
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"embed"
@@ -19,7 +18,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -31,6 +29,7 @@ import (
 	"audioviz/internal/engine"
 	"audioviz/internal/gpu"
 	"audioviz/internal/lyrics"
+	"audioviz/internal/lyricsgen"
 	"audioviz/internal/video"
 )
 
@@ -47,7 +46,6 @@ type Server struct {
 	hub      *hub
 	job      *job
 	startDir string
-	toolsDir string
 	version  string
 	logs     []string
 }
@@ -55,7 +53,6 @@ type Server struct {
 type Options struct {
 	Addr     string
 	Project  string // project.yaml o carpeta a abrir al arrancar
-	ToolsDir string
 	Version  string
 }
 
@@ -63,7 +60,6 @@ type Options struct {
 func Run(opt Options, ready func(url string)) error {
 	s := &Server{hub: newHub(), version: opt.Version}
 	s.startDir, _ = os.Getwd()
-	s.toolsDir = findTools(opt.ToolsDir)
 	if opt.Project == "" {
 		if _, err := os.Stat("project.yaml"); err == nil {
 			opt.Project = "project.yaml"
@@ -114,25 +110,6 @@ func Run(opt Options, ready func(url string)) error {
 		ready(url)
 	}
 	return http.Serve(ln, mux)
-}
-
-func findTools(explicit string) string {
-	cands := []string{explicit, os.Getenv("AUDIOVIZ_TOOLS")}
-	if exe, err := os.Executable(); err == nil {
-		cands = append(cands, filepath.Join(filepath.Dir(exe), "tools"))
-	}
-	if wd, err := os.Getwd(); err == nil {
-		cands = append(cands, filepath.Join(wd, "tools"))
-	}
-	for _, c := range cands {
-		if c == "" {
-			continue
-		}
-		if _, err := os.Stat(filepath.Join(c, "lyrics", "run.sh")); err == nil {
-			return c
-		}
-	}
-	return ""
 }
 
 // ---------------------------------------------------------------- utilidades HTTP
@@ -220,7 +197,7 @@ func (s *Server) hState(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := map[string]any{"version": s.version, "project": s.meta(), "startDir": s.startDir,
-		"lyricsTool": s.toolsDir != "", "logs": s.logs, "gpu": gpu.ListDevices(), "home": os.Getenv("HOME")}
+		"lyricsTool": true, "models": map[string]bool{"whisper": lyricsgen.WhisperModel.Present(), "demucs": lyricsgen.DemucsModel.Present()}, "logs": s.logs, "gpu": gpu.ListDevices(), "home": os.Getenv("HOME")}
 	if s.job != nil {
 		st["job"] = s.job.snapshot()
 	}
@@ -668,6 +645,7 @@ type job struct {
 	Output   string    `json:"output"`
 	Log      []string  `json:"log"`
 	Started  time.Time `json:"started"`
+	Gen      *lyricsgen.Status
 	cancel   context.CancelFunc
 }
 
@@ -679,7 +657,7 @@ func (j *job) snapshot() map[string]any {
 		log = log[len(log)-40:]
 	}
 	return map[string]any{"id": j.ID, "kind": j.Kind, "status": j.Status, "progress": j.Progress,
-		"message": j.Message, "output": j.Output, "log": log, "elapsed": time.Since(j.Started).Seconds()}
+		"message": j.Message, "output": j.Output, "log": log, "elapsed": time.Since(j.Started).Seconds(), "gen": j.Gen}
 }
 
 func (s *Server) startJob(kind string, run func(ctx context.Context, j *job) error) (*job, error) {
@@ -774,75 +752,69 @@ func (s *Server) hExport(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, j.snapshot())
 }
 
-// hGenLyrics lanza tools/lyrics/run.sh (Demucs + Whisper) para generar el .lrc
+// hGenLyrics genera la letra sincronizada dentro del propio binario (Demucs + Whisper + alineado)
 func (s *Server) hGenLyrics(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Txt  string `json:"txt"`
 		Lang string `json:"lang"`
+		Fast bool   `json:"fast"`
 	}
 	if err := readJSON(r, &req); err != nil || req.Txt == "" {
 		fail(w, 400, errors.New("indica el archivo .txt con la letra"))
 		return
 	}
-	if s.toolsDir == "" {
-		fail(w, 400, errors.New("no se encontró tools/lyrics (debe estar junto al binario)"))
+	txt, err := os.ReadFile(req.Txt)
+	if err != nil {
+		fail(w, 400, err)
 		return
 	}
 	s.mu.Lock()
-	cfg := s.cfg
-	proj := s.projPath
+	sess, cfg, proj := s.sess, s.cfg, s.projPath
 	s.mu.Unlock()
-	if cfg == nil || cfg.Audio.Path == "" {
+	if sess == nil || sess.Audio == nil {
 		fail(w, 400, errors.New("el proyecto no tiene audio"))
 		return
 	}
-	out := filepath.Join(filepath.Dir(proj), "letra.lrc")
-	lang := req.Lang
-	if lang == "" {
-		lang = "en"
+	d := sess.Audio
+	key := cfg.Audio.Path
+	if st, err := os.Stat(cfg.Audio.Path); err == nil {
+		key = fmt.Sprintf("%s|%d|%d", cfg.Audio.Path, st.Size(), st.ModTime().Unix())
 	}
+	out := filepath.Join(filepath.Dir(proj), "letra.lrc")
 	j, err := s.startJob("lyrics", func(ctx context.Context, j *job) error {
-		cmd := exec.CommandContext(ctx, filepath.Join(s.toolsDir, "lyrics", "run.sh"), cfg.Audio.Path, req.Txt, out, "--lang", lang)
-		pr, pw := io.Pipe()
-		cmd.Stdout, cmd.Stderr = pw, pw
-		if err := cmd.Start(); err != nil {
-			return err
+		stereo := make([]float32, len(d.PCM))
+		sc := float32(1.0 / float64(int64(1)<<(d.BitsPerSample-1)))
+		for i, v := range d.PCM {
+			stereo[i] = float32(v) * sc
 		}
-		go func() { cmd.Wait(); pw.Close() }()
-		sc := bufio.NewScanner(pr)
-		sc.Buffer(make([]byte, 1<<20), 1<<20)
-		sc.Split(scanLinesCR)
-		stages := []string{"📝", "🎙️", "💾", "🧠", "🔧", "✅"}
-		for sc.Scan() {
-			line := strings.TrimSpace(sc.Text())
-			if line == "" {
-				continue
-			}
+		res, err := lyricsgen.Generate(ctx, lyricsgen.Options{Stereo: stereo, SampleRate: d.SampleRate, AudioKey: key,
+			Lyrics: string(txt), Lang: req.Lang, Separate: !req.Fast}, func(st lyricsgen.Status) {
 			j.mu.Lock()
-			if strings.Contains(line, "%|") {
-				j.Message = line
-			} else {
-				j.Log = append(j.Log, line)
-				j.Message = line
-				for k, st := range stages {
-					if strings.HasPrefix(line, st) {
-						j.Progress = float64(k+1) / float64(len(stages))
-					}
-				}
+			j.Gen = &st
+			j.Progress = st.Progress
+			cur := st.Steps[st.Current]
+			j.Message = cur.Label
+			if cur.Detail != "" {
+				j.Message += " · " + cur.Detail
 			}
 			j.mu.Unlock()
 			s.hub.send("job", j.snapshot())
+		})
+		if err != nil {
+			return err
 		}
-		if ctx.Err() != nil {
-			return ctx.Err()
+		// Si ya había una letra, se conserva una copia
+		if _, err := os.Stat(out); err == nil {
+			_ = os.Rename(out, strings.TrimSuffix(out, ".lrc")+time.Now().Format("-20060102-150405")+".lrc")
 		}
-		if cmd.ProcessState == nil || !cmd.ProcessState.Success() {
-			return errors.New("la generación de la letra falló (mira el registro)")
+		if err := os.WriteFile(out, []byte(res.LRC), 0644); err != nil {
+			return err
 		}
 		j.mu.Lock()
 		j.Output = out
-		j.Message = "Letra generada: " + out
+		j.Message = fmt.Sprintf("Letra generada: %d líneas", len(res.Lines))
 		j.mu.Unlock()
+		s.logf("🎤 Letra generada: %s", out)
 		return nil
 	})
 	if err != nil {
@@ -850,19 +822,6 @@ func (s *Server) hGenLyrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, j.snapshot())
-}
-
-// scanLinesCR separa por \n y por \r (las barras de progreso usan \r)
-func scanLinesCR(data []byte, atEOF bool) (int, []byte, error) {
-	for i, b := range data {
-		if b == '\n' || b == '\r' {
-			return i + 1, data[:i], nil
-		}
-	}
-	if atEOF && len(data) > 0 {
-		return len(data), data, nil
-	}
-	return 0, nil, nil
 }
 
 func (s *Server) hCancel(w http.ResponseWriter, r *http.Request) {

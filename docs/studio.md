@@ -80,9 +80,9 @@ renombrarla, clic derecho para borrarla. Sirven de referencia para colocar los t
 
 ## Letra
 - Importa un `.lrc` / `.srt` en la pista **Letra** → *Archivo*.
-- **Generar letra sincronizada…** (en el inspector de la letra): eliges el `.txt` (vale el formato
-  de Suno) y el idioma; lanza `tools/lyrics/run.sh` (Demucs + Whisper) y al terminar la carga sola.
-  Necesita `tools/lyrics` junto al binario (ver [generar.md](lyrics/generar.md)).
+- **Generar letra sincronizada…** (en el inspector de la letra, o arrastrando el `.txt`): eliges el
+  `.txt` (vale el formato de Suno), el idioma y el modo (preciso / rápido). Va integrado en el binario
+  (Demucs + Whisper en la GPU); el progreso muestra cada paso con su tiempo. Ver [generar.md](lyrics/generar.md).
 - **Retocar tiempos**: clic en una línea de la pista "Letra (líneas)". El inspector muestra cada
   palabra con su inicio y fin; ⇤ pone el inicio en el cursor, y hay botones para mover la línea
   entera. Luego **Guardar letra** (escribe un `.lrc` con tiempo por palabra).

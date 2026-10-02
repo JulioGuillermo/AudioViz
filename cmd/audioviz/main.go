@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -9,7 +10,9 @@ import (
 	"strings"
 
 	"audioviz/internal/config"
+	"audioviz/internal/audio"
 	"audioviz/internal/engine"
+	"audioviz/internal/lyricsgen"
 	"audioviz/internal/gpu"
 	"audioviz/internal/studio"
 	"gopkg.in/yaml.v3"
@@ -20,6 +23,10 @@ const version = "2.0.0"
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "studio" {
 		runStudio(os.Args[2:])
+		return
+	}
+	if len(os.Args) > 1 && os.Args[1] == "lyrics" {
+		runLyrics(os.Args[2:])
 		return
 	}
 	var (
@@ -161,12 +168,89 @@ func main() {
 	}
 }
 
+// runLyrics genera un .lrc con tiempo por palabra a partir del audio y la letra en texto
+func runLyrics(args []string) {
+	fs := flag.NewFlagSet("lyrics", flag.ExitOnError)
+	out := fs.String("o", "letra.lrc", "Archivo .lrc de salida")
+	lang := fs.String("lang", "en", "Idioma de la letra (en, es, fr...)")
+	fast := fs.Bool("fast", false, "Modo rápido: no separar la voz (menos preciso)")
+	var pos []string
+	for len(args) > 0 {
+		if strings.HasPrefix(args[0], "-") {
+			fs.Parse(args)
+			args = fs.Args()
+			continue
+		}
+		pos = append(pos, args[0])
+		args = args[1:]
+	}
+	if len(pos) != 2 {
+		fmt.Println("Uso: audioviz lyrics <audio> <letra.txt> [-o letra.lrc] [--lang en] [--fast]")
+		os.Exit(1)
+	}
+	txt, err := os.ReadFile(pos[1])
+	if err != nil {
+		fmt.Printf("❌ %v\n", err)
+		os.Exit(1)
+	}
+	dec, err := audio.DecodeAudio(pos[0], 1)
+	if err != nil {
+		fmt.Printf("❌ %v\n", err)
+		os.Exit(1)
+	}
+	abs, _ := filepath.Abs(pos[0])
+	st0, _ := os.Stat(abs)
+	key := abs
+	if st0 != nil {
+		key = fmt.Sprintf("%s|%d|%d", abs, st0.Size(), st0.ModTime().Unix())
+	}
+	stereo := make([]float32, len(dec.PCM))
+	sc := float32(1.0 / float64(int64(1)<<(dec.BitsPerSample-1)))
+	for i, v := range dec.PCM {
+		stereo[i] = float32(v) * sc
+	}
+	lastLine := ""
+	res, err := lyricsgen.Generate(context.Background(), lyricsgen.Options{Stereo: stereo, SampleRate: dec.SampleRate, AudioKey: key,
+		Lyrics: string(txt), Lang: *lang, Separate: !*fast}, func(s lyricsgen.Status) {
+		step := s.Steps[s.Current]
+		eta := ""
+		if step.ETA > 0 {
+			eta = fmt.Sprintf(" · quedan %s", fmtDur(step.ETA))
+		}
+		line := fmt.Sprintf("[%3.0f%%] %d/%d %s %3.0f%% · %s%s · %s", s.Progress*100, s.Current+1, len(s.Steps), step.Label, step.Progress*100, fmtDur(step.Elapsed), eta, step.Detail)
+		if line != lastLine {
+			fmt.Printf("\r\033[K%s", line)
+			if step.State != "running" {
+				fmt.Println()
+			}
+			lastLine = line
+		}
+	})
+	fmt.Println()
+	if err != nil {
+		fmt.Printf("❌ %v\n", err)
+		os.Exit(1)
+	}
+	if err := os.WriteFile(*out, []byte(res.LRC), 0644); err != nil {
+		fmt.Printf("❌ %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("✅ %d líneas → %s\n", len(res.Lines), *out)
+}
+
+func fmtDur(s float64) string {
+	if s < 0 {
+		s = 0
+	}
+	m := int(s) / 60
+	return fmt.Sprintf("%d:%02d", m, int(s)%60)
+}
+
 // runStudio arranca la interfaz gráfica (servidor web local embebido en el binario)
 func runStudio(args []string) {
 	fs := flag.NewFlagSet("studio", flag.ExitOnError)
 	addr := fs.String("addr", "127.0.0.1:8787", "Dirección de escucha (usa 0.0.0.0:8787 para abrirlo desde otro equipo de la red)")
 	noOpen := fs.Bool("no-open", false, "No abrir el navegador automáticamente")
-	tools := fs.String("tools", "", "Carpeta tools/ (para generar letras); por defecto junto al binario")
 	// El proyecto puede ir antes o después de las opciones
 	var project string
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -176,7 +260,7 @@ func runStudio(args []string) {
 	if project == "" && fs.NArg() > 0 {
 		project = fs.Arg(0)
 	}
-	err := studio.Run(studio.Options{Addr: *addr, Project: project, ToolsDir: *tools, Version: version}, func(url string) {
+	err := studio.Run(studio.Options{Addr: *addr, Project: project, Version: version}, func(url string) {
 		fmt.Printf("🎛️  AudioViz Studio en %s  (Ctrl+C para salir)\n", url)
 		if !*noOpen {
 			for _, opener := range []string{"xdg-open", "open"} {
@@ -198,6 +282,7 @@ func printHelp() {
 Uso:
   audioviz [ruta_al_proyecto.yaml] [opciones]
   audioviz studio [proyecto] [--addr 127.0.0.1:8787] [--no-open]   # interfaz gráfica
+  audioviz lyrics <audio> <letra.txt> [-o letra.lrc] [--lang en] [--fast]   # letra sincronizada
 
 Ejemplos:
   audioviz project.yaml                       # Renderiza el video completo (GPU Vulkan si hay)

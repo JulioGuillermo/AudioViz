@@ -1,8 +1,0 @@
-#!/bin/bash
-# Ejecuta un script de tools/lyrics con el Python del entorno (lo crea si no existe)
-set -euo pipefail
-DIR="$(cd "$(dirname "$0")" && pwd)"
-[ -x "$DIR/.venv/bin/python" ] || "$DIR/run.sh" --help >/dev/null 2>&1 || true
-script="$1"; shift
-[ -f "$script" ] || script="$DIR/$script"
-exec "$DIR/.venv/bin/python" -W ignore "$script" "$@"

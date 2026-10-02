@@ -141,26 +141,73 @@ export function JobView({ job }) {
   </div>`;
 }
 
-export function GenLyricsDialog({ meta, job, available, pickFile, onStart, onCancel, onClose, initialTxt }) {
+const fmtDur = (s) => {
+  if (!(s >= 0)) return '–';
+  s = Math.round(s);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+};
+
+// Pasos de la generación de letra: barra global + barra del paso actual + lista de pasos
+export function GenSteps({ gen, status }) {
+  if (!gen) return null;
+  const cur = gen.steps[gen.current] || gen.steps[0];
+  const icon = { done: 'check', skipped: 'minus', error: 'triangle-alert', running: 'loader-circle', pending: 'circle' };
+  return html`<div class="gen">
+    <div class="gen-row">
+      <span class="gen-l">Total</span>
+      <div class="progress"><i style=${{ width: (gen.progress * 100).toFixed(1) + '%' }}></i></div>
+      <span class="gen-v mono">${Math.round(gen.progress * 100)}%</span>
+      <span class="gen-t mono">${fmtDur(gen.elapsed)}</span>
+    </div>
+    ${status === 'running' && cur && html`<div class="gen-row">
+      <span class="gen-l">${cur.label}</span>
+      <div class="progress sub"><i style=${{ width: (cur.progress * 100).toFixed(1) + '%' }}></i></div>
+      <span class="gen-v mono">${Math.round(cur.progress * 100)}%</span>
+      <span class="gen-t mono" title="Transcurrido / restante">${fmtDur(cur.elapsed)}${cur.eta > 0 ? ' · −' + fmtDur(cur.eta) : ''}</span>
+    </div>`}
+    <div class="gen-steps">
+      ${gen.steps.map((st, i) => html`<div class=${'gen-step ' + st.state}>
+        <${Icon} name=${icon[st.state] || 'circle-help'} size=${14} cls=${st.state === 'running' ? 'spin' : ''} />
+        <span class="n">${i + 1}. ${st.label}</span>
+        <span class="d">${st.detail}</span>
+        <span class="t mono">${st.state === 'done' || st.state === 'running' ? fmtDur(st.elapsed) : ''}</span>
+      </div>`)}
+    </div>
+    ${gen.device && html`<div class="faint" style="font-size:11.5px;margin-top:6px">Reconocimiento en: ${gen.device}</div>`}
+  </div>`;
+}
+
+export function GenLyricsDialog({ meta, job, models, pickFile, onStart, onCancel, onClose, initialTxt }) {
   const [txt, setTxt] = useState(initialTxt || '');
   const [lang, setLang] = useState('en');
-  const running = job && job.kind === 'lyrics' && job.status === 'running';
+  const [mode, setMode] = useState('precise');
+  const mine = job && job.kind === 'lyrics' ? job : null;
+  const running = mine && mine.status === 'running';
+  const toDownload = (models && !models.whisper ? 574 : 0) + (models && !models.demucs && mode === 'precise' ? 84 : 0);
   return html`<${Modal} title="Generar letra sincronizada" icon="wand-sparkles" onClose=${onClose}
     footer=${html`
-      <button class="btn" onClick=${onClose}>Cerrar</button>
+      <button class="btn" onClick=${onClose}>${running ? 'Seguir en segundo plano' : 'Cerrar'}</button>
       ${running ? html`<button class="btn danger" onClick=${onCancel}><${Icon} name="x" size=${15} /> Cancelar</button>`
-        : html`<button class="btn primary" disabled=${!txt || !available || !meta.hasAudio} onClick=${() => onStart(txt, lang)}>
-          <${Icon} name="wand-sparkles" size=${15} /> Generar</button>`}`}>
-    ${!available && html`<div class="alert" style="margin-bottom:10px"><${Icon} name="triangle-alert" size=${15} />
-      No se encontró <span class="mono">tools/lyrics</span> junto al binario. Consulta docs/lyrics/generar.md.</div>`}
-    <p class="faint" style="margin-top:0">Separa la voz (Demucs) y alinea tu letra con ella (Whisper) para obtener el tiempo de cada palabra.
-      Las etiquetas de Suno ([Verse], [Chorus]…) se ignoran. Tarda unos minutos; la primera vez descarga los modelos (~3 GB).</p>
-    <div class="fld"><label>Letra en texto</label><div class="ctl filectl">
-      <div class="fn"><${Icon} name="file-text" size=${14} cls="faint" /><span>${txt ? basename(txt) : html`<span class="faint">Ninguno</span>`}</span></div>
-      <button class="btn icon" title="Elegir archivo" onClick=${() => pickFile('txt', setTxt, txt)}><${Icon} name="folder-open" size=${15} /></button></div></div>
-    <div class="fld"><label>Idioma</label><div class="ctl"><select class="grow" value=${lang} onChange=${(e) => setLang(e.target.value)}>
-      ${[['en', 'Inglés'], ['es', 'Español'], ['fr', 'Francés'], ['de', 'Alemán'], ['it', 'Italiano'], ['pt', 'Portugués'], ['ja', 'Japonés']].map(([v, l]) => html`<option value=${v}>${l}</option>`)}
-    </select></div></div>
-    ${job && job.kind === 'lyrics' && html`<${JobView} job=${job} />`}
+        : html`<button class="btn primary" disabled=${!txt || !meta.hasAudio} onClick=${() => onStart(txt, lang, mode === 'fast')}>
+          <${Icon} name="wand-sparkles" size=${15} /> ${mine && mine.status === 'done' ? 'Volver a generar' : 'Generar'}</button>`}`}>
+    ${!running && html`
+      <p class="faint" style="margin-top:0">A partir de la letra en texto (vale el formato de Suno: las etiquetas [ ] se ignoran) se calcula
+        cuándo se canta cada palabra. Todo se hace dentro de AudioViz; el reconocimiento usa la GPU si hay.</p>
+      <div class="fld"><label>Letra en texto</label><div class="ctl filectl">
+        <div class="fn"><${Icon} name="file-text" size=${14} cls="faint" /><span>${txt ? basename(txt) : html`<span class="faint">Ninguno</span>`}</span></div>
+        <button class="btn icon" title="Elegir archivo" onClick=${() => pickFile('txt', setTxt, txt)}><${Icon} name="folder-open" size=${15} /></button></div></div>
+      <div class="fld"><label>Idioma</label><div class="ctl"><select class="grow" value=${lang} onChange=${(e) => setLang(e.target.value)}>
+        ${[['en', 'Inglés'], ['es', 'Español'], ['fr', 'Francés'], ['de', 'Alemán'], ['it', 'Italiano'], ['pt', 'Portugués'], ['ja', 'Japonés']].map(([v, l]) => html`<option value=${v}>${l}</option>`)}
+      </select></div></div>
+      <div class="fld"><label>Modo</label><div class="ctl"><select class="grow" value=${mode} onChange=${(e) => setMode(e.target.value)}>
+        <option value="precise">Preciso: separa la voz primero (≈ la duración de la canción)</option>
+        <option value="fast">Rápido: sobre la mezcla completa (segundos, menos fiable)</option>
+      </select></div></div>
+      ${toDownload > 0 && html`<div class="alert" style="margin-top:8px"><${Icon} name="info" size=${15} />
+        La primera vez se descargan los modelos (≈ ${toDownload} MB) a la caché; después funciona sin conexión.</div>`}
+      ${!meta.hasAudio && html`<div class="alert" style="margin-top:8px"><${Icon} name="triangle-alert" size=${15} />El proyecto todavía no tiene audio.</div>`}`}
+    ${mine && mine.gen && html`<${GenSteps} gen=${mine.gen} status=${mine.status} />`}
+    ${mine && mine.status !== 'running' && html`<p class=${'row ' + ({ done: 'st-ok', error: 'st-err', canceled: 'st-warn' }[mine.status] || '')} style="font-size:12.5px">
+      <${Icon} name=${{ done: 'check', error: 'triangle-alert', canceled: 'x' }[mine.status] || 'info'} size=${15} />${mine.message}</p>`}
   </${Modal}>`;
 }
