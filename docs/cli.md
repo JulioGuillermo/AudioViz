@@ -3,7 +3,7 @@
 ```
 audioviz [proyecto.yaml] [opciones]
 ```
-Si no se indica proyecto se usa `project.yaml`.
+Si no se indica proyecto se usa `project.yaml`. Para la interfaz gráfica: `audioviz studio` (ver [studio.md](studio.md)).
 
 | Opción | Descripción |
 |---|---|

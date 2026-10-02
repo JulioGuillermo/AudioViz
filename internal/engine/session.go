@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"math"
+	"os"
 	"sync"
 	"time"
 
@@ -137,6 +138,9 @@ func (s *Session) Update(cfg *config.ProjectConfig) error {
 	lk := ""
 	if b, err := yaml.Marshal(cfg.Timeline.Lyrics); err == nil {
 		lk = fmt.Sprintf("%dx%d|%s", w, h, b)
+		if st, err := os.Stat(cfg.Timeline.Lyrics[0].Cfg.Path); err == nil {
+			lk += st.ModTime().String()
+		}
 	}
 	if lk != s.lyrKey {
 		s.lyr = nil
@@ -522,3 +526,32 @@ func (s *Session) stepParticle(i int, feat *audio.FrameFeatures, fresh bool) {
 	}
 	s.sim.entries = alive
 }
+
+// Fork crea una sesión independiente con una copia de la config actual que reutiliza el audio
+// y los análisis ya calculados (para exportar mientras se sigue editando)
+func (s *Session) Fork() (*Session, error) {
+	s.mu.Lock()
+	b, err := s.Cfg.Marshal()
+	if err != nil {
+		s.mu.Unlock()
+		return nil, err
+	}
+	cfg, err := config.ParseConfig(b, s.Cfg.Dir)
+	if err != nil {
+		s.mu.Unlock()
+		return nil, err
+	}
+	ns := &Session{Logf: s.Logf, feats: map[anaKey][]audio.FrameFeatures{}, media: map[string]video.BackgroundReader{},
+		Audio: s.Audio, audioKey: s.audioKey, W: s.W, H: s.H, FPS: s.FPS}
+	for k, v := range s.feats {
+		ns.feats[k] = v
+	}
+	s.mu.Unlock()
+	if err := ns.Update(cfg); err != nil {
+		return nil, err
+	}
+	return ns, nil
+}
+
+// Duration devuelve la duración de la línea de tiempo en segundos
+func (s *Session) Duration() float64 { return float64(s.Frames) / float64(s.FPS) }

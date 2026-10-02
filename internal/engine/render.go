@@ -147,6 +147,61 @@ func (r *Renderer) Still(fs *FrameState) (*image.RGBA, error) {
 	return out, nil
 }
 
+// Preview renderiza un cuadro a 1/scale de resolución directamente en la GPU (más rápido)
+func (r *Renderer) Preview(fs *FrameState, scale int) (*image.RGBA, error) {
+	if r.G == nil || scale <= 1 {
+		img, err := r.Still(fs)
+		if err != nil || scale <= 1 {
+			return img, err
+		}
+		return downscale(img, scale), nil
+	}
+	pw, ph := (r.s.W+scale-1)/scale, (r.s.H+scale-1)/scale
+	r.G.Params(0).Prev = [4]int32{int32(scale), int32(pw), int32(ph)}
+	defer func() { r.G.Params(0).Prev = [4]int32{} }() // tras esperar a la GPU
+	if err := r.submit(0, fs, true); err != nil {
+		return nil, err
+	}
+	if err := r.G.Wait(0); err != nil {
+		return nil, err
+	}
+	out := image.NewRGBA(image.Rect(0, 0, pw, ph))
+	copy(out.Pix, r.G.RGBA(0)[:pw*ph*4])
+	return out, nil
+}
+
+func downscale(src *image.RGBA, f int) *image.RGBA {
+	w, h := src.Bounds().Dx()/f, src.Bounds().Dy()/f
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
+	var wg sync.WaitGroup
+	nw := runtime.NumCPU()
+	for k := 0; k < nw; k++ {
+		wg.Add(1)
+		go func(k int) {
+			defer wg.Done()
+			n := uint32(f * f)
+			for y := k; y < h; y += nw {
+				for x := 0; x < w; x++ {
+					var cr, cg, cb uint32
+					for dy := 0; dy < f; dy++ {
+						o := (y*f+dy)*src.Stride + x*f*4
+						for dx := 0; dx < f; dx++ {
+							cr += uint32(src.Pix[o])
+							cg += uint32(src.Pix[o+1])
+							cb += uint32(src.Pix[o+2])
+							o += 4
+						}
+					}
+					d := dst.Pix[y*dst.Stride+x*4:]
+					d[0], d[1], d[2], d[3] = uint8(cr/n), uint8(cg/n), uint8(cb/n), 255
+				}
+			}
+		}(k)
+	}
+	wg.Wait()
+	return dst
+}
+
 // ---------------------------------------------------------------- exportación
 
 // ExportRange exporta los cuadros [start, end) al MP4 de salida

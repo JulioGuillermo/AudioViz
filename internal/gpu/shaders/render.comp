@@ -50,7 +50,16 @@ layout(std430, set = 0, binding = 0) readonly buffer Params {
     vec4 tB[MAX_TEXT];         // centro x, y, escala, alfa
     vec4 tC[MAX_TEXT];         // relleno karaoke, pad
     vec4 bgMix;                // fundido al fondo 2, opacidad del visualizador
+    ivec4 prev;                // preview: escala (1 = normal), ancho y alto de salida
 } P;
+
+// Listas por baldosa (grupo de trabajo): partículas y palabras que pueden tocar la baldosa
+const int TILE_PARTS = 512;
+const int TILE_TEXT = 48;
+shared int sPart[TILE_PARTS];
+shared int sPartN;
+shared int sText[TILE_TEXT];
+shared int sTextN;
 
 layout(std430, set = 0, binding = 1) readonly buffer BG { uint bg[]; };
 layout(std430, set = 0, binding = 2) writeonly buffer OutY { uint outY[]; };
@@ -331,10 +340,11 @@ vec3 textGradient(float t) {
 
 // Compone la letra sobre col en el punto p
 vec3 drawText(vec3 col, vec2 p) {
-    int n = P.textInfo.x;
+    int n = min(sTextN, TILE_TEXT);
     float ow = P.textStyle.x;
     float gr = max(P.textStyle.y, 0.5);
-    for (int i = 0; i < n; i++) {
+    for (int ti = 0; ti < n; ti++) {
+        int i = sText[ti];
         vec4 r = P.tA[i];
         vec4 b = P.tB[i];
         float sc = b.z;
@@ -357,6 +367,7 @@ vec3 drawText(vec3 col, vec2 p) {
         // Glow
         if (P.textStyle.z > 0.0) {
             float g = exp(-max(d - ow, 0.0) / (gr * 0.45)) * P.textStyle.z * alpha;
+            g *= 1.0 - smoothstep(0.55, 0.95, (d / sc) / max(pad, 1.0)); // llega a 0 antes del borde del área
             col = mix(col, P.textGlowC.rgb, clamp(g, 0.0, 1.0) * 0.85);
         }
         // Contorno
@@ -375,14 +386,14 @@ vec3 drawText(vec3 col, vec2 p) {
     return col;
 }
 
-vec3 shade(ivec2 pix) {
-    vec2 q = vec2(pix);
+vec3 shade(vec2 q) {
     vec2 p = q + 0.5;
     vec3 col = background(q);
 
-    // Partículas (glow suave + núcleo)
-    int np = P.flags.z;
-    for (int i = 0; i < np; i++) {
+    // Partículas (glow suave + núcleo), solo las de esta baldosa
+    int np = min(sPartN, TILE_PARTS);
+    for (int pi = 0; pi < np; pi++) {
+        int i = sPart[pi];
         vec4 pt = P.parts[i];
         vec3 pc = P.partCol[i].rgb;
         float dist = length(p - pt.xy);
@@ -434,6 +445,33 @@ uint packBytes(float a, float b, float c, float d) {
 
 float lumaOf(vec3 c) { return 16.0 + 219.0 * dot(c, vec3(0.2126, 0.7152, 0.0722)); }
 
+// Prepara las listas de partículas y palabras que tocan la baldosa [lo, hi) (coords. a resolución completa)
+void buildTileLists(vec2 lo, vec2 hi) {
+    uint li = gl_LocalInvocationIndex;
+    if (li == 0u) { sPartN = 0; sTextN = 0; }
+    barrier();
+    int np = P.flags.z;
+    for (int i = int(li); i < np; i += 64) {
+        vec4 pt = P.parts[i];
+        float rr = (P.partCol[i].w > 0.5 ? pt.z * 2.0 : pt.z) + 2.0;
+        if (pt.x + rr >= lo.x && pt.x - rr <= hi.x && pt.y + rr >= lo.y && pt.y - rr <= hi.y) {
+            int k = atomicAdd(sPartN, 1);
+            if (k < TILE_PARTS) sPart[k] = i;
+        }
+    }
+    int nt = P.textInfo.x;
+    float extra = abs(P.textStyle.w) + max(abs(P.textShadow.x), abs(P.textShadow.y)) + 2.0;
+    for (int i = int(li); i < nt; i += 64) {
+        vec2 hs = P.tA[i].zw * 0.5 * P.tB[i].z + extra;
+        vec2 c = P.tB[i].xy;
+        if (c.x + hs.x >= lo.x && c.x - hs.x <= hi.x && c.y + hs.y >= lo.y && c.y - hs.y <= hi.y) {
+            int k = atomicAdd(sTextN, 1);
+            if (k < TILE_TEXT) sText[k] = i;
+        }
+    }
+    barrier();
+}
+
 void main() {
     W = P.dims.x;
     H = P.dims.y;
@@ -441,6 +479,27 @@ void main() {
     int padH = P.dims.w;
     int bx = int(gl_GlobalInvocationID.x);
     int by = int(gl_GlobalInvocationID.y);
+    int s = max(P.prev.x, 1);
+
+    // Baldosa del grupo: 8x8 invocaciones de 4x2 píxeles = 32x16 píxeles de salida
+    vec2 tlo = vec2(gl_WorkGroupID.xy * uvec2(32u, 16u)) * float(s) - 1.0;
+    vec2 thi = tlo + vec2(32.0, 16.0) * float(s) + 2.0;
+    buildTileLists(tlo, thi);
+
+    if (s > 1) {
+        // Preview a resolución reducida: cada píxel de salida sombrea el centro de su celda s x s
+        int pw = P.prev.y, ph = P.prev.z;
+        if (bx * 4 >= pw || by * 2 >= ph) return;
+        for (int yy = 0; yy < 2; yy++) {
+            for (int xx = 0; xx < 4; xx++) {
+                ivec2 o = ivec2(bx * 4 + xx, by * 2 + yy);
+                if (o.x >= pw || o.y >= ph) continue;
+                vec2 q = min((vec2(o) + 0.5) * float(s) - 0.5, vec2(float(W - 1), float(H - 1)));
+                outRGBA[o.y * pw + o.x] = packUnorm4x8(vec4(shade(q), 1.0));
+            }
+        }
+        return;
+    }
     if (bx * 4 >= padW || by * 2 >= padH) return;
 
     vec3 c[8];
@@ -448,7 +507,7 @@ void main() {
         for (int xx = 0; xx < 4; xx++) {
             ivec2 pix = ivec2(bx * 4 + xx, by * 2 + yy);
             ivec2 src = min(pix, ivec2(W - 1, H - 1)); // relleno replicando el borde
-            vec3 v = shade(src);
+            vec3 v = shade(vec2(src));
             c[yy * 4 + xx] = v;
             if (P.flags2.w != 0 && pix.x < W && pix.y < H) {
                 outRGBA[pix.y * W + pix.x] = packUnorm4x8(vec4(v, 1.0));

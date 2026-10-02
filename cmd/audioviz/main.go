@@ -4,18 +4,24 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
 	"audioviz/internal/config"
 	"audioviz/internal/engine"
 	"audioviz/internal/gpu"
+	"audioviz/internal/studio"
 	"gopkg.in/yaml.v3"
 )
 
 const version = "2.0.0"
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "studio" {
+		runStudio(os.Args[2:])
+		return
+	}
 	var (
 		flagOutput   string
 		flagAudio    string
@@ -155,10 +161,44 @@ func main() {
 	}
 }
 
+// runStudio arranca la interfaz gráfica (servidor web local embebido en el binario)
+func runStudio(args []string) {
+	fs := flag.NewFlagSet("studio", flag.ExitOnError)
+	addr := fs.String("addr", "127.0.0.1:8787", "Dirección de escucha (usa 0.0.0.0:8787 para abrirlo desde otro equipo de la red)")
+	noOpen := fs.Bool("no-open", false, "No abrir el navegador automáticamente")
+	tools := fs.String("tools", "", "Carpeta tools/ (para generar letras); por defecto junto al binario")
+	var project string
+	var rest []string
+	for _, a := range args {
+		if !strings.HasPrefix(a, "-") && project == "" {
+			project = a
+		} else {
+			rest = append(rest, a)
+		}
+	}
+	fs.Parse(rest)
+	err := studio.Run(studio.Options{Addr: *addr, Project: project, ToolsDir: *tools, Version: version}, func(url string) {
+		fmt.Printf("🎛️  AudioViz Studio en %s  (Ctrl+C para salir)\n", url)
+		if !*noOpen {
+			for _, opener := range []string{"xdg-open", "open"} {
+				if p, err := exec.LookPath(opener); err == nil {
+					_ = exec.Command(p, url).Start()
+					break
+				}
+			}
+		}
+	})
+	if err != nil {
+		fmt.Printf("❌ %v\n", err)
+		os.Exit(1)
+	}
+}
+
 func printHelp() {
 	fmt.Printf(`AudioViz - Generador de Videos Musicales Reactivos al Audio
 Uso:
   audioviz [ruta_al_proyecto.yaml] [opciones]
+  audioviz studio [proyecto] [--addr 127.0.0.1:8787] [--no-open]   # interfaz gráfica
 
 Ejemplos:
   audioviz project.yaml                       # Renderiza el video completo (GPU Vulkan si hay)

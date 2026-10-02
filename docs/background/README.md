@@ -12,12 +12,12 @@ background:
 
 | Campo | Def. | Descripción |
 |---|---|---|
-| `path` | — | Imagen PNG, JPEG, WebP, BMP o **GIF animado**. Los videos (.mp4...) no están soportados |
+| `path` | — | Imagen PNG, JPEG, WebP, BMP, GIF animado o **vídeo** (mp4, mov, mkv, webm, avi; H.264, H.265, VP8, VP9, ProRes...) |
 | `fit_mode` | cover | `cover` (rellena y recorta), `contain` (cabe entera, bandas negras), `stretch` (deforma) |
 | `opacity` | 0.88 | Multiplica el brillo del fondo (0–1) |
 | `darken` | 0.15 | Oscurecimiento constante (0–1) para resaltar el visualizador |
 | `vignette` | 0.25 | Oscurece los bordes (0–1) |
-| `loop_video` | true | Repite el GIF si dura menos que la canción |
+| `loop_video` | true | Repite el vídeo/GIF si dura menos que su tramo |
 
 ## Efectos (`background_effects`)
 Se aplican en este orden: glitch → aberración cromática → ripple → zoom/shake → color.

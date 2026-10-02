@@ -193,10 +193,10 @@ func (c *ProjectConfig) BuildTimeline() error {
 	if tl.ColorFlash, err = buildTrack(be.ColorFlash, raw["color_flash"], noFix[ColorFlashConfig]); err != nil {
 		return err
 	}
-	if tl.Visualizer, err = buildTrack(c.Visualizer, raw["visualizer"], fixVisualizer); err != nil {
+	if tl.Visualizer, err = buildTrack(c.Visualizer, raw["visualizer"], FixVisualizer); err != nil {
 		return err
 	}
-	if tl.Particles, err = buildTrack(c.Particles, raw["particles"], fixParticles); err != nil {
+	if tl.Particles, err = buildTrack(c.Particles, raw["particles"], FixParticles); err != nil {
 		return err
 	}
 	if tl.Lyrics, err = buildTrack(c.Lyrics, raw["lyrics"], noFix[LyricsConfig]); err != nil {
@@ -214,7 +214,8 @@ func (c *ProjectConfig) BuildTimeline() error {
 	return nil
 }
 
-func fixVisualizer(v *VisualizerConfig) {
+// FixVisualizer normaliza un bloque de visualizador (límites de barras, tipo en minúsculas)
+func FixVisualizer(v *VisualizerConfig) {
 	if v.Bars <= 0 {
 		v.Bars = 48
 	}
@@ -224,7 +225,8 @@ func fixVisualizer(v *VisualizerConfig) {
 	v.Type = lower(v.Type)
 }
 
-func fixParticles(p *ParticlesConfig) {
+// FixParticles asegura que haya al menos una capa
+func FixParticles(p *ParticlesConfig) {
 	if len(p.Layers) == 0 {
 		p.Layers = []ParticleLayer{p.ParticleLayer}
 	}

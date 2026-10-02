@@ -58,6 +58,7 @@ type Params struct {
 	TItemC                                           [MaxTextItems][4]float32 // relleno karaoke, pad
 
 	BgMix [4]float32 // fundido hacia el fondo 2 (0..1), opacidad del visualizador, -, -
+	Prev  [4]int32   // preview: escala, ancho, alto (escala 0/1 = render normal)
 }
 
 type Renderer struct {

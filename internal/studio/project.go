@@ -1,0 +1,206 @@
+package studio
+
+import (
+	"fmt"
+
+	"audioviz/internal/config"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Forma JSON del proyecto para la interfaz: mismas claves que el YAML, pero cada pista
+// como lista explícita de tramos (el primero en at=0 es el bloque base).
+
+type TransJSON struct {
+	Mode     string  `json:"mode"`
+	Duration float64 `json:"duration"`
+}
+
+type SegJSON struct {
+	At         float64        `json:"at"`
+	Label      string         `json:"label"`
+	Transition TransJSON      `json:"transition"`
+	Cfg        map[string]any `json:"cfg"`
+}
+
+type MarkerJSON struct {
+	At    float64 `json:"at"`
+	Label string  `json:"label"`
+}
+
+type ProjectJSON struct {
+	Audio   map[string]any       `json:"audio"`
+	Output  map[string]any       `json:"output"`
+	Tracks  map[string][]SegJSON `json:"tracks"`
+	Markers []MarkerJSON         `json:"markers"`
+}
+
+// toMap convierte un bloque de config en un mapa con las claves del YAML
+func toMap(v any) map[string]any {
+	b, _ := yaml.Marshal(v)
+	m := map[string]any{}
+	_ = yaml.Unmarshal(b, &m)
+	return normalize(m).(map[string]any)
+}
+
+// normalize convierte map[any]any anidados (yaml) en map[string]any (json)
+func normalize(v any) any {
+	switch t := v.(type) {
+	case map[string]any:
+		for k, x := range t {
+			t[k] = normalize(x)
+		}
+		return t
+	case map[any]any:
+		m := map[string]any{}
+		for k, x := range t {
+			m[fmt.Sprint(k)] = normalize(x)
+		}
+		return m
+	case []any:
+		for i := range t {
+			t[i] = normalize(t[i])
+		}
+		return t
+	}
+	return v
+}
+
+// fromMap aplica un mapa sobre dst (que ya contiene los valores por defecto)
+func fromMap(m map[string]any, dst any) error {
+	b, err := yaml.Marshal(m)
+	if err != nil {
+		return err
+	}
+	return yaml.Unmarshal(b, dst)
+}
+
+func segsToJSON[T any](segs []config.Seg[T]) []SegJSON {
+	out := make([]SegJSON, len(segs))
+	for i, s := range segs {
+		out[i] = SegJSON{At: s.At, Label: s.Label, Transition: TransJSON{s.Transition.Mode, s.Transition.Duration}, Cfg: toMap(s.Cfg)}
+	}
+	return out
+}
+
+func segsFromJSON[T any](name string, in []SegJSON, def T, fix func(*T)) ([]config.Seg[T], error) {
+	if len(in) == 0 {
+		fix(&def)
+		return []config.Seg[T]{{Cfg: def, Transition: config.Transition{Mode: "cut"}}}, nil
+	}
+	out := make([]config.Seg[T], 0, len(in))
+	for i, s := range in {
+		cfg := def
+		// Copia limpia del valor por defecto (los slices no deben compartirse)
+		b, _ := yaml.Marshal(def)
+		_ = yaml.Unmarshal(b, &cfg)
+		if err := fromMap(s.Cfg, &cfg); err != nil {
+			return nil, fmt.Errorf("%s tramo %d: %w", name, i+1, err)
+		}
+		fix(&cfg)
+		at := s.At
+		if i == 0 {
+			at = 0
+		}
+		mode := s.Transition.Mode
+		if mode != "fade" {
+			mode = "cut"
+		}
+		out = append(out, config.Seg[T]{At: at, Label: s.Label, Transition: config.Transition{Mode: mode, Duration: s.Transition.Duration}, Cfg: cfg})
+	}
+	// Orden por tiempo (el primero siempre en 0)
+	for i := 1; i < len(out); i++ {
+		for j := i; j > 1 && out[j].At < out[j-1].At; j-- {
+			out[j], out[j-1] = out[j-1], out[j]
+		}
+	}
+	return out, nil
+}
+
+func noFix[T any](*T) {}
+
+// ProjectToJSON prepara el proyecto para la interfaz
+func ProjectToJSON(c *config.ProjectConfig) *ProjectJSON {
+	tl := &c.Timeline
+	p := &ProjectJSON{
+		Audio:  toMap(c.Audio),
+		Output: toMap(c.Output),
+		Tracks: map[string][]SegJSON{
+			"background":           segsToJSON(tl.Background),
+			"bass_zoom":            segsToJSON(tl.BassZoom),
+			"shake":                segsToJSON(tl.Shake),
+			"chromatic_aberration": segsToJSON(tl.Chromatic),
+			"ripple":               segsToJSON(tl.Ripple),
+			"glitch":               segsToJSON(tl.Glitch),
+			"color_flash":          segsToJSON(tl.ColorFlash),
+			"visualizer":           segsToJSON(tl.Visualizer),
+			"particles":            segsToJSON(tl.Particles),
+			"lyrics":               segsToJSON(tl.Lyrics),
+		},
+		Markers: []MarkerJSON{},
+	}
+	for _, m := range c.Markers {
+		p.Markers = append(p.Markers, MarkerJSON{m.At, m.Label})
+	}
+	return p
+}
+
+// ProjectFromJSON reconstruye la config completa a partir de lo que envía la interfaz
+func ProjectFromJSON(p *ProjectJSON, dir string) (*config.ProjectConfig, error) {
+	c := config.DefaultConfig()
+	c.Dir = dir
+	if err := fromMap(p.Audio, &c.Audio); err != nil {
+		return nil, fmt.Errorf("audio: %w", err)
+	}
+	if err := fromMap(p.Output, &c.Output); err != nil {
+		return nil, fmt.Errorf("output: %w", err)
+	}
+	d := config.DefaultConfig()
+	tl := &c.Timeline
+	var err error
+	if tl.Background, err = segsFromJSON("background", p.Tracks["background"], d.Background, noFix[config.BackgroundConfig]); err != nil {
+		return nil, err
+	}
+	be := &d.BackgroundEffects
+	if tl.BassZoom, err = segsFromJSON("bass_zoom", p.Tracks["bass_zoom"], be.BassZoom, noFix[config.BassZoomConfig]); err != nil {
+		return nil, err
+	}
+	if tl.Shake, err = segsFromJSON("shake", p.Tracks["shake"], be.Shake, noFix[config.ShakeConfig]); err != nil {
+		return nil, err
+	}
+	if tl.Chromatic, err = segsFromJSON("chromatic_aberration", p.Tracks["chromatic_aberration"], be.ChromaticAberration, noFix[config.ChromaticAberrationConfig]); err != nil {
+		return nil, err
+	}
+	if tl.Ripple, err = segsFromJSON("ripple", p.Tracks["ripple"], be.Ripple, noFix[config.RippleConfig]); err != nil {
+		return nil, err
+	}
+	if tl.Glitch, err = segsFromJSON("glitch", p.Tracks["glitch"], be.Glitch, noFix[config.GlitchConfig]); err != nil {
+		return nil, err
+	}
+	if tl.ColorFlash, err = segsFromJSON("color_flash", p.Tracks["color_flash"], be.ColorFlash, noFix[config.ColorFlashConfig]); err != nil {
+		return nil, err
+	}
+	if tl.Visualizer, err = segsFromJSON("visualizer", p.Tracks["visualizer"], d.Visualizer, config.FixVisualizer); err != nil {
+		return nil, err
+	}
+	if tl.Particles, err = segsFromJSON("particles", p.Tracks["particles"], d.Particles, config.FixParticles); err != nil {
+		return nil, err
+	}
+	if tl.Lyrics, err = segsFromJSON("lyrics", p.Tracks["lyrics"], d.Lyrics, noFix[config.LyricsConfig]); err != nil {
+		return nil, err
+	}
+	// La ruta y el desfase de la letra son globales: los marca el primer tramo
+	for i := range tl.Lyrics {
+		tl.Lyrics[i].Cfg.Path, tl.Lyrics[i].Cfg.Offset = tl.Lyrics[0].Cfg.Path, tl.Lyrics[0].Cfg.Offset
+	}
+	for _, m := range p.Markers {
+		c.Markers = append(c.Markers, config.Marker{At: m.At, Label: m.Label})
+	}
+	if err := c.SyncFromTimeline(); err != nil {
+		return nil, err
+	}
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}

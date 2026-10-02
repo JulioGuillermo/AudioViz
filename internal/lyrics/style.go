@@ -181,6 +181,7 @@ func (e *Engine) textAt(col [3]float64, px, py float64, items []Item, st *Style)
 		d := e.sdfAt(ax, ay, it) * sc
 		if st.GlowI > 0 {
 			g := math.Exp(-math.Max(d-ow, 0)/(gr*0.45)) * st.GlowI * alpha
+			g *= 1 - smoothstep(0.55, 0.95, (d/sc)/math.Max(pad, 1))
 			col = mix3(col, [3]float64{st.GlowC[0], st.GlowC[1], st.GlowC[2]}, clampF(g, 0, 1)*0.85)
 		}
 		if ow > 0 {

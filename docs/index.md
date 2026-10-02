@@ -5,6 +5,8 @@ render por **GPU (Vulkan, cualquier fabricante)** con caída automática a CPU, 
 y audio FLAC sin pérdidas dentro de un MP4.
 
 ## Empezar
+- **[AudioViz Studio](studio.md)**: interfaz gráfica con preview y línea de tiempo (`audioviz studio`)
+- [Línea de tiempo en el YAML](timeline.md): cambiar efectos, fondo, visualizador o letra en cada sección
 - [Línea de comandos](cli.md) — render, previews, cuadro suelto, selección de GPU
 - [Compilar](build.md)
 - [Estructura del proyecto YAML](#estructura-del-yaml)
