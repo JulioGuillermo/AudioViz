@@ -56,6 +56,8 @@ type Params struct {
 	TItemA                                           [MaxTextItems][4]float32 // atlas x, y, w, h
 	TItemB                                           [MaxTextItems][4]float32 // centro x, y, escala, alfa
 	TItemC                                           [MaxTextItems][4]float32 // relleno karaoke, pad
+
+	BgMix [4]float32 // fundido hacia el fondo 2 (0..1), opacidad del visualizador, -, -
 }
 
 type Renderer struct {
@@ -114,6 +116,9 @@ func (g *Renderer) Background(slot int) []byte { return g.bytes(slot, C.VKR_BUF_
 // PlaneY / PlaneUV: salida NV12 (stride = PadW)
 func (g *Renderer) PlaneY(slot int) unsafe.Pointer  { return C.vkr_map(g.r, C.int(slot), C.VKR_BUF_Y) }
 func (g *Renderer) PlaneUV(slot int) unsafe.Pointer { return C.vkr_map(g.r, C.int(slot), C.VKR_BUF_UV) }
+// Background2 es el fondo destino durante un fundido cruzado
+func (g *Renderer) Background2(slot int) []byte { return g.bytes(slot, C.VKR_BUF_BG2, g.Width*g.Height*4) }
+
 // Text devuelve el buffer del atlas SDF de la letra del slot
 func (g *Renderer) Text(slot, n int) []byte { return g.bytes(slot, C.VKR_BUF_TEXT, n) }
 

@@ -18,6 +18,13 @@ type ProjectConfig struct {
 	Particles         ParticlesConfig         `yaml:"particles"`
 	Lyrics            LyricsConfig            `yaml:"lyrics"`
 	Output            OutputConfig            `yaml:"output"`
+
+	// Cambios a lo largo de la canción (ver timeline.go). Al cargar se construye Timeline.
+	TimelineRaw yaml.Node `yaml:"timeline,omitempty"`
+	Timeline    Timeline  `yaml:"-"`
+	Markers     []Marker  `yaml:"-"`
+	// Carpeta del proyecto (las rutas relativas del YAML se resuelven contra ella)
+	Dir string `yaml:"-"`
 }
 
 type AudioConfig struct {
@@ -166,6 +173,10 @@ type ParticleLayer struct {
 	Turbulence float64 `yaml:"turbulence"` // Serpenteo lateral (0 = recto; 0.5-1 = llama)
 	MinLife    float64 `yaml:"min_life"`   // Vida mínima en segundos (def. 1)
 	MaxLife    float64 `yaml:"max_life"`   // Vida máxima en segundos (def. 3)
+	// Dirección del movimiento en grados (0 = derecha, 90 = arriba, 180 = izquierda, 270 = abajo).
+	// rising_sparks: def. 90 y nacen en el borde opuesto; ambient_dust: deriva común en esa dirección.
+	Direction *float64 `yaml:"direction"`
+	Spread    float64  `yaml:"spread"` // apertura en grados alrededor de direction (def. 25)
 }
 
 // LyricsConfig: letra sincronizada (.srt / .lrc / LRC con tiempo por palabra) dibujada animada
@@ -385,44 +396,99 @@ func LoadConfig(filePath string) (*ProjectConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error leyendo archivo de proyecto '%s': %w", filePath, err)
 	}
+	abs, _ := filepath.Abs(filePath)
+	return ParseConfig(data, filepath.Dir(abs))
+}
 
+// ParseConfig interpreta un YAML de proyecto cuyas rutas relativas cuelgan de dir
+func ParseConfig(data []byte, dir string) (*ProjectConfig, error) {
 	cfg := DefaultConfig()
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("error parseando YAML de proyecto: %w", err)
 	}
-
-	// Resolver rutas relativas al archivo de proyecto
-	projectDir := filepath.Dir(filePath)
-	if cfg.Audio.Path != "" && !filepath.IsAbs(cfg.Audio.Path) {
-		cfg.Audio.Path = filepath.Clean(filepath.Join(projectDir, cfg.Audio.Path))
-	}
-	if cfg.Background.Path != "" && !filepath.IsAbs(cfg.Background.Path) {
-		cfg.Background.Path = filepath.Clean(filepath.Join(projectDir, cfg.Background.Path))
-	}
-	for _, pp := range []*string{&cfg.Lyrics.Path, &cfg.Lyrics.Font} {
-		if *pp != "" && !filepath.IsAbs(*pp) {
-			*pp = filepath.Clean(filepath.Join(projectDir, *pp))
-		}
-	}
-	if cfg.Output.Path != "" && !filepath.IsAbs(cfg.Output.Path) {
-		cfg.Output.Path = filepath.Clean(filepath.Join(projectDir, cfg.Output.Path))
-	}
-
+	cfg.Dir = dir
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
-
+	if err := cfg.BuildTimeline(); err != nil {
+		return nil, err
+	}
+	cfg.mapPaths(func(p string) string {
+		if p == "" || filepath.IsAbs(p) {
+			return p
+		}
+		return filepath.Clean(filepath.Join(dir, p))
+	})
 	return &cfg, nil
 }
 
+// mapPaths aplica fn a todas las rutas de archivos del proyecto (base y tramos)
+func (c *ProjectConfig) mapPaths(fn func(string) string) {
+	c.Audio.Path = fn(c.Audio.Path)
+	c.Output.Path = fn(c.Output.Path)
+	c.Background.Path = fn(c.Background.Path)
+	c.Lyrics.Path, c.Lyrics.Font = fn(c.Lyrics.Path), fn(c.Lyrics.Font)
+	for i := range c.Timeline.Background {
+		c.Timeline.Background[i].Cfg.Path = fn(c.Timeline.Background[i].Cfg.Path)
+	}
+	for i := range c.Timeline.Lyrics {
+		l := &c.Timeline.Lyrics[i].Cfg
+		l.Path, l.Font = fn(l.Path), fn(l.Font)
+	}
+}
+
+// Marshal serializa el proyecto a YAML con las rutas relativas a c.Dir cuando están dentro
+func (c *ProjectConfig) Marshal() ([]byte, error) {
+	cp := *c
+	if err := cp.SyncFromTimeline(); err != nil {
+		return nil, err
+	}
+	// Copia profunda de las pistas para no alterar las rutas del original
+	b, err := yaml.Marshal(&cp)
+	if err != nil {
+		return nil, err
+	}
+	tmp := DefaultConfig()
+	if err := yaml.Unmarshal(b, &tmp); err != nil {
+		return nil, err
+	}
+	rel := func(p string) string {
+		if p == "" || c.Dir == "" || !filepath.IsAbs(p) {
+			return p
+		}
+		if r, err := filepath.Rel(c.Dir, p); err == nil && !strings.HasPrefix(r, "..") {
+			return r
+		}
+		return p
+	}
+	tmp.Dir = c.Dir
+	if err := tmp.BuildTimeline(); err != nil {
+		return nil, err
+	}
+	tmp.mapPaths(rel)
+	if err := tmp.SyncFromTimeline(); err != nil {
+		return nil, err
+	}
+	return yaml.Marshal(&tmp)
+}
+
+// Save escribe el proyecto en path (de forma atómica)
+func (c *ProjectConfig) Save(path string) error {
+	b, err := c.Marshal()
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, append([]byte("# Proyecto AudioViz (editable a mano; ver docs/index.md)\n"), b...), 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func lower(s string) string { return strings.ToLower(s) }
+
 // Validate comprueba consistencia básica de la configuración
 func (c *ProjectConfig) Validate() error {
-	if c.Audio.Path == "" {
-		return fmt.Errorf("el campo 'audio.path' es obligatorio en el archivo de proyecto")
-	}
-	if c.Background.Path == "" {
-		return fmt.Errorf("el campo 'background.path' es obligatorio en el archivo de proyecto")
-	}
 	if c.Output.Path == "" {
 		c.Output.Path = "output.mp4"
 	}

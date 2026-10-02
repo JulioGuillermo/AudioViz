@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"image"
 	"image/color"
@@ -21,29 +22,10 @@ import (
 	"audioviz/internal/gpu"
 	"audioviz/internal/lyrics"
 	"audioviz/internal/mux"
-	"audioviz/internal/particles"
-	"audioviz/internal/video"
 	"audioviz/internal/visualizer"
 
 	"github.com/fogleman/gg"
 )
-
-type RenderEngine struct {
-	cfg        *config.ProjectConfig
-	outW, outH int
-}
-
-func NewRenderEngine(cfg *config.ProjectConfig) *RenderEngine {
-	return &RenderEngine{cfg: cfg}
-}
-
-// RenderOptions opciones auxiliares para previsualización o renderizado parcial
-type RenderOptions struct {
-	MaxDurationSec float64 // Si > 0, limita la duración del video (ej. 10s para preview)
-	StartSec       float64 // Segundo inicial del preview
-	SingleFrameAt  float64 // Si >= 0, exporta solo ese cuadro como imagen PNG
-	SingleFrameOut string  // Ruta de salida de la imagen de cuadro único
-}
 
 // frameFX son los parámetros de efectos de fondo de un cuadro (comunes a CPU y GPU)
 type frameFX struct {
@@ -56,175 +38,132 @@ type frameFX struct {
 	bright, contrast            float64
 }
 
-func (e *RenderEngine) computeFX(feat *audio.FrameFeatures, frameIdx int) frameFX {
-	eff := &e.cfg.BackgroundEffects
-	fps := float64(e.cfg.Output.FPS)
-	var fx frameFX
-	fx.zoom = 1
-	if eff.BassZoom.Enabled {
-		fx.zoom = 1.0 + (eff.BassZoom.MaxZoom-1.0)*feat.Band(eff.BassZoom.ReactTo, "bass")*eff.BassZoom.Sensitivity
-		if feat.BeatPulse > 0 {
-			fx.zoom += (eff.BassZoom.MaxZoom - 1.0) * feat.BeatPulse * 0.5
-		}
-	}
-	if sh := eff.Shake; sh.Enabled && sh.Amplitude > 0 {
-		speed := sh.Speed
-		if speed <= 0 {
-			speed = 1
-		}
-		t := float64(frameIdx) / fps * speed
-		amp := sh.Amplitude * feat.Band(sh.ReactTo, "bass")
-		// Suma de senos de frecuencias no múltiplas: vaivén orgánico sin repetición visible
-		fx.shakeX = amp * (0.6*math.Sin(t*7.3) + 0.4*math.Sin(t*13.1+1.7))
-		fx.shakeY = amp * (0.6*math.Sin(t*8.9+0.5) + 0.4*math.Sin(t*11.7+2.3))
-		// Zoom extra para que el desplazamiento nunca deje ver los bordes
-		minDim := math.Max(math.Min(float64(e.outW), float64(e.outH)), 64)
-		fx.zoom *= 1 + 2*sh.Amplitude/minDim
-	}
-	if eff.Ripple.Enabled {
-		fx.rTim = float64(frameIdx) * 0.05 * eff.Ripple.Speed
-		fx.rippleAmp = eff.Ripple.Amplitude * (0.3 + feat.Band(eff.Ripple.ReactTo, "mid")*0.7)
-		fx.rippleFreq = eff.Ripple.Frequency
-	}
-	if eff.ChromaticAberration.Enabled {
-		fx.chromaShift = eff.ChromaticAberration.MaxShift * feat.Band(eff.ChromaticAberration.ReactTo, "bass")
-		fx.chromaMode = 1
-		if eff.ChromaticAberration.Mode == "radial" {
-			fx.chromaMode = 2
-		}
-	}
-	if g := eff.Glitch; g.Enabled {
-		if g.ReactTo == "" {
-			fx.glitch = feat.SpectralFlux > g.Threshold || feat.IsBeat
-		} else {
-			fx.glitch = feat.Band(g.ReactTo, "") > g.Threshold
-		}
-	}
-	if eff.ColorFlash.Enabled {
-		v := feat.Band(eff.ColorFlash.ReactTo, "bass")
-		fx.bright = eff.ColorFlash.BrightnessBoost * v
-		fx.contrast = eff.ColorFlash.ContrastBoost * v
-	}
-	return fx
+// RenderOptions opciones del CLI para previsualización o renderizado parcial
+type RenderOptions struct {
+	MaxDurationSec float64 // Si > 0, limita la duración del video (ej. 10s para preview)
+	StartSec       float64 // Segundo inicial del preview
+	SingleFrameAt  float64 // Si >= 0, exporta solo ese cuadro como imagen PNG
+	SingleFrameOut string  // Ruta de salida de la imagen de cuadro único
 }
 
-func (e *RenderEngine) Execute(opts RenderOptions) error {
-	startTime := time.Now()
-	cfg := e.cfg
+// Progress informa del avance de una exportación
+type Progress struct {
+	Done, Total int
+	FPS         float64
+	ETA         float64
+	Stage       string
+}
 
-	fmt.Printf("🔍 Inspeccionando fondo: %s\n", cfg.Background.Path)
-	probe, err := video.ProbeMedia(cfg.Background.Path)
-	if err != nil {
-		return fmt.Errorf("error al inspeccionar fondo: %w", err)
-	}
-	targetW, targetH := cfg.Output.Width, cfg.Output.Height
-	if targetW <= 0 || targetH <= 0 {
-		targetW, targetH = probe.Width, probe.Height
-	}
-	targetW, targetH = targetW/2*2, targetH/2*2
-	e.outW, e.outH = targetW, targetH
-	fmt.Printf("📐 Resolución: %dx%d\n", targetW, targetH)
+// ---------------------------------------------------------------- renderer GPU/CPU
 
-	fmt.Printf("🎵 Decodificando audio: %s\n", cfg.Audio.Path)
-	decoded, err := audio.DecodeAudio(cfg.Audio.Path, cfg.Audio.Volume)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("✅ Audio: %.2f s, %d Hz, %d bits\n", decoded.DurationSec, decoded.SampleRate, decoded.BitsPerSample)
+// Renderer dibuja cuadros de una sesión con la GPU (Vulkan) o, si no hay, con la CPU
+type Renderer struct {
+	G       *gpu.Renderer
+	s       *Session
+	verA    []string
+	verB    []string
+	lyrVer  []int
+	textCap int
+}
 
-	fps := cfg.Output.FPS
-	fullFrames := int(decoded.DurationSec * float64(fps))
-	startFrame := 0
-	endFrame := fullFrames
-	if opts.SingleFrameAt >= 0 {
-		endFrame = min(int(opts.SingleFrameAt*float64(fps))+1, fullFrames)
-	} else {
-		if opts.StartSec > 0 {
-			startFrame = min(int(opts.StartSec*float64(fps)), fullFrames-1)
-		}
-		if opts.MaxDurationSec > 0 {
-			endFrame = min(startFrame+int(opts.MaxDurationSec*float64(fps)), fullFrames)
-		}
-	}
-
-	fmt.Printf("⚡ Analizando espectro (%d bandas, %d cuadros, normalización %v)...\n", cfg.Visualizer.Bars, fullFrames, cfg.Audio.Normalize)
-	t0 := time.Now()
-	analyzer := audio.NewAudioAnalyzer(decoded, fps, cfg.Visualizer.Bars, cfg.Audio.Sensitivity, cfg.Visualizer.Smoothing, cfg.Visualizer.DecayRate)
-	analyzer.Normalize = cfg.Audio.Normalize
-	analyzer.WindowSec = cfg.Audio.NormalizeWindow
-	// Se analiza la canción entera para que la normalización y el suavizado sean idénticos
-	// en un preview y en el render completo
-	allFeatures := analyzer.AnalyzeAllFrames(fullFrames)
-	fmt.Printf("   análisis en %v\n", time.Since(t0).Round(time.Millisecond))
-
-	bgReader, err := video.NewBackgroundReader(cfg.Background.Path, targetW, targetH, cfg.Background.FitMode, cfg.Background.LoopVideo)
-	if err != nil {
-		return err
-	}
-	defer bgReader.Close()
-
-	sc := newScene(cfg, targetW, targetH)
-	textSize := 16
-	if cfg.Lyrics.Enabled {
-		t1 := time.Now()
-		sc.lyr, err = lyrics.New(&cfg.Lyrics, targetW, targetH)
-		if err != nil {
-			return err
-		}
-		textSize = len(sc.lyr.Atlas.Pix)
-		fmt.Printf("🎤 Letra cargada: %s (atlas %dx%d, %v)\n", filepath.Base(cfg.Lyrics.Path), sc.lyr.Atlas.W, sc.lyr.Atlas.H, time.Since(t1).Round(time.Millisecond))
-	}
-
-	// Backend de render
-	var g *gpu.Renderer
-	mode := strings.ToLower(cfg.Output.Renderer)
+// NewRenderer crea el backend de render ("auto", "gpu" o "cpu") para la resolución de la sesión
+func NewRenderer(s *Session, mode string, slots int) (*Renderer, error) {
+	r := &Renderer{s: s}
+	mode = strings.ToLower(mode)
 	if mode != "cpu" {
-		slots := 3
-		if opts.SingleFrameAt >= 0 {
-			slots = 1
+		textCap := 1 << 20
+		if s.lyr != nil {
+			textCap = max(textCap, len(s.lyr.Atlas.Pix)*2)
 		}
-		g, err = gpu.New(targetW, targetH, slots, cfg.Output.GPUDevice, textSize)
+		g, err := gpu.New(s.W, s.H, slots, s.Cfg.Output.GPUDevice, textCap)
 		if err != nil {
 			if mode == "gpu" {
-				return fmt.Errorf("GPU Vulkan no disponible: %w", err)
+				return nil, fmt.Errorf("GPU Vulkan no disponible: %w", err)
 			}
-			fmt.Printf("⚠️  GPU Vulkan no disponible (%v), usando CPU\n", err)
-			g = nil
+			s.Logf("⚠️  GPU Vulkan no disponible (%v), usando CPU", err)
 		} else {
-			defer g.Close()
-			if sc.lyr != nil {
-				for s := 0; s < g.Slots; s++ {
-					copy(g.Text(s, textSize), sc.lyr.Atlas.Pix)
-				}
-			}
-			fmt.Printf("🖥️  Render por GPU (Vulkan): %s\n", g.DeviceName)
+			r.G, r.textCap = g, textCap
+			r.verA, r.verB, r.lyrVer = make([]string, slots), make([]string, slots), make([]int, slots)
+			s.Logf("🖥️  Render por GPU (Vulkan): %s", g.DeviceName)
 		}
 	}
-	if g == nil {
-		fmt.Printf("🖥️  Render por CPU (%d hilos)\n", runtime.NumCPU())
+	if r.G == nil {
+		s.Logf("🖥️  Render por CPU (%d hilos)", runtime.NumCPU())
 	}
+	return r, nil
+}
 
-	if opts.SingleFrameAt >= 0 {
-		idx := endFrame - 1
-		fmt.Printf("📸 Renderizando cuadro t=%.2fs (frame %d)...\n", float64(idx)/float64(fps), idx)
-		// Simular partículas desde un poco antes para que no estén en reposo
-		for i := max(0, idx-60); i < idx; i++ {
-			sc.parts.Update(&allFeatures[i], 1.0/float64(fps))
-		}
-		sc.parts.Update(&allFeatures[idx], 1.0/float64(fps))
-		var img *image.RGBA
-		if g != nil {
-			img, err = e.gpuStill(g, sc, bgReader, &allFeatures[idx], idx)
-		} else {
-			img, err = e.cpuFrame(sc, bgReader, &allFeatures[idx], idx)
-		}
-		if err != nil {
-			return err
-		}
-		return savePNG(opts.SingleFrameOut, img)
+// Fits indica si el renderer sirve para la sesión tal como está ahora (resolución y atlas)
+func (r *Renderer) Fits() bool {
+	if r.G == nil {
+		return true
 	}
+	need := 0
+	if r.s.lyr != nil {
+		need = len(r.s.lyr.Atlas.Pix)
+	}
+	return r.G.Width == r.s.W && r.G.Height == r.s.H && need <= r.textCap
+}
 
-	// Codificador H.264 (x264 integrado) + muxer MP4
+func (r *Renderer) Close() {
+	if r.G != nil {
+		r.G.Close()
+		r.G = nil
+	}
+}
+
+// submit prepara y lanza el cuadro fs en el slot (solo GPU)
+func (r *Renderer) submit(slot int, fs *FrameState, writeRGBA bool) error {
+	g := r.G
+	if fs.BgA != nil && r.verA[slot] != fs.VerA {
+		copy(g.Background(slot), fs.BgA.Pix)
+		r.verA[slot] = fs.VerA
+	}
+	if fs.BgB != nil && r.verB[slot] != fs.VerB {
+		copy(g.Background2(slot), fs.BgB.Pix)
+		r.verB[slot] = fs.VerB
+	}
+	if fs.Lyr != nil && r.lyrVer[slot] != r.s.LyrVer {
+		copy(g.Text(slot, len(fs.Lyr.Atlas.Pix)), fs.Lyr.Atlas.Pix)
+		r.lyrVer[slot] = r.s.LyrVer
+	}
+	r.s.fillParams(g.Params(slot), fs, g.PadW, g.PadH, writeRGBA)
+	return g.Submit(slot)
+}
+
+// Still renderiza un único cuadro como imagen RGBA
+func (r *Renderer) Still(fs *FrameState) (*image.RGBA, error) {
+	if r.G == nil {
+		return r.s.cpuFrame(fs), nil
+	}
+	if err := r.submit(0, fs, true); err != nil {
+		return nil, err
+	}
+	if err := r.G.Wait(0); err != nil {
+		return nil, err
+	}
+	out := image.NewRGBA(image.Rect(0, 0, r.G.Width, r.G.Height))
+	copy(out.Pix, r.G.RGBA(0))
+	return out, nil
+}
+
+// ---------------------------------------------------------------- exportación
+
+// ExportRange exporta los cuadros [start, end) al MP4 de salida
+func (s *Session) ExportRange(ctx context.Context, mode string, start, end int, outPath string, progress func(Progress)) error {
+	if s.Audio == nil {
+		return fmt.Errorf("el proyecto no tiene audio")
+	}
+	if progress == nil {
+		progress = func(Progress) {}
+	}
+	cfg := s.Cfg
+	r, err := NewRenderer(s, mode, 3)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
 	preset := cfg.Output.Preset
 	if preset == "" {
 		preset = "fast"
@@ -233,18 +172,21 @@ func (e *RenderEngine) Execute(opts RenderOptions) error {
 	if crf <= 0 {
 		crf = 18
 	}
-	enc, err := encode.NewX264(targetW, targetH, fps, preset, crf)
+	fps := s.FPS
+	enc, err := encode.NewX264(s.W, s.H, fps, preset, crf)
 	if err != nil {
 		return err
 	}
 	defer enc.Close()
-	mp4, err := mux.NewMP4Writer(cfg.Output.Path, targetW, targetH, fps)
+	if dir := filepath.Dir(outPath); dir != "" {
+		os.MkdirAll(dir, 0755)
+	}
+	mp4, err := mux.NewMP4Writer(outPath, s.W, s.H, fps)
 	if err != nil {
 		return err
 	}
-	hdrs := mux.SplitAnnexB(enc.Headers())
 	var sps, pps []byte
-	for _, nal := range hdrs {
+	for _, nal := range mux.SplitAnnexB(enc.Headers()) {
 		switch nal[0] & 0x1F {
 		case 7:
 			sps = nal
@@ -254,19 +196,18 @@ func (e *RenderEngine) Execute(opts RenderOptions) error {
 	}
 	mp4.SetAVCConfig(sps, pps)
 
-	// Audio: el tramo exacto del video, codificado a FLAC sin pérdidas en paralelo al render
+	// Audio: el tramo exacto, a FLAC sin pérdidas en paralelo al render
 	var audioWG sync.WaitGroup
 	audioWG.Add(1)
 	go func() {
 		defer audioWG.Done()
-		s0 := int(float64(startFrame) / float64(fps) * float64(decoded.SampleRate))
-		s1 := int(float64(endFrame) / float64(fps) * float64(decoded.SampleRate))
-		s1 = min(s1, len(decoded.PCM)/2)
-		st := audio.EncodeFLAC(decoded.PCM[s0*2:s1*2], decoded.SampleRate, decoded.BitsPerSample, 0)
-		mp4.SetAudio(&mux.AudioTrack{SampleRate: decoded.SampleRate, Channels: 2, BitsPerSample: decoded.BitsPerSample,
+		d := s.Audio
+		s0 := int(float64(start) / float64(fps) * float64(d.SampleRate))
+		s1 := min(int(float64(end)/float64(fps)*float64(d.SampleRate)), len(d.PCM)/2)
+		st := audio.EncodeFLAC(d.PCM[s0*2:s1*2], d.SampleRate, d.BitsPerSample, 0)
+		mp4.SetAudio(&mux.AudioTrack{SampleRate: d.SampleRate, Channels: 2, BitsPerSample: d.BitsPerSample,
 			StreamInfo: st.StreamInfo, Frames: st.Frames, FrameSamples: st.FrameSamples})
 	}()
-
 	emit := func(p *encode.Packet) error {
 		if p == nil {
 			return nil
@@ -274,125 +215,170 @@ func (e *RenderEngine) Execute(opts RenderOptions) error {
 		return mp4.WriteVideoAnnexB(p.Data, p.PTS, p.DTS, p.Key)
 	}
 
-	// Avanzar partículas hasta el inicio del preview
-	for i := 0; i < startFrame; i++ {
-		sc.parts.Update(&allFeatures[i], 1.0/float64(fps))
-	}
-
-	total := endFrame - startFrame
-	fmt.Printf("🚀 Renderizando %d cuadros (x264 preset %s, CRF %.0f)...\n", total, preset, crf)
-	renderStart := time.Now()
-	lastReport := time.Now()
-	progress := func(done int) {
-		if time.Since(lastReport) < time.Second && done != total {
+	total := end - start
+	t0 := time.Now()
+	last := time.Time{}
+	done := 0
+	report := func() {
+		if time.Since(last) < 250*time.Millisecond && done != total {
 			return
 		}
-		lastReport = time.Now()
-		el := time.Since(renderStart).Seconds()
-		f := float64(done) / el
-		fmt.Printf("\r⏳ [%5.1f%%] Cuadro %d/%d (%.1f FPS) | ETA: %.0fs    ", float64(done)/float64(total)*100, done, total, f, float64(total-done)/math.Max(f, 0.01))
+		last = time.Now()
+		f := float64(done) / math.Max(time.Since(t0).Seconds(), 1e-3)
+		progress(Progress{Done: done, Total: total, FPS: f, ETA: float64(total-done) / math.Max(f, 0.01), Stage: "render"})
 	}
 
-	if g != nil {
-		err = e.renderGPU(g, sc, bgReader, allFeatures, startFrame, endFrame, enc, emit, progress)
+	if r.G != nil {
+		g := r.G
+		inFlight := make([]int, g.Slots)
+		for i := range inFlight {
+			inFlight[i] = -1
+		}
+		collect := func(slot int) error {
+			if inFlight[slot] < 0 {
+				return nil
+			}
+			if err := g.Wait(slot); err != nil {
+				return err
+			}
+			p, err := enc.Encode(g.PlaneY(slot), g.PlaneUV(slot), g.PadW, int64(inFlight[slot]-start))
+			if err != nil {
+				return err
+			}
+			inFlight[slot] = -1
+			done++
+			report()
+			return emit(p)
+		}
+		for i := start; i < end; i++ {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			slot := (i - start) % g.Slots
+			if err := collect(slot); err != nil {
+				return err
+			}
+			fs, err := s.Prepare(i)
+			if err != nil {
+				return err
+			}
+			if err := r.submit(slot, fs, false); err != nil {
+				return err
+			}
+			inFlight[slot] = i
+		}
+		for k := 0; k < g.Slots; k++ {
+			if err := collect((end - start + k) % g.Slots); err != nil {
+				return err
+			}
+		}
 	} else {
-		err = e.renderCPU(sc, bgReader, allFeatures, startFrame, endFrame, enc, emit, progress)
-	}
-	if err != nil {
-		return err
+		stride := (s.W + 15) / 16 * 16
+		ph := (s.H + 15) / 16 * 16
+		yp := encode.Alloc(stride * ph)
+		uvp := encode.Alloc(stride * ph / 2)
+		defer encode.Free(yp)
+		defer encode.Free(uvp)
+		Y := unsafe.Slice((*byte)(yp), stride*ph)
+		UV := unsafe.Slice((*byte)(uvp), stride*ph/2)
+		for i := start; i < end; i++ {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			fs, err := s.Prepare(i)
+			if err != nil {
+				return err
+			}
+			rgbaToNV12(s.cpuFrame(fs), Y, UV, stride)
+			p, err := enc.Encode(yp, uvp, stride, int64(i-start))
+			if err != nil {
+				return err
+			}
+			if err := emit(p); err != nil {
+				return err
+			}
+			done++
+			report()
+		}
 	}
 	if err := enc.Flush(emit); err != nil {
 		return err
 	}
+	progress(Progress{Done: done, Total: total, Stage: "mux"})
 	audioWG.Wait()
-	fmt.Printf("\n📦 Escribiendo MP4...\n")
-	if err := mp4.Close(); err != nil {
-		return err
-	}
-	fmt.Printf("✨ Completado en %s (%.1f FPS medios)\n📁 %s\n", time.Since(startTime).Round(time.Millisecond),
-		float64(total)/time.Since(renderStart).Seconds(), cfg.Output.Path)
-	return nil
+	return mp4.Close()
 }
 
-// ---------------------------------------------------------------- GPU
+// Execute es el flujo del CLI: un PNG suelto o el video (completo o un tramo)
+func Execute(cfg *config.ProjectConfig, opts RenderOptions) error {
+	startTime := time.Now()
+	logf := func(f string, a ...any) { fmt.Printf(f+"\n", a...) }
+	if cfg.Audio.Path == "" {
+		return fmt.Errorf("el campo 'audio.path' es obligatorio")
+	}
+	s, err := Open(cfg, logf)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	logf("📐 Resolución: %dx%d @ %d fps", s.W, s.H, s.FPS)
 
-func (e *RenderEngine) renderGPU(g *gpu.Renderer, sc *scene, bg video.BackgroundReader, feats []audio.FrameFeatures,
-	start, end int, enc *encode.X264, emit func(*encode.Packet) error, progress func(int)) error {
-	fps := float64(e.cfg.Output.FPS)
-	bgVersion := make([]int, g.Slots)
-	for i := range bgVersion {
-		bgVersion[i] = -1
-	}
-	inFlight := make([]int, g.Slots) // cuadro en cada slot, -1 libre
-	for i := range inFlight {
-		inFlight[i] = -1
-	}
-	done := 0
-	collect := func(slot int) error {
-		if inFlight[slot] < 0 {
-			return nil
-		}
-		if err := g.Wait(slot); err != nil {
-			return err
-		}
-		p, err := enc.Encode(g.PlaneY(slot), g.PlaneUV(slot), g.PadW, int64(inFlight[slot]-start))
+	if opts.SingleFrameAt >= 0 {
+		idx := min(int(opts.SingleFrameAt*float64(s.FPS)), s.Frames-1)
+		r, err := NewRenderer(s, cfg.Output.Renderer, 1)
 		if err != nil {
 			return err
 		}
-		inFlight[slot] = -1
-		done++
-		progress(done)
-		return emit(p)
+		defer r.Close()
+		fs, err := s.Prepare(idx)
+		if err != nil {
+			return err
+		}
+		img, err := r.Still(fs)
+		if err != nil {
+			return err
+		}
+		return savePNG(opts.SingleFrameOut, img)
 	}
 
-	for i := start; i < end; i++ {
-		slot := (i - start) % g.Slots
-		if err := collect(slot); err != nil {
-			return err
-		}
-		feat := &feats[i]
-		sc.parts.Update(feat, 1/fps)
-		img, ver := bg.FrameAt(float64(i) / fps)
-		if ver != bgVersion[slot] {
-			copy(g.Background(slot), img.Pix)
-			bgVersion[slot] = ver
-		}
-		sc.fillParams(g.Params(slot), e.computeFX(feat, i), feat, i, g.PadW, g.PadH, false)
-		if err := g.Submit(slot); err != nil {
-			return err
-		}
-		inFlight[slot] = i
+	start, end := 0, s.Frames
+	if opts.StartSec > 0 {
+		start = min(int(opts.StartSec*float64(s.FPS)), s.Frames-1)
 	}
-	for k := 0; k < g.Slots; k++ {
-		if err := collect((end - start + k) % g.Slots); err != nil {
-			return err
-		}
+	if opts.MaxDurationSec > 0 {
+		end = min(start+int(opts.MaxDurationSec*float64(s.FPS)), s.Frames)
 	}
+	logf("🚀 Renderizando %d cuadros (x264 preset %s, CRF %d)...", end-start, cfg.Output.Preset, cfg.Output.CRF)
+	t0 := time.Now()
+	err = s.ExportRange(context.Background(), cfg.Output.Renderer, start, end, cfg.Output.Path, func(p Progress) {
+		if p.Stage == "mux" {
+			fmt.Printf("\n📦 Escribiendo MP4...\n")
+			return
+		}
+		fmt.Printf("\r⏳ [%5.1f%%] Cuadro %d/%d (%.1f FPS) | ETA: %.0fs    ", float64(p.Done)/float64(p.Total)*100, p.Done, p.Total, p.FPS, p.ETA)
+	})
+	if err != nil {
+		return err
+	}
+	logf("✨ Completado en %s (%.1f FPS medios)\n📁 %s", time.Since(startTime).Round(time.Millisecond),
+		float64(end-start)/time.Since(t0).Seconds(), cfg.Output.Path)
 	return nil
-}
-
-func (e *RenderEngine) gpuStill(g *gpu.Renderer, sc *scene, bg video.BackgroundReader, feat *audio.FrameFeatures, idx int) (*image.RGBA, error) {
-	img, _ := bg.FrameAt(float64(idx) / float64(e.cfg.Output.FPS))
-	copy(g.Background(0), img.Pix)
-	sc.fillParams(g.Params(0), e.computeFX(feat, idx), feat, idx, g.PadW, g.PadH, true)
-	if err := g.Submit(0); err != nil {
-		return nil, err
-	}
-	if err := g.Wait(0); err != nil {
-		return nil, err
-	}
-	out := image.NewRGBA(image.Rect(0, 0, g.Width, g.Height))
-	copy(out.Pix, g.RGBA(0))
-	return out, nil
 }
 
 // ---------------------------------------------------------------- CPU
 
-func (e *RenderEngine) cpuFrame(sc *scene, bg video.BackgroundReader, feat *audio.FrameFeatures, idx int) (*image.RGBA, error) {
-	src, _ := bg.FrameAt(float64(idx) / float64(e.cfg.Output.FPS))
-	frame := image.NewRGBA(src.Bounds())
-	copy(frame.Pix, src.Pix)
-	fx := e.computeFX(feat, idx)
+func (s *Session) cpuFrame(fs *FrameState) *image.RGBA {
+	frame := image.NewRGBA(image.Rect(0, 0, s.W, s.H))
+	if fs.BgA != nil {
+		copy(frame.Pix, fs.BgA.Pix)
+		if fs.BgB != nil && fs.BgMix > 0 {
+			m := fs.BgMix
+			for i := range frame.Pix {
+				frame.Pix[i] = uint8(float64(frame.Pix[i])*(1-m) + float64(fs.BgB.Pix[i])*m + 0.5)
+			}
+		}
+	}
+	fx := fs.FX
 	frame = effects.ApplyBassZoom(frame, fx.zoom, fx.shakeX, fx.shakeY)
 	if fx.rippleAmp > 0 {
 		frame = effects.ApplyRipple(frame, fx.rippleAmp, fx.rippleFreq, fx.rTim)
@@ -405,49 +391,31 @@ func (e *RenderEngine) cpuFrame(sc *scene, bg video.BackgroundReader, feat *audi
 		frame = effects.ApplyChromaticAberration(frame, fx.chromaShift, mode)
 	}
 	if fx.glitch {
-		frame = effects.ApplyGlitch(frame, e.cfg.BackgroundEffects.Glitch.Intensity, int64(idx))
+		frame = effects.ApplyGlitch(frame, fs.GlitchAmount, int64(fs.Idx))
 	}
-	effects.ApplyColorAndContrast(frame, fx.bright, fx.contrast, e.cfg.Background.Darken, e.cfg.Background.Opacity, e.cfg.Background.Vignette)
+	effects.ApplyColorAndContrast(frame, fx.bright, fx.contrast, fs.BG.Darken, fs.BG.Opacity, fs.BG.Vignette)
 
 	dc := gg.NewContextForRGBA(frame)
-	sc.parts.Draw(dc)
-	sc.viz.Draw(dc, feat)
-	if sc.lyr != nil {
-		t := float64(idx) / float64(e.cfg.Output.FPS)
-		sc.lyr.DrawCPU(frame, sc.lyr.Frame(t, feat), sc.lyr.StyleAt(t, feat))
+	for _, ps := range fs.Parts {
+		ps.Draw(dc)
 	}
-	return frame, nil
-}
-
-func (e *RenderEngine) renderCPU(sc *scene, bg video.BackgroundReader, feats []audio.FrameFeatures,
-	start, end int, enc *encode.X264, emit func(*encode.Packet) error, progress func(int)) error {
-	w, h := sc.w, sc.h
-	stride := (w + 15) / 16 * 16
-	ph := (h + 15) / 16 * 16
-	yp := encode.Alloc(stride * ph)
-	uvp := encode.Alloc(stride * ph / 2)
-	defer encode.Free(yp)
-	defer encode.Free(uvp)
-	Y := unsafe.Slice((*byte)(yp), stride*ph)
-	UV := unsafe.Slice((*byte)(uvp), stride*ph/2)
-	fps := float64(e.cfg.Output.FPS)
-	for i := start; i < end; i++ {
-		sc.parts.Update(&feats[i], 1/fps)
-		frame, err := e.cpuFrame(sc, bg, &feats[i], i)
-		if err != nil {
-			return err
+	if viz, err := visualizer.NewVisualizer(&fs.Viz, s.W, s.H); err == nil && fs.VizAlpha > 0 {
+		if fs.VizAlpha >= 0.999 {
+			viz.Draw(dc, fs.VizFeat)
+		} else {
+			layer := image.NewRGBA(frame.Bounds())
+			copy(layer.Pix, frame.Pix)
+			viz.Draw(gg.NewContextForRGBA(layer), fs.VizFeat)
+			a := fs.VizAlpha
+			for i := range frame.Pix {
+				frame.Pix[i] = uint8(float64(frame.Pix[i])*(1-a) + float64(layer.Pix[i])*a + 0.5)
+			}
 		}
-		rgbaToNV12(frame, Y, UV, stride)
-		p, err := enc.Encode(yp, uvp, stride, int64(i-start))
-		if err != nil {
-			return err
-		}
-		if err := emit(p); err != nil {
-			return err
-		}
-		progress(i - start + 1)
 	}
-	return nil
+	if fs.Lyr != nil {
+		fs.Lyr.DrawCPU(frame, fs.Lyr.Frame(fs.T, fs.Feat), lyrics.StyleFor(&fs.LyrSt, fs.T, fs.Feat))
+	}
+	return frame
 }
 
 func rgbaToNV12(img *image.RGBA, Y, UV []byte, stride int) {
@@ -499,30 +467,18 @@ func savePNG(path string, img *image.RGBA) error {
 	return nil
 }
 
-// ---------------------------------------------------------------- escena
-
-type scene struct {
-	cfg   *config.ProjectConfig
-	w, h  int
-	parts *particles.ParticleSystem
-	viz   visualizer.Visualizer
-	lyr   *lyrics.Engine
-}
-
-func newScene(cfg *config.ProjectConfig, w, h int) *scene {
-	viz, _ := visualizer.NewVisualizer(&cfg.Visualizer, w, h)
-	return &scene{cfg: cfg, w: w, h: h, parts: particles.NewParticleSystem(&cfg.Particles, w, h), viz: viz}
-}
+// ---------------------------------------------------------------- parámetros GPU
 
 func rgbaF(hex string) [4]float32 {
 	c, _ := visualizer.ParseHexColor(hex)
 	return [4]float32{float32(c.R) / 255, float32(c.G) / 255, float32(c.B) / 255, float32(c.A) / 255}
 }
 
-func (s *scene) fillParams(p *gpu.Params, fx frameFX, feat *audio.FrameFeatures, frameIdx, padW, padH int, writeRGBA bool) {
-	cfg := s.cfg
-	v := &cfg.Visualizer
-	W, H := float64(s.w), float64(s.h)
+func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writeRGBA bool) {
+	v := &fs.Viz
+	feat := fs.VizFeat
+	fx := fs.FX
+	W, H := float64(s.W), float64(s.H)
 	b2i := func(b bool) int32 {
 		if b {
 			return 1
@@ -530,17 +486,20 @@ func (s *scene) fillParams(p *gpu.Params, fx frameFX, feat *audio.FrameFeatures,
 		return 0
 	}
 
-	p.Dims = [4]int32{int32(s.w), int32(s.h), int32(padW), int32(padH)}
+	p.Dims = [4]int32{int32(s.W), int32(s.H), int32(padW), int32(padH)}
 
 	// Fondo
 	c := fx.contrast * 128.0
 	cf := (259.0 * (c + 255.0)) / (255.0 * (259.0 - c))
 	p.ZoomRipple = [4]float32{float32(fx.zoom), float32(fx.rippleAmp), float32(fx.rippleFreq), float32(fx.rTim)}
-	p.ColorAdj = [4]float32{float32(cf), float32(-cfg.Background.Darken + fx.bright), float32(cfg.Background.Opacity), float32(cfg.Background.Vignette)}
+	p.ColorAdj = [4]float32{float32(cf), float32(-fs.BG.Darken + fx.bright), float32(fs.BG.Opacity), float32(fs.BG.Vignette)}
+	if fs.BgA == nil {
+		p.ColorAdj[2] = 0 // sin fondo: negro
+	}
 	p.Chroma = [4]float32{float32(fx.chromaShift)}
 	nGlitch := 0
 	if fx.glitch {
-		for _, sl := range effects.GlitchSlices(s.w, s.h, cfg.BackgroundEffects.Glitch.Intensity, int64(frameIdx)) {
+		for _, sl := range effects.GlitchSlices(s.W, s.H, fs.GlitchAmount, int64(fs.Idx)) {
 			if nGlitch == gpu.MaxGlitch {
 				break
 			}
@@ -548,25 +507,31 @@ func (s *scene) fillParams(p *gpu.Params, fx frameFX, feat *audio.FrameFeatures,
 			nGlitch++
 		}
 	}
+	p.BgMix = [4]float32{0, float32(fs.VizAlpha)}
+	if fs.BgB != nil {
+		p.BgMix[0] = float32(fs.BgMix)
+	}
 
 	// Partículas
 	np := 0
-	s.parts.Each(func(x, y, size, alpha float64, col color.RGBA, glow bool) {
-		if np < gpu.MaxParts {
-			p.Parts[np] = [4]float32{float32(x), float32(y), float32(size), float32(alpha)}
-			g := float32(0)
-			if glow {
-				g = 1
+	for _, ps := range fs.Parts {
+		ps.Each(func(x, y, size, alpha float64, col color.RGBA, glow bool) {
+			if np < gpu.MaxParts {
+				p.Parts[np] = [4]float32{float32(x), float32(y), float32(size), float32(alpha)}
+				g := float32(0)
+				if glow {
+					g = 1
+				}
+				p.PartCol[np] = [4]float32{float32(col.R) / 255, float32(col.G) / 255, float32(col.B) / 255, g}
+				np++
 			}
-			p.PartCol[np] = [4]float32{float32(col.R) / 255, float32(col.G) / 255, float32(col.B) / 255, g}
-			np++
-		}
-	})
+		})
+	}
 	p.Shake = [4]float32{float32(fx.shakeX), float32(fx.shakeY)}
 
 	// Visualizador
 	vizType := int32(0)
-	if v.Enabled {
+	if v.Enabled && fs.VizAlpha > 0 {
 		switch v.Type {
 		case "circular", "circle", "radial":
 			vizType = 1
@@ -584,7 +549,6 @@ func (s *scene) fillParams(p *gpu.Params, fx frameFX, feat *audio.FrameFeatures,
 		p.Bars[i] = [4]float32{float32(v.MinHeight + l*(v.MaxHeight-v.MinHeight)), float32(v.MinHeight + r*(v.MaxHeight-v.MinHeight)), float32(l), float32(r)}
 	}
 
-	chromaMode := int32(fx.chromaMode)
 	colorMode := int32(0)
 	if v.ColorMode == "solid" {
 		colorMode = 1
@@ -604,12 +568,12 @@ func (s *scene) fillParams(p *gpu.Params, fx frameFX, feat *audio.FrameFeatures,
 	}
 
 	p.Flags = [4]int32{vizType, int32(n), int32(np), int32(nGlitch)}
-	p.Flags2 = [4]int32{chromaMode, colorMode, int32(ng), b2i(writeRGBA)}
+	p.Flags2 = [4]int32{int32(fx.chromaMode), colorMode, int32(ng), b2i(writeRGBA)}
 	p.Flags3 = [4]int32{b2i(v.MirrorBottom), b2i(v.Glow.Enabled), 0, 1}
 	p.GradInfo = [4]float32{float32(b2i(v.GradientAxis == "length")), float32(b2i(v.GradientFit == "max")), float32(v.MaxHeight)}
+	p.Viz0, p.Viz1, p.Viz2, p.Viz3 = [4]float32{}, [4]float32{}, [4]float32{}, [4]float32{}
 
 	bw := v.BarWidth
-	glowR, glowI := v.Glow.Radius, v.Glow.Intensity
 	switch vizType {
 	case 1:
 		cx, cy := W*v.CenterX, H*v.CenterY
@@ -626,9 +590,9 @@ func (s *scene) fillParams(p *gpu.Params, fx frameFX, feat *audio.FrameFeatures,
 		if bw <= 0 {
 			bw = 4
 		}
-		base := rad * (1.0 + feat.BassEnergy*0.08 + feat.BeatPulse*0.04)
+		base := rad * (1.0 + fs.Feat.BassEnergy*0.08 + fs.Feat.BeatPulse*0.04)
 		p.Viz0 = [4]float32{float32(cx), float32(cy), float32(base), 0}
-		p.Viz1 = [4]float32{float32(bw), 0, 0, float32(0.4 + feat.BassEnergy*0.3)}
+		p.Viz1 = [4]float32{float32(bw), 0, 0, float32(0.4 + fs.Feat.BassEnergy*0.3)}
 	case 2:
 		posY := v.PositionY
 		if posY <= 0 {
@@ -645,7 +609,7 @@ func (s *scene) fillParams(p *gpu.Params, fx frameFX, feat *audio.FrameFeatures,
 		p.Viz1 = [4]float32{float32(bw), float32(span), float32(v.Roundness), 0}
 		p.Viz3 = [4]float32{0, 0, float32(cg), 0}
 	case 3:
-		span := H * 0.8 / float64(n)
+		span := H * 0.8 / float64(max(n, 1))
 		p.Viz1 = [4]float32{float32(bw), float32(span), float32(v.Roundness), 0}
 		p.Viz3 = [4]float32{float32(H * 0.1), float32(span * 0.7), 0, 0}
 	case 4:
@@ -661,15 +625,14 @@ func (s *scene) fillParams(p *gpu.Params, fx frameFX, feat *audio.FrameFeatures,
 		p.Viz2[2] = float32(v.MaxHeight)
 		p.Viz2[3] = float32(W / float64(max(n-1, 1)))
 	}
-	p.Viz2[0] = float32(glowR)
-	p.Viz2[1] = float32(glowI)
+	p.Viz2[0] = float32(v.Glow.Radius)
+	p.Viz2[1] = float32(v.Glow.Intensity)
 
 	// Letra
 	p.TextInfo = [4]int32{}
-	if s.lyr != nil {
-		t := float64(frameIdx) / float64(cfg.Output.FPS)
-		items := s.lyr.Frame(t, feat)
-		st := s.lyr.StyleAt(t, feat)
+	if fs.Lyr != nil {
+		items := fs.Lyr.Frame(fs.T, fs.Feat)
+		st := lyrics.StyleFor(&fs.LyrSt, fs.T, fs.Feat)
 		n := min(len(items), gpu.MaxTextItems)
 		for i := 0; i < n; i++ {
 			it := items[i]
@@ -687,7 +650,7 @@ func (s *scene) fillParams(p *gpu.Params, fx frameFX, feat *audio.FrameFeatures,
 		if st.Chroma > 0.3 {
 			chroma = 1
 		}
-		p.TextInfo = [4]int32{int32(n), int32(s.lyr.Atlas.W), chroma, int32(ng)}
+		p.TextInfo = [4]int32{int32(n), int32(fs.Lyr.Atlas.W), chroma, int32(ng)}
 		p.TextStyle = [4]float32{float32(st.OutlineW), float32(st.GlowR), float32(st.GlowI), float32(st.Chroma)}
 		p.TextColor, p.TextUpcoming, p.TextOutline, p.TextGlowC = f4(st.Color), f4(st.Upcoming), f4(st.Outline), f4(st.GlowC)
 		p.TextShadow = [4]float32{float32(st.ShadowDX), float32(st.ShadowDY), float32(st.ShadowOp), float32(st.Blur)}

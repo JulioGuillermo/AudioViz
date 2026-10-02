@@ -49,6 +49,7 @@ layout(std430, set = 0, binding = 0) readonly buffer Params {
     vec4 tA[MAX_TEXT];         // atlas x, y, w, h
     vec4 tB[MAX_TEXT];         // centro x, y, escala, alfa
     vec4 tC[MAX_TEXT];         // relleno karaoke, pad
+    vec4 bgMix;                // fundido al fondo 2, opacidad del visualizador
 } P;
 
 layout(std430, set = 0, binding = 1) readonly buffer BG { uint bg[]; };
@@ -56,12 +57,15 @@ layout(std430, set = 0, binding = 2) writeonly buffer OutY { uint outY[]; };
 layout(std430, set = 0, binding = 3) writeonly buffer OutUV { uint outUV[]; };
 layout(std430, set = 0, binding = 4) writeonly buffer OutRGBA { uint outRGBA[]; };
 layout(std430, set = 0, binding = 5) readonly buffer TextAtlas { uint atlas[]; };
+layout(std430, set = 0, binding = 6) readonly buffer BG2 { uint bg2[]; };
 
 int W, H;
 
 vec3 fetch(ivec2 c) {
     c = clamp(c, ivec2(0), ivec2(W - 1, H - 1));
-    return unpackUnorm4x8(bg[c.y * W + c.x]).rgb;
+    vec3 a = unpackUnorm4x8(bg[c.y * W + c.x]).rgb;
+    if (P.bgMix.x > 0.0) a = mix(a, unpackUnorm4x8(bg2[c.y * W + c.x]).rgb, P.bgMix.x);
+    return a;
 }
 
 vec3 bilinear(vec2 q) {
@@ -191,6 +195,7 @@ float gA, cA;
 vec3 gC, cC;
 
 void addShape(float d, vec3 color, float alpha) {
+    alpha *= P.bgMix.y;
     float cov = clamp(0.5 - d, 0.0, 1.0) * alpha;
     if (cov > cA) { cA = cov; cC = color; }
     if (P.flags3.y != 0) {
@@ -395,7 +400,7 @@ vec3 shade(ivec2 pix) {
             if (P.flags3.w != 0) {
                 // Anillo base del visualizador circular
                 float rd = abs(length(p - P.viz0.xy) - (P.viz0.z - 2.0)) - 1.0;
-                col = over(col, gradientAt(0.5), clamp(0.5 - rd, 0.0, 1.0) * P.viz1.w);
+                col = over(col, gradientAt(0.5), clamp(0.5 - rd, 0.0, 1.0) * P.viz1.w * P.bgMix.y);
             }
             circularBars(p);
         } else if (vt == 2) {

@@ -119,18 +119,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	abs := func(p string) string { a, _ := filepath.Abs(p); return a }
 	if flagOutput != "" {
-		cfg.Output.Path = flagOutput
+		cfg.Output.Path = abs(flagOutput)
 	}
 	if flagAudio != "" {
-		cfg.Audio.Path = flagAudio
+		cfg.Audio.Path = abs(flagAudio)
 	}
 	if flagBg != "" {
-		cfg.Background.Path = flagBg
+		cfg.Timeline.Background[0].Cfg.Path = abs(flagBg)
 	}
 	if flagLyrics != "" {
-		cfg.Lyrics.Path = flagLyrics
-		cfg.Lyrics.Enabled = true
+		for i := range cfg.Timeline.Lyrics {
+			cfg.Timeline.Lyrics[i].Cfg.Path = abs(flagLyrics)
+			cfg.Timeline.Lyrics[i].Cfg.Enabled = true
+		}
 	}
 	if flagRenderer != "" {
 		cfg.Output.Renderer = flagRenderer
@@ -146,8 +149,7 @@ func main() {
 		SingleFrameOut: flagFrameOut,
 	}
 
-	eng := engine.NewRenderEngine(cfg)
-	if err := eng.Execute(renderOpts); err != nil {
+	if err := engine.Execute(cfg, renderOpts); err != nil {
 		fmt.Printf("\n❌ Error durante el renderizado: %v\n", err)
 		os.Exit(1)
 	}

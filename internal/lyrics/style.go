@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"audioviz/internal/audio"
+	"audioviz/internal/config"
 	"audioviz/internal/visualizer"
 )
 
@@ -41,8 +42,15 @@ func mix3(a, b [3]float64, t float64) [3]float64 {
 
 // StyleAt calcula el estilo del cuadro: flash de color, parpadeo tipo llama y glow reactivo
 func (e *Engine) StyleAt(t float64, feat *audio.FrameFeatures) Style {
-	cfg := e.cfg
-	band := e.Band(feat)
+	return StyleFor(e.cfg, t, feat)
+}
+
+// StyleFor calcula el estilo de un cuadro con la config indicada (la del tramo activo en t)
+func StyleFor(cfg *config.LyricsConfig, t float64, feat *audio.FrameFeatures) Style {
+	band := 0.0
+	if feat != nil {
+		band = math.Min(feat.Band(cfg.React.ReactTo, "bass"), 1)
+	}
 	white := [4]float64{1, 1, 1, 1}
 	st := Style{
 		OutlineW: cfg.OutlineWidth,

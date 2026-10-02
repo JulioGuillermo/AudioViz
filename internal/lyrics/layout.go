@@ -80,6 +80,10 @@ func New(cfg *config.LyricsConfig, w, h int) (*Engine, error) {
 	if err != nil {
 		return nil, err
 	}
+	return newEngine(cfg, lines, w, h)
+}
+
+func newEngine(cfg *config.LyricsConfig, lines []Line, w, h int) (*Engine, error) {
 	face, err := loadFace(cfg)
 	if err != nil {
 		return nil, err

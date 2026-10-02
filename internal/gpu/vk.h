@@ -16,7 +16,8 @@ enum {
     VKR_BUF_UV = 3,
     VKR_BUF_RGBA = 4,
     VKR_BUF_TEXT = 5,
-    VKR_NUM_BUFS = 6,
+    VKR_BUF_BG2 = 6,
+    VKR_NUM_BUFS = 7,
 };
 
 typedef struct {
