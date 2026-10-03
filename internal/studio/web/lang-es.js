@@ -1,5 +1,6 @@
 // Spanish UI strings (English source → Spanish)
 export const ES = {
+  'Edit words': 'Editar palabras', 'Done': 'Hecho', 'Show the words on the timeline to adjust each one (Esc to finish)': 'Muestra las palabras en la timeline para ajustar cada una (Esc para terminar)',
   'Could not recognize line {n} clearly; it was left as it was. Drag it closer to where it is sung and try again.': 'No se reconoció bien la línea {n}; se ha dejado como estaba. Arrástrala más cerca de donde se canta y vuelve a intentarlo.',
   'Audio while scrubbing: on (S)': 'Audio al desplazarse: activado (S)', 'Audio while scrubbing: off (S)': 'Audio al desplazarse: desactivado (S)',
   // --- general
@@ -47,7 +48,7 @@ export const ES = {
   'Marker': 'Marca', 'Marker at the cursor (M)': 'Marca en el cursor (M)', 'Zoom in': 'Acercar', 'Zoom out': 'Alejar', 'Show the whole song': 'Ver toda la canción',
   'Lyric lines': 'Líneas de letra', 'Click: go · double-click: rename · right-click: delete': 'Clic: ir · doble clic: renombrar · clic derecho: borrar',
   'Marker name (e.g. Chorus):': 'Nombre de la marca (p. ej. Estribillo):', 'New name:': 'Nuevo nombre:', 'Delete the marker “{m}”?': '¿Borrar la marca «{m}»?',
-  'drag to move, Shift+click to select several': 'arrastra para mover, Mayús+clic para seleccionar varias',
+  'drag to move · Shift+click: select several': 'arrastra para mover · Mayús+clic: seleccionar varias', 'click to select · Shift+click: select several': 'clic para seleccionar · Mayús+clic: seleccionar varias',
   'drag to move, edges = start / end': 'arrastra para mover, bordes = inicio / fin',
   'Number of segments': 'Número de tramos', '{n} layer': '{n} capa', '{n} layers': '{n} capas',
 
@@ -70,7 +71,7 @@ export const ES = {
   'Recognize this part of the song again and re-align the words (around their current position)': 'Vuelve a reconocer este tramo de la canción y realinea las palabras (alrededor de su posición actual)',
   'Lyrics language': 'Idioma de la letra', 'Word': 'Palabra', 'Start': 'Inicio', 'End': 'Fin', 'Set the start at the cursor': 'Poner el inicio en el cursor',
   'Several lines selected (Shift+click). Drag them together on the timeline, shift them with the buttons, or resync them.': 'Varias líneas seleccionadas (Mayús+clic). Arrástralas juntas en la línea de tiempo, muévelas con los botones o resincronízalas.',
-  'Tip: drag the words on the timeline, or play, pause right when a word starts and press the crosshair button. If a line is far off, drag it roughly into place and press Resync.': 'Consejo: arrastra las palabras en la línea de tiempo, o reproduce, pausa justo cuando empieza una palabra y pulsa la mira. Si una línea está muy desplazada, arrástrala a su sitio aproximado y pulsa Resincronizar.',
+  'Tip: with Edit words, drag the words (or their edges) on the timeline; or play, pause right when a word starts and press the crosshair button. If a line is far off, drag it roughly into place and press Resync.': 'Consejo: con Editar palabras, arrastra las palabras (o sus bordes) en la timeline; o reproduce, pausa justo cuando empieza una palabra y pulsa el botón de la mira. Si una línea está muy desplazada, arrástrala más o menos a su sitio y pulsa Resincronizar.',
 
   // --- export
   'Export video': 'Exportar vídeo', 'Output file': 'Archivo de salida', 'Range': 'Duración', 'Whole song ({d})': 'Canción completa ({d})', 'Only a part': 'Solo una parte',

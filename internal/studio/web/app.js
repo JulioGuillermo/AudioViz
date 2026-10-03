@@ -183,7 +183,7 @@ function TrackInspector({ proj, track, segIdx, time, meta, update, setSel, ctx, 
   </div>`;
 }
 
-function LineEditor({ lyr, lines, time, onChange, seek, saveState, onResync, resyncing, lyricLang, setLyricLang }) {
+function LineEditor({ lyr, lines, time, onChange, seek, saveState, onResync, resyncing, lyricLang, setLyricLang, wordEdit, setWordEdit }) {
   const idx = lines[0];
   const line = lyr.lines[idx];
   if (!line) return html`<div class="insp-b faint" style="padding-top:14px">${t('Select a line in the lyrics track.')}</div>`;
@@ -215,6 +215,8 @@ function LineEditor({ lyr, lines, time, onChange, seek, saveState, onResync, res
           <button class="btn sm" title=${t('Move later by 0.05 s')} onClick=${() => shift(0.05)}>+0.05 s</button>
         </div>
         ${!multi && html`<button class="btn sm icon" title=${t('Make the line start at the cursor')} onClick=${() => shift(time - line.start)}><${Icon} name="crosshair" size=${14} /></button>`}
+        ${!multi && html`<button class=${'btn sm' + (wordEdit ? ' on' : '')} title=${t('Show the words on the timeline to adjust each one (Esc to finish)')}
+          onClick=${() => setWordEdit(!wordEdit)}><${Icon} name=${wordEdit ? 'check' : 'pencil'} size=${13} /> ${t(wordEdit ? 'Done' : 'Edit words')}</button>`}
       </div>
       <div class="row" style="margin-top:8px">
         <button class="btn sm primary" disabled=${resyncing} title=${t('Recognize this part of the song again and re-align the words (around their current position)')}
@@ -232,7 +234,7 @@ function LineEditor({ lyr, lines, time, onChange, seek, saveState, onResync, res
         <button class="btn icon" title=${t('Set the start at the cursor')} onClick=${() => setWord(k, 'start', +time.toFixed(2))}><${Icon} name="crosshair" size=${14} /></button>
       </div>`)}
     </div>
-    <p class="faint" style="font-size:12px">${t('Tip: drag the words on the timeline, or play, pause right when a word starts and press the crosshair button. If a line is far off, drag it roughly into place and press Resync.')}</p></div>`}
+    <p class="faint" style="font-size:12px">${t('Tip: with Edit words, drag the words (or their edges) on the timeline; or play, pause right when a word starts and press the crosshair button. If a line is far off, drag it roughly into place and press Resync.')}</p></div>`}
   </div>`;
 }
 
@@ -271,6 +273,7 @@ function App() {
   const [lyrSave, setLyrSave] = useState('');
   const [sel, setSel] = useState({ kind: 'track', track: 'visualizer', seg: 0 });
   const [lineSel, setLineSel] = useState([]);
+  const [wordEdit, setWordEdit] = useState(false); // word blocks of the selected line on the timeline
   const [playing, setPlaying] = useState(false);
   const [scale, setScale] = useState(2);
   const [rev, setRev] = useState(0);
@@ -483,6 +486,7 @@ function App() {
       const a = Math.min(lineSel[0], i), b = Math.max(lineSel[lineSel.length - 1], i);
       ns = Array.from({ length: b - a + 1 }, (_, k) => a + k);
     } else ns = lineSel.includes(i) && lineSel.length > 1 ? lineSel : [i];
+    if (ns.length !== 1 || ns[0] !== lineSel[0] || lineSel.length !== 1) setWordEdit(false);
     setLineSel(ns);
     setSel({ kind: 'line' });
   };
@@ -553,6 +557,7 @@ function App() {
       else if (e.key === 'End') seek(meta.duration);
       else if (e.key === 'm' || e.key === 'M') onMarker('add');
       else if (e.key === 's' || e.key === 'S') setScrub(!scrubRef.current);
+      else if (e.key === 'Escape') setWordEdit(false);
       else if ((e.key === 'n' || e.key === 'N') && sel.kind === 'track') ctx.addSeg(sel.track, now);
       else if (e.key === 'Delete' && sel.kind === 'track' && sel.seg > 0) {
         update((p) => { p.tracks[sel.track].splice(sel.seg, 1); });
@@ -596,7 +601,7 @@ function App() {
       <${Form} fields=${OUTPUT_FIELDS} value=${proj.output} onChange=${(v) => update((p) => { p.output = v; })} ctx=${ctx} />
       <p class="faint" style="font-size:12px">${t('Current resolution')}: ${meta.width}×${meta.height} · ${meta.fps} fps · ${fmtTime(meta.duration)}</p></div></div>`;
   else if (sel.kind === 'line') inspector = html`<${LineEditor} lyr=${lyr} lines=${lineSel} time=${time} seek=${seek} saveState=${lyrSave}
-      onChange=${(fn) => editLyrics(fn)} onResync=${resync} resyncing=${resyncing} lyricLang=${lyricLang} setLyricLang=${setLyricLang} />`;
+      onChange=${(fn) => editLyrics(fn)} onResync=${resync} resyncing=${resyncing} lyricLang=${lyricLang} setLyricLang=${setLyricLang} wordEdit=${wordEdit} setWordEdit=${setWordEdit} />`;
   else inspector = html`<${TrackInspector} proj=${proj} track=${sel.track} segIdx=${sel.seg} time=${time} meta=${meta}
       update=${update} setSel=${setSel} ctx=${ctx} onGenLyrics=${() => setDlg({ type: 'genlyrics' })} />`;
 
@@ -669,7 +674,7 @@ function App() {
     <div class="inspector">${inspector}</div>
 
     <${Timeline} proj=${proj} meta=${meta} ana=${ana} lyr=${lyr} timeStore=${timeStore} slowTime=${time} playing=${playing}
-      sel=${sel} lineSel=${lineSel} height=${tlH} setHeight=${setTlH}
+      sel=${sel} lineSel=${lineSel} wordEdit=${wordEdit} height=${tlH} setHeight=${setTlH}
       onSeek=${seek} onSelect=${selTrack} onMoveSeg=${onMoveSeg} onAddSeg=${ctx.addSeg} onMarker=${onMarker}
       onSelectLine=${selectLine} onLyrics=${(lines) => editLyrics((all) => { all.splice(0, all.length, ...lines); }, false)}
       onLyricsCommit=${() => lyrSaveRef.current()} />

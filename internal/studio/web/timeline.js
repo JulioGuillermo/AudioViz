@@ -25,25 +25,54 @@ export function segSummary(track, cfg) {
   }
 }
 
-function AudioLane({ ana, width, pps }) {
+// Canvas that only covers the visible part of the timeline (the whole song at high zoom
+// would be wider than the browser allows for a canvas). It follows the scroll and repaints;
+// draw(g, x0, x1) paints in timeline coordinates the range [x0, x1).
+function ViewCanvas({ scroller, height, draw, deps }) {
   const ref = useRef();
+  const drawRef = useRef(draw);
+  drawRef.current = draw;
   useEffect(() => {
-    const c = ref.current;
-    if (!c || !ana) return;
-    const dpr = window.devicePixelRatio || 1;
-    c.width = Math.max(1, Math.floor(width * dpr));
-    c.height = H.audio * dpr;
-    c.style.width = width + 'px';
-    c.style.height = H.audio + 'px';
-    const g = c.getContext('2d');
-    g.scale(dpr, dpr);
-    g.clearRect(0, 0, width, H.audio);
-    const n = ana.frames;
-    const fps = ana.fps;
-    const mid = H.audio / 2;
+    const sc = scroller.current, c = ref.current;
+    if (!sc || !c) return;
+    let raf = 0;
+    const paint = () => {
+      raf = 0;
+      const dpr = window.devicePixelRatio || 1;
+      const x0 = sc.scrollLeft, w = Math.max(1, sc.clientWidth);
+      const cw = Math.floor(w * dpr), ch = Math.floor(height * dpr);
+      if (c.width !== cw || c.height !== ch) {
+        c.width = cw; c.height = ch;
+        c.style.width = w + 'px'; c.style.height = height + 'px';
+      }
+      c.style.transform = `translateX(${x0}px)`;
+      const g = c.getContext('2d');
+      g.setTransform(dpr, 0, 0, dpr, -x0 * dpr, 0);
+      g.clearRect(x0, 0, w, height);
+      drawRef.current(g, x0, x0 + w);
+    };
+    const req = () => { if (!raf) raf = requestAnimationFrame(paint); };
+    paint();
+    sc.addEventListener('scroll', req, { passive: true });
+    const ro = new ResizeObserver(req);
+    ro.observe(sc);
+    return () => { sc.removeEventListener('scroll', req); ro.disconnect(); cancelAnimationFrame(raf); };
+  }, deps);
+  return html`<canvas ref=${ref}></canvas>`;
+}
+
+function AudioLane({ ana, pps, scroller }) {
+  const draw = (g, xa, xb) => {
+    if (!ana) return;
+    const n = ana.frames, fps = ana.fps, mid = H.audio / 2;
+    const x0 = Math.floor(xa), x1 = Math.ceil(xb);
+    const range = (x) => {
+      const i0 = Math.floor((x / pps) * fps);
+      return [i0, Math.max(i0 + 1, Math.floor(((x + 1) / pps) * fps))];
+    };
     g.fillStyle = '#2b2f36';
-    for (let x = 0; x < width; x++) {
-      const i0 = Math.floor((x / pps) * fps), i1 = Math.max(i0 + 1, Math.floor(((x + 1) / pps) * fps));
+    for (let x = x0; x < x1; x++) {
+      const [i0, i1] = range(x);
       let pk = 0;
       for (let i = i0; i < i1 && i < n; i++) pk = Math.max(pk, ana.wave[i] || 0);
       const h = (pk / 255) * (H.audio - 6) / 2;
@@ -53,13 +82,12 @@ function AudioLane({ ana, width, pps }) {
       g.strokeStyle = color;
       g.lineWidth = 1.2;
       g.beginPath();
-      for (let x = 0; x < width; x += 1) {
-        const i0 = Math.floor((x / pps) * fps), i1 = Math.max(i0 + 1, Math.floor(((x + 1) / pps) * fps));
-        let s = 0, k = 0;
-        for (let i = i0; i < i1 && i < n; i++) { s += arr[i]; k++; }
-        const v = k ? s / k / 255 : 0;
-        const y = H.audio - 2 - v * (H.audio - 6);
-        x === 0 ? g.moveTo(x, y) : g.lineTo(x, y);
+      for (let x = x0; x < x1; x++) {
+        const [i0, i1] = range(x);
+        let sum = 0, k = 0;
+        for (let i = i0; i < i1 && i < n; i++) { sum += arr[i]; k++; }
+        const y = H.audio - 2 - (k ? sum / k / 255 : 0) * (H.audio - 6);
+        x === x0 ? g.moveTo(x, y) : g.lineTo(x, y);
       }
       g.stroke();
     };
@@ -67,30 +95,23 @@ function AudioLane({ ana, width, pps }) {
     curve(ana.mid, cssVar('--band-mid'));
     curve(ana.treble, cssVar('--band-treble'));
     g.fillStyle = 'rgba(255,255,255,0.22)';
-    for (const b of ana.beats || []) g.fillRect((b / fps) * pps, 0, 1, 5);
-  }, [ana, width, pps]);
-  return html`<canvas ref=${ref}></canvas>`;
+    for (const b of ana.beats || []) {
+      const x = (b / fps) * pps;
+      if (x >= x0 - 1 && x <= x1) g.fillRect(x, 0, 1, 5);
+    }
+  };
+  return html`<${ViewCanvas} scroller=${scroller} height=${H.audio} draw=${draw} deps=${[ana, pps]} />`;
 }
 
-function Ruler({ width, pps, duration }) {
-  const ref = useRef();
-  useEffect(() => {
-    const c = ref.current;
-    if (!c) return;
-    const dpr = window.devicePixelRatio || 1;
-    c.width = Math.max(1, Math.floor(width * dpr));
-    c.height = H.ruler * dpr;
-    c.style.width = width + 'px';
-    c.style.height = H.ruler + 'px';
-    const g = c.getContext('2d');
-    g.scale(dpr, dpr);
-    g.clearRect(0, 0, width, H.ruler);
+function Ruler({ pps, duration, scroller }) {
+  const draw = (g, xa, xb) => {
     const steps = [0.1, 0.25, 0.5, 1, 2, 5, 10, 15, 30, 60];
     const step = steps.find((s) => s * pps >= 70) || 60;
     g.fillStyle = cssVar('--text-3');
     g.strokeStyle = '#30343b';
     g.font = '10px ' + cssVar('--mono');
-    for (let tt = 0; tt <= duration; tt += step) {
+    const first = Math.max(0, Math.floor(xa / pps / step) * step);
+    for (let tt = first; tt <= duration && tt * pps <= xb; tt += step) {
       const x = Math.round(tt * pps) + 0.5;
       g.beginPath(); g.moveTo(x, 14); g.lineTo(x, H.ruler); g.stroke();
       g.fillText(fmtTime(tt, step < 1), x + 3, 11);
@@ -100,8 +121,8 @@ function Ruler({ width, pps, duration }) {
         g.beginPath(); g.moveTo(xs, 20); g.lineTo(xs, H.ruler); g.stroke();
       }
     }
-  }, [width, pps, duration]);
-  return html`<canvas ref=${ref}></canvas>`;
+  };
+  return html`<${ViewCanvas} scroller=${scroller} height=${H.ruler} draw=${draw} deps=${[pps, duration]} />`;
 }
 
 // Playhead: the only part of the timeline that follows the playback time every frame
@@ -117,7 +138,7 @@ function Playhead({ timeStore, pps, scroller, follow }) {
 }
 
 export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, sel, lineSel, onSeek, onSelect, onMoveSeg,
-  onAddSeg, onSelectLine, onLyrics, onLyricsCommit, onMarker, height, setHeight }) {
+  onAddSeg, onSelectLine, onLyrics, onLyricsCommit, onMarker, height, setHeight, wordEdit }) {
   const scroller = useRef();
   const namesRef = useRef();
   const [pps, setPps] = useState(null); // pixels per second
@@ -206,8 +227,9 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
     e.stopPropagation();
     if (e.button !== 0) return;
     const multi = e.shiftKey;
-    const moving = lineSel.includes(i) && !multi ? lineSel : [i];
-    onSelectLine(i, multi);
+    // A line only moves once it is selected: the first click just selects it
+    if (multi || sel.kind !== 'line' || !lineSel.includes(i)) { onSelectLine(i, multi); return; }
+    const moving = lineSel;
     const orig = clone(lyr.lines);
     const start0 = orig[moving[0]].start;
     drag(e, (dt, ev) => {
@@ -274,7 +296,19 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
   };
 
   const curLine = lyr.lines.findIndex((l) => slowTime >= l.start && slowTime <= l.end);
-  const editLine = sel.kind === 'line' && lineSel.length === 1 ? lineSel[0] : -1;
+  // Word blocks only in edit mode ("Edit words" in the inspector)
+  const editLine = wordEdit && sel.kind === 'line' && lineSel.length === 1 ? lineSel[0] : -1;
+  // Entering word editing zooms in so the line takes about half of the view, centered
+  useEffect(() => {
+    const sc = scroller.current, l = lyr.lines[editLine];
+    if (!sc || !l) return;
+    const mid = (l.start + l.end) / 2;
+    const want = Math.min(600, (sc.clientWidth * 0.5) / Math.max(0.5, l.end - l.start));
+    if (want > effPps * 1.05) {
+      zoomAnchor.current = { tt: mid, offset: sc.clientWidth / 2 };
+      setPps(want);
+    } else sc.scrollLeft = Math.max(0, mid * effPps - sc.clientWidth / 2);
+  }, [editLine]);
 
   return html`<div class="timeline">
     <div class="tl-resize" onMouseDown=${resize}></div>
@@ -305,17 +339,17 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
       <div class="tl-scroll" ref=${scroller} onWheel=${wheel} onScroll=${onScroll}>
         <div class="tl-inner" style=${{ width: width + 'px' }}>
           <div class="lane ruler" style=${{ '--h': H.ruler + 'px' }} onMouseDown=${seekDrag}>
-            <${Ruler} width=${width} pps=${effPps} duration=${duration} />
+            <${Ruler} pps=${effPps} duration=${duration} scroller=${scroller} />
           </div>
           <div class="lane" style=${{ '--h': H.audio + 'px' }} onMouseDown=${seekDrag}>
-            <${AudioLane} ana=${ana} width=${width} pps=${effPps} />
+            <${AudioLane} ana=${ana} pps=${effPps} scroller=${scroller} />
           </div>
           <div class="lane" style=${{ '--h': H.lyrics + 'px' }} onMouseDown=${seekDrag}>
             ${lyr.lines.map((l, i) => {
               const cls = 'lyrline' + (i === editLine ? ' edit' : lineSel.includes(i) ? (lineSel.length > 1 ? ' multi' : ' on') : i === curLine ? ' now' : '');
               return html`<div class=${cls} key=${i}
                 style=${{ left: l.start * effPps + 'px', width: Math.max(4, (l.end - l.start) * effPps) + 'px' }}
-                title=${l.words.map((w) => w.text).join(' ') + ' — ' + t('drag to move, Shift+click to select several')}
+                title=${l.words.map((w) => w.text).join(' ') + ' — ' + t(sel.kind === 'line' && lineSel.includes(i) ? 'drag to move · Shift+click: select several' : 'click to select · Shift+click: select several')}
                 onMouseDown=${(e) => lineDrag(e, i)}>${i === editLine ? '' : l.words.map((w) => w.text).join(' ')}</div>`;
             })}
             ${editLine >= 0 && lyr.lines[editLine].words.map((w, wi) => html`<div class=${'lyrword' + (slowTime >= w.start && slowTime < w.end ? ' now' : '')} key=${'w' + wi}
