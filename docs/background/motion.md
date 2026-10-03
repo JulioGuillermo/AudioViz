@@ -19,7 +19,7 @@ background:
 | `none` | Still image (default) |
 | `zoom_in` / `zoom_out` | Slow zoom towards / away from the center, from 1 to 1 + `amount` |
 | `pan_left` / `pan_right` / `pan_up` / `pan_down` | The image travels in that direction (zoomed in by `amount` to have room) |
-| `ken_burns` | Zoom in while moving towards a corner (`direction`, or a different one per segment) |
+| `ken_burns` | Zooms in while the camera travels across the image, from the opposite corner to the `direction` corner (`auto`: a different one per segment) |
 | `drift` | Slow floating around the image, without stopping |
 | `sway` | Gentle rotation back and forth |
 

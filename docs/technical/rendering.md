@@ -250,7 +250,7 @@ covers the frame when rotated, `max(cos+sin/ar, cos+sin·ar)`).
 |---|---|
 | `zoom_in` / `zoom_out` | scale `1 + a·e` / `1 + a·(1−e)` |
 | `pan_*` | scale `1 + a`; offset `±slack·(2e−1)` on the axis |
-| `ken_burns` | scale `1 + a·e`; offset `= slack(scale)` towards the `direction` corner (`auto`: segment index mod 4) |
+| `ken_burns` | scale `1 + a·(0.5 + 0.5e)`; offset `slack(scale)·(2e − 1)` along the diagonal: from the opposite corner to the `direction` corner (`auto`: segment index mod 4) |
 | `drift` | scale `1 + a`; offset `slack·(sin φ, sin(0.77φ + 1.3))`, `φ = 2π·speed/10·t` |
 | `sway` | rot `0.25a·sin φ`; scale = cover(0.25a)·(1 + 0.1a) |
 
