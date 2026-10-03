@@ -31,7 +31,7 @@ Vulkan setup step, to see where a driver stops.
 |---|---|---|---|
 | Builds | ✅ | ✅ cross-compiled from Linux (zig 0.16, LLVM tools) | ✅ on the Mac (Xcode, Go, CMake from Homebrew): 23 MB, only system frameworks |
 | CPU rendering / export | ✅ | ✅ under Wine: frame identical to the Linux CPU render, MP4 export (H.264 + FLAC) | ✅ frame identical to Linux |
-| GPU rendering | ✅ Intel Lunar Lake: 63.8 fps exporting 1920×1088 @ 60 with lyrics, texts, visualizer and particles | ⚠ under Wine the GPU is found but Wine blocks inside \ in a headless session; the timeout falls back to CPU. **To test on real Windows.** | ✅ MoltenVK 1.4.2 on Apple M4: frame identical to the Linux GPU render; **115.6 fps** on the same export (CPU: 24.4 fps) |
+| GPU rendering | ✅ Intel Lunar Lake: 63.8 fps exporting 1920×1088 @ 60 with lyrics, texts, visualizer and particles | ⚠ under Wine the GPU is found but Wine blocks inside vkCreateInstance in a headless session; the timeout falls back to CPU. **To test on real Windows.** | ✅ MoltenVK 1.4.2 on Apple M4: frame identical to the Linux GPU render; **115.6 fps** on the same export (CPU: 24.4 fps) |
 | Studio | ✅ | ✅ under Wine (UI, Windows paths, drive list) | ✅ (preview, file browser, thumbnails) |
 | Lyrics generation | ✅ Vulkan | to test | ✅ Metal: whole song in 4 min 7 s (Demucs on CPU 3 min 25 s, Whisper on the M4 39 s), 379 of 380 words; word starts match Linux (median 0, 90 % within 0.02 s) |
 
