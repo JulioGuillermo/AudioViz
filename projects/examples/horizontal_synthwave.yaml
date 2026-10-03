@@ -1,10 +1,10 @@
 audio:
-  path: "../../I didnt ask to be the devil.flac"
+  path: "song.flac"          # your audio, relative to this file
   volume: 1.0
   sensitivity: 1.0
 
 background:
-  path: "../../I didn't ask to be the devil"
+  path: "background.png"     # image, GIF or video
   fit_mode: "cover"
   opacity: 0.9
   darken: 0.15

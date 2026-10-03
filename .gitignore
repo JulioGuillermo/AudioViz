@@ -17,3 +17,9 @@ tools/lyrics/cache/
 /third_party/toolchain-*/
 /third_party/vulkan-headers/
 /third_party/moltenvk-*
+# Personal projects (songs, lyrics, fonts) stay out of the repository
+/project.yaml
+/letra.lrc
+/lyrics.lrc
+/*.txt
+/fonts/
