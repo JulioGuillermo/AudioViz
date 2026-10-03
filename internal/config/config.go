@@ -55,6 +55,9 @@ type MotionConfig struct {
 	Amount float64 `yaml:"amount"` // strength 0..1: extra zoom / travelled fraction (default 0.15)
 	Easing string  `yaml:"easing"` // linear (constant speed) or ease (starts and ends softly)
 	Speed  float64 `yaml:"speed"`  // drift and sway: cycles per 10 s (default 1)
+	// ken_burns: corner the camera moves towards while zooming in: auto (a different one per
+	// segment), top_left, top_right, bottom_left, bottom_right
+	Direction string `yaml:"direction,omitempty"`
 }
 
 type BackgroundEffectsConfig struct {

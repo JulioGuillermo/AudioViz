@@ -67,11 +67,22 @@ func MotionAt(m config.MotionConfig, p, tsec float64, w, h, seed int) Layer {
 			l.OffY = -sy * (2*e - 1)
 		}
 		return l
-	case "ken_burns": // zoom in while drifting towards a corner (a different one per segment)
+	case "ken_burns": // zoom in while moving towards a corner (chosen, or a different one per segment)
 		s := 1 + a*e
 		sx, sy := slack(s)
-		dirs := [4][2]float64{{1, 1}, {-1, 1}, {1, -1}, {-1, -1}}
-		d := dirs[((seed%4)+4)%4]
+		var d [2]float64
+		switch m.Direction {
+		case "top_left":
+			d = [2]float64{-1, -1}
+		case "top_right":
+			d = [2]float64{1, -1}
+		case "bottom_left":
+			d = [2]float64{-1, 1}
+		case "bottom_right":
+			d = [2]float64{1, 1}
+		default:
+			d = [4][2]float64{{1, 1}, {-1, 1}, {1, -1}, {-1, -1}}[((seed%4)+4)%4]
+		}
 		return Layer{Scale: s, OffX: d[0] * sx, OffY: d[1] * sy}
 	case "drift": // slow floating around the image
 		s := 1 + a

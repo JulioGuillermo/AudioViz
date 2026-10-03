@@ -1,5 +1,8 @@
 // Spanish UI strings (English source → Spanish)
 export const ES = {
+  'Towards': 'Hacia', 'Corner the camera moves to while zooming in': 'Esquina hacia la que va la cámara mientras se acerca',
+  'Auto (varies per segment)': 'Auto (cambia en cada tramo)', 'Top left': 'Arriba a la izquierda', 'Top right': 'Arriba a la derecha',
+  'Bottom left': 'Abajo a la izquierda', 'Bottom right': 'Abajo a la derecha',
   'Motion': 'Movimiento', 'Slow camera motion over the image during this segment': 'Movimiento lento de cámara sobre la imagen durante este tramo',
   'Still': 'Estática', 'Slow zoom in': 'Zoom lento hacia dentro', 'Slow zoom out': 'Zoom lento hacia fuera', 'Pan left': 'Desplazar a la izquierda',
   'Pan right': 'Desplazar a la derecha', 'Pan up': 'Desplazar hacia arriba', 'Pan down': 'Desplazar hacia abajo', 'Ken Burns (zoom + pan)': 'Ken Burns (zoom + desplazamiento)',
