@@ -48,8 +48,8 @@ timeline to change effects over the song, and export. Projects are plain YAML fi
 ./build.sh
 ```
 
-Requirements for building only: `go`, `gcc`/`g++`, `cmake`, `nasm`, `git`, Vulkan and SPIR-V
-headers and `glslc`. The script downloads and builds x264, a decode-only FFmpeg, whisper.cpp and
+Requirements for building only (Linux): `go`, `gcc`/`g++`, `cmake`, `nasm`, `git`, Vulkan and
+SPIR-V headers and `glslc`; other systems in [docs/build.md](docs/build.md). The script downloads and builds x264, a decode-only FFmpeg, whisper.cpp and
 demucs.cpp once, as static libraries that end up inside the binary; on Linux the result depends
 only on the C library. Details in [docs/build.md](docs/build.md).
 
@@ -58,11 +58,18 @@ downloaded on first use to the user cache folder.
 
 ## Platforms
 
-| | Status |
-|---|---|
-| Linux x86-64 | ✅ main platform |
-| Windows x86-64 | 🧪 branch `cross-platform`: cross-compiled from Linux with zig; tested under Wine (CPU rendering, export, studio), GPU still to test on real hardware |
-| macOS (Apple Silicon) | 🧪 branch `cross-platform`: Metal for lyrics recognition, MoltenVK for the renderer; to be built and tested on a Mac |
+```bash
+./build.sh                 # Linux, or macOS on a Mac  -> ./audioviz
+GOOS=windows ./build.sh    # Windows, cross-compiled from Linux with zig -> ./audioviz.exe
+```
+
+| | GPU (video / lyrics) | Status |
+|---|---|---|
+| Linux x86-64 | Vulkan / Vulkan | ✅ main platform |
+| macOS (Apple Silicon) | MoltenVK on Metal / Metal | ✅ tested on a Mac mini M4 (115 fps exporting 1080p60) |
+| Windows x86-64 | Vulkan / Vulkan | 🧪 cross-compiled from Linux; tested under Wine (CPU rendering, export, studio). GPU still to test on real Windows |
+
+Details in [docs/technical/portability.md](docs/technical/portability.md).
 
 ## License
 

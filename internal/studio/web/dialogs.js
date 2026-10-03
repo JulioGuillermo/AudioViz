@@ -56,7 +56,7 @@ export function FilePicker({ kind, start, onPick, onClose, hasProject }) {
       setDir(await api('GET', '/api/fs?' + q));
     } catch (e) { setErr(e.message); }
   };
-  useEffect(() => { load(start ? (kind === 'dir' ? start : start.replace(/\/[^/]*$/, '')) : ''); }, []);
+  useEffect(() => { load(start ? (kind === 'dir' ? start : start.replace(/[\\/][^\\/]*$/, '')) : ''); }, []);
   const upload = async (file) => {
     setBusy(true);
     try {

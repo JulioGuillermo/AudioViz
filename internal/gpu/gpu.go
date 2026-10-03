@@ -5,6 +5,9 @@ package gpu
 
 /*
 #cgo linux LDFLAGS: -ldl
+#cgo windows CFLAGS: -I${SRCDIR}/../../third_party/vulkan-headers
+#cgo darwin,arm64 CFLAGS: -I${SRCDIR}/../../third_party/build-darwin-arm64/include
+#cgo darwin,amd64 CFLAGS: -I${SRCDIR}/../../third_party/build-darwin-amd64/include
 #include <stdlib.h>
 #include "vk.h"
 */
@@ -12,8 +15,43 @@ import "C"
 
 import (
 	_ "embed"
+	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
+	"time"
 	"unsafe"
+)
+
+// A broken Vulkan driver can hang inside its setup calls instead of failing. Those calls run
+// with a time limit: past it the GPU is given up for the rest of the process (the CPU renders),
+// rather than freezing the program. The stuck call stays parked in its own thread.
+const setupTimeout = 20 * time.Second
+
+var stuck atomic.Bool
+
+// ErrStuck: a previous Vulkan setup did not return in time
+var ErrStuck = errors.New("the Vulkan driver did not respond (setup timed out); using the CPU")
+
+func withTimeout[T any](f func() T) (T, bool) {
+	var zero T
+	if stuck.Load() {
+		return zero, false
+	}
+	ch := make(chan T, 1)
+	go func() { ch <- f() }()
+	select {
+	case v := <-ch:
+		return v, true
+	case <-time.After(setupTimeout):
+		stuck.Store(true)
+		return zero, false
+	}
+}
+
+var (
+	listOnce sync.Once
+	listed   string
 )
 
 //go:embed shaders/render.spv
@@ -85,15 +123,37 @@ type Renderer struct {
 
 // ListDevices returns the list of visible Vulkan GPUs
 func ListDevices() string {
-	buf := make([]byte, 4096)
-	C.vkr_list_devices((*C.char)(unsafe.Pointer(&buf[0])), C.int(len(buf)))
-	return C.GoString((*C.char)(unsafe.Pointer(&buf[0])))
+	// Asked often by the studio: computed once, with the setup time limit
+	listOnce.Do(func() {
+		s, ok := withTimeout(func() string {
+			buf := make([]byte, 4096)
+			C.vkr_list_devices((*C.char)(unsafe.Pointer(&buf[0])), C.int(len(buf)))
+			return C.GoString((*C.char)(unsafe.Pointer(&buf[0])))
+		})
+		if !ok {
+			s = ErrStuck.Error()
+		}
+		listed = s
+	})
+	return listed
 }
 
 func align(v, a int) int { return (v + a - 1) / a * a }
 
 // New creates the renderer. deviceIndex -1 = automatic.
 func New(width, height, slots, deviceIndex int, textSize int) (*Renderer, error) {
+	type res struct {
+		g   *Renderer
+		err error
+	}
+	r, ok := withTimeout(func() res { g, err := newRenderer(width, height, slots, deviceIndex, textSize); return res{g, err} })
+	if !ok {
+		return nil, ErrStuck
+	}
+	return r.g, r.err
+}
+
+func newRenderer(width, height, slots, deviceIndex int, textSize int) (*Renderer, error) {
 	g := &Renderer{Width: width, Height: height, PadW: align(width, 16), PadH: align(height, 16), Slots: slots}
 	g.spirv = C.CBytes(renderSPV)
 	cfg := C.vkr_config{

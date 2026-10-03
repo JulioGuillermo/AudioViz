@@ -4,6 +4,14 @@ How `./build.sh` produces a single `audioviz` binary that depends only on glibc,
 step and flag is there. The short user-facing version (requirements, one command) is
 [../build.md](../build.md); this page is for whoever maintains the build or ports it.
 
+
+> **Targets.** The build now has a target (`scripts/target.sh`): this machine by default, or
+> `GOOS=windows` to cross-compile a Windows `.exe` from Linux with zig. Libraries go to
+> `third_party/build` (Linux) or `third_party/build-<os>-<arch>`, out-of-tree build dirs to
+> `third_party/obj-<os>-<arch>`. The cgo flags pick the right directory per `GOOS`/`GOARCH`.
+> Per-system details (Windows, macOS/Metal, what is tested) are in [portability.md](portability.md);
+> the sections below describe the Linux build, which the others follow.
+
 ## Result
 
 Expected `ldd` output (glibc only):

@@ -1,8 +1,14 @@
 package video
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/../../third_party/build/include
-#cgo LDFLAGS: ${SRCDIR}/../../third_party/build/lib/libavformat.a ${SRCDIR}/../../third_party/build/lib/libavcodec.a ${SRCDIR}/../../third_party/build/lib/libswscale.a ${SRCDIR}/../../third_party/build/lib/libavutil.a -lm -lpthread
+#cgo linux CFLAGS: -I${SRCDIR}/../../third_party/build/include
+#cgo linux LDFLAGS: ${SRCDIR}/../../third_party/build/lib/libavformat.a ${SRCDIR}/../../third_party/build/lib/libavcodec.a ${SRCDIR}/../../third_party/build/lib/libswscale.a ${SRCDIR}/../../third_party/build/lib/libavutil.a -lm -lpthread
+#cgo windows CFLAGS: -I${SRCDIR}/../../third_party/build-windows-amd64/include
+#cgo windows LDFLAGS: ${SRCDIR}/../../third_party/build-windows-amd64/lib/libavformat.a ${SRCDIR}/../../third_party/build-windows-amd64/lib/libavcodec.a ${SRCDIR}/../../third_party/build-windows-amd64/lib/libswscale.a ${SRCDIR}/../../third_party/build-windows-amd64/lib/libavutil.a -lbcrypt
+#cgo darwin,arm64 CFLAGS: -I${SRCDIR}/../../third_party/build-darwin-arm64/include
+#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../third_party/build-darwin-arm64/lib/libavformat.a ${SRCDIR}/../../third_party/build-darwin-arm64/lib/libavcodec.a ${SRCDIR}/../../third_party/build-darwin-arm64/lib/libswscale.a ${SRCDIR}/../../third_party/build-darwin-arm64/lib/libavutil.a -lm -lpthread
+#cgo darwin,amd64 CFLAGS: -I${SRCDIR}/../../third_party/build-darwin-amd64/include
+#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../third_party/build-darwin-amd64/lib/libavformat.a ${SRCDIR}/../../third_party/build-darwin-amd64/lib/libavcodec.a ${SRCDIR}/../../third_party/build-darwin-amd64/lib/libswscale.a ${SRCDIR}/../../third_party/build-darwin-amd64/lib/libavutil.a -lm -lpthread
 #include <stdlib.h>
 #include <string.h>
 #include <libavformat/avformat.h>

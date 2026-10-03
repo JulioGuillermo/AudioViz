@@ -1,8 +1,14 @@
 package lyricsgen
 
 /*
-#cgo CXXFLAGS: -std=c++17 -O3 -march=x86-64-v3 -DNDEBUG -w -I${SRCDIR}/../../third_party/demucs.cpp/src -I${SRCDIR}/../../third_party/demucs.cpp/vendor/eigen
-#cgo LDFLAGS: ${SRCDIR}/../../third_party/build/lib/libdemucs.a -l:libstdc++.a
+#cgo CXXFLAGS: -std=c++17 -O3 -DNDEBUG -w -I${SRCDIR}/../../third_party/demucs.cpp/src -I${SRCDIR}/../../third_party/demucs.cpp/vendor/eigen
+#cgo linux,amd64 darwin,amd64 CXXFLAGS: -march=x86-64-v3
+#cgo windows,amd64 CXXFLAGS: -mcpu=x86_64_v3
+// C++ runtime for demucs and whisper: static libstdc++ (Linux/gcc), zig's libc++ (Windows), libc++ (macOS)
+#cgo linux LDFLAGS: ${SRCDIR}/../../third_party/build/lib/libdemucs.a -l:libstdc++.a
+#cgo windows LDFLAGS: ${SRCDIR}/../../third_party/build-windows-amd64/lib/libdemucs.a -lc++
+#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../third_party/build-darwin-arm64/lib/libdemucs.a -lc++
+#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../third_party/build-darwin-amd64/lib/libdemucs.a -lc++
 #include <stdlib.h>
 #include "dmx.h"
 */

@@ -488,7 +488,7 @@ func ParseConfig(data []byte, dir string) (*ProjectConfig, error) {
 		return nil, err
 	}
 	cfg.mapPaths(func(p string) string {
-		if p == "" || filepath.IsAbs(p) {
+		if p == "" || isRooted(p) {
 			return p
 		}
 		return filepath.Clean(filepath.Join(dir, p))
@@ -530,7 +530,7 @@ func (c *ProjectConfig) Marshal() ([]byte, error) {
 		return nil, err
 	}
 	rel := func(p string) string {
-		if p == "" || c.Dir == "" || !filepath.IsAbs(p) {
+		if p == "" || c.Dir == "" || !isRooted(p) {
 			return p
 		}
 		if r, err := filepath.Rel(c.Dir, p); err == nil && !strings.HasPrefix(r, "..") {
@@ -595,4 +595,10 @@ func (c *ProjectConfig) Validate() error {
 	}
 	c.Visualizer.Type = strings.ToLower(c.Visualizer.Type)
 	return nil
+}
+
+// isRooted: an absolute path, or (Windows) one starting with a separator, which means the root
+// of the current drive. Such paths are not resolved against the project folder.
+func isRooted(p string) bool {
+	return filepath.IsAbs(p) || strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`)
 }
