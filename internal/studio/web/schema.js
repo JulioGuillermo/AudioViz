@@ -27,6 +27,16 @@ export const TRACKS = [
     { key: 'darken', label: 'Darken', type: 'num', min: 0, max: 1, step: 0.01 },
     { key: 'vignette', label: 'Vignette', type: 'num', min: 0, max: 1, step: 0.01 },
     { key: 'loop_video', label: 'Loop video / GIF', type: 'bool' },
+    { key: 'motion', label: 'Motion', type: 'group', fields: [
+      { key: 'type', label: 'Type', type: 'enum', def: 'none', help: 'Slow camera motion over the image during this segment',
+        options: [['none', 'Still'], ['zoom_in', 'Slow zoom in'], ['zoom_out', 'Slow zoom out'], ['pan_left', 'Pan left'],
+          ['pan_right', 'Pan right'], ['pan_up', 'Pan up'], ['pan_down', 'Pan down'], ['ken_burns', 'Ken Burns (zoom + pan)'],
+          ['drift', 'Drift (floating)'], ['sway', 'Sway (rotation)']] },
+      { key: 'amount', label: 'Amount', type: 'num', min: 0.02, max: 0.6, step: 0.01, showIf: (c) => (c.type || 'none') !== 'none' },
+      { key: 'easing', label: 'Easing', type: 'enum', def: 'linear', options: [['linear', 'Constant speed'], ['ease', 'Soft start and end']],
+        showIf: (c) => !['none', 'drift', 'sway'].includes(c.type || 'none') },
+      { key: 'speed', label: 'Speed', type: 'num', min: 0.1, max: 5, step: 0.1, help: 'Cycles every 10 s', showIf: (c) => ['drift', 'sway'].includes(c.type) },
+    ] },
   ] },
   { id: 'bass_zoom', group: 'Background effects', label: 'Zoom', icon: 'zoom-in', fields: [
     { key: 'enabled', label: 'Enabled', type: 'bool' },
@@ -183,3 +193,11 @@ export const OUTPUT_FIELDS = [
 ];
 
 export const trackById = Object.fromEntries(TRACKS.map((t) => [t.id, t]));
+
+// Transitions between segments. The background has visual transitions; other tracks blend.
+export const TRANSITIONS = [['cut', 'Cut'], ['fade', 'Fade'], ['dissolve', 'Dissolve'], ['dip_black', 'Dip to black'],
+  ['flash', 'Flash (white)'], ['wipe', 'Wipe'], ['slide', 'Slide'], ['push', 'Push'], ['zoom_in', 'Zoom in'],
+  ['zoom_out', 'Zoom out'], ['circle', 'Circle (iris)'], ['clock', 'Clock wipe'], ['glitch', 'Glitch'], ['pixelate', 'Pixelate']];
+export const SIMPLE_TRANSITIONS = [['cut', 'Cut'], ['fade', 'Fade']];
+export const DIRECTED = ['wipe', 'slide', 'push'];
+export const DIRECTIONS = [['left', 'Left'], ['right', 'Right'], ['up', 'Up'], ['down', 'Down']];

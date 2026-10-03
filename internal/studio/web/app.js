@@ -1,5 +1,5 @@
 import { html, render, useState, useEffect, useRef } from './vendor/preact-htm.js';
-import { TRACKS, AUDIO_FIELDS, OUTPUT_FIELDS, trackById } from './schema.js';
+import { TRACKS, AUDIO_FIELDS, OUTPUT_FIELDS, trackById, TRANSITIONS, SIMPLE_TRANSITIONS, DIRECTED, DIRECTIONS } from './schema.js';
 import { api, clone, fmtTime, parseTime, b64u8, basename, debounce } from './util.js';
 import { Form, Select } from './fields.js';
 import { Icon } from './icons.js';
@@ -134,7 +134,7 @@ function Setup({ proj, ctx, onHide }) {
 
 // ------------------------------------------------------------------ inspector
 
-function SegHeader({ segs, i, set, meta }) {
+function SegHeader({ segs, i, set, meta, track }) {
   const s = segs[i];
   const name = html`<div class="fld"><label>${t('Name')}</label><div class="ctl"><input type="text" class="grow" value=${s.label}
       placeholder=${i === 0 ? t('Optional') : t('e.g. Chorus')} onChange=${(e) => set({ ...s, label: e.target.value })} /></div></div>`;
@@ -146,11 +146,15 @@ function SegHeader({ segs, i, set, meta }) {
         onChange=${(e) => set({ ...s, at: Math.max(0.01, Math.min(meta.duration - 0.01, parseTime(e.target.value))) })} />
       <span class="faint" style="font-size:11.5px">min:sec</span></div></div>
     <div class="fld"><label>${t('Transition')}</label><div class="ctl">
-      <${Select} value=${s.transition.mode} options=${[['cut', 'Cut'], ['fade', 'Fade']]}
+      <${Select} value=${track === 'background' || s.transition.mode === 'cut' ? s.transition.mode : 'fade'}
+        options=${track === 'background' ? TRANSITIONS : SIMPLE_TRANSITIONS}
         onChange=${(m) => set({ ...s, transition: { ...s.transition, mode: m, duration: s.transition.duration || 1 } })} />
-      ${s.transition.mode === 'fade' && html`<input type="number" step="0.1" min="0.05" value=${s.transition.duration} title=${t('Duration (s)')}
+      ${s.transition.mode !== 'cut' && html`<input type="number" step="0.1" min="0.05" value=${s.transition.duration} title=${t('Duration (s)')}
         onChange=${(e) => set({ ...s, transition: { ...s.transition, duration: Math.max(0.05, +e.target.value) } })} /><span class="faint">s</span>`}
     </div></div>
+    ${track === 'background' && DIRECTED.includes(s.transition.mode) && html`<div class="fld"><label>${t('Direction')}</label><div class="ctl">
+      <${Select} value=${s.transition.direction || 'left'} options=${DIRECTIONS}
+        onChange=${(d) => set({ ...s, transition: { ...s.transition, direction: d } })} /></div></div>`}
   </div>`;
 }
 
@@ -174,7 +178,7 @@ function TrackInspector({ proj, track, segIdx, time, meta, update, setSel, ctx, 
       </div>
     </div>
     <div class="insp-b">
-      <${SegHeader} segs=${segs} i=${i} set=${setSeg} meta=${meta} />
+      <${SegHeader} segs=${segs} i=${i} set=${setSeg} meta=${meta} track=${track} />
       <${Form} fields=${def.fields} value=${seg.cfg} onChange=${(cfg) => setSeg({ ...seg, cfg })} ctx=${ctx} isFirst=${i === 0} />
       ${track === 'lyrics' && html`<div class="section"><div class="sh">${t('Generate lyrics')}</div><div class="sb">
         <p class="faint" style="margin:2px 0 8px;font-size:12px">${t('Creates an .lrc with the timing of every word from the lyrics as text.')}</p>

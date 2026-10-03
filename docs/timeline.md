@@ -17,8 +17,9 @@ timeline:
       radius: 220
   background:
     - at: 120
-      transition: { mode: fade, duration: 2 }
+      transition: { mode: slide, duration: 2, direction: left }   # see background/transitions.md
       path: "assets/puente.mp4"
+      motion: { type: zoom_in, amount: 0.2 }                     # see background/motion.md
   chromatic_aberration:
     - at: 150
       enabled: false
@@ -40,6 +41,8 @@ timeline:
 | `lyrics` | `lyrics` style (the path and the offset are always those of the first segment) |
 
 Each segment accepts `at` (seconds, required), `label` (name) and `transition`. The transition rules
-are in [studio.md](studio.md#segments-changing-effects-over-the-song).
+are in [studio.md](studio.md#segments-changing-effects-over-the-song). Background segments have many
+visual transitions (slide, wipe, circle, glitch...): see [background/transitions.md](background/transitions.md);
+the other tracks use `cut` or `fade`.
 
 Video backgrounds start from their beginning when their segment starts, and loop if `loop_video: true`.

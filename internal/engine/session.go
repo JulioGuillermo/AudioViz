@@ -10,6 +10,7 @@ import (
 
 	"audioviz/internal/audio"
 	"audioviz/internal/config"
+	"audioviz/internal/effects"
 	"audioviz/internal/lyrics"
 	"audioviz/internal/particles"
 	"audioviz/internal/video"
@@ -222,6 +223,23 @@ func (s *Session) mediaFor(bg *config.BackgroundConfig) (video.BackgroundReader,
 
 // ---------------------------------------------------------------- frame state
 
+// motionAt places background segment i at time t. Its motion spans the whole time the segment
+// is visible: from its start until the next segment has fully entered (its transition included).
+func (s *Session) motionAt(i int, t float64) effects.Layer {
+	segs := s.Cfg.Timeline.Background
+	sg := segs[i]
+	end := float64(s.Frames) / float64(s.FPS)
+	if i+1 < len(segs) {
+		n := segs[i+1]
+		end = n.At
+		if n.Transition.Animated() {
+			end += n.Transition.Duration
+		}
+	}
+	span := math.Max(end-sg.At, 1e-3)
+	return effects.MotionAt(sg.Cfg.Motion, (t-sg.At)/span, t-sg.At, s.W, s.H, i)
+}
+
 // FrameState is everything needed to draw a frame, already resolved on the timeline
 type FrameState struct {
 	Idx  int
@@ -230,12 +248,14 @@ type FrameState struct {
 
 	FX frameFX
 	BG config.BackgroundConfig // darken/opacity/vignette (interpolated)
-	// Background images: A always; B and Mix during a crossfade. Ver* identifies the image
-	// so it isn't re-uploaded to the GPU if unchanged.
-	BgA, BgB     *image.RGBA
-	VerA, VerB   string
-	BgMix        float64
-	GlitchAmount float64
+	// Background images: A always (the previous one during a transition), B the new one during
+	// a transition. Ver* identifies the image so it isn't re-uploaded to the GPU if unchanged.
+	// Layer* place each image (segment motion); Trans says how B replaces A.
+	BgA, BgB       *image.RGBA
+	VerA, VerB     string
+	LayerA, LayerB effects.Layer
+	Trans          effects.Trans
+	GlitchAmount   float64
 
 	Viz      config.VisualizerConfig
 	VizFeat  *audio.FrameFeatures
@@ -266,7 +286,8 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 	// Background effects: their results are blended (so enabling/disabling also fades)
 	fs.FX, fs.GlitchAmount = s.effectsAt(t, idx, fs.Feat)
 
-	// Background (with crossfade between media)
+	// Background: each segment's image with its motion; during a transition the previous one
+	// (A) and the new one (B) are both drawn and mixed by the transition
 	bi := config.Active(tl.Background, t)
 	pbg, cbg, k := config.Blend(tl.Background, t)
 	fs.BG = config.Lerp(pbg, cbg, k)
@@ -278,18 +299,23 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 		img, ver := ra.FrameAt(t - tl.Background[bi].At)
 		fs.BgA, fs.VerA = img, fmt.Sprintf("%p:%d", ra, ver)
 	}
-	if k < 1 && pbg.Path != cbg.Path {
+	fs.LayerA = s.motionAt(bi, t)
+	fs.Trans = effects.Trans{HasA: fs.BgA != nil}
+	if k < 1 {
 		rb, err := s.mediaFor(pbg)
 		if err != nil {
 			return nil, err
 		}
+		fs.BgB, fs.VerB, fs.LayerB = fs.BgA, fs.VerA, fs.LayerA
+		fs.BgA, fs.VerA = nil, ""
 		if rb != nil {
 			img, ver := rb.FrameAt(t - tl.Background[bi-1].At)
-			// A = previous, B = new, Mix = k
-			fs.BgB, fs.VerB = fs.BgA, fs.VerA
 			fs.BgA, fs.VerA = img, fmt.Sprintf("%p:%d", rb, ver)
-			fs.BgMix = k
 		}
+		fs.LayerA = s.motionAt(bi-1, t)
+		tr := tl.Background[bi].Transition
+		fs.Trans = effects.Trans{Mode: tr.ModeIndex(), Dir: tr.DirectionIndex(), K: k,
+			Seed: effects.Hash(uint32(bi)) & 0x7fffffff, HasA: fs.BgA != nil, HasB: fs.BgB != nil}
 	}
 
 	// Visualizer: same type -> interpolate; type change -> one fades out and the other fades in
@@ -505,7 +531,7 @@ func (s *Session) stepParticle(i int, feat *audio.FrameFeatures, fresh bool) {
 	}
 	sg := segs[cur]
 	k := 1.0
-	if sg.Transition.Mode == "fade" && sg.Transition.Duration > 0 && t < sg.At+sg.Transition.Duration {
+	if sg.Transition.Animated() && t < sg.At+sg.Transition.Duration {
 		k = math.Max(0, (t-sg.At)/sg.Transition.Duration)
 	}
 	alive := s.sim.entries[:0]
@@ -515,7 +541,7 @@ func (s *Session) stepParticle(i int, feat *audio.FrameFeatures, fresh bool) {
 			e.ps.Alpha = k
 		} else {
 			e.ps.Alpha = 1 - k
-			if sg.Transition.Mode != "fade" {
+			if !sg.Transition.Animated() {
 				e.ps.Alpha = 1
 			}
 		}

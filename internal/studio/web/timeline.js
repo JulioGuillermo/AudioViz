@@ -9,11 +9,18 @@ const H = { ruler: 26, audio: 74, lyrics: 30, track: 28 };
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const BAND = { bass: 'bass', mid: 'mids', treble: 'treble', overall: 'volume', transient: 'transients', beat: 'beats' };
 
+const MOTION_LABEL = Object.fromEntries(TRACKS.find((tr) => tr.id === 'background').fields
+  .find((f) => f.key === 'motion').fields.find((f) => f.key === 'type').options);
+
 // Short summary of a segment, shown inside its block
 export function segSummary(track, cfg) {
   if (!cfg) return '';
   switch (track) {
-    case 'background': return basename(cfg.path) || t('no background');
+    case 'background': {
+      const name = basename(cfg.path) || t('no background');
+      const m = cfg.motion && cfg.motion.type;
+      return m && m !== 'none' ? `${name} · ${t(MOTION_LABEL[m] || m)}` : name;
+    }
     case 'visualizer': return cfg.enabled ? `${t(cfg.type)} · ${cfg.bars}` : t('hidden');
     case 'particles': {
       const n = (cfg.layers || []).length;
@@ -365,7 +372,7 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
               ${segs.map((s, i) => {
                 const end = i + 1 < segs.length ? segs[i + 1].at : duration;
                 const on = sel.kind === 'track' && sel.track === tr.id && sel.seg === i;
-                const fade = s.transition && s.transition.mode === 'fade' && i > 0 ? s.transition.duration * effPps : 0;
+                const fade = s.transition && s.transition.mode !== 'cut' && i > 0 ? s.transition.duration * effPps : 0;
                 const enabled = tr.id === 'background' ? !!s.cfg.path : s.cfg.enabled !== false;
                 return html`<div class=${'seg' + (on ? ' on' : '') + (enabled ? '' : ' off')}
                     style=${{ left: s.at * effPps + 'px', width: Math.max(3, (end - s.at) * effPps - 1) + 'px' }}

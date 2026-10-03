@@ -8,7 +8,11 @@ background:
   darken: 0.12
   vignette: 0.25
   loop_video: true
+  motion: { type: ken_burns, amount: 0.15 }   # see motion.md
 ```
+
+- **[Motion](motion.md)**: slow zoom, pan, Ken Burns, drift or sway over each image, so it is not static.
+- **[Transitions](transitions.md)**: how one background segment replaces the previous one (fade, slide, wipe, circle, glitch...).
 
 | Field | Default | Description |
 |---|---|---|
@@ -18,6 +22,7 @@ background:
 | `darken` | 0.15 | Constant darkening (0–1) to make the visualizer stand out |
 | `vignette` | 0.25 | Darkens the edges (0–1) |
 | `loop_video` | true | Loops the video/GIF if it is shorter than its segment |
+| `motion` | none | Camera motion over the image: see [motion.md](motion.md) |
 
 ## Effects (`background_effects`)
 They are applied in this order: glitch → chromatic aberration → ripple → zoom/shake → color.

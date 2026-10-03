@@ -42,7 +42,7 @@ per-second rates would make the look fps-independent.
 | Each pixel only checks nearby bars (±2 circular, ±1 linear): very thick bars or wide glow get clipped | `render.comp` |
 | After a seek particles are re-simulated for 5 s: preview frames are close to, not identical to, the export; `max_life` > 5 s is not fully rebuilt | `engine/session.go` |
 | `find_mem` may fall back to non-coherent memory for Params/background/text buffers, which are never flushed | `internal/gpu/vk.c` (only matters on unusual hardware) |
-| Background crossfade to "no background" doesn't fade; a crossfade needs different `path`s; back-to-back fades jump if a segment starts while the previous is still fading | `engine/session.go`, `config/lerp.go` |
+| Back-to-back transitions jump if a segment starts while the previous one is still entering | `engine/session.go`, `config/lerp.go` |
 | Lyrics always use the first segment's path and offset | `engine/session.go` |
 | A shadow offset larger than about `pad − blur − outline` is cut at the word rectangle | `internal/lyrics/layout.go` |
 | `Lerp` deep-copies through YAML even without a fade, 3× per frame | `config/lerp.go`, `Session.Prepare` (not measured as a bottleneck) |
@@ -102,6 +102,12 @@ WAV/MP3/OGG decoders, `Lerp`, the LRC parser or the alignment code.
   `Resync`'s `source` ignored by the UI.
 - `tools/lyrics/` (empty, from the removed Python tool) and its `.gitignore` entries; a stray
   `.gitignore` line `I didn*t ask to be the devil`.
+
+## Fixed since
+
+- Background transitions to/from "no background" now fade (black side), and a transition between
+  two segments with the same image works (each keeps its motion) — with the background
+  layers/transitions work.
 
 ## Fixed while documenting
 

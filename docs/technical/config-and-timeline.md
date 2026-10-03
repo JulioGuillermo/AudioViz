@@ -103,8 +103,9 @@ block type:
 
 ```go
 type Transition struct {
-    Mode     string  // "cut" (instant) or "fade"
-    Duration float64 // seconds, fade only
+    Mode      string  // "cut", "fade" or a background transition (config.TransitionModes)
+    Duration  float64 // seconds (not for cut)
+    Direction string  // left/right/up/down for wipe, slide, push
 }
 
 type Seg[T any] struct {
@@ -176,7 +177,7 @@ func Blend[T any](segs []Seg[T], t float64) (prev, cur *T, k float64)
 
 `Active` is a binary search (`sort.Search` for the first `At > t`, minus one, clamped to 0).
 `Blend` returns `k = 1` and `prev = cur` unless the active segment `i > 0` has
-`Mode == "fade"`, `Duration > 0` and `t < At + Duration`; then `prev` = segment `i−1` and
+`Transition.Animated()` (any mode but `cut`, with `Duration > 0`) and `t < At + Duration`; then `prev` = segment `i−1` and
 `k = (t − At) / Duration`, rising 0 → 1.
 
 So a fade **starts at `at`** and ends at `at + duration`; the previous segment is shown
@@ -189,7 +190,7 @@ Each consumer decides *what* to blend; `Lerp` is only one of the strategies.
 
 | Track | Strategy |
 |---|---|
-| `background` | `Lerp` for numeric fields (darken, opacity, vignette); if the path changes, both media are read and crossfaded with `BgMix = k` (`Prepare`). Video time is `t − At` of the respective segment |
+| `background` | `Lerp` for numeric fields (darken, opacity, vignette); both images are always drawn during the transition, each with its own motion layer, and mixed by the transition mode (see [rendering.md](rendering.md#background-layers-motion-and-transitions)). Video time is `t − At` of the respective segment |
 | `visualizer` | If `type`, `bars` or `enabled` differ: no interpolation — the old one fades out over `k < 0.5`, the new one fades in over `k ≥ 0.5` (`VizAlpha`). Otherwise `Lerp` |
 | `bass_zoom`, `shake`, `ripple`, `chromatic_aberration`, `color_flash` | Compute the effect **output** for both configs and lerp the outputs (so `enabled: false` → `true` fades in). Chromatic mode switches instead of blending; ripple frequency/phase are taken from the enabled side when one side is disabled (`effectsAt`) |
 | `glitch` | No blend: uses `prev` while `k < 0.5`, `cur` after |

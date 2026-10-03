@@ -1,6 +1,7 @@
 #version 450
 // Full render of one frame on the GPU (a single dispatch):
-//   background (zoom + ripple + chromatic aberration + glitch + color/vignette)
+//   background (two images with motion + transition, zoom + ripple + chromatic aberration +
+//   glitch + color/vignette)
 //   -> particles -> visualizer (circular / horizontal / vertical / wave) with glow
 //   -> NV12 conversion (BT.709, limited range) ready for the H.264 encoder.
 // Each invocation processes a 4x2 pixel block (1 Y word per row + 1 UV word).
@@ -49,8 +50,12 @@ layout(std430, set = 0, binding = 0) readonly buffer Params {
     vec4 tA[MAX_TEXT];         // atlas x, y, w, h
     vec4 tB[MAX_TEXT];         // center x, y, scale, alpha
     vec4 tC[MAX_TEXT];         // karaoke fill, pad
-    vec4 bgMix;                // crossfade to background 2, visualizer opacity
+    vec4 bgMix;                // -, visualizer opacity
     ivec4 prev;                // preview: scale (1 = normal), output width and height
+    vec4 layerA;               // background A (BG): scale, offX, offY, rot (segment motion)
+    vec4 layerB;               // background B (BG2), only during a transition
+    ivec4 trans;               // mode (0 = none, see config.TransitionModes), direction, has (bit0 A, bit1 B), seed
+    vec4 transP;               // progress k
 } P;
 
 // Per-tile (workgroup) lists: particles and words that may touch the tile
@@ -70,22 +75,126 @@ layout(std430, set = 0, binding = 6) readonly buffer BG2 { uint bg2[]; };
 
 int W, H;
 
-vec3 fetch(ivec2 c) {
+// ---- Background images: each one placed by its layer (motion) and mixed by the transition.
+// Same math as internal/effects/transition.go (CPU path).
+
+vec3 texel(int img, ivec2 c) {
     c = clamp(c, ivec2(0), ivec2(W - 1, H - 1));
-    vec3 a = unpackUnorm4x8(bg[c.y * W + c.x]).rgb;
-    if (P.bgMix.x > 0.0) a = mix(a, unpackUnorm4x8(bg2[c.y * W + c.x]).rgb, P.bgMix.x);
-    return a;
+    uint v = img == 0 ? bg[c.y * W + c.x] : bg2[c.y * W + c.x];
+    return unpackUnorm4x8(v).rgb;
 }
 
-vec3 bilinear(vec2 q) {
+vec3 bilinearImg(int img, vec2 q) {
     q = clamp(q, vec2(0.0), vec2(float(W - 1), float(H - 1)));
     ivec2 i0 = ivec2(floor(q));
     vec2 f = q - vec2(i0);
-    vec3 a = fetch(i0);
-    vec3 b = fetch(i0 + ivec2(1, 0));
-    vec3 c = fetch(i0 + ivec2(0, 1));
-    vec3 d = fetch(i0 + ivec2(1, 1));
+    vec3 a = texel(img, i0);
+    vec3 b = texel(img, i0 + ivec2(1, 0));
+    vec3 c = texel(img, i0 + ivec2(0, 1));
+    vec3 d = texel(img, i0 + ivec2(1, 1));
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// Image img (0 = A, 1 = B) at output point q: source = c + rotate(q - c, -rot) / scale + off
+vec3 layerAt(int img, vec2 q) {
+    if ((P.trans.z & (img == 0 ? 1 : 2)) == 0) return vec3(0.0);
+    vec4 L = img == 0 ? P.layerA : P.layerB;
+    vec2 c = vec2(float(W), float(H)) * 0.5;
+    vec2 d = q - c;
+    if (L.w != 0.0) {
+        float cs = cos(-L.w), sn = sin(-L.w);
+        d = vec2(d.x * cs - d.y * sn, d.x * sn + d.y * cs);
+    }
+    float sc = L.x > 0.0 ? L.x : 1.0;
+    return bilinearImg(img, c + d / sc + L.yz);
+}
+
+uint hashU(uint x) {
+    x = x * 747796405u + 2891336453u;
+    uint w = ((x >> ((x >> 28u) + 4u)) ^ x) * 277803737u;
+    return (w >> 22u) ^ w;
+}
+
+float hash3(uint a, uint b, uint c) {
+    return float(hashU(a + hashU(b + hashU(c)))) / 4294967296.0;
+}
+
+vec2 dirVec(int d) {
+    if (d == 1) return vec2(1.0, 0.0);
+    if (d == 2) return vec2(0.0, -1.0);
+    if (d == 3) return vec2(0.0, 1.0);
+    return vec2(-1.0, 0.0);
+}
+
+// Modes in config.TransitionModes order: 0 cut (A only), 1 fade, 2 dissolve, 3 dip_black,
+// 4 flash, 5 wipe, 6 slide, 7 push, 8 zoom_in, 9 zoom_out, 10 circle, 11 clock, 12 glitch, 13 pixelate
+vec3 composite(vec2 q) {
+    int mode = P.trans.x;
+    if (mode == 0) return layerAt(0, q);
+    float k = clamp(P.transP.x, 0.0, 1.0);
+    float ke = k * k * (3.0 - 2.0 * k);
+    vec2 S = vec2(float(W), float(H));
+    vec2 c = S * 0.5;
+    uint seed = uint(P.trans.w);
+    if (mode == 2) { // dissolve
+        float n = hash3(uint(floor(q.x * 0.5)), uint(floor(q.y * 0.5)), seed);
+        return mix(layerAt(0, q), layerAt(1, q), smoothstep(n, n + 0.1, k * 1.1));
+    }
+    if (mode == 3 || mode == 4) { // dip to black / flash through white
+        vec3 mid = mode == 3 ? vec3(0.0) : vec3(1.0);
+        if (k < 0.5) return mix(layerAt(0, q), mid, smoothstep(0.0, 1.0, 2.0 * k));
+        return mix(mid, layerAt(1, q), smoothstep(0.0, 1.0, 2.0 * k - 1.0));
+    }
+    if (mode == 5) { // wipe: 0 where the new image appears first
+        int d = P.trans.y;
+        float u = d == 1 ? q.x / S.x : d == 2 ? 1.0 - q.y / S.y : d == 3 ? q.y / S.y : 1.0 - q.x / S.x;
+        const float f = 0.02;
+        float e = ke * (1.0 + 2.0 * f) - f;
+        return mix(layerAt(0, q), layerAt(1, q), 1.0 - smoothstep(e - f, e + f, u));
+    }
+    if (mode == 6 || mode == 7) { // slide (new over old) / push (new pushes old)
+        vec2 dv = dirVec(P.trans.y);
+        vec2 qb = q + dv * S * (1.0 - ke);
+        if (qb.x >= 0.0 && qb.x < S.x && qb.y >= 0.0 && qb.y < S.y) return layerAt(1, qb);
+        return mode == 7 ? layerAt(0, q - dv * S * ke) : layerAt(0, q);
+    }
+    if (mode == 8) { // zoom_in: fly into the old image while the new one settles
+        float s = 1.0 + 1.5 * ke;
+        float sb = 1.0 + 0.2 * (1.0 - ke);
+        return mix(layerAt(0, c + (q - c) / s), layerAt(1, c + (q - c) / sb), smoothstep(0.3, 1.0, k));
+    }
+    if (mode == 9) { // zoom_out: the new image arrives from very close
+        float s = 1.0 + 1.5 * (1.0 - ke);
+        return mix(layerAt(0, q), layerAt(1, c + (q - c) / s), smoothstep(0.0, 0.7, k));
+    }
+    if (mode == 10) { // circle (iris opening from the center)
+        float diag = length(S) * 0.5;
+        float f = 0.01 * diag;
+        float r = ke * (diag + f);
+        return mix(layerAt(0, q), layerAt(1, q), 1.0 - smoothstep(r - f, r + f, length(q - c)));
+    }
+    if (mode == 11) { // clock (radial sweep from 12 o'clock)
+        float ang = atan(q.x - c.x, -(q.y - c.y));
+        if (ang < 0.0) ang += 6.28318530718;
+        float e = ke * (6.28318530718 + 0.04);
+        return mix(layerAt(0, q), layerAt(1, q), 1.0 - smoothstep(e - 0.04, e, ang));
+    }
+    if (mode == 12) { // glitch: bands switch to the new image with shifts and RGB split
+        float g = sin(3.14159265 * k);
+        uint band = uint(int(floor(q.y)) / max(1, H / 24));
+        uint stp = uint(k * 16.0);
+        int img = hash3(band, stp, seed) < k ? 1 : 0;
+        float shift = (hash3(band, stp + 97u, seed) - 0.5) * S.x * 0.08 * g;
+        float split = 8.0 * g * (S.y / 1080.0);
+        float xs = q.x + shift;
+        return vec3(layerAt(img, vec2(xs + split, q.y)).r, layerAt(img, vec2(xs, q.y)).g, layerAt(img, vec2(xs - split, q.y)).b);
+    }
+    if (mode == 13) { // pixelate: blocks grow, swap at the middle, shrink
+        float bs = 1.0 + floor(sin(3.14159265 * k) * 48.0 * (S.y / 1080.0));
+        vec2 qp = (floor(q / bs) + 0.5) * bs;
+        return mix(layerAt(0, qp), layerAt(1, qp), smoothstep(0.4, 0.6, k));
+    }
+    return mix(layerAt(0, q), layerAt(1, q), k); // fade
 }
 
 // Warp map: ripple then centered zoom (each effect reads the previous one's output)
@@ -102,7 +211,7 @@ vec3 warped(vec2 q) {
         q = c + (q - c) / zoom;
     }
     q -= P.shake.xy;
-    return bilinear(q);
+    return composite(q);
 }
 
 bool inside(vec2 q) {

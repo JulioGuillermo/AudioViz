@@ -1,5 +1,13 @@
 // Spanish UI strings (English source → Spanish)
 export const ES = {
+  'Motion': 'Movimiento', 'Slow camera motion over the image during this segment': 'Movimiento lento de cámara sobre la imagen durante este tramo',
+  'Still': 'Estática', 'Slow zoom in': 'Zoom lento hacia dentro', 'Slow zoom out': 'Zoom lento hacia fuera', 'Pan left': 'Desplazar a la izquierda',
+  'Pan right': 'Desplazar a la derecha', 'Pan up': 'Desplazar hacia arriba', 'Pan down': 'Desplazar hacia abajo', 'Ken Burns (zoom + pan)': 'Ken Burns (zoom + desplazamiento)',
+  'Drift (floating)': 'Deriva (flotando)', 'Sway (rotation)': 'Balanceo (giro)', 'Amount': 'Intensidad', 'Easing': 'Suavizado',
+  'Constant speed': 'Velocidad constante', 'Soft start and end': 'Inicio y final suaves', 'Cycles every 10 s': 'Ciclos cada 10 s',
+  'Dissolve': 'Disolver', 'Dip to black': 'Fundido a negro', 'Flash (white)': 'Destello (blanco)', 'Wipe': 'Cortinilla', 'Slide': 'Deslizar',
+  'Push': 'Empujar', 'Circle (iris)': 'Círculo (iris)', 'Clock wipe': 'Barrido de reloj',
+  'Pixelate': 'Pixelar', 'Up': 'Arriba', 'Down': 'Abajo',
   'Edit words': 'Editar palabras', 'Done': 'Hecho', 'Show the words on the timeline to adjust each one (Esc to finish)': 'Muestra las palabras en la timeline para ajustar cada una (Esc para terminar)',
   'Could not recognize line {n} clearly; it was left as it was. Drag it closer to where it is sung and try again.': 'No se reconoció bien la línea {n}; se ha dejado como estaba. Arrástrala más cerca de donde se canta y vuelve a intentarlo.',
   'Audio while scrubbing: on (S)': 'Audio al desplazarse: activado (S)', 'Audio while scrubbing: off (S)': 'Audio al desplazarse: desactivado (S)',

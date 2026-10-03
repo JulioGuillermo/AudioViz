@@ -38,12 +38,23 @@ type AudioConfig struct {
 }
 
 type BackgroundConfig struct {
-	Path      string  `yaml:"path"`       // Path to an image (.png, .jpg) or video (.mp4, .mkv)
-	FitMode   string  `yaml:"fit_mode"`   // "cover", "contain", "stretch"
-	Opacity   float64 `yaml:"opacity"`    // 0.0 to 1.0 (to fade the background image)
-	Darken    float64 `yaml:"darken"`     // 0.0 to 1.0 (constant base darkening)
-	Vignette  float64 `yaml:"vignette"`   // 0.0 to 1.0 (dark vignette at the edges)
-	LoopVideo bool    `yaml:"loop_video"` // Whether the background video loops
+	Path      string       `yaml:"path"`       // Path to an image (.png, .jpg) or video (.mp4, .mkv)
+	FitMode   string       `yaml:"fit_mode"`   // "cover", "contain", "stretch"
+	Opacity   float64      `yaml:"opacity"`    // 0.0 to 1.0 (to fade the background image)
+	Darken    float64      `yaml:"darken"`     // 0.0 to 1.0 (constant base darkening)
+	Vignette  float64      `yaml:"vignette"`   // 0.0 to 1.0 (dark vignette at the edges)
+	LoopVideo bool         `yaml:"loop_video"` // Whether the background video loops
+	Motion    MotionConfig `yaml:"motion"`     // Camera motion over the image during its segment
+}
+
+// MotionConfig: slow camera motion over a background segment (Ken Burns style), so a still
+// image is not static. It runs over the whole time the segment is visible (its transitions
+// included) and the image is scaled up just enough that no edge ever shows.
+type MotionConfig struct {
+	Type   string  `yaml:"type"`   // none, zoom_in, zoom_out, pan_left, pan_right, pan_up, pan_down, ken_burns, drift, sway
+	Amount float64 `yaml:"amount"` // strength 0..1: extra zoom / travelled fraction (default 0.15)
+	Easing string  `yaml:"easing"` // linear (constant speed) or ease (starts and ends softly)
+	Speed  float64 `yaml:"speed"`  // drift and sway: cycles per 10 s (default 1)
 }
 
 type BackgroundEffectsConfig struct {
@@ -276,6 +287,7 @@ func DefaultConfig() ProjectConfig {
 			Darken:    0.15,
 			Vignette:  0.25,
 			LoopVideo: true,
+			Motion:    MotionConfig{Type: "none", Amount: 0.15, Easing: "linear", Speed: 1},
 		},
 		BackgroundEffects: BackgroundEffectsConfig{
 			BassZoom: BassZoomConfig{

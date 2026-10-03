@@ -424,14 +424,12 @@ func Execute(cfg *config.ProjectConfig, opts RenderOptions) error {
 
 func (s *Session) cpuFrame(fs *FrameState) *image.RGBA {
 	frame := image.NewRGBA(image.Rect(0, 0, s.W, s.H))
-	if fs.BgA != nil {
-		copy(frame.Pix, fs.BgA.Pix)
-		if fs.BgB != nil && fs.BgMix > 0 {
-			m := fs.BgMix
-			for i := range frame.Pix {
-				frame.Pix[i] = uint8(float64(frame.Pix[i])*(1-m) + float64(fs.BgB.Pix[i])*m + 0.5)
-			}
+	if fs.Trans.Mode == 0 && fs.LayerA == effects.Identity {
+		if fs.BgA != nil {
+			copy(frame.Pix, fs.BgA.Pix)
 		}
+	} else {
+		effects.Compose(frame, fs.BgA, fs.BgB, fs.LayerA, fs.LayerB, fs.Trans)
 	}
 	fx := fs.FX
 	frame = effects.ApplyBassZoom(frame, fx.zoom, fx.shakeX, fx.shakeY)
@@ -548,7 +546,7 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 	cf := (259.0 * (c + 255.0)) / (255.0 * (259.0 - c))
 	p.ZoomRipple = [4]float32{float32(fx.zoom), float32(fx.rippleAmp), float32(fx.rippleFreq), float32(fx.rTim)}
 	p.ColorAdj = [4]float32{float32(cf), float32(-fs.BG.Darken + fx.bright), float32(fs.BG.Opacity), float32(fs.BG.Vignette)}
-	if fs.BgA == nil {
+	if fs.BgA == nil && fs.BgB == nil {
 		p.ColorAdj[2] = 0 // no background: black
 	}
 	p.Chroma = [4]float32{float32(fx.chromaShift)}
@@ -563,9 +561,21 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 		}
 	}
 	p.BgMix = [4]float32{0, float32(fs.VizAlpha)}
-	if fs.BgB != nil {
-		p.BgMix[0] = float32(fs.BgMix)
+	// Background layers (motion) and transition (see composite() in render.comp)
+	layer := func(l effects.Layer) [4]float32 {
+		return [4]float32{float32(l.Scale), float32(l.OffX), float32(l.OffY), float32(l.Rot)}
 	}
+	tr := fs.Trans
+	has := int32(0)
+	if tr.HasA {
+		has |= 1
+	}
+	if tr.HasB {
+		has |= 2
+	}
+	p.LayerA, p.LayerB = layer(fs.LayerA), layer(fs.LayerB)
+	p.Trans = [4]int32{int32(tr.Mode), int32(tr.Dir), has, int32(tr.Seed & 0x7fffffff)}
+	p.TransP = [4]float32{float32(tr.K)}
 
 	// Particles
 	np := 0

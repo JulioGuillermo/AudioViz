@@ -36,7 +36,9 @@ flowchart TD
 | `Feat` | Base analysis frame (bands, beat) — drives effects, particles, lyrics, ring pulse |
 | `FX` (`frameFX`) | Resolved background effect values: zoom, shake dx/dy, ripple amp/freq/time, chroma shift/mode, glitch on/off, brightness, contrast |
 | `BG` | Lerped background block (darken, opacity, vignette) |
-| `BgA`, `BgB`, `BgMix`, `VerA`, `VerB` | Background image(s); during a fade A = previous, B = new, `BgMix` = k. `Ver*` = `"%p:%d"` of reader pointer + frame version, used to skip re-uploads |
+| `BgA`, `BgB`, `VerA`, `VerB` | Background image(s): A = current; during a transition A = previous, B = new (either may be nil = black). `Ver*` = `"%p:%d"` of reader pointer + frame version, used to skip re-uploads |
+| `LayerA`, `LayerB` | `effects.Layer` (scale, offX, offY, rot) placing each image: the segment's [motion](../background/motion.md) at this time |
+| `Trans` | `effects.Trans`: transition mode/direction index, progress k, seed, which sides have an image |
 | `GlitchAmount` | Intensity of the active glitch block |
 | `Viz`, `VizFeat`, `VizAlpha` | Visualizer config (lerped or switched), the analysis computed **for that config's bar parameters**, and its opacity |
 | `Parts` | Live `*particles.ParticleSystem` pointers (mutable — consume before the next `Prepare`) |
@@ -72,7 +74,7 @@ All buffers are host-visible and persistently mapped; there are no staging copie
 | 3 | `UV` | PadW·PadH/2 | HOST_CACHED \| HOST_COHERENT | GPU output |
 | 4 | `RGBA` | W·H·4 | HOST_CACHED \| HOST_COHERENT | GPU output (stills/preview) |
 | 5 | `TEXT` | `textCap` rounded to 4 | DEVICE_LOCAL \| HOST_COHERENT | when `Session.LyrVer` changed for that slot |
-| 6 | `BG2` | W·H·4 | DEVICE_LOCAL \| HOST_COHERENT | only during a crossfade, when `VerB` changed |
+| 6 | `BG2` | W·H·4 | DEVICE_LOCAL \| HOST_COHERENT | only during a transition, when `VerB` changed |
 
 `PadW`, `PadH` = W, H rounded up to 16 (x264 macroblocks). `find_mem` first looks for a type with
 `HOST_VISIBLE` + the preference, then any `HOST_VISIBLE` type. DEVICE_LOCAL+HOST_VISIBLE is
@@ -130,8 +132,11 @@ Must match `gpu.Params` field for field (`gpu.go`). Limits: `MAX_GRAD 8`, `MAX_G
 | `bars[256]` | heightL px, heightR px, magL 0..1, magR 0..1 |
 | `parts[1024]`, `partCol[1024]` | x, y, radius, alpha / rgb, glow flag |
 | `textInfo`, `textStyle`, `text*`, `textGrad`, `tA/tB/tC` | lyrics, see [lyrics-rendering.md](lyrics-rendering.md#gpu-sampling) |
-| `bgMix` | x = crossfade to BG2 (0..1), y = visualizer opacity (`VizAlpha`) |
+| `bgMix` | x unused, y = visualizer opacity (`VizAlpha`) |
 | `prev` | preview scale (0/1 = off), preview width, preview height |
+| `layerA`, `layerB` | scale, offX, offY, rot of BG and BG2 (segment motion) |
+| `trans` | mode (index in `config.TransitionModes`, 0 = none), direction, has (bit0 A, bit1 B), seed |
+| `transP` | x = transition progress k |
 
 ### Per-invocation flow
 
@@ -149,7 +154,7 @@ main():
 
 `shade(q)` (q = pixel coords, `p = q + 0.5` = pixel centre), in order:
 
-1. `background(q)` — glitch → ripple → zoom/shake → bilinear fetch (with BG2 mix) → chromatic aberration → contrast/brightness/vignette/opacity.
+1. `background(q)` — glitch → ripple → zoom/shake → `composite(q)` (both images placed by their layers and mixed by the transition) → chromatic aberration → contrast/brightness/vignette/opacity.
 2. Particles from the tile list (halo, then core).
 3. Visualizer (ring for circular, then bars/lines into glow/core accumulators, composited glow then core).
 4. Lyrics (`drawText`, three times with offsets when lyric chroma is on).
@@ -219,7 +224,7 @@ Coordinates are inverse-mapped, so effects compose as image operations zoom → 
 for each glitch slice with y0 <= q.y < y1:  if 0 <= q.x - shift < W: q.x -= shift   // cumulative
 warped(q):  if amp > 0.2: q += (sin(ph), cos(ph)) * amp,  ph = q.y*freq + time; clamp
             if zoom > 1.001: q = c + (q - c) / zoom          // c = (W/2, H/2)
-            q -= shake;  return bilinear(q)                  // edge-clamped, BG/BG2 mixed in fetch()
+            q -= shake;  return composite(q)                 // layers + transition, see below
 chroma:     horizontal off = (-round(shift), 0); radial off = (q - c)/|c| * shift
             col.r = warped(q + off).r ; col.b = warped(q - off).b   (only if the offset point is inside)
 color:      col = cf*(col - 0.5) + 0.5 + brightAdd ; col *= max(0, 1 - |q-c|²/|c|² * vignette) ; col *= opacity
@@ -231,9 +236,47 @@ Glitch slices: `effects.GlitchSlices(W, H, intensity, seed = frame idx)` — det
 `math/rand`: count `max(2, H·0.04·intensity)`, height `rand(max(4, H·0.08)) + 2`, shift
 `±W·0.06·intensity`. Shared by CPU and GPU (the GPU keeps the first 64).
 
-Crossfade between two background media: `Prepare` sets A = previous, B = new, `BgMix = k` only when
-the paths differ. `fetch()` mixes per texel before every other effect, so both images are warped
-identically.
+### Background layers, motion and transitions
+
+`Prepare` places each background image with an `effects.Layer` computed by `effects.MotionAt`
+from the segment's `motion` block. Progress `p` runs over the whole time the segment is visible:
+from its `at` until the next segment has fully entered (`next.at + next.transition.duration` when
+animated), so an image keeps moving during the transition. A layer maps output point `q` to the
+source pixel `c + rotate(q − c, −rot) / scale + (offX, offY)` (`c` = frame center); `MotionAt`
+picks the scale so no edge shows (pans use the slack `(W − W/s)/2`; sway uses the zoom that
+covers the frame when rotated, `max(cos+sin/ar, cos+sin·ar)`).
+
+| Motion | Layer at progress `e` (eased `p`), amount `a` |
+|---|---|
+| `zoom_in` / `zoom_out` | scale `1 + a·e` / `1 + a·(1−e)` |
+| `pan_*` | scale `1 + a`; offset `±slack·(2e−1)` on the axis |
+| `ken_burns` | scale `1 + a·e`; offset `= slack(scale)` towards one of 4 corners (segment index mod 4) |
+| `drift` | scale `1 + a`; offset `slack·(sin φ, sin(0.77φ + 1.3))`, `φ = 2π·speed/10·t` |
+| `sway` | rot `0.25a·sin φ`; scale = cover(0.25a)·(1 + 0.1a) |
+
+During a transition (`config.Blend` gives k < 1; any mode but `cut` with a duration) A = previous
+image with its layer, B = new image with its layer, and `composite()` mixes them by mode. The
+same math is in Go (`effects.Compose` / `transitionPixel`, used by the CPU path) and GLSL
+(`composite()`), including the PCG hash used for `dissolve` and `glitch`; rendering both on the
+13 modes gives a mean difference ≤ 0.11/255. `ke = smoothstep(k)`.
+
+| Mode | Formula |
+|---|---|
+| fade | `mix(A, B, k)` |
+| dissolve | per 2×2 px noise `n`: `mix(A, B, smoothstep(n, n+0.1, 1.1k))` |
+| dip_black / flash | `k < 0.5`: A → black/white; then black/white → B (smoothstep halves) |
+| wipe | coordinate `u` along the direction; B where `u < ke` with a 2 % soft edge |
+| slide | B sampled at `q + dir·size·(1−ke)` where inside, else A |
+| push | as slide, and A sampled at `q − dir·size·ke` |
+| zoom_in | A zoomed `1 + 1.5ke`, B settling from `1.2`, mixed by `smoothstep(0.3, 1, k)` |
+| zoom_out | B from zoom `1 + 1.5(1−ke)` to 1, mixed by `smoothstep(0, 0.7, k)` |
+| circle | B inside radius `ke·(diag/2)`, 1 % soft edge |
+| clock | B where the angle from 12 o'clock `< ke·2π` |
+| glitch | 24 bands, re-rolled 16× during the transition: each band shows B if `hash < k`, shifted `±4 %·W·sin(πk)` with an RGB split of `8 px·sin(πk)` |
+| pixelate | blocks of `1 + 48·sin(πk)` px (at 1080 p), A → B at k = 0.5 |
+
+Effects (glitch slices, ripple, zoom/shake, chroma) act on the composited result, so both images
+are warped identically.
 
 ### CPU equivalents (`internal/effects`)
 

@@ -16,7 +16,7 @@ and lossless FLAC audio inside an MP4.
 - [Audio](audio.md) — formats, volume, sensitivity
 - [Reactivity and normalization](reactivity.md) — `react_to` (bass/mid/treble/...) and adaptive normalization
 
-## Background — [overview](background/README.md)
+## Background — [overview](background/README.md) · [motion](background/motion.md) · [transitions](background/transitions.md)
 | Effect | What it does | Reacts by default to |
 |---|---|---|
 | [bass_zoom](background/bass_zoom.md) | Pulsing zoom from the center | bass |

@@ -61,13 +61,17 @@ new segment starts at its own instant and replaces that track's configuration fr
 - **Move it**: drag it on the timeline. It snaps (magnet) to markers, beats, the cursor and
   other segments; hold **Alt** to move it freely. You can also type the exact instant in
   "Starts at".
-- **Transition**: *Cut* or *Fade* with its duration:
+- **Transition**: *Cut* or *Fade* (the background has many more) with its duration:
   - numbers and colors are interpolated (e.g. the gradient gradually changes from red to blue);
   - turning an effect on/off fades;
   - a change of visualizer type or bar count fades out and back in;
-  - a background change cross-fades;
+  - a background change uses its own transition: besides *Fade* there are *Dissolve*, *Dip to black*,
+    *Flash*, *Wipe*, *Slide*, *Push* (with a direction), *Zoom in/out*, *Circle*, *Clock wipe*,
+    *Glitch* and *Pixelate* (see [background/transitions.md](background/transitions.md));
   - particles from the previous segment stop spawning and fade out while the new ones spawn.
 - **Delete**: the *Delete segment* button or the **Del** key (the first one cannot be deleted).
+- **Motion** (background segments): slow zoom, pan, Ken Burns, drift or sway over the image, so it
+  is not static (see [background/motion.md](background/motion.md)).
 - **Name**: give segments names ("Chorus", "Bridge") to see them on the timeline.
 
 **Lyrics** work the same way: a lyrics segment changes the style (font, position, colors,

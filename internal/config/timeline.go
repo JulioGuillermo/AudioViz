@@ -21,8 +21,44 @@ import (
 
 // Transition describes how a segment is entered
 type Transition struct {
-	Mode     string  `yaml:"mode"`     // "cut" (instant) or "fade" (interpolate/crossfade)
-	Duration float64 `yaml:"duration"` // seconds (fade only)
+	// "cut" (instant), "fade" (interpolate/crossfade) or, for the background, one of the visual
+	// transitions in TransitionModes. Other tracks treat every non-cut mode as a fade.
+	Mode      string  `yaml:"mode"`
+	Duration  float64 `yaml:"duration"`            // seconds (not for cut)
+	Direction string  `yaml:"direction,omitempty"` // left, right, up, down: wipe, slide and push
+}
+
+// TransitionModes are the background transitions (the renderer numbers them in this order)
+var TransitionModes = []string{"cut", "fade", "dissolve", "dip_black", "flash", "wipe", "slide", "push",
+	"zoom_in", "zoom_out", "circle", "clock", "glitch", "pixelate"}
+
+// Directions for wipe, slide and push: where the new image moves
+var TransitionDirections = []string{"left", "right", "up", "down"}
+
+// Animated says whether entering the segment takes time (any mode but cut, with a duration)
+func (t Transition) Animated() bool { return t.Mode != "" && t.Mode != "cut" && t.Duration > 0 }
+
+// ModeIndex is the position of the mode in TransitionModes (unknown modes count as fade)
+func (t Transition) ModeIndex() int {
+	for i, m := range TransitionModes {
+		if m == t.Mode {
+			return i
+		}
+	}
+	if t.Mode == "" {
+		return 0
+	}
+	return 1
+}
+
+// DirectionIndex is the position of the direction in TransitionDirections (default left)
+func (t Transition) DirectionIndex() int {
+	for i, d := range TransitionDirections {
+		if d == t.Direction {
+			return i
+		}
+	}
+	return 0
 }
 
 // Seg is a segment of a track
@@ -69,7 +105,7 @@ func Blend[T any](segs []Seg[T], t float64) (prev, cur *T, k float64) {
 	prev, k = cur, 1
 	if i > 0 {
 		s := segs[i]
-		if s.Transition.Mode == "fade" && s.Transition.Duration > 0 && t < s.At+s.Transition.Duration {
+		if s.Transition.Animated() && t < s.At+s.Transition.Duration {
 			prev = &segs[i-1].Cfg
 			k = (t - s.At) / s.Transition.Duration
 		}

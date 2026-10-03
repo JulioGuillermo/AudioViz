@@ -57,8 +57,13 @@ type Params struct {
 	TItemB                                          [MaxTextItems][4]float32 // center x, y, scale, alpha
 	TItemC                                          [MaxTextItems][4]float32 // karaoke fill, pad
 
-	BgMix [4]float32 // crossfade towards background 2 (0..1), visualizer opacity, -, -
+	BgMix [4]float32 // -, visualizer opacity, -, -
 	Prev  [4]int32   // preview: scale, width, height (scale 0/1 = normal render)
+
+	// Background layers and transition (effects.Layer / effects.Trans)
+	LayerA, LayerB [4]float32 // scale, offX, offY, rot of image A (BG) and B (BG2)
+	Trans          [4]int32   // mode, direction, has (bit0 A, bit1 B), seed
+	TransP         [4]float32 // progress k, -, -, -
 }
 
 type Renderer struct {
