@@ -1,5 +1,6 @@
 // Spanish UI strings (English source → Spanish)
 export const ES = {
+  'Audio while scrubbing: on (S)': 'Audio al desplazarse: activado (S)', 'Audio while scrubbing: off (S)': 'Audio al desplazarse: desactivado (S)',
   // --- general
   'Loading…': 'Cargando…', 'Cancel': 'Cancelar', 'Close': 'Cerrar', 'Close (Esc)': 'Cerrar (Esc)', 'Delete': 'Eliminar', 'Remove': 'Quitar',
   'Hide': 'Ocultar', 'None': 'Ninguno', 'Name': 'Nombre', 'Optional': 'Opcional', 'optional': 'opcional', 'Go': 'Ir', 'New': 'Nuevo', 'Open': 'Abrir',

@@ -7,6 +7,7 @@ import { Timeline, segSummary } from './timeline.js';
 import { FilePicker, NewProject, ExportDialog, GenLyricsDialog, LYRIC_LANGS, STEP_LABEL } from './dialogs.js';
 import { createStore, useStore, useThrottledStore } from './store.js';
 import { t, setLang, langStore, LANGS } from './i18n.js';
+import { createScrubber } from './scrub.js';
 
 // ------------------------------------------------------------------ preview
 
@@ -287,6 +288,17 @@ function App() {
   // Slow copy of the time for everything that doesn't need 60 updates per second
   const time = useThrottledStore(timeStore, 250, playing);
   const audio = useRef(new Audio());
+  // Hear the audio while moving through time with the playback stopped (remembered per browser)
+  const scrubber = useRef(null);
+  if (!scrubber.current) scrubber.current = createScrubber();
+  const [scrub, setScrubState] = useState(() => { try { return localStorage.getItem('audioviz.scrub') !== '0'; } catch (e) { return true; } });
+  const scrubRef = useRef(scrub);
+  scrubRef.current = scrub;
+  const setScrub = (on) => {
+    setScrubState(on);
+    try { localStorage.setItem('audioviz.scrub', on ? '1' : '0'); } catch (e) { /* ignore */ }
+    if (on) scrubber.current.preload(); else scrubber.current.stop();
+  };
   const projRef = useRef(null);
   const lyrRef = useRef(lyr);
   projRef.current = proj;
@@ -321,6 +333,8 @@ function App() {
     const a = audio.current;
     const src = p.audio.path ? '/api/media?path=' + encodeURIComponent(p.audio.path) : '';
     if (a.dataset.src !== src) { a.src = src; a.dataset.src = src; a.load(); }
+    scrubber.current.setSource(src);
+    if (scrubRef.current && src) scrubber.current.preload();
   };
 
   useEffect(() => {
@@ -382,11 +396,13 @@ function App() {
     tt = Math.max(0, Math.min(d, tt));
     timeStore.set(tt);
     if (playing && audio.current.src) audio.current.currentTime = tt;
+    else if (!playing && scrubRef.current) scrubber.current.play(tt);
   };
   useEffect(() => {
     if (!playing) return;
     const a = audio.current;
     let raf;
+    scrubber.current.stop();
     const base = performance.now(), t0 = timeStore.get();
     if (a.src) { a.currentTime = t0; a.play().catch(showErr); }
     const tick = () => {
@@ -531,6 +547,7 @@ function App() {
       else if (e.key === 'Home') seek(0);
       else if (e.key === 'End') seek(meta.duration);
       else if (e.key === 'm' || e.key === 'M') onMarker('add');
+      else if (e.key === 's' || e.key === 'S') setScrub(!scrubRef.current);
       else if ((e.key === 'n' || e.key === 'N') && sel.kind === 'track') ctx.addSeg(sel.track, now);
       else if (e.key === 'Delete' && sel.kind === 'track' && sel.seg > 0) {
         update((p) => { p.tracks[sel.track].splice(sel.seg, 1); });
@@ -634,6 +651,8 @@ function App() {
           <button class="btn icon" title=${t('Go to end (End)')} onClick=${() => seek(meta.duration)}><${Icon} name="skip-forward" size=${15} /></button>
         </div>
         <${Clock} timeStore=${timeStore} meta=${meta} />
+        <button class=${'btn icon' + (scrub ? ' on' : '')} title=${t(scrub ? 'Audio while scrubbing: on (S)' : 'Audio while scrubbing: off (S)')}
+          onClick=${() => setScrub(!scrub)}><${Icon} name=${scrub ? 'volume-2' : 'volume-x'} size=${15} /></button>
         <span class="spacer"></span>
         ${!meta.hasAudio && html`<button class="btn sm ghost notice" onClick=${() => ctx.pickFile('audio', ctx.setAudio)}><${Icon} name="triangle-alert" size=${14} />${t('No audio · choose…')}</button>`}
         <span class="faint" style="font-size:12px">${t('Preview')}</span>

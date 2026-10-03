@@ -116,9 +116,13 @@ The interface language (English / Español) is chosen in the top bar and remembe
 | N | New segment at the cursor (selected track) |
 | Del | Delete the selected segment |
 | M | Marker at the cursor |
-| Ctrl + wheel | Timeline zoom |
+| S | Audio while scrubbing on / off |
+| Ctrl + wheel | Timeline zoom (keeps the point under the pointer; the buttons keep the center) |
 
 ## Preview
+- **Audio while scrubbing** (speaker button next to the clock, or `S`): with the playback stopped,
+  moving through time (dragging on the ruler or the waveform, ←/→, jumping to a line…) plays a short
+  snippet of the song at that point. On by default; the choice is remembered by the browser.
 - *Preview quality* (1/2 by default) renders directly at a lower resolution on the GPU.
 - On the same machine it runs at 50–60 fps. From another machine it requests several frames ahead to
   compensate for network latency.
