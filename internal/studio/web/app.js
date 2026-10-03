@@ -376,7 +376,36 @@ function App() {
   const [dlg, setDlg] = useState(null);
   const [pick, setPick] = useState(null); // file browser: own layer, above any dialog
   const [toast, setToast] = useState('');
-  const [tlH, setTlH] = useState(Math.round(innerHeight * 0.36));
+  // Layout: side panel widths and timeline height, adjustable with the dividers, remembered by the browser
+  const layoutDef = () => ({ left: 220, right: 340, tl: Math.round(innerHeight * 0.36) });
+  const [layout, setLayoutState] = useState(() => {
+    try { return { ...layoutDef(), ...JSON.parse(localStorage.getItem('audioviz.layout') || '{}') }; } catch (e) { return layoutDef(); }
+  });
+  const setLayout = (k, v) => setLayoutState((l) => {
+    const n = { ...l, [k]: v ?? layoutDef()[k] }; // null = default size
+    try { localStorage.setItem('audioviz.layout', JSON.stringify(n)); } catch (e) { /* ignore */ }
+    return n;
+  });
+  const tlH = Math.max(160, Math.min(innerHeight - 220, layout.tl));
+  const setTlH = (v) => setLayout('tl', v);
+  const colDrag = (e, side) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const x0 = e.clientX, w0 = layout[side], el = e.currentTarget;
+    el.classList.add('on');
+    document.body.classList.add('resizing-col');
+    const lim = side === 'left' ? [160, 420] : [280, 640];
+    const mv = (ev) => {
+      const dx = ev.clientX - x0;
+      setLayout(side, Math.round(Math.max(lim[0], Math.min(lim[1], side === 'left' ? w0 + dx : w0 - dx))));
+    };
+    const up = () => {
+      removeEventListener('mousemove', mv); removeEventListener('mouseup', up);
+      el.classList.remove('on');
+      document.body.classList.remove('resizing-col');
+    };
+    addEventListener('mousemove', mv); addEventListener('mouseup', up);
+  };
   const [hideSetup, setHideSetup] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [resyncing, setResyncing] = useState(false);
@@ -802,7 +831,11 @@ function App() {
   else inspector = html`<${TrackInspector} proj=${proj} track=${sel.track} segIdx=${sel.seg} time=${time} meta=${meta}
       update=${update} setSel=${setSel} ctx=${ctx} onGenLyrics=${() => setDlg({ type: 'genlyrics' })} />`;
 
-  return html`<div class="app" style=${{ '--tl-h': tlH + 'px' }}>
+  return html`<div class="app" style=${{ '--tl-h': tlH + 'px', '--left-w': layout.left + 'px', '--right-w': layout.right + 'px' }}>
+    <div class="split-v left" onMouseDown=${(e) => colDrag(e, 'left')} onDblClick=${() => setLayout('left', null)}
+      title=${t('Drag to resize · double-click: default size')}></div>
+    <div class="split-v right" onMouseDown=${(e) => colDrag(e, 'right')} onDblClick=${() => setLayout('right', null)}
+      title=${t('Drag to resize · double-click: default size')}></div>
     <div class="top">
       <div class="brand"><span class="mark"><${Icon} name="audio-waveform" size=${13} /></span>AudioViz</div>
       <span class="sep"></span>

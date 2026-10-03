@@ -1,5 +1,6 @@
 // Spanish UI strings (English source → Spanish)
 export const ES = {
+  'Drag to resize · double-click: default size': 'Arrastra para cambiar el tamaño · doble clic: tamaño por defecto',
   'Drag to scroll the timeline · click to move the cursor': 'Arrastra para desplazar la línea de tiempo · clic para mover el cursor',
   'Undo (Ctrl+Z)': 'Deshacer (Ctrl+Z)', 'Redo (Ctrl+Y)': 'Rehacer (Ctrl+Y)',
   'Thumbnails': 'Miniaturas', 'List': 'Lista',

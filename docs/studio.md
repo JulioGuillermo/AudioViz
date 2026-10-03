@@ -120,6 +120,11 @@ studio from another computer).
 **🎬 Export** → the full song or just a part. A copy of the project is exported as it
 is, so you can keep editing in the meantime. Progress appears at the top.
 
+## Layout
+The dividers between the left panel, the preview, the inspector and the timeline can be dragged
+to give more room to what you are working on (they light up on hover); double-click one to go back
+to its default size. The sizes are remembered by the browser.
+
 ## Language
 The interface language (English / Español) is chosen in the top bar and remembered by the browser.
 

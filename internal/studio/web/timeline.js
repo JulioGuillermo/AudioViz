@@ -349,9 +349,16 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
   const onScroll = () => { if (namesRef.current) namesRef.current.scrollTop = scroller.current.scrollTop; };
 
   const resize = (e) => {
-    const y0 = e.clientY, h0 = height;
+    e.preventDefault();
+    const y0 = e.clientY, h0 = height, el = e.currentTarget;
+    el.classList.add('on');
+    document.body.classList.add('resizing-row');
     const mv = (ev) => setHeight(Math.max(160, Math.min(innerHeight - 220, h0 + (y0 - ev.clientY))));
-    const up = () => { removeEventListener('mousemove', mv); removeEventListener('mouseup', up); };
+    const up = () => {
+      removeEventListener('mousemove', mv); removeEventListener('mouseup', up);
+      el.classList.remove('on');
+      document.body.classList.remove('resizing-row');
+    };
     addEventListener('mousemove', mv); addEventListener('mouseup', up);
   };
 
@@ -371,7 +378,8 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
   }, [editLine]);
 
   return html`<div class="timeline">
-    <div class="tl-resize" onMouseDown=${resize}></div>
+    <div class="tl-resize" onMouseDown=${resize} onDblClick=${() => setHeight(null)}
+      title=${t('Drag to resize · double-click: default size')}></div>
     <div class="tl-bar">
       <span class="label-sm" style="color:var(--text-2)">${t('Timeline')}</span>
       <span class="hint">${t('Double-click a track: new segment · Drag to move (snaps; Alt = free) · Ctrl + wheel: zoom · Drag the ruler: scroll')}</span>

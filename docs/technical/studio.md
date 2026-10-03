@@ -742,7 +742,7 @@ All accesses are wrapped in `try/catch` (private mode or blocked storage falls b
 |---|---|---|---|
 | `audioviz.lang` | `en`, `es` | `en` | `setLang` (i18n.js) |
 | `audioviz.scrub` | `'1'` / `'0'` | on (anything but `'0'`) | `setScrub` (app.js) |
-| `audioviz.lyricLang` | Whisper language code (`en`, `es`, `fr`, `de`, `it`, `pt`, `ja`) | `en` | `setLyricLang` (app.js): LineEditor selector and on starting a generation |
+| `audioviz.lyricLang`, `audioviz.layout` (panel widths and timeline height), `audioviz.pickerView` | Whisper language code (`en`, `es`, `fr`, `de`, `it`, `pt`, `ja`) | `en` | `setLyricLang` (app.js): LineEditor selector and on starting a generation |
 
 Nothing else is persisted in the browser; the project, lyrics and timeline zoom state are either
 on the server or reset on reload (zoom fits the song again).
