@@ -46,20 +46,31 @@ type Server struct {
 	hub      *hub
 	job      *job
 	startDir string
-	version  string
-	logs     []string
+	// Folder holding the projects (New creates them there, Import unpacks there)
+	workspace string
+	version   string
+	logs      []string
 }
 
 type Options struct {
-	Addr    string
-	Project string // project.yaml or folder to open at startup
-	Version string
+	Addr      string
+	Project   string // project.yaml or folder to open at startup
+	Workspace string // folder holding the projects (default ~/AudioViz)
+	Version   string
 }
 
 // Run starts the studio and blocks until the server is closed
 func Run(opt Options, ready func(url string)) error {
 	s := &Server{hub: newHub(), version: opt.Version}
-	s.startDir, _ = os.Getwd()
+	s.workspace = opt.Workspace
+	if s.workspace == "" {
+		s.workspace = DefaultWorkspace()
+	}
+	s.workspace, _ = filepath.Abs(s.workspace)
+	if err := os.MkdirAll(s.workspace, 0o755); err != nil {
+		return fmt.Errorf("workspace %s: %w", s.workspace, err)
+	}
+	s.startDir = s.workspace
 	if opt.Project == "" {
 		if _, err := os.Stat("project.yaml"); err == nil {
 			opt.Project = "project.yaml"
@@ -93,6 +104,12 @@ func Run(opt Options, ready func(url string)) error {
 	mux.HandleFunc("POST /api/upload", s.hUpload)
 	mux.HandleFunc("GET /api/media", s.hMedia)
 	mux.HandleFunc("GET /api/thumb", s.hThumb)
+	mux.HandleFunc("GET /api/workspace", s.hWorkspace)
+	mux.HandleFunc("GET /api/project/package", s.hPackage)
+	mux.HandleFunc("POST /api/project/collect", s.hCollect)
+	mux.HandleFunc("POST /api/project/import", s.hImport)
+	mux.HandleFunc("GET /api/exports", s.hExports)
+	mux.HandleFunc("DELETE /api/exports", s.hDeleteExport)
 	mux.HandleFunc("GET /api/probe", s.hProbe)
 	mux.HandleFunc("POST /api/export", s.hExport)
 	mux.HandleFunc("POST /api/lyrics/generate", s.hGenLyrics)
@@ -198,7 +215,7 @@ func (s *Server) meta() *projectMeta {
 func (s *Server) hState(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st := map[string]any{"version": s.version, "project": s.meta(), "startDir": s.startDir,
+	st := map[string]any{"version": s.version, "project": s.meta(), "startDir": s.startDir, "workspace": s.workspace,
 		"lyricsTool": true, "models": map[string]bool{"whisper": lyricsgen.WhisperModel.Present(), "demucs": lyricsgen.DemucsModel.Present()}, "logs": s.logs, "gpu": gpu.ListDevices(), "home": userHome()}
 	if s.job != nil {
 		st["job"] = s.job.snapshot()
@@ -231,7 +248,8 @@ func (s *Server) hNew(w http.ResponseWriter, r *http.Request) {
 	}
 	cfg := config.DefaultConfig()
 	cfg.Dir, _ = filepath.Abs(dir)
-	cfg.Output.Path = filepath.Join(cfg.Dir, "output.mp4")
+	_ = os.MkdirAll(filepath.Join(cfg.Dir, exportsDir), 0o755)
+	cfg.Output.Path = filepath.Join(cfg.Dir, exportsDir, filepath.Base(cfg.Dir)+".mp4")
 	if err := cfg.BuildTimeline(); err != nil {
 		fail(w, 500, err)
 		return
@@ -527,6 +545,7 @@ var kindExts = map[string][]string{
 	"txt":     {".txt"},
 	"font":    {".ttf", ".otf"},
 	"project": {".yaml", ".yml"},
+	"zip":     {".zip"},
 }
 
 func (s *Server) hFS(w http.ResponseWriter, r *http.Request) {
@@ -646,6 +665,9 @@ func (s *Server) hMedia(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if r.URL.Query().Get("download") == "1" {
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, strings.ReplaceAll(filepath.Base(p), `"`, "")))
+	}
 	http.ServeFile(w, r, p)
 }
 
@@ -751,6 +773,10 @@ func (s *Server) hExport(w http.ResponseWriter, r *http.Request) {
 	}
 	if !filepath.IsAbs(out) {
 		out = filepath.Join(cfg.Dir, out)
+	}
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		fail(w, 400, err)
+		return
 	}
 	j, err := s.startJob("export", func(ctx context.Context, j *job) error {
 		fork, err := sess.Fork()

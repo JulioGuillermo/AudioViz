@@ -5,6 +5,7 @@
 ./audioviz studio path/to/project   # opens that project (folder or .yaml)
 ./audioviz studio --addr 0.0.0.0:8787   # reachable from another machine on the network
 ./audioviz studio --no-open       # don't open the browser
+./audioviz studio --workspace ~/Videos/AudioViz   # where your projects live (default ~/AudioViz)
 ```
 The studio ships **inside the same binary**: it starts a local server and opens the browser at
 `http://localhost:8787`. Nothing needs to be installed. The preview is rendered by the same GPU and the
@@ -13,8 +14,26 @@ same engine as the export, so what you see is what gets exported.
 > `--addr 0.0.0.0:...` allows access from the network, and anyone on it could browse your folders.
 > Only use it on trusted networks.
 
+## Projects and the workspace
+The **workspace** is the folder holding your projects (`~/AudioViz` unless you pass
+`--workspace`). The start screen and **Projects** (top bar) show its projects as cards with the
+background as thumbnail; click one to open it. From there you can also create a **New project**,
+**Import** a package or **Open** any other `project.yaml`.
+
+- **Package** (top bar) → **Download .zip**: one file with everything the project uses — project,
+  lyrics, audio, the backgrounds of every segment, fonts and `assets/`. Files from outside the
+  project go into `assets/` inside the zip and the project in the zip points to them, so it opens
+  anywhere. *Compression*: none, fast, normal or maximum (audio, images and videos are already
+  compressed and are stored as they are). Optionally include the exported videos.
+- **Collect files into the project** (in Package): the same, but on disk — files the project uses
+  from outside its folder are copied to `assets/` and the project points to the copies.
+- **Import** (start screen or Projects): upload a package `.zip` from your computer, or pick one on
+  the machine running the studio (*From the server…*). It is unpacked into a new folder of the
+  workspace (`name`, `name-2`…) and opened. Names that would write outside that folder are refused.
+
 ## Starting a new project
-1. **New** → choose the folder and the name. This creates `name/project.yaml` and `name/assets/`.
+1. **New** → choose the folder (the workspace by default) and the name. This creates
+   `name/project.yaml`, `name/assets/` and `name/exports/`.
 2. **Getting started** appears over the preview:
    - **Choose audio…**: the song. It is analyzed right away and the timeline becomes as long
      as the song (without audio it lasts 30 s, so you can start building the visuals).
@@ -118,7 +137,13 @@ studio from another computer).
 
 ## Export
 **🎬 Export** → the full song or just a part. A copy of the project is exported as it
-is, so you can keep editing in the meantime. Progress appears at the top.
+is, so you can keep editing in the meantime. Progress appears at the top and in the dialog
+(frames, speed, elapsed and remaining time).
+
+Videos go to the project's **`exports/`** folder by default (`exports/<project>-<date>.mp4`); you
+can type another path. **Exports** (top bar) lists the videos of `exports/` with a thumbnail,
+duration, size and date: click one to **play** it in the browser, **download** it or **delete** it.
+(The audio of the MP4 is FLAC: Chrome and Firefox play it; the download always works.)
 
 ## Layout
 The dividers between the left panel, the preview, the inspector and the timeline can be dragged

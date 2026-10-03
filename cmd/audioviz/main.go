@@ -250,6 +250,7 @@ func runStudio(args []string) {
 	fs := flag.NewFlagSet("studio", flag.ExitOnError)
 	addr := fs.String("addr", "127.0.0.1:8787", "Listen address (use 0.0.0.0:8787 to open it from another machine on the network)")
 	noOpen := fs.Bool("no-open", false, "Do not open the browser automatically")
+	workspace := fs.String("workspace", "", "Folder holding the projects (default ~/AudioViz)")
 	// The project may come before or after the options
 	var project string
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -259,7 +260,7 @@ func runStudio(args []string) {
 	if project == "" && fs.NArg() > 0 {
 		project = fs.Arg(0)
 	}
-	err := studio.Run(studio.Options{Addr: *addr, Project: project, Version: version}, func(url string) {
+	err := studio.Run(studio.Options{Addr: *addr, Project: project, Workspace: *workspace, Version: version}, func(url string) {
 		fmt.Printf("🎛️  AudioViz Studio at %s  (Ctrl+C to quit)\n", url)
 		if !*noOpen {
 			openBrowser(url) // per system: open_*.go

@@ -1,16 +1,16 @@
 import { html, useEffect, useState, useRef } from './vendor/preact-htm.js';
 import { api, fmtTime, basename } from './util.js';
 import { Icon } from './icons.js';
-import { FILE_ICON, Select } from './fields.js';
+import { FILE_ICON, Select, Switch } from './fields.js';
 import { t } from './i18n.js';
 
 const KIND_LABEL = {
   audio: 'Choose audio', bg: 'Choose background', lyrics: 'Choose lyrics', txt: 'Choose lyrics text',
-  font: 'Choose font', project: 'Open project', dir: 'Choose folder',
+  font: 'Choose font', project: 'Open project', dir: 'Choose folder', zip: 'Import project package',
 };
 const KIND_HINT = {
   audio: 'FLAC, WAV, MP3 or OGG', bg: 'Image, GIF or video (MP4, MOV, MKV, WebM, AVI)', lyrics: '.lrc or .srt',
-  txt: '.txt (Suno format works)', font: '.ttf or .otf', project: 'project.yaml',
+  txt: '.txt (Suno format works)', font: '.ttf or .otf', project: 'project.yaml', zip: 'A project exported as .zip',
   dir: 'Browse to the folder and press “Use this folder”',
 };
 
@@ -131,14 +131,19 @@ export function NewProject({ start, onCreate, onClose, pickFile }) {
   </${Modal}>`;
 }
 
-export function ExportDialog({ proj, meta, job, onStart, onCancel, onClose }) {
-  const [path, setPath] = useState(proj.output.path || 'output.mp4');
+// New exports go to the project's exports/ folder by default, with the date in the name
+const stamp = () => { const d = new Date(), p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}`; };
+
+export function ExportDialog({ proj, meta, job, onStart, onCancel, onClose, onShowExports }) {
+  const [path, setPath] = useState(() => `${meta.dir}/exports/${meta.name}-${stamp()}.mp4`);
   const [range, setRange] = useState('all');
   const [from, setFrom] = useState(0);
   const [to, setTo] = useState(meta.duration);
   const running = job && job.kind === 'export' && job.status === 'running';
   return html`<${Modal} title=${t('Export video')} icon="clapperboard" onClose=${onClose}
     footer=${html`
+      ${job && job.kind === 'export' && job.status === 'done' && html`<button class="btn ghost" onClick=${onShowExports}><${Icon} name="film" size=${15} /> ${t('See exports')}</button>`}
+      <span class="spacer"></span>
       <button class="btn" onClick=${onClose}>${t('Close')}</button>
       ${running ? html`<button class="btn danger" onClick=${onCancel}><${Icon} name="x" size=${15} /> ${t('Cancel export')}</button>`
         : html`<button class="btn primary" disabled=${!meta.hasAudio} onClick=${() => onStart({ path, start: range === 'all' ? 0 : from, end: range === 'all' ? 0 : to })}>
@@ -255,5 +260,158 @@ export function GenLyricsDialog({ meta, job, models, pickFile, onStart, onCancel
     ${mine && mine.gen && html`<${GenSteps} gen=${mine.gen} status=${mine.status} />`}
     ${mine && mine.status !== 'running' && html`<p class=${'row ' + ({ done: 'st-ok', error: 'st-err', canceled: 'st-warn' }[mine.status] || '')} style="font-size:12.5px">
       <${Icon} name=${{ done: 'check', error: 'triangle-alert', canceled: 'x' }[mine.status] || 'info'} size=${15} />${mine.message}</p>`}
+  </${Modal}>`;
+}
+
+// ------------------------------------------------------------------ projects, packages, exports
+
+const fmtSize = (b) => (b >= 1073741824 ? (b / 1073741824).toFixed(1) + ' GB' : b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB');
+const fmtDate = (d) => new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+const thumbURL = (p) => '/api/thumb?s=320&path=' + encodeURIComponent(p);
+
+// Upload a project package (zip) with progress; resolves with the new state
+export function uploadPackage(file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const fd = new FormData();
+    fd.append('file', file);
+    xhr.open('POST', '/api/project/import');
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress && onProgress(e.loaded / e.total);
+    xhr.onload = () => {
+      let d = null;
+      try { d = JSON.parse(xhr.responseText); } catch (e) { /* not JSON */ }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(d);
+      else reject(new Error((d && d.error) || xhr.statusText || 'import failed'));
+    };
+    xhr.onerror = () => reject(new Error('network error'));
+    xhr.send(fd);
+  });
+}
+
+// Grid of the workspace projects (thumbnail of the background, name, date, exports)
+export function WorkspaceGrid({ current, onOpen }) {
+  const [ws, setWs] = useState(null);
+  useEffect(() => { api('GET', '/api/workspace').then(setWs).catch(() => setWs({ projects: [] })); }, []);
+  if (!ws) return html`<p class="faint">${t('Loading…')}</p>`;
+  return html`<div>
+    <div class="faint mono" style="font-size:11px;margin-bottom:8px" title=${t('Workspace folder')}><${Icon} name="folder" size=${12} /> ${ws.workspace}</div>
+    ${ws.projects.length === 0 ? html`<p class="faint">${t('No projects in the workspace yet.')}</p>` : html`<div class="tiles proj">
+      ${ws.projects.map((p) => html`<div class=${'tile' + (p.path === current ? ' cur' : '')} key=${p.path} title=${p.path} onClick=${() => onOpen(p.path)}>
+        <div class="th">
+          <${Icon} name="clapperboard" size=${22} cls="faint" />
+          ${p.thumb && html`<img loading="lazy" alt="" src=${thumbURL(p.thumb)} onError=${(e) => { e.target.style.display = 'none'; }} />`}
+          ${p.exports > 0 && html`<span class="vid" title=${t('Exported videos')}><${Icon} name="film" size=${10} /> ${p.exports}</span>`}
+        </div>
+        <div class="nm">${p.name}</div>
+        <div class="sz">${fmtDate(p.modified)}</div>
+      </div>`)}
+    </div>`}
+  </div>`;
+}
+
+// Projects: the workspace, new, import (upload or from this machine), open any project.yaml
+export function ProjectsDialog({ current, onOpen, onNew, onImported, pickFile, onClose }) {
+  const fileRef = useRef();
+  const [busy, setBusy] = useState(null); // upload progress 0..1
+  const [err, setErr] = useState('');
+  const doUpload = async (f) => {
+    setErr(''); setBusy(0);
+    try { await uploadPackage(f, setBusy); setBusy(null); onImported(); onClose(); } catch (e) { setBusy(null); setErr(e.message); }
+  };
+  const fromHost = () => pickFile('zip', async (p) => {
+    setErr(''); setBusy(1);
+    const fd = new FormData();
+    fd.append('path', p);
+    try {
+      const r = await fetch('/api/project/import', { method: 'POST', body: fd });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      setBusy(null); onImported(); onClose();
+    } catch (e) { setBusy(null); setErr(e.message); }
+  });
+  return html`<${Modal} title=${t('Projects')} icon="folder-open" onClose=${onClose} wide=${true}
+    footer=${html`
+      <input type="file" accept=".zip" ref=${fileRef} style="display:none" onChange=${(e) => e.target.files[0] && doUpload(e.target.files[0])} />
+      <button class="btn" disabled=${busy !== null} onClick=${() => fileRef.current.click()} title=${t('Upload a project .zip from this computer')}><${Icon} name="upload" size=${15} /> ${t('Import…')}</button>
+      <button class="btn ghost" disabled=${busy !== null} onClick=${fromHost} title=${t('Import a .zip that is on the machine running the studio')}>${t('From the server…')}</button>
+      <span class="spacer"></span>
+      <button class="btn ghost" onClick=${() => pickFile('project', onOpen)}>${t('Open other…')}</button>
+      <button class="btn primary" onClick=${onNew}><${Icon} name="plus" size=${15} /> ${t('New project')}</button>`}>
+    ${busy !== null && html`<div class="row" style="margin-bottom:10px"><div class="progress"><i style=${{ width: (busy * 100).toFixed(1) + '%' }}></i></div>
+      <span class="mono faint" style="font-size:11px">${busy < 1 ? Math.round(busy * 100) + '%' : t('Unpacking…')}</span></div>`}
+    ${err && html`<div class="alert err" style="margin-bottom:10px"><${Icon} name="triangle-alert" size=${15} />${err}</div>`}
+    <${WorkspaceGrid} current=${current} onOpen=${(p) => { onOpen(p); onClose(); }} />
+  </${Modal}>`;
+}
+
+const LEVELS = [['0', 'None (fastest, largest)'], ['1', 'Fast'], ['6', 'Normal'], ['9', 'Maximum (slowest)']];
+
+// Package: download the project as a zip, or collect its external files into its folder
+export function PackageDialog({ meta, onCollected, onClose }) {
+  const [level, setLevel] = useState('1');
+  const [videos, setVideos] = useState(false);
+  const [res, setRes] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const collect = async () => {
+    setBusy(true);
+    try { const r = await api('POST', '/api/project/collect'); setRes(r.copied || []); onCollected(); } catch (e) { setRes(e.message); }
+    setBusy(false);
+  };
+  return html`<${Modal} title=${t('Project package')} icon="layers" onClose=${onClose}
+    footer=${html`<span class="spacer"></span><button class="btn" onClick=${onClose}>${t('Close')}</button>
+      <a class="btn primary" href=${'/api/project/package?level=' + level + '&videos=' + (videos ? 1 : 0)} download=${meta.name + '.zip'}>
+        <${Icon} name="download" size=${15} /> ${t('Download .zip')}</a>`}>
+    <p class="faint" style="margin-top:0">${t('Everything the project uses goes into one .zip: project, lyrics, audio, backgrounds, fonts and assets/. Files from outside the project are put in assets/ and the project inside the zip points to them. Import it from Projects on any machine.')}</p>
+    <div class="fld"><label>${t('Compression')}</label><div class="ctl">
+      <${Select} value=${level} options=${LEVELS} onChange=${setLevel} /></div></div>
+    <p class="faint" style="font-size:11.5px;margin:-2px 0 8px">${t('Audio, images and videos are already compressed and are stored as they are.')}</p>
+    <div class="fld"><label>${t('Exported videos')}</label><div class="ctl">
+      <${Switch} checked=${videos} onChange=${setVideos} /><span class="faint" style="font-size:12px">${t('Include the videos of exports/')}</span></div></div>
+    <div class="card" style="margin-top:14px">
+      <div class="row"><b style="font-size:13px">${t('Collect files into the project')}</b><span class="spacer"></span>
+        <button class="btn sm" disabled=${busy} onClick=${collect}>${t('Collect')}</button></div>
+      <div class="card-note">${t('Copies the files the project uses from outside its folder into assets/ and points the project to the copies, so the folder works on its own.')}</div>
+      ${res !== null && (typeof res === 'string' ? html`<div class="alert err" style="margin-top:8px">${res}</div>`
+        : html`<div class="st-ok" style="font-size:12.5px;margin-top:8px">${res.length ? t('Copied {n} files: {f}', { n: res.length, f: res.join(', ') }) : t('Everything was already inside the project.')}</div>`)}
+    </div>
+  </${Modal}>`;
+}
+
+// Exports: the videos of exports/ — play, download, delete
+export function ExportsDialog({ meta, onClose }) {
+  const [list, setList] = useState(null);
+  const [cur, setCur] = useState(null);
+  const [err, setErr] = useState('');
+  const load = () => api('GET', '/api/exports').then(setList).catch((e) => setErr(e.message));
+  useEffect(() => { load(); }, []);
+  const del = async (f) => {
+    if (!confirm(t('Delete {f}? This cannot be undone.', { f: f.name }))) return;
+    try { await api('DELETE', '/api/exports?name=' + encodeURIComponent(f.name)); setCur(null); load(); } catch (e) { setErr(e.message); }
+  };
+  const media = (f, dl) => '/api/media?path=' + encodeURIComponent(f.path) + (dl ? '&download=1' : '');
+  return html`<${Modal} title=${t('Exports')} icon="film" onClose=${onClose} wide=${true}
+    footer=${html`${cur && html`<button class="btn ghost" onClick=${() => setCur(null)}><${Icon} name="chevron-left" size=${15} /> ${t('All exports')}</button>`}
+      <span class="spacer"></span>
+      ${cur && html`<button class="btn ghost danger" onClick=${() => del(cur)}><${Icon} name="trash-2" size=${15} /> ${t('Delete')}</button>
+        <a class="btn primary" href=${media(cur, true)} download=${cur.name}><${Icon} name="download" size=${15} /> ${t('Download')}</a>`}
+      ${!cur && html`<button class="btn" onClick=${onClose}>${t('Close')}</button>`}`}>
+    ${err && html`<div class="alert err" style="margin-bottom:10px"><${Icon} name="triangle-alert" size=${15} />${err}</div>`}
+    ${!list ? html`<p class="faint">${t('Loading…')}</p>` : cur ? html`<div class="player">
+        <video src=${media(cur)} controls autoplay preload="metadata"></video>
+        <div class="row" style="margin-top:8px"><b>${cur.name}</b><span class="spacer"></span>
+          <span class="faint mono" style="font-size:11.5px">${cur.width}×${cur.height} · ${fmtDur(cur.duration)} · ${fmtSize(cur.size)} · ${fmtDate(cur.modified)}</span></div>
+      </div>` : html`
+      <div class="faint mono" style="font-size:11px;margin-bottom:8px"><${Icon} name="folder" size=${12} /> ${list.dir}</div>
+      ${list.files.length === 0 ? html`<p class="faint">${t('No exported videos yet. Export one and it will appear here.')}</p>` : html`<div class="tiles proj">
+        ${list.files.map((f) => html`<div class="tile" key=${f.path} title=${f.name} onClick=${() => setCur(f)}>
+          <div class="th">
+            <${Icon} name="film" size=${22} cls="faint" />
+            <img loading="lazy" alt="" src=${thumbURL(f.path)} onError=${(e) => { e.target.style.display = 'none'; }} />
+            <span class="vid"><${Icon} name="play" size=${10} /> ${fmtDur(f.duration)}</span>
+          </div>
+          <div class="nm">${f.name}</div>
+          <div class="sz">${fmtSize(f.size)} · ${fmtDate(f.modified)}</div>
+        </div>`)}
+      </div>`}`}
   </${Modal}>`;
 }

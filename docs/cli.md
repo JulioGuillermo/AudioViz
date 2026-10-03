@@ -6,7 +6,7 @@ audioviz [project.yaml] [options]
 If no project is given, `project.yaml` is used.
 
 Subcommands:
-- `audioviz studio [project.yaml] [--addr 127.0.0.1:8787] [--no-open]`: graphical interface (see [studio.md](studio.md)).
+- `audioviz studio [project.yaml] [--addr 127.0.0.1:8787] [--no-open] [--workspace ~/AudioViz]`: graphical interface (see [studio.md](studio.md)).
 - `audioviz lyrics <audio> <lyrics.txt> [-o lyrics.lrc] [--lang en] [--fast]`: generate a per-word synced `.lrc` (see [lyrics/generate.md](lyrics/generate.md)).
 
 | Option | Description |

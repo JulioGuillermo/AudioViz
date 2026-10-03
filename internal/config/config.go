@@ -602,3 +602,32 @@ func (c *ProjectConfig) Validate() error {
 func isRooted(p string) bool {
 	return filepath.IsAbs(p) || strings.HasPrefix(p, "/") || strings.HasPrefix(p, `\`)
 }
+
+// RewritePaths applies fn to every file path of the project (audio, output, backgrounds and
+// lyrics of every segment, fonts of the lyrics and texts). Empty paths are left alone.
+func (c *ProjectConfig) RewritePaths(fn func(string) string) {
+	c.mapPaths(func(p string) string {
+		if p == "" {
+			return p
+		}
+		return fn(p)
+	})
+}
+
+// Files lists the existing files the project uses (absolute paths, without duplicates): audio,
+// backgrounds of every segment, lyrics and fonts. The output video is not included.
+func (c *ProjectConfig) Files() []string {
+	seen := map[string]bool{}
+	var out []string
+	out0 := c.Output.Path
+	c.RewritePaths(func(p string) string {
+		if p != out0 && !seen[p] {
+			if st, err := os.Stat(p); err == nil && !st.IsDir() {
+				seen[p] = true
+				out = append(out, p)
+			}
+		}
+		return p
+	})
+	return out
+}

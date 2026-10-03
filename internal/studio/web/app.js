@@ -4,7 +4,7 @@ import { api, clone, fmtTime, parseTime, b64u8, basename, debounce } from './uti
 import { Form, Select, Edit } from './fields.js';
 import { Icon } from './icons.js';
 import { Timeline, segSummary } from './timeline.js';
-import { FilePicker, NewProject, ExportDialog, GenLyricsDialog, LYRIC_LANGS, STEP_LABEL } from './dialogs.js';
+import { FilePicker, NewProject, ExportDialog, GenLyricsDialog, LYRIC_LANGS, STEP_LABEL, ProjectsDialog, PackageDialog, ExportsDialog, WorkspaceGrid, uploadPackage } from './dialogs.js';
 import { createStore, useStore, useThrottledStore } from './store.js';
 import { t, setLang, langStore, LANGS } from './i18n.js';
 import { createScrubber } from './scrub.js';
@@ -344,9 +344,14 @@ function Welcome({ st, ctx }) {
     <div class="cards">
       <div class="card2" onClick=${() => ctx.dialog({ type: 'new' })}><${Icon} name="plus" size=${20} />
         <h3>${t('New project')}</h3><p>${t('Creates a project folder; start by choosing the audio and the background.')}</p></div>
+      <div class="card2" onClick=${() => document.getElementById('welcome-import').click()}><${Icon} name="upload" size=${20} />
+        <h3>${t('Import project')}</h3><p>${t('Unpacks a project .zip into the workspace and opens it.')}</p></div>
       <div class="card2" onClick=${() => ctx.pickFile('project', (p) => ctx.openProject(p))}><${Icon} name="folder-open" size=${20} />
         <h3>${t('Open project')}</h3><p>${t('Opens an existing project.yaml, including hand-written ones.')}</p></div>
     </div>
+    <input type="file" id="welcome-import" accept=".zip" style="display:none"
+      onChange=${(e) => e.target.files[0] && ctx.importPackage(e.target.files[0])} />
+    <div class="ws"><h2>${t('Your projects')}</h2><${WorkspaceGrid} onOpen=${(p) => ctx.openProject(p)} /></div>
     <div class="row"><${LangSelect} /></div>
     <p class="faint mono" style="font-size:11px">${(st.gpu || '').trim()}</p>
   </div>`;
@@ -617,6 +622,7 @@ function App() {
     dialog: setDlg,
     pickFile: (kind, cb, start) => setPick({ kind, cb, start }),
     openProject: async (p) => { try { await api('POST', '/api/project/open', { path: p }); await loadAll(); } catch (e) { showErr(e); } },
+    importPackage: async (f) => { try { await uploadPackage(f); await loadAll(); } catch (e) { showErr(e); } },
     setAudio: (path) => update((p) => { p.audio.path = path; }),
     // The background goes to the segment active at the cursor (or the first one if still empty)
     setBackground: (path) => update((p) => {
@@ -795,9 +801,14 @@ function App() {
   if (!st) return html`<div class="welcome"><p class="muted">${t('Loading…')}</p></div>`;
 
   const dialogs = html`
-    ${dlg && dlg.type === 'new' && html`<${NewProject} start=${st.home || st.startDir} pickFile=${ctx.pickFile} onClose=${() => setDlg(null)}
+    ${dlg && dlg.type === 'new' && html`<${NewProject} start=${st.workspace || st.home || st.startDir} pickFile=${ctx.pickFile} onClose=${() => setDlg(null)}
         onCreate=${async (dir, name) => { await api('POST', '/api/project/new', { dir, name }); await loadAll(); }} />`}
+    ${dlg && dlg.type === 'projects' && html`<${ProjectsDialog} current=${meta && meta.path} onClose=${() => setDlg(null)}
+        onOpen=${(p) => ctx.openProject(p)} onNew=${() => setDlg({ type: 'new' })} onImported=${() => loadAll()} pickFile=${ctx.pickFile} />`}
+    ${dlg && dlg.type === 'package' && proj && html`<${PackageDialog} meta=${meta} onClose=${() => setDlg(null)} onCollected=${() => loadAll()} />`}
+    ${dlg && dlg.type === 'exports' && proj && html`<${ExportsDialog} meta=${meta} onClose=${() => setDlg(null)} />`}
     ${dlg && dlg.type === 'export' && proj && html`<${ExportDialog} proj=${proj} meta=${meta} job=${job} onClose=${() => setDlg(null)}
+        onShowExports=${() => setDlg({ type: 'exports' })}
         onStart=${(o) => api('POST', '/api/export', o).then(setJob).catch(showErr)} onCancel=${() => api('POST', '/api/job/cancel')} />`}
     ${dlg && dlg.type === 'genlyrics' && proj && html`<${GenLyricsDialog} meta=${meta} job=${job} models=${st.models} initialTxt=${dlg.txt}
         pickFile=${ctx.pickFile} onClose=${() => setDlg(null)} onCancel=${() => api('POST', '/api/job/cancel')}
@@ -855,8 +866,9 @@ function App() {
         <button class="btn icon ghost" disabled=${!hist.current.past.length} title=${t('Undo (Ctrl+Z)')} onClick=${undo}><${Icon} name="undo-2" size=${15} /></button>
         <button class="btn icon ghost" disabled=${!hist.current.future.length} title=${t('Redo (Ctrl+Y)')} onClick=${redo}><${Icon} name="redo-2" size=${15} /></button>
       </div>
-      <button class="btn ghost" onClick=${() => setDlg({ type: 'new' })}><${Icon} name="plus" size=${15} /> ${t('New')}</button>
-      <button class="btn ghost" onClick=${() => ctx.pickFile('project', (p) => ctx.openProject(p), meta.path)}><${Icon} name="folder-open" size=${15} /> ${t('Open')}</button>
+      <button class="btn ghost" onClick=${() => setDlg({ type: 'projects' })} title=${t('Your projects: open, new, import')}><${Icon} name="folder-open" size=${15} /> ${t('Projects')}</button>
+      <button class="btn ghost" onClick=${() => setDlg({ type: 'package' })} title=${t('Export the project as a .zip, collect its files')}><${Icon} name="layers" size=${15} /> ${t('Package')}</button>
+      <button class="btn ghost" onClick=${() => setDlg({ type: 'exports' })} title=${t('Exported videos: play, download')}><${Icon} name="film" size=${15} /> ${t('Exports')}</button>
       <${LangSelect} />
       <button class="btn primary" disabled=${jobRunning && job.kind === 'export'} onClick=${() => setDlg({ type: 'export' })}><${Icon} name="film" size=${15} /> ${t('Export')}</button>
     </div>

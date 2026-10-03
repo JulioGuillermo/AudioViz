@@ -98,7 +98,13 @@ are read through `readJSON`, capped at **64 MiB** (`io.LimitReader`).
 | GET | `/api/frame?f=<frame>&scale=1..4` | — | `image/jpeg` (+ `X-Render-Ms`, `X-Total-Ms`, `Cache-Control: no-store`) | `hFrame`: renders one preview frame, see §5 |
 | GET | `/api/fs?path=&kind=` | — | `{path, parent, entries: [{name, path, dir, size}]}` | `hFS`: file browser, see §7 |
 | POST | `/api/upload` | multipart, field `file` | `{path}` | `hUpload`: copies into `<project>/assets/<basename>` |
-| GET | `/api/media?path=` | — | file bytes | `hMedia`: `http.ServeFile` (Range, `Last-Modified`, content type) |
+| GET | `/api/media?path=[&download=1]` | — | file bytes | `hMedia`: `http.ServeFile` (Range, `Last-Modified`, content type); `download=1` adds `Content-Disposition: attachment` |
+| GET | `/api/workspace` | — | `{workspace, projects:[{name, path, modified, thumb, exports}]}` | `hWorkspace` (`projects.go`): folders of the workspace with a `project.yaml`, newest first |
+| GET | `/api/project/package?level=0..9&videos=0/1` | — | zip stream | `hPackage`: project.yaml rewritten (external files → `assets/`, output → `exports/`), every used file, the rest of `assets/`, optionally `exports/`; media stored, text deflated at `level` |
+| POST | `/api/project/collect` | — | `{copied:[…]}` | `hCollect`: copies external files to `assets/` (same mtime, so a later collect sees them as the same), saves and reopens the project |
+| POST | `/api/project/import` | multipart `file` (zip) or form `path` (zip on the server) | state | `hImport` → `unpack`: project.yaml at the root or under one folder; new folder in the workspace (`-2`, `-3`… if taken); refuses `..`, absolute or `\` names and removes the half-written folder |
+| GET | `/api/exports` | — | `{dir, files:[{name, path, size, modified, duration, width, height}]}` | `hExports`: videos of `<project>/exports/` |
+| DELETE | `/api/exports?name=` | — | `{ok}` | `hDeleteExport`: a base name with a video extension, inside `exports/` only |
 | GET | `/api/thumb?path=&s=` | — | JPEG | `hThumb` (`thumbs.go`): image/GIF/video scaled to fit `s`×`s` (64–480, default 240), a video's frame at min(1 s, 10 % of its length); in-memory cache of 400 keyed by path, size, mtime and `s`; at most 3 generated at once |
 | GET | `/api/probe?path=` | — | `video.ProbeMedia` result | `hProbe`. Not used by the current web app |
 | POST | `/api/export` | `{path?, start?, end?}` (seconds; `end` 0 = to the end) | job snapshot | `hExport`: starts an `export` job, see §4 |
