@@ -6,7 +6,7 @@ set -euo pipefail
 source "$(dirname "$0")/target.sh"
 [ "$TARGET_OS" = darwin ] || exit 0
 if [ -f "$OUT/lib/libMoltenVK.a" ]; then echo "MoltenVK already there"; exit 0; fi
-VER=v1.2.11
+VER=v1.4.2
 D="$TP/moltenvk-$VER"
 if [ ! -d "$D" ]; then
   mkdir -p "$D"

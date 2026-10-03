@@ -24,6 +24,6 @@ fi
   --enable-protocol=file \
   --enable-demuxer=mov,matroska,avi,mpegts,m4v,h264,hevc \
   --enable-decoder=h264,hevc,vp8,vp9,mpeg4,mjpeg,prores,png,mpeg2video \
-  --enable-parser=h264,hevc,vp8,vp9,mpeg4video,mpegvideo,mjpeg,png "${extra[@]}"
+  --enable-parser=h264,hevc,vp8,vp9,mpeg4video,mpegvideo,mjpeg,png ${extra[@]+"${extra[@]}"}
 make -j"$NPROC"
 make install

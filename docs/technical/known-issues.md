@@ -60,6 +60,10 @@ per-second rates would make the look fps-independent.
 
 ## Lyrics generation
 
+- The outro (short lines repeated over the instrumental) can be squeezed right after the previous
+  line when a few of its words are not recognized; small floating-point differences between GPU
+  backends (Vulkan vs Metal) are enough to flip it. Resync or dragging those lines fixes it.
+
 | Issue | Where |
 |---|---|
 | Vocals cache key ignores the decode volume (studio uses `audio.volume`, CLI uses 1) | `lyricsgen`, `hGenLyrics` (effect probably small: thresholds are relative) |

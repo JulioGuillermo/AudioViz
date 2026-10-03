@@ -27,13 +27,17 @@ Vulkan setup step, to see where a driver stops.
 
 ## Status
 
-| | Linux | Windows | macOS |
+| | Linux | Windows | macOS (Mac mini M4, macOS 27) |
 |---|---|---|---|
-| Builds | ✅ | ✅ cross-compiled from Linux (zig 0.16, LLVM tools) | not built yet (needs a Mac) |
-| CPU rendering / export | ✅ | ✅ under Wine: frame identical to the Linux CPU render, MP4 export (H.264 + FLAC) | — |
-| Studio | ✅ | ✅ under Wine (UI, project with Windows paths, drive list) | — |
-| GPU rendering | ✅ | ⚠ under Wine the GPU is found (`--list-gpus` lists the real Intel GPU through Wine's Vulkan) but Wine's `vkCreateInstance` then blocks in a headless SSH session; the timeout falls back to CPU. **To test on real Windows.** | to test (MoltenVK) |
-| Lyrics generation on the GPU | ✅ Vulkan | to test (Vulkan) | to test (Metal) |
+| Builds | ✅ | ✅ cross-compiled from Linux (zig 0.16, LLVM tools) | ✅ on the Mac (Xcode, Go, CMake from Homebrew): 23 MB, only system frameworks |
+| CPU rendering / export | ✅ | ✅ under Wine: frame identical to the Linux CPU render, MP4 export (H.264 + FLAC) | ✅ frame identical to Linux |
+| GPU rendering | ✅ Intel Lunar Lake: 63.8 fps exporting 1920×1088 @ 60 with lyrics, texts, visualizer and particles | ⚠ under Wine the GPU is found but Wine blocks inside \ in a headless session; the timeout falls back to CPU. **To test on real Windows.** | ✅ MoltenVK 1.4.2 on Apple M4: frame identical to the Linux GPU render; **115.6 fps** on the same export (CPU: 24.4 fps) |
+| Studio | ✅ | ✅ under Wine (UI, Windows paths, drive list) | ✅ (preview, file browser, thumbnails) |
+| Lyrics generation | ✅ Vulkan | to test | ✅ Metal: whole song in 4 min 7 s (Demucs on CPU 3 min 25 s, Whisper on the M4 39 s), 379 of 380 words; word starts match Linux (median 0, 90 % within 0.02 s) |
+
+Note: recognition results differ slightly between GPU backends (floating point). On the demo
+song the outro (lines repeated over the instrumental) was placed right on Metal and squeezed on
+Vulkan in one run: that part of the alignment is fragile (see known-issues).
 
 ## Windows cross-compilation in short
 

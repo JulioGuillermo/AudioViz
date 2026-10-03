@@ -17,6 +17,6 @@ if [ "$TARGET_OS" = windows ]; then
 fi
 "$SRC/configure" --prefix="$OUT" --enable-static --enable-pic --disable-cli --disable-opencl \
   --disable-avs --disable-swscale --disable-lavf --disable-ffms --disable-gpac --disable-lsmash \
-  --bit-depth=8 --chroma-format=420 "${extra[@]}"
+  --bit-depth=8 --chroma-format=420 ${extra[@]+"${extra[@]}"}
 make -j"$NPROC"
 make install

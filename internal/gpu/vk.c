@@ -139,6 +139,10 @@ struct vkr {
 
 static int load_lib(char *err, int errlen) {
     if (p_vkGetInstanceProcAddr) return 0;
+#if defined(__APPLE__)
+    // MoltenVK logs every step at "info" level: keep only its errors (unless set by the user)
+    setenv("MVK_CONFIG_LOG_LEVEL", "1", 0);
+#endif
 #if defined(AUDIOVIZ_MOLTENVK_STATIC)
     p_vkGetInstanceProcAddr = vkGetInstanceProcAddr; // MoltenVK linked into the binary
 #else
