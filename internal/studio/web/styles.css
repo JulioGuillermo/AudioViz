@@ -212,7 +212,8 @@ input[type=color]::-moz-color-swatch { border: 0; border-radius: 3px; }
 .seg:hover { background: #2a2e35; color: var(--text); }
 .seg.on { background: #2b2420; border-color: var(--accent); color: var(--text); z-index: 2; }
 .seg.off { background: repeating-linear-gradient(135deg, #1a1c20 0 5px, #16181b 5px 10px); color: var(--text-3); border-style: dashed; }
-.seg .grip { position: absolute; left: 0; top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
+.seg .grip { position: absolute; left: 0; top: 0; bottom: 0; width: 12px; max-width: 35%; cursor: ew-resize; z-index: 1; }
+.seg .grip:hover, .lyrword .grip:hover { background: rgba(255, 255, 255, .14); }
 .seg .grip.end { left: auto; right: 0; }
 .seg.txt { bottom: auto; height: calc(var(--rowh) - 6px); }
 .seg .fade { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, rgba(0, 0, 0, .55), transparent); pointer-events: none; border-right: 1px dashed rgba(255, 255, 255, .15); }
@@ -318,7 +319,7 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
   padding: 0 6px; overflow: hidden; white-space: nowrap; color: var(--text); cursor: grab; z-index: 3; }
 .lyrword:hover { border-color: var(--accent-line); }
 .lyrword.now { background: #3a2a20; border-color: var(--accent); }
-.lyrword .grip { position: absolute; left: 0; top: 0; bottom: 0; width: 5px; cursor: ew-resize; background: rgba(255,255,255,.06); }
+.lyrword .grip { position: absolute; left: 0; top: 0; bottom: 0; width: 10px; max-width: 35%; cursor: ew-resize; background: rgba(255,255,255,.06); z-index: 1; }
 .lyrword .grip.end { left: auto; right: 0; }
 .top .lang select { height: 26px; font-size: 12px; }
 .playhead { left: 0; will-change: transform; }

@@ -746,3 +746,15 @@ All accesses are wrapped in `try/catch` (private mode or blocked storage falls b
 
 Nothing else is persisted in the browser; the project, lyrics and timeline zoom state are either
 on the server or reset on reload (zoom fits the song again).
+
+## Undo / redo
+
+`app.js` keeps `hist = {past, future, cur, at}` with snapshots `{proj, lyr}` (the immutable objects
+the app already produces: every change clones). `update()` and committed lyric edits call
+`record()`, which pushes the previous `cur` onto `past` (max 32) unless the last record was less
+than 0.6 s ago (so a slider drag is one step). Live drags (segments, texts, lyric lines/words) only
+call `histBase()` (make sure the pre-drag state is the base) and are recorded when released.
+`applySnap` restores a snapshot: saves the project (`pushRef`) and, if the lyrics differ, writes
+them back (`lyrSaveRef`), then clamps the selection. A reloaded lyrics file replaces `cur.lyr`
+without adding a step; opening a project resets the history. Ctrl/Cmd+Z, Ctrl+Y and
+Ctrl+Shift+Z work outside text fields (which keep their own undo).

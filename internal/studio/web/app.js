@@ -387,6 +387,26 @@ function App() {
   const lyrRef = useRef(lyr);
   projRef.current = proj;
   lyrRef.current = lyr;
+  // Undo / redo: snapshots of {project, lyrics} at each committed change (drags count once, when
+  // released; changes less than 0.6 s apart, like moving a slider, merge into one). 32 steps.
+  const hist = useRef({ past: [], future: [], cur: null, at: 0 });
+  const [, setHistTick] = useState(0);
+  const histBase = () => { if (!hist.current.cur) hist.current.cur = { proj: projRef.current, lyr: lyrRef.current }; };
+  const record = () => {
+    const h = hist.current;
+    const snap = { proj: projRef.current, lyr: lyrRef.current };
+    if (!h.cur) { h.cur = snap; return; }
+    if (snap.proj === h.cur.proj && snap.lyr === h.cur.lyr) return;
+    const now = performance.now();
+    if (now - h.at > 600) {
+      h.past.push(h.cur);
+      if (h.past.length > 32) h.past.shift();
+    }
+    h.at = now;
+    h.cur = snap;
+    h.future = [];
+    setHistTick((x) => x + 1);
+  };
 
   const setLyricLang = (l) => { setLyricLangState(l); try { localStorage.setItem('audioviz.lyricLang', l); } catch (e) { /* ignore */ } };
   const showErr = (e) => { setToast(String(e.message || e)); setTimeout(() => setToast(''), 6000); };
@@ -397,7 +417,10 @@ function App() {
     if (s.job) setJob(s.job);
     if (!s.project) { setProj(null); return; }
     const d = await api('GET', '/api/project');
+    projRef.current = d.project;
     setProj(d.project);
+    hist.current = { past: [], future: [], cur: null, at: 0 }; // a (re)opened project starts a new history
+    setHistTick((x) => x + 1);
     setMeta(d.meta);
     loadAudio(d.project);
     loadAna();
@@ -411,7 +434,13 @@ function App() {
     } catch (e) { showErr(e); }
   };
   const loadLyrics = async () => {
-    try { setLyr(await api('GET', '/api/lyrics')); setLineSel([]); } catch (e) { setLyr({ lines: [], path: '' }); showErr(e); }
+    let l;
+    try { l = await api('GET', '/api/lyrics'); } catch (e) { l = { lines: [], path: '' }; showErr(e); }
+    lyrRef.current = l;
+    setLyr(l);
+    setLineSel([]);
+    // A (re)loaded file is the current state, not a change of its own
+    if (hist.current.cur) hist.current.cur = { ...hist.current.cur, lyr: l };
   };
   const loadAudio = (p) => {
     const a = audio.current;
@@ -448,12 +477,52 @@ function App() {
   }, 250));
 
   const update = (fn) => {
+    histBase();
     const old = projRef.current;
     const p = clone(old);
     fn(p);
     setProj(p);
     projRef.current = p;
     pushRef.current(p, old.audio.path, old.tracks.lyrics[0].cfg.path);
+    record();
+  };
+
+  // Restores a snapshot (undo/redo): saves the project, and the lyrics if they differ
+  const applySnap = (snap) => {
+    const old = projRef.current;
+    projRef.current = snap.proj;
+    setProj(snap.proj);
+    pushRef.current(snap.proj, old.audio.path, old.tracks.lyrics[0].cfg.path);
+    if (snap.lyr !== lyrRef.current) {
+      lyrRef.current = snap.lyr;
+      setLyr(snap.lyr);
+      lyrSaveRef.current();
+    }
+    // Keep the selection valid
+    setSel((s) => {
+      if (s.kind === 'track') { const n = snap.proj.tracks[s.track].length; return s.seg >= n ? { ...s, seg: n - 1 } : s; }
+      if (s.kind === 'text') return s.i >= snap.proj.texts.length ? { ...s, i: snap.proj.texts.length - 1 } : s;
+      return s;
+    });
+    setLineSel((ls) => ls.filter((i) => i < snap.lyr.lines.length));
+  };
+  const undo = () => {
+    const h = hist.current;
+    if (!h.past.length) return;
+    h.future.push(h.cur);
+    h.cur = h.past.pop();
+    h.at = 0;
+    applySnap(h.cur);
+    setHistTick((x) => x + 1);
+  };
+  const redo = () => {
+    const h = hist.current;
+    if (!h.future.length) return;
+    h.past.push(h.cur);
+    h.cur = h.future.pop();
+    h.at = 0;
+    applySnap(h.cur);
+    setHistTick((x) => x + 1);
   };
 
   // --- saving the lyrics (edits on the timeline / inspector are saved automatically)
@@ -467,11 +536,12 @@ function App() {
     } catch (e) { setLyrSave('error'); showErr(e); }
   }, 600));
   const editLyrics = (fn, save = true) => {
+    histBase();
     const n = clone(lyrRef.current);
     fn(n.lines);
     lyrRef.current = n;
     setLyr(n);
-    if (save) lyrSaveRef.current();
+    if (save) { lyrSaveRef.current(); record(); } // save = false: a drag, recorded when released
   };
 
   // --- transport
@@ -542,6 +612,7 @@ function App() {
   };
   const onMoveText = (i, s, e, commit) => {
     if (commit) { update(() => {}); return; }
+    histBase();
     const p = clone(projRef.current);
     p.texts[i].start = +s.toFixed(3);
     p.texts[i].end = +e.toFixed(3);
@@ -565,6 +636,7 @@ function App() {
       });
       return;
     }
+    histBase();
     const p = clone(projRef.current);
     p.tracks[track][i].at = +at.toFixed(3);
     projRef.current = p;
@@ -650,7 +722,10 @@ function App() {
   // --- keyboard
   useEffect(() => {
     const k = (e) => {
-      if (e.target.matches('input, select, textarea')) return;
+      if (e.target.matches('input, select, textarea')) return; // (they keep their own undo)
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); redo(); return; }
+      if (e.ctrlKey || e.metaKey) return; // leave the browser's own shortcuts alone
       if (!projRef.current || !meta) return;
       const fr = 1 / meta.fps;
       const now = timeStore.get();
@@ -728,6 +803,10 @@ function App() {
         <span class="msg">${job.gen && job.status === 'running'
           ? `${t(STEP_LABEL[job.gen.steps[job.gen.current].id])} · ${Math.round(job.gen.steps[job.gen.current].progress * 100)}%` : job.message}</span>
       </div>`}
+      <div class="btngroup">
+        <button class="btn icon ghost" disabled=${!hist.current.past.length} title=${t('Undo (Ctrl+Z)')} onClick=${undo}><${Icon} name="undo-2" size=${15} /></button>
+        <button class="btn icon ghost" disabled=${!hist.current.future.length} title=${t('Redo (Ctrl+Y)')} onClick=${redo}><${Icon} name="redo-2" size=${15} /></button>
+      </div>
       <button class="btn ghost" onClick=${() => setDlg({ type: 'new' })}><${Icon} name="plus" size=${15} /> ${t('New')}</button>
       <button class="btn ghost" onClick=${() => ctx.pickFile('project', (p) => ctx.openProject(p), meta.path)}><${Icon} name="folder-open" size=${15} /> ${t('Open')}</button>
       <${LangSelect} />
@@ -793,7 +872,7 @@ function App() {
       sel=${sel} lineSel=${lineSel} wordEdit=${wordEdit} height=${tlH} setHeight=${setTlH}
       onSeek=${seek} onSelect=${selTrack} onMoveSeg=${onMoveSeg} onAddSeg=${ctx.addSeg} onMarker=${onMarker}
       onSelectLine=${selectLine} onLyrics=${(lines) => editLyrics((all) => { all.splice(0, all.length, ...lines); }, false)}
-      onLyricsCommit=${() => lyrSaveRef.current()} />
+      onLyricsCommit=${() => { lyrSaveRef.current(); record(); }} />
     ${dialogs}
     ${dragging && html`<div class="dropzone"><div><${Icon} name="upload" size=${28} />
       <div style="margin-top:10px;font-size:15px;font-weight:600">${t('Drop to add to the project')}</div>

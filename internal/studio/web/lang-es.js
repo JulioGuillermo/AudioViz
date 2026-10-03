@@ -1,5 +1,6 @@
 // Spanish UI strings (English source → Spanish)
 export const ES = {
+  'Undo (Ctrl+Z)': 'Deshacer (Ctrl+Z)', 'Redo (Ctrl+Y)': 'Rehacer (Ctrl+Y)',
   'Thumbnails': 'Miniaturas', 'List': 'Lista',
   'Texts': 'Textos', 'Titles and texts': 'Títulos y textos', 'Titles and fixed texts': 'Títulos y textos fijos', 'Title': 'Título',
   'Text {n}': 'Texto {n}', 'Text at {t}': 'Texto en {t}', 'New text starting at the cursor': 'Texto nuevo que empieza en el cursor',

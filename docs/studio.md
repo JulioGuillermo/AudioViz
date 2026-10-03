@@ -127,6 +127,7 @@ The interface language (English / Español) is chosen in the top bar and remembe
 | Key | Action |
 |---|---|
 | Space | Play / pause |
+| Ctrl+Z / Ctrl+Y (or Ctrl+Shift+Z) | Undo / redo (also the arrows in the top bar; up to 32 steps) |
 | ← / → | Previous / next frame (with Shift: ±1 s) |
 | Home / End | Beginning / end |
 | N | New segment at the cursor (selected track) |
