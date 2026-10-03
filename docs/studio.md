@@ -142,7 +142,8 @@ The interface language (English / Español) is chosen in the top bar and remembe
 - **Audio while scrubbing** (speaker button next to the clock, or `S`): with the playback stopped,
   moving through time (dragging on the ruler or the waveform, ←/→, jumping to a line…) plays a short
   snippet of the song at that point. On by default; the choice is remembered by the browser.
-- *Preview quality* (1/2 by default) renders directly at a lower resolution on the GPU.
+- *Preview quality* (1/2 by default) renders directly at a lower resolution on the GPU; the image is
+  always scaled to fill the preview area, keeping the video's aspect ratio.
 - On the same machine it runs at 50–60 fps. From another machine it requests several frames ahead to
   compensate for network latency.
 - When jumping to another point, particles are re-simulated for a few seconds so they look like

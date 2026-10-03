@@ -138,8 +138,8 @@ input[type=color]::-moz-color-swatch { border: 0; border-radius: 3px; }
 
 /* ---------- preview */
 .preview { grid-area: preview; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: #0a0b0d; }
-.stage { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; position: relative; padding: 14px; }
-.stage canvas { max-width: 100%; max-height: 100%; background: #000; border-radius: 2px; box-shadow: 0 0 0 1px #1d1f24, 0 10px 40px rgba(0, 0, 0, .55); }
+.stage { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; min-width: 0; position: relative; padding: 14px; overflow: hidden; }
+.stage canvas { flex: none; background: #000; border-radius: 2px; box-shadow: 0 0 0 1px #1d1f24, 0 10px 40px rgba(0, 0, 0, .55); }
 .stage .hud { position: absolute; top: 12px; right: 14px; font: 11px var(--mono); color: var(--text-3); }
 .transport { display: flex; align-items: center; gap: 6px; padding: 0 10px; height: 46px; background: var(--surface); border-top: 1px solid var(--border); }
 .transport .time { font: 14px var(--mono); margin-left: 8px; color: var(--text); }

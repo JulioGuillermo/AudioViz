@@ -17,12 +17,25 @@ function Preview({ meta, timeStore, scale, rev, playing, pin, onPin }) {
   const stage = useRef();
   // Placing a fixed text: drag on the image (pin = its position 0..1, null when no text is selected)
   const [dragPin, setDragPin] = useState(null);
-  const [, setTick] = useState(0);
+  // The image always fills the available area keeping the video's aspect ratio, whatever the
+  // preview quality (a 1/4 preview is scaled up instead of staying small)
+  const [box, setBox] = useState(null);
   useEffect(() => {
-    const f = () => setTick((v) => v + 1);
-    addEventListener('resize', f);
-    return () => removeEventListener('resize', f);
-  }, []);
+    const el = stage.current;
+    if (!el) return;
+    const fitBox = () => {
+      const cs = getComputedStyle(el);
+      const aw = el.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+      const ah = el.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+      const ar = meta.width / meta.height;
+      const w = Math.max(1, Math.floor(Math.min(aw, ah * ar)));
+      setBox({ w, h: Math.max(1, Math.floor(w / ar)) });
+    };
+    fitBox();
+    const ro = new ResizeObserver(fitBox);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [meta.width, meta.height]);
   const posFrom = (e) => {
     const r = canvas.current.getBoundingClientRect();
     const c = (v) => Math.max(0, Math.min(1, v));
@@ -110,7 +123,7 @@ function Preview({ meta, timeStore, scale, rev, playing, pin, onPin }) {
 
   return html`<div class="stage" ref=${stage}>
     <canvas ref=${canvas} width=${Math.round(meta.width / scale)} height=${Math.round(meta.height / scale)}
-      style=${{ aspectRatio: `${meta.width}/${meta.height}`, cursor: pin ? 'crosshair' : '' }} onMouseDown=${pinDown}
+      style=${{ width: box ? box.w + 'px' : '', height: box ? box.h + 'px' : '', cursor: pin ? 'crosshair' : '' }} onMouseDown=${pinDown}
       title=${pin ? t('Drag to place the selected text') : ''}></canvas>
     ${pinStyle && html`<div class=${'pin' + (dragPin ? ' drag' : '')} style=${pinStyle}></div>`}
     <div class="hud">${meta.width}×${meta.height} · 1/${scale} · ${info.ms} ms${playing ? ' · ' + info.fps + ' fps' : ''}</div>
