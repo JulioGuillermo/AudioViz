@@ -13,6 +13,20 @@ export function Form({ fields, value, onChange, ctx, isFirst = true }) {
   })}`;
 }
 
+// Text / number box that keeps what you are typing while it has focus: the app re-renders
+// several times a second while playing, and a controlled value would be reset on every render.
+// The value is applied on change (Enter or leaving the field); Esc restores it.
+export function Edit({ tag = 'input', value, onKeyDown, ...rest }) {
+  const [focused, setFocused] = useState(false);
+  return html`<${tag} ...${rest} value=${focused ? undefined : value}
+    onFocus=${() => setFocused(true)} onBlur=${() => setFocused(false)}
+    onKeyDown=${(e) => {
+      if (e.key === 'Enter' && tag === 'input') e.target.blur();
+      else if (e.key === 'Escape') { e.target.value = value ?? ''; e.target.blur(); }
+      onKeyDown && onKeyDown(e);
+    }} />`;
+}
+
 function Row({ f, children }) {
   return html`<div class="fld">
     <label title=${f.help ? t(f.help) : ''}>${t(f.label)}</label>
@@ -63,7 +77,7 @@ function Num({ f, v, set, optional }) {
         onChange=${(c) => set(c ? (f.min ?? 0) : null)} />`}
     <input type="range" min=${f.min ?? 0} max=${f.max ?? 1} step=${step} value=${val} disabled=${!on}
       onInput=${(e) => set(conv(e.target.value))} />
-    <input type="number" step=${step} value=${on ? val : ''} disabled=${!on} placeholder=${t('auto')}
+    <${Edit} type="number" step=${step} value=${on ? val : ''} disabled=${!on} placeholder=${t('auto')}
       onChange=${(e) => e.target.value !== '' && set(conv(e.target.value))} />`;
 }
 
@@ -76,7 +90,7 @@ function Color({ f, v, set }) {
     <input type="color" value=${rgb} disabled=${off} onInput=${(e) => set(joinHex(e.target.value, a))} />
     <input type="range" min="0" max="255" step="1" value=${a} title=${t('Opacity')} disabled=${off}
       onInput=${(e) => set(joinHex(rgb, +e.target.value))} />
-    <input type="text" value=${empty ? '' : v} style="width:88px" class="mono" placeholder=${f.optional ? t('automatic') : ''}
+    <${Edit} type="text" value=${empty ? '' : v} style="width:88px" class="mono" placeholder=${f.optional ? t('automatic') : ''}
       disabled=${off} onChange=${(e) => set(e.target.value.trim())} />`;
 }
 
@@ -89,7 +103,7 @@ function Gradient({ v, set }) {
       const { rgb, a } = splitHex(g.color);
       return html`<div class="stop">
         <input type="color" value=${rgb} onInput=${(e) => upd(i, 'color', joinHex(e.target.value, a))} />
-        <input type="text" value=${g.color} onChange=${(e) => upd(i, 'color', e.target.value.trim())} />
+        <${Edit} type="text" value=${g.color} onChange=${(e) => upd(i, 'color', e.target.value.trim())} />
         <input type="range" min="0" max="1" step="0.01" value=${g.offset} title=${t('Position')} onInput=${(e) => upd(i, 'offset', +e.target.value)} />
         <span class="pct">${Math.round(g.offset * 100)}%</span>
         <button class="btn sm icon ghost danger" title=${t('Remove color')} onClick=${() => set(stops.filter((_, j) => j !== i))}><${Icon} name="x" size=${14} /></button>
@@ -157,9 +171,9 @@ function Field({ f, v, set, ctx, isFirst }) {
     case 'gradient':
       return html`<${Row} f=${f}><${Gradient} v=${v} set=${set} /></${Row}>`;
     case 'text':
-      return html`<${Row} f=${f}><input type="text" class="grow" value=${v ?? ''} onChange=${(e) => set(e.target.value)} /></${Row}>`;
+      return html`<${Row} f=${f}><${Edit} type="text" class="grow" value=${v ?? ''} onChange=${(e) => set(e.target.value)} /></${Row}>`;
     case 'textarea':
-      return html`<${Row} f=${f}><textarea class="grow" rows="3" value=${v ?? ''} onChange=${(e) => set(e.target.value)}></textarea></${Row}>`;
+      return html`<${Row} f=${f}><${Edit} tag="textarea" class="grow" rows="3" value=${v ?? ''} onChange=${(e) => set(e.target.value)} /></${Row}>`;
     case 'file':
       return html`<${Row} f=${f}><div class="filectl">
         <div class="fn" title=${v || ''}><${Icon} name=${FILE_ICON[f.kind] || 'file'} size=${14} cls="faint" />

@@ -559,6 +559,12 @@ changes (every 100 px). While playing, if the playhead leaves the visible area (
 
 ---
 
+
+**Editable fields keep what you type** (`fields.js: Edit`): text and number boxes render
+`value` only while they are not focused. The app re-renders several times a second while
+playing, and a controlled `value` would otherwise reset the text being typed on every render.
+The value is applied on `change` (Enter or leaving the field); Esc restores it.
+
 ## 10. Lyrics editing on the timeline
 
 Lines come from `/api/lyrics` into `lyr.lines` (`{start, end, words: [{text, start, end}]}`) and

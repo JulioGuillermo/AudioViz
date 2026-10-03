@@ -1,7 +1,7 @@
 import { html, render, useState, useEffect, useRef } from './vendor/preact-htm.js';
 import { TRACKS, AUDIO_FIELDS, OUTPUT_FIELDS, trackById, TRANSITIONS, SIMPLE_TRANSITIONS, DIRECTED, DIRECTIONS, TEXT_FIELDS } from './schema.js';
 import { api, clone, fmtTime, parseTime, b64u8, basename, debounce } from './util.js';
-import { Form, Select } from './fields.js';
+import { Form, Select, Edit } from './fields.js';
 import { Icon } from './icons.js';
 import { Timeline, segSummary } from './timeline.js';
 import { FilePicker, NewProject, ExportDialog, GenLyricsDialog, LYRIC_LANGS, STEP_LABEL } from './dialogs.js';
@@ -171,20 +171,20 @@ function Setup({ proj, ctx, onHide }) {
 
 function SegHeader({ segs, i, set, meta, track }) {
   const s = segs[i];
-  const name = html`<div class="fld"><label>${t('Name')}</label><div class="ctl"><input type="text" class="grow" value=${s.label}
+  const name = html`<div class="fld"><label>${t('Name')}</label><div class="ctl"><${Edit} type="text" class="grow" value=${s.label}
       placeholder=${i === 0 ? t('Optional') : t('e.g. Chorus')} onChange=${(e) => set({ ...s, label: e.target.value })} /></div></div>`;
   if (i === 0) return html`<div class="card">${name}<div class="card-note">${t('First segment: applies from the start until the next change.')}</div></div>`;
   return html`<div class="card">
     ${name}
     <div class="fld"><label>${t('Starts at')}</label><div class="ctl">
-      <input type="text" class="mono" style="width:96px" value=${fmtTime(s.at)}
+      <${Edit} type="text" class="mono" style="width:96px" value=${fmtTime(s.at)}
         onChange=${(e) => set({ ...s, at: Math.max(0.01, Math.min(meta.duration - 0.01, parseTime(e.target.value))) })} />
       <span class="faint" style="font-size:11.5px">min:sec</span></div></div>
     <div class="fld"><label>${t('Transition')}</label><div class="ctl">
       <${Select} value=${track === 'background' || s.transition.mode === 'cut' ? s.transition.mode : 'fade'}
         options=${track === 'background' ? TRANSITIONS : SIMPLE_TRANSITIONS}
         onChange=${(m) => set({ ...s, transition: { ...s.transition, mode: m, duration: s.transition.duration || 1 } })} />
-      ${s.transition.mode !== 'cut' && html`<input type="number" step="0.1" min="0.05" value=${s.transition.duration} title=${t('Duration (s)')}
+      ${s.transition.mode !== 'cut' && html`<${Edit} type="number" step="0.1" min="0.05" value=${s.transition.duration} title=${t('Duration (s)')}
         onChange=${(e) => set({ ...s, transition: { ...s.transition, duration: Math.max(0.05, +e.target.value) } })} /><span class="faint">s</span>`}
     </div></div>
     ${track === 'background' && DIRECTED.includes(s.transition.mode) && html`<div class="fld"><label>${t('Direction')}</label><div class="ctl">
@@ -217,14 +217,14 @@ function TextsInspector({ proj, sel, setSel, update, time, meta, ctx }) {
     <div class="insp-b">
       ${!x ? html`<p class="faint" style="font-size:12px">${t('No texts yet. Add one at the cursor, or double-click the Texts lane on the timeline.')}</p>` : html`
       <div class="card">
-        <div class="fld"><label>${t('Name')}</label><div class="ctl"><input type="text" class="grow" value=${x.label || ''}
+        <div class="fld"><label>${t('Name')}</label><div class="ctl"><${Edit} type="text" class="grow" value=${x.label || ''}
           placeholder=${t('Optional')} onChange=${(e) => set({ ...x, label: e.target.value })} /></div></div>
         <div class="fld"><label>${t('Starts at')}</label><div class="ctl">
-          <input type="text" class="mono" style="width:96px" value=${fmtTime(x.start)}
+          <${Edit} type="text" class="mono" style="width:96px" value=${fmtTime(x.start)}
             onChange=${(e) => { const v = clampT(parseTime(e.target.value)); set({ ...x, start: v, end: Math.max(x.end, v + 0.1) }); }} />
           <span class="faint" style="font-size:11.5px">min:sec</span></div></div>
         <div class="fld"><label>${t('Ends at')}</label><div class="ctl">
-          <input type="text" class="mono" style="width:96px" value=${fmtTime(x.end)}
+          <${Edit} type="text" class="mono" style="width:96px" value=${fmtTime(x.end)}
             onChange=${(e) => set({ ...x, end: Math.max(x.start + 0.1, clampT(parseTime(e.target.value))) })} />
           <span class="faint" style="font-size:11.5px">${t('{s} s', { s: (x.end - x.start).toFixed(2) })}</span></div></div>
         <div class="card-note">${t('Drag on the preview to place it. In and out animations happen inside this time.')}</div>
@@ -309,9 +309,9 @@ function LineEditor({ lyr, lines, time, onChange, seek, saveState, onResync, res
       : html`<div class="insp-b"><div class="words">
       <div class="word head"><span>${t('Word')}</span><span>${t('Start')}</span><span>${t('End')}</span><span></span></div>
       ${line.words.map((w, k) => html`<div class=${'word' + (time >= w.start && time < w.end ? ' now' : '')}>
-        <input type="text" value=${w.text} onChange=${(e) => setWord(k, 'text', e.target.value)} />
-        <input type="number" step="0.01" value=${w.start.toFixed(2)} onChange=${(e) => setWord(k, 'start', +e.target.value)} />
-        <input type="number" step="0.01" value=${w.end.toFixed(2)} onChange=${(e) => setWord(k, 'end', +e.target.value)} />
+        <${Edit} type="text" value=${w.text} onChange=${(e) => setWord(k, 'text', e.target.value)} />
+        <${Edit} type="number" step="0.01" value=${w.start.toFixed(2)} onChange=${(e) => setWord(k, 'start', +e.target.value)} />
+        <${Edit} type="number" step="0.01" value=${w.end.toFixed(2)} onChange=${(e) => setWord(k, 'end', +e.target.value)} />
         <button class="btn icon" title=${t('Set the start at the cursor')} onClick=${() => setWord(k, 'start', +time.toFixed(2))}><${Icon} name="crosshair" size=${14} /></button>
       </div>`)}
     </div>
