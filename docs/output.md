@@ -9,7 +9,7 @@ output:
   renderer: "auto"
   gpu_device: -1
   preset: "fast"
-  crf: 20
+  crf: 18
 ```
 
 | Field | Default | Description |

@@ -24,7 +24,7 @@ layout(std430, set = 0, binding = 0) readonly buffer Params {
     vec4 viz0;        // cx, cy, baseRadius, baseY
     vec4 viz1;        // barWidth, span, roundness, ringAlpha
     vec4 viz2;        // glowRadius, glowIntensity, waveAmp, stepX
-    vec4 viz3;        // startY (vertical), barHeight (vertical), -, -
+    vec4 viz3;        // startY (vertical), barHeight (vertical), center gap (horizontal), -
     vec4 solidColor;  // rgba
     vec4 partColor;   // rgb
     vec4 waveColL;

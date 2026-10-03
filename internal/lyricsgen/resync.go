@@ -18,8 +18,8 @@ type ResyncOptions struct {
 	Targets    []int   // indices of the lines to re-sync
 }
 
-// Resync recognizes again only the audio around the target lines (using the lyric text as a
-// hint) and re-aligns their words. The rest of the lyric is left untouched. Uses the cached
+// Resync recognizes again only the audio around the target lines (without a prompt, see
+// below) and re-aligns their words. The rest of the lyric is left untouched. Uses the cached
 // separated vocals when available, otherwise the full mix.
 func Resync(ctx context.Context, opt ResyncOptions) ([]LLine, string, error) {
 	if len(opt.Targets) == 0 {

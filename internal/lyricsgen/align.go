@@ -136,8 +136,8 @@ func (v *voice) voicedSpans(a, b float64) [][2]float64 {
 
 // decayEnd: where a sung word ends. The level is compared with the word's own peak (in its
 // first `peakWin` seconds): the word ends when it stays below a quarter of it (-12 dB) for
-// 0.1 s. Unlike voiceEnd it is not fooled by reverb tails or backing vocals, which keep the
-// signal above the (global, very low) voice threshold long after the word is over.
+// 0.1 s. Unlike a silence search over the global (very low) voice threshold, it is not fooled
+// by reverb tails or backing vocals, which stay above that threshold long after the word is over.
 func (v *voice) decayEnd(t, peakWin, limit float64) float64 {
 	i0, i1 := v.idx(t), v.idx(limit)
 	pk, peak := i0, 0.0
@@ -224,7 +224,7 @@ func lyricWords(lines []string) []LWord {
 	return out
 }
 
-// alignNW aligns (Needleman-Wunsch) the lyrics words lw[a:b] with the recognized ones rec and
+// alignNW aligns (Needleman-Wunsch) the lyrics words lw with the recognized ones rec and
 // sets the start of those that match. Returns how many were anchored.
 func alignNW(lw []LWord, rec []Word) int {
 	n, m := len(lw), len(rec)
@@ -379,7 +379,8 @@ func lineCoverage(lw []LWord, nlines int) []float64 {
 	return cov
 }
 
-// finish sets the end times (using voice energy) and guarantees increasing times
+// finish sets the end times (the last word of each line from its level, see decayEnd) and
+// guarantees increasing times
 func finish(lw []LWord, v *voice, total float64) []LLine {
 	for i := range lw {
 		if i > 0 && lw[i].Start < lw[i-1].Start+0.02 {

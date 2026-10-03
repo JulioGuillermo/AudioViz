@@ -1,6 +1,6 @@
 #!/bin/bash
 # Builds the self-contained binary: static x264 inside, no ffmpeg or other runtime dependencies.
-# Build-time requirements ONLY: go, gcc, nasm, git, Vulkan headers and glslc (if the shader changes).
+# Build-time requirements ONLY: go, gcc, g++, cmake, nasm, git, Vulkan headers and glslc.
 set -euo pipefail
 cd "$(dirname "$0")"
 scripts/build-x264.sh

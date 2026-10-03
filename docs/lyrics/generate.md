@@ -47,4 +47,4 @@ Measured on *I didn't ask to be the devil* against a reference forced alignment:
   (with the vocals already cached it takes a few seconds).
 
 ## Without a GPU
-It works the same on the CPU (recognition takes longer). To force it: `AUDIOVIZ_NO_VULKAN=1`.
+It works the same on the CPU (recognition takes longer). To force the CPU for recognition: `AUDIOVIZ_NO_VULKAN=1` (the video renderer has its own `--renderer cpu`).

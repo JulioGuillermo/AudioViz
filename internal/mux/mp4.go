@@ -62,7 +62,7 @@ func (m *MP4Writer) SetAVCConfig(sps, pps []byte) {
 func (m *MP4Writer) SetAudio(a *AudioTrack) { m.audio = a }
 
 // WriteVideoAnnexB takes an access unit in Annex B format (00 00 01 / 00 00 00 01),
-// drops SPS/PPS/AUD/SEI for already known parameters and stores it in AVCC format (4-byte length).
+// drops SPS/PPS (already known parameters) and AUD, keeps SEI, and stores it in AVCC format (4-byte length).
 func (m *MP4Writer) WriteVideoAnnexB(au []byte, pts, dts int64, key bool) error {
 	var size uint32
 	for _, nal := range SplitAnnexB(au) {

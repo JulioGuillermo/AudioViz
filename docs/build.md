@@ -3,7 +3,7 @@
 ```bash
 ./build.sh
 ```
-Produces `./audioviz`, which depends only on libc. x264 and a minimal FFmpeg (video decoding
+Produces `./audioviz`, which depends only on the C library (libc, libm and the system's dynamic loader). x264 and a minimal FFmpeg (video decoding
 only) are downloaded and built once as static libraries (`third_party/`) and end up inside
 the binary, just like the studio's web interface.
 
@@ -16,7 +16,7 @@ These are built as static libraries, only once:
 - `scripts/build-ml.sh`: whisper.cpp with the Vulkan backend (speech recognition) and demucs.cpp (vocal separation)
 
 `libstdc++` and `libgcc` are linked statically and `libvulkan` is loaded at runtime only if present, so the
-resulting binary depends only on libc.
+resulting binary depends only on the C library.
 
 Nothing needs to be installed to run it. The GPU is used through the system's Vulkan driver
 (part of the graphics driver); if there is none, rendering falls back to the CPU automatically.

@@ -21,7 +21,7 @@ type FLACStream struct {
 	SampleRate   int
 }
 
-// EncodeFLAC encodes interleaved stereo PCM (bps = 16 or 24). maxFrames limits the duration (<=0 = all).
+// EncodeFLAC encodes interleaved stereo PCM (bps = 16 or 24). maxSamples limits the duration (<=0 = all).
 func EncodeFLAC(pcm []int32, sampleRate, bps int, maxSamples int) *FLACStream {
 	total := len(pcm) / 2
 	if maxSamples > 0 && maxSamples < total {

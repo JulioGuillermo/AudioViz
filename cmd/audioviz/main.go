@@ -303,7 +303,7 @@ Options:
   -a, --audio <path>            Override the audio path from the YAML
   -b, --bg <path>               Override the background path (image or GIF) from the YAML
   -l, --lyrics <path>           Show synced lyrics (.srt / .lrc) and enable them
-  --init <file.yaml>            Create a full commented YAML template
+  --init <file.yaml>            Create a YAML template with every option and its default
   -h, --help                    Show this help message
 `)
 }

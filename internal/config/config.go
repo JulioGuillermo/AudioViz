@@ -30,7 +30,7 @@ type ProjectConfig struct {
 type AudioConfig struct {
 	Path        string  `yaml:"path"`
 	Volume      float64 `yaml:"volume"`      // Volume multiplier (1.0 = normal)
-	Sensitivity float64 `yaml:"sensitivity"` // Global reactivity multiplier (1.0 = normal)
+	Sensitivity float64 `yaml:"sensitivity"` // Bar height multiplier (1.0 = normal); effects have their own
 	// Adaptive normalization: each effect and each bar is rescaled to its local range
 	// so they don't stay saturated (or dead) when a band is always high/low.
 	Normalize       bool    `yaml:"normalize"`
@@ -110,7 +110,7 @@ type VisualizerConfig struct {
 	BarWidth        float64 `yaml:"bar_width"`        // Width or thickness of each bar
 	BarGap          float64 `yaml:"bar_gap"`          // Gap between bars
 	Roundness       float64 `yaml:"roundness"`        // Tip rounding
-	Smoothing       float64 `yaml:"smoothing"`        // 0.0 (hard reactive) to 0.95 (very smooth)
+	Smoothing       float64 `yaml:"smoothing"`        // Weight of the new value when bars rise: higher = faster (0.75 default)
 	DecayRate       float64 `yaml:"decay_rate"`       // Peak decay (0.05 to 0.3)
 
 	// For type "circular":

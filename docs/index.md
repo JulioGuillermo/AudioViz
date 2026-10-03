@@ -9,6 +9,7 @@ and lossless FLAC audio inside an MP4.
 - [Timeline in the YAML](timeline.md): change effects, background, visualizer or lyrics in each section
 - [Command line](cli.md) — rendering, previews, single frames, GPU selection
 - [Building](build.md)
+- **[Technical documentation](technical/README.md)**: how everything works inside — architecture, GPU renderer, audio analysis, lyrics generation and alignment, studio internals, build, portability
 - [YAML project structure](#yaml-structure)
 
 ## Audio and reactivity
