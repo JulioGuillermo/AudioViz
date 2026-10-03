@@ -24,6 +24,7 @@ the music. Everything runs from a **single binary with nothing to install**, ren
 
 ```bash
 ./build.sh                       # builds ./audioviz (see "Building")
+./build.sh install               # or install it in ~/go/bin to use it from any folder
 ./audioviz studio                # opens the studio in the browser (New → creates a project)
 ./audioviz studio my-video/      # opens an existing project folder
 ./audioviz project.yaml          # renders a project from the command line

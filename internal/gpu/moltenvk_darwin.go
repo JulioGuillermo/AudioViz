@@ -1,9 +1,10 @@
-//go:build darwin && moltenvk
+//go:build darwin && !nomoltenvk
 
 // macOS: MoltenVK (Vulkan on top of Metal) linked statically, so the same compute shader runs on
 // Apple GPUs with nothing installed. scripts/build-moltenvk.sh puts libMoltenVK.a and the Vulkan
-// headers in third_party/build-darwin-<arch>; build.sh then adds the "moltenvk" tag. Without the
-// tag the renderer looks for a MoltenVK / Vulkan SDK dylib at runtime and otherwise uses the CPU.
+// headers in third_party/build-darwin-<arch>. It is linked by default (so a plain
+// "go install ./cmd/audioviz" works); build.sh adds the "nomoltenvk" tag only when the library is
+// missing, and then the renderer looks for a MoltenVK / Vulkan SDK dylib at runtime or uses the CPU.
 package gpu
 
 /*

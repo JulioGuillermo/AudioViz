@@ -3,7 +3,11 @@
 ```bash
 ./build.sh                    # this system (Linux, or macOS on a Mac) -> ./audioviz
 GOOS=windows ./build.sh       # Windows, cross-compiled from Linux     -> ./audioviz.exe
+./build.sh install            # builds and installs `audioviz` in ~/go/bin (or $GOBIN)
 ```
+
+After the first `./build.sh` (which builds the static libraries), a plain `go install ./cmd/audioviz`
+works too. Put `~/go/bin` in your `PATH` to run `audioviz` from any folder.
 
 The result is a single file with nothing to install. x264, a minimal FFmpeg (video decoding
 only), whisper.cpp and demucs.cpp are downloaded and built once per target as static libraries

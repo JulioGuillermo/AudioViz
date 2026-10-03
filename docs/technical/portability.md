@@ -9,7 +9,7 @@ Mac). Everything system-specific is selected at compile time:
 | CPU baseline | `#cgo <os>,amd64 CXXFLAGS`, `CPUFLAGS` in `target.sh` | `-march=x86-64-v3` | `-mcpu=x86_64_v3` (zig's spelling) | x86-64-v3 on Intel Macs, default on Apple Silicon |
 | Speech recognition GPU (`build-ml.sh`) | CMake options per target | ggml Vulkan | ggml Vulkan | **ggml Metal** (embedded shaders) + Accelerate |
 | Vulkan loader for ggml (`vkshim.c`) | `#if defined(_WIN32)` / `!__APPLE__` | `dlopen("libvulkan.so.1")` | `LoadLibraryA("vulkan-1.dll")` | not compiled (Metal) |
-| Renderer's Vulkan loader (`vk.c`) | `#if defined(_WIN32)`, `AUDIOVIZ_MOLTENVK_STATIC` | `dlopen` | `LoadLibraryA` | MoltenVK linked statically (`moltenvk` build tag, `moltenvk_darwin.go`); otherwise a Vulkan SDK / MoltenVK dylib if installed |
+| Renderer's Vulkan loader (`vk.c`) | `#if defined(_WIN32)`, `AUDIOVIZ_MOLTENVK_STATIC` | `dlopen` | `LoadLibraryA` | MoltenVK linked statically by default (`moltenvk_darwin.go`; tag `nomoltenvk` turns it off); otherwise a Vulkan SDK / MoltenVK dylib if installed |
 | Portability extensions | runtime check | — | — | instance flag `ENUMERATE_PORTABILITY` + device extension `VK_KHR_portability_subset` (required by MoltenVK) |
 | Opening the browser | `open_<os>.go` | `xdg-open` | `rundll32 url.dll,FileProtocolHandler` | `open` |
 | File browser roots | `fsroots_windows.go` / `fsroots_other.go` | `/` | pseudo-folder `::drives` listing `C:\`, `D:\`… above each drive root | `/` |
@@ -53,7 +53,7 @@ prefix; `build-ml.sh` normalizes them so the cgo flags are the same on every sys
 
 On a Mac, `./build.sh`: whisper.cpp with `GGML_METAL=ON` (shaders embedded in the library, no
 `.metallib` to ship) and Accelerate; `scripts/build-moltenvk.sh` downloads the static
-`libMoltenVK.a` and the Vulkan headers from an official MoltenVK release; `build.sh` adds the
-`moltenvk` tag, which links it with the Metal/IOSurface/QuartzCore/… frameworks. The renderer's
+`libMoltenVK.a` and the Vulkan headers from an official MoltenVK release; `moltenvk_darwin.go` links it
+by default (build.sh adds `nomoltenvk` only if the library is missing) with the Metal/IOSurface/QuartzCore/… frameworks. The renderer's
 compute shader runs unchanged on Metal through MoltenVK. Distributing to other Macs without
 Gatekeeper warnings needs signing and notarization (Apple developer account).
