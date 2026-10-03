@@ -99,6 +99,7 @@ are read through `readJSON`, capped at **64 MiB** (`io.LimitReader`).
 | GET | `/api/fs?path=&kind=` | — | `{path, parent, entries: [{name, path, dir, size}]}` | `hFS`: file browser, see §7 |
 | POST | `/api/upload` | multipart, field `file` | `{path}` | `hUpload`: copies into `<project>/assets/<basename>` |
 | GET | `/api/media?path=` | — | file bytes | `hMedia`: `http.ServeFile` (Range, `Last-Modified`, content type) |
+| GET | `/api/thumb?path=&s=` | — | JPEG | `hThumb` (`thumbs.go`): image/GIF/video scaled to fit `s`×`s` (64–480, default 240), a video's frame at min(1 s, 10 % of its length); in-memory cache of 400 keyed by path, size, mtime and `s`; at most 3 generated at once |
 | GET | `/api/probe?path=` | — | `video.ProbeMedia` result | `hProbe`. Not used by the current web app |
 | POST | `/api/export` | `{path?, start?, end?}` (seconds; `end` 0 = to the end) | job snapshot | `hExport`: starts an `export` job, see §4 |
 | POST | `/api/lyrics/generate` | `{txt, lang, fast}` | job snapshot | `hGenLyrics`: starts a `lyrics` job |

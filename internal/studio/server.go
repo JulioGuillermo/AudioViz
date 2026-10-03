@@ -92,6 +92,7 @@ func Run(opt Options, ready func(url string)) error {
 	mux.HandleFunc("GET /api/fs", s.hFS)
 	mux.HandleFunc("POST /api/upload", s.hUpload)
 	mux.HandleFunc("GET /api/media", s.hMedia)
+	mux.HandleFunc("GET /api/thumb", s.hThumb)
 	mux.HandleFunc("GET /api/probe", s.hProbe)
 	mux.HandleFunc("POST /api/export", s.hExport)
 	mux.HandleFunc("POST /api/lyrics/generate", s.hGenLyrics)

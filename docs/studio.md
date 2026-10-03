@@ -112,7 +112,7 @@ rename it, right-click to delete it. They serve as references for placing segmen
 - Lyric edits are **saved automatically** to the project's `.lrc` (per-word timing).
 
 ## Files
-The file pickers browse the folders of the machine where the studio runs. With
+The file pickers browse the folders of the machine where the studio runs. When choosing a background they show **thumbnails** of images, GIFs and videos (a frame near the start); the buttons next to the path switch between thumbnails and a list (remembered by the browser). With
 **⬆ Upload from this computer…** you copy a file into the project's `assets/` (useful if you open the
 studio from another computer).
 

@@ -1,5 +1,6 @@
 // Spanish UI strings (English source → Spanish)
 export const ES = {
+  'Thumbnails': 'Miniaturas', 'List': 'Lista',
   'Texts': 'Textos', 'Titles and texts': 'Títulos y textos', 'Titles and fixed texts': 'Títulos y textos fijos', 'Title': 'Título',
   'Text {n}': 'Texto {n}', 'Text at {t}': 'Texto en {t}', 'New text starting at the cursor': 'Texto nuevo que empieza en el cursor',
   'Delete this text (Del)': 'Borrar este texto (Supr)', 'Ends at': 'Termina en', '{s} s': '{s} s',

@@ -36,8 +36,15 @@ export function Modal({ title, icon, onClose, children, footer, wide }) {
 }
 
 // File browser of the machine running the studio (+ upload into the project)
+const VIDEO_EXT = /\.(mp4|mov|mkv|webm|avi|m4v)$/i;
+
 export function FilePicker({ kind, start, onPick, onClose, hasProject }) {
   const [dir, setDir] = useState(null);
+  // Images and videos: thumbnail grid (or list), remembered by the browser
+  const canGrid = kind === 'bg';
+  const [view, setViewState] = useState(() => { try { return localStorage.getItem('audioviz.pickerView') || 'grid'; } catch (e) { return 'grid'; } });
+  const setView = (v) => { setViewState(v); try { localStorage.setItem('audioviz.pickerView', v); } catch (e) { /* ignore */ } };
+  const grid = canGrid && view === 'grid';
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
   const fileRef = useRef();
@@ -80,14 +87,31 @@ export function FilePicker({ kind, start, onPick, onClose, hasProject }) {
         <button class="btn icon" title=${t('Home folder')} onClick=${() => load('~')}><${Icon} name="house" size=${15} /></button>
       </div>
       <div class="crumb grow">${dir.path}</div>
+      ${canGrid && html`<div class="btngroup">
+        <button class=${'btn icon' + (grid ? ' on' : '')} title=${t('Thumbnails')} onClick=${() => setView('grid')}><${Icon} name="layout-grid" size=${15} /></button>
+        <button class=${'btn icon' + (grid ? '' : ' on')} title=${t('List')} onClick=${() => setView('list')}><${Icon} name="list" size=${15} /></button>
+      </div>`}
     </div>
-    <div class="files">
+    ${grid ? html`<div class="tiles">
+      ${entries.length === 0 && html`<div class="faint" style="grid-column:1/-1;padding:8px">${t('No files of this type here')}</div>`}
+      ${entries.map((e) => html`<div class=${'tile' + (e.dir ? ' dir' : '')} key=${e.path} title=${e.name}
+          onClick=${() => (e.dir ? load(e.path) : (onPick(e.path), onClose()))}>
+        <div class="th">
+          <${Icon} name=${e.dir ? 'folder' : VIDEO_EXT.test(e.name) ? 'film' : 'image'} size=${e.dir ? 30 : 22} cls="faint" />
+          ${!e.dir && html`<img loading="lazy" alt="" src=${'/api/thumb?s=240&path=' + encodeURIComponent(e.path)}
+            onError=${(ev) => { ev.target.style.display = 'none'; }} />`}
+          ${!e.dir && VIDEO_EXT.test(e.name) && html`<span class="vid"><${Icon} name="play" size=${10} /></span>`}
+        </div>
+        <div class="nm">${e.name}</div>
+        ${!e.dir && html`<div class="sz">${(e.size / 1048576).toFixed(1)} MB</div>`}
+      </div>`)}
+    </div>` : html`<div class="files">
       ${entries.length === 0 && html`<div class="f faint">${t(kind === 'dir' ? 'No folders here' : 'No files of this type here')}</div>`}
       ${entries.map((e) => html`<div class=${'f' + (e.dir ? ' dir' : '')} onClick=${() => (e.dir ? load(e.path) : (onPick(e.path), onClose()))}>
         <${Icon} name=${e.dir ? 'folder' : FILE_ICON[kind] || 'file'} size=${15} cls=${e.dir ? 'muted' : 'faint'} /><span>${e.name}</span>
         ${!e.dir && html`<span class="sz">${(e.size / 1048576).toFixed(1)} MB</span>`}
       </div>`)}
-    </div>`}
+    </div>`}`}
   </${Modal}>`;
 }
 
