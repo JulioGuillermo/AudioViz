@@ -1,4 +1,4 @@
-import { html, useEffect, useRef, useState, useMemo } from './vendor/preact-htm.js';
+import { html, useEffect, useLayoutEffect, useRef, useState, useMemo } from './vendor/preact-htm.js';
 import { TRACKS } from './schema.js';
 import { fmtTime, basename, clone } from './util.js';
 import { Icon } from './icons.js';
@@ -125,6 +125,24 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
   const effPps = pps ?? 12;
   const width = Math.max(200, Math.ceil(duration * effPps) + 40);
 
+  // Zoom keeping one point still: the time under `offset` px (from the left edge of
+  // the visible area; default its center) stays under it after the new scale.
+  const zoomAnchor = useRef(null);
+  const zoomTo = (np, offset) => {
+    const sc = scroller.current;
+    np = Math.max(1, Math.min(600, np));
+    if (!sc || np === effPps) return;
+    if (offset == null) offset = sc.clientWidth / 2;
+    zoomAnchor.current = { tt: (sc.scrollLeft + offset) / effPps, offset };
+    setPps(np);
+  };
+  useLayoutEffect(() => {
+    const a = zoomAnchor.current, sc = scroller.current;
+    if (!a || !sc) return;
+    zoomAnchor.current = null;
+    sc.scrollLeft = Math.max(0, a.tt * effPps - a.offset);
+  }, [effPps]);
+
   // Fit the whole song on open and whenever the duration changes (e.g. after choosing the audio)
   useEffect(() => {
     if (scroller.current) setPps(Math.max(2, (scroller.current.clientWidth - 40) / duration));
@@ -236,11 +254,8 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
   const wheel = (e) => {
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
-      const sc = scroller.current;
-      const tt = xToT(e.clientX);
-      const np = Math.max(1, Math.min(600, effPps * (e.deltaY < 0 ? 1.18 : 1 / 1.18)));
-      setPps(np);
-      requestAnimationFrame(() => { sc.scrollLeft = tt * np - (e.clientX - sc.getBoundingClientRect().left); });
+      // with the wheel the point under the pointer stays put
+      zoomTo(effPps * (e.deltaY < 0 ? 1.18 : 1 / 1.18), e.clientX - scroller.current.getBoundingClientRect().left);
     }
   };
 
@@ -269,8 +284,8 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
       </span>
       <button class="btn sm" title=${t('Marker at the cursor (M)')} onClick=${() => onMarker('add')}><${Icon} name="flag" size=${14} /> ${t('Marker')}</button>
       <div class="btngroup">
-        <button class="btn sm icon" title=${t('Zoom out')} onClick=${() => setPps(Math.max(1, effPps / 1.5))}><${Icon} name="zoom-out" size=${14} /></button>
-        <button class="btn sm icon" title=${t('Zoom in')} onClick=${() => setPps(Math.min(600, effPps * 1.5))}><${Icon} name="zoom-in" size=${14} /></button>
+        <button class="btn sm icon" title=${t('Zoom out')} onClick=${() => zoomTo(effPps / 1.5)}><${Icon} name="zoom-out" size=${14} /></button>
+        <button class="btn sm icon" title=${t('Zoom in')} onClick=${() => zoomTo(effPps * 1.5)}><${Icon} name="zoom-in" size=${14} /></button>
         <button class="btn sm icon" title=${t('Show the whole song')} onClick=${() => setPps(Math.max(1, (scroller.current.clientWidth - 40) / duration))}><${Icon} name="maximize-2" size=${14} /></button>
       </div>
     </div>
