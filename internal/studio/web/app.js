@@ -205,7 +205,8 @@ function TextsInspector({ proj, sel, setSel, update, time, meta, ctx }) {
     <div class="insp-h">
       <div class="insp-title"><${Icon} name="type" size=${16} cls="muted" />${t('Texts')}<span class="sub">${t('Titles and fixed texts')}</span></div>
       ${texts.length > 0 && html`<div class="segtabs">${texts.map((tx, k) => html`<button class=${'segtab' + (k === i ? ' on' : '')} title=${tx.text}
-          onClick=${() => ctx.selectText(k)}><span class="mono">${fmtTime(tx.start, false)}</span>${name(tx, k)}</button>`)}</div>`}
+          onClick=${() => ctx.selectText(k)}><span class="mono">${fmtTime(tx.start, false)}</span><span class="nm">${name(tx, k)}</span>
+          <span class="sum mono">${fmtTime(tx.end - tx.start, false)}</span></button>`)}</div>`}
       <div class="row">
         <button class="btn sm" onClick=${() => ctx.addText(time)} title=${t('New text starting at the cursor')}><${Icon} name="plus" size=${14} /> ${t('Text at {t}', { t: fmtTime(time) })}</button>
         <span class="spacer"></span>
@@ -244,7 +245,8 @@ function TrackInspector({ proj, track, segIdx, time, meta, update, setSel, ctx, 
       <div class="insp-title"><${Icon} name=${def.icon} size=${16} cls="muted" />${t(def.label)}${def.group !== def.label && html`<span class="sub">${t(def.group)}</span>`}</div>
       <div class="segtabs">${segs.map((s, k) => html`<button class=${'segtab' + (k === i ? ' on' : '')} title=${s.label || ''}
           onClick=${() => { setSel({ kind: 'track', track, seg: k }); ctx.seek(s.at); }}>
-          <span class="mono">${fmtTime(s.at, false)}</span>${s.label || t('Segment {n}', { n: k + 1 })}</button>`)}</div>
+          <span class="mono">${fmtTime(s.at, false)}</span><span class="nm">${s.label || t('Segment {n}', { n: k + 1 })}</span>
+          <span class="sum">${segSummary(track, s.cfg)}</span></button>`)}</div>
       <div class="row">
         <button class="btn sm" onClick=${() => ctx.addSeg(track, time)} title=${t('New segment starting at the cursor (N)')}><${Icon} name="plus" size=${14} /> ${t('Segment at {t}', { t: fmtTime(time) })}</button>
         <span class="spacer"></span>
