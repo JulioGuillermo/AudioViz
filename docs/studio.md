@@ -135,6 +135,7 @@ The interface language (English / Español) is chosen in the top bar and remembe
 | M | Marker at the cursor |
 | S | Audio while scrubbing on / off |
 | Esc | Leave word editing |
+| Drag on the ruler | Scroll the timeline (a click without dragging moves the cursor) |
 | Ctrl + wheel | Timeline zoom (keeps the point under the pointer; the buttons keep the center) |
 
 ## Preview

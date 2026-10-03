@@ -1,5 +1,6 @@
 // Spanish UI strings (English source → Spanish)
 export const ES = {
+  'Drag to scroll the timeline · click to move the cursor': 'Arrastra para desplazar la línea de tiempo · clic para mover el cursor',
   'Undo (Ctrl+Z)': 'Deshacer (Ctrl+Z)', 'Redo (Ctrl+Y)': 'Rehacer (Ctrl+Y)',
   'Thumbnails': 'Miniaturas', 'List': 'Lista',
   'Texts': 'Textos', 'Titles and texts': 'Títulos y textos', 'Titles and fixed texts': 'Títulos y textos fijos', 'Title': 'Título',
@@ -65,7 +66,7 @@ export const ES = {
   'Go to start (Home)': 'Ir al inicio (Inicio)', 'Go to end (End)': 'Ir al final (Fin)', 'Previous frame (←)': 'Cuadro anterior (←)',
   'Next frame (→)': 'Cuadro siguiente (→)', 'Play / pause (Space)': 'Reproducir / pausa (Espacio)', 'Preview resolution': 'Resolución del preview',
   'Full': 'Completa', 'Timeline': 'Línea de tiempo',
-  'Double-click a track: new segment · Drag to move (snaps; Alt = free) · Ctrl + wheel: zoom': 'Doble clic en una pista: nuevo tramo · Arrastra para mover (imán; Alt sin imán) · Ctrl + rueda: zoom',
+  'Double-click a track: new segment · Drag to move (snaps; Alt = free) · Ctrl + wheel: zoom · Drag the ruler: scroll': 'Doble clic en una pista: nuevo tramo · Arrastra para mover (imán; Alt sin imán) · Ctrl + rueda: zoom · Arrastra la regla: desplazar',
   'Marker': 'Marca', 'Marker at the cursor (M)': 'Marca en el cursor (M)', 'Zoom in': 'Acercar', 'Zoom out': 'Alejar', 'Show the whole song': 'Ver toda la canción',
   'Lyric lines': 'Líneas de letra', 'Click: go · double-click: rename · right-click: delete': 'Clic: ir · doble clic: renombrar · clic derecho: borrar',
   'Marker name (e.g. Chorus):': 'Nombre de la marca (p. ej. Estribillo):', 'New name:': 'Nuevo nombre:', 'Delete the marker “{m}”?': '¿Borrar la marca «{m}»?',

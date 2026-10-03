@@ -212,6 +212,28 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
     addEventListener('mouseup', up);
   };
 
+  // Ruler: dragging scrolls the view (grab and pull); a click without moving puts the cursor there
+  const rulerDrag = (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const sc = scroller.current;
+    const x0 = e.clientX, s0 = sc.scrollLeft;
+    let moved = false;
+    const mv = (ev) => {
+      const dx = ev.clientX - x0;
+      if (!moved && Math.abs(dx) > 3) { moved = true; document.body.classList.add('panning'); }
+      if (moved) sc.scrollLeft = s0 - dx;
+    };
+    const up = (ev) => {
+      removeEventListener('mousemove', mv);
+      removeEventListener('mouseup', up);
+      document.body.classList.remove('panning');
+      if (!moved) onSeek(xToT(ev.clientX));
+    };
+    addEventListener('mousemove', mv);
+    addEventListener('mouseup', up);
+  };
+
   const seekDrag = (e) => {
     if (e.button !== 0) return;
     onSeek(xToT(e.clientX));
@@ -352,7 +374,7 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
     <div class="tl-resize" onMouseDown=${resize}></div>
     <div class="tl-bar">
       <span class="label-sm" style="color:var(--text-2)">${t('Timeline')}</span>
-      <span class="hint">${t('Double-click a track: new segment · Drag to move (snaps; Alt = free) · Ctrl + wheel: zoom')}</span>
+      <span class="hint">${t('Double-click a track: new segment · Drag to move (snaps; Alt = free) · Ctrl + wheel: zoom · Drag the ruler: scroll')}</span>
       <span class="spacer"></span>
       <span class="legend">
         <span><i style="background:var(--band-bass)"></i>${t('Bass')}</span>
@@ -378,7 +400,8 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
       </div>
       <div class="tl-scroll" ref=${scroller} onWheel=${wheel} onScroll=${onScroll}>
         <div class="tl-inner" style=${{ width: width + 'px' }}>
-          <div class="lane ruler" style=${{ '--h': H.ruler + 'px' }} onMouseDown=${seekDrag}>
+          <div class="lane ruler" style=${{ '--h': H.ruler + 'px' }} onMouseDown=${rulerDrag}
+              title=${t('Drag to scroll the timeline · click to move the cursor')}>
             <${Ruler} pps=${effPps} duration=${duration} scroller=${scroller} />
           </div>
           <div class="lane" style=${{ '--h': H.audio + 'px' }} onMouseDown=${seekDrag}>
