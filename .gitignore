@@ -11,3 +11,9 @@ tools/lyrics/cache/
 /third_party/ffmpeg/
 /third_party/whisper.cpp/
 /third_party/demucs.cpp/
+/audioviz.exe
+/third_party/build-*/
+/third_party/obj-*/
+/third_party/toolchain-*/
+/third_party/vulkan-headers/
+/third_party/moltenvk-*

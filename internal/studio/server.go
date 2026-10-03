@@ -199,7 +199,7 @@ func (s *Server) hState(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := map[string]any{"version": s.version, "project": s.meta(), "startDir": s.startDir,
-		"lyricsTool": true, "models": map[string]bool{"whisper": lyricsgen.WhisperModel.Present(), "demucs": lyricsgen.DemucsModel.Present()}, "logs": s.logs, "gpu": gpu.ListDevices(), "home": os.Getenv("HOME")}
+		"lyricsTool": true, "models": map[string]bool{"whisper": lyricsgen.WhisperModel.Present(), "demucs": lyricsgen.DemucsModel.Present()}, "logs": s.logs, "gpu": gpu.ListDevices(), "home": userHome()}
 	if s.job != nil {
 		st["job"] = s.job.snapshot()
 	}
@@ -535,21 +535,31 @@ func (s *Server) hFS(w http.ResponseWriter, r *http.Request) {
 		}
 		s.mu.Unlock()
 	}
-	if dir == "~" || strings.HasPrefix(dir, "~/") {
+	if dir == "~" || strings.HasPrefix(dir, "~/") || strings.HasPrefix(dir, `~\`) {
 		home, _ := os.UserHomeDir()
-		dir = filepath.Join(home, strings.TrimPrefix(dir, "~"))
-	}
-	dir, _ = filepath.Abs(dir)
-	ents, err := os.ReadDir(dir)
-	if err != nil {
-		fail(w, 400, err)
-		return
+		dir = filepath.Join(home, dir[1:])
 	}
 	type ent struct {
 		Name string `json:"name"`
 		Path string `json:"path"`
 		Dir  bool   `json:"dir"`
 		Size int64  `json:"size"`
+	}
+	// Windows: the list of drives sits above the root of each drive
+	drives := fsDrives()
+	if dir == drivesPath && len(drives) > 0 {
+		var out []ent
+		for _, d := range drives {
+			out = append(out, ent{d, d, true, 0})
+		}
+		writeJSON(w, map[string]any{"path": drivesPath, "parent": drivesPath, "entries": out})
+		return
+	}
+	dir, _ = filepath.Abs(dir)
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		fail(w, 400, err)
+		return
 	}
 	var out []ent
 	exts := kindExts[kind]
@@ -586,7 +596,11 @@ func (s *Server) hFS(w http.ResponseWriter, r *http.Request) {
 		}
 		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
 	})
-	writeJSON(w, map[string]any{"path": dir, "parent": filepath.Dir(dir), "entries": out})
+	parent := filepath.Dir(dir)
+	if parent == dir && len(drives) > 0 {
+		parent = drivesPath
+	}
+	writeJSON(w, map[string]any{"path": dir, "parent": parent, "entries": out})
 }
 
 // hUpload saves an uploaded file to <project>/assets
@@ -948,4 +962,10 @@ func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 			fl.Flush()
 		}
 	}
+}
+
+// userHome is the user's home folder (HOME on Unix, the profile folder on Windows)
+func userHome() string {
+	h, _ := os.UserHomeDir()
+	return h
 }

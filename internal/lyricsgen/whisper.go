@@ -1,8 +1,15 @@
 package lyricsgen
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/../../third_party/build/include
-#cgo LDFLAGS: ${SRCDIR}/../../third_party/build/lib/libwhisper.a ${SRCDIR}/../../third_party/build/lib/libggml.a ${SRCDIR}/../../third_party/build/lib/libggml-vulkan.a ${SRCDIR}/../../third_party/build/lib/libggml-cpu.a ${SRCDIR}/../../third_party/build/lib/libggml-base.a -lm -lpthread -ldl
+// Per target: static libraries from scripts/build-ml.sh (Vulkan backend on Linux/Windows, Metal on macOS)
+#cgo linux CFLAGS: -I${SRCDIR}/../../third_party/build/include
+#cgo linux LDFLAGS: ${SRCDIR}/../../third_party/build/lib/libwhisper.a ${SRCDIR}/../../third_party/build/lib/libggml.a ${SRCDIR}/../../third_party/build/lib/libggml-vulkan.a ${SRCDIR}/../../third_party/build/lib/libggml-cpu.a ${SRCDIR}/../../third_party/build/lib/libggml-base.a -lm -lpthread -ldl
+#cgo windows CFLAGS: -I${SRCDIR}/../../third_party/build-windows-amd64/include -I${SRCDIR}/../../third_party/vulkan-headers
+#cgo windows LDFLAGS: ${SRCDIR}/../../third_party/build-windows-amd64/lib/libwhisper.a ${SRCDIR}/../../third_party/build-windows-amd64/lib/libggml.a ${SRCDIR}/../../third_party/build-windows-amd64/lib/libggml-vulkan.a ${SRCDIR}/../../third_party/build-windows-amd64/lib/libggml-cpu.a ${SRCDIR}/../../third_party/build-windows-amd64/lib/libggml-base.a
+#cgo darwin,arm64 CFLAGS: -I${SRCDIR}/../../third_party/build-darwin-arm64/include
+#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../third_party/build-darwin-arm64/lib/libwhisper.a ${SRCDIR}/../../third_party/build-darwin-arm64/lib/libggml.a ${SRCDIR}/../../third_party/build-darwin-arm64/lib/libggml-metal.a ${SRCDIR}/../../third_party/build-darwin-arm64/lib/libggml-blas.a ${SRCDIR}/../../third_party/build-darwin-arm64/lib/libggml-cpu.a ${SRCDIR}/../../third_party/build-darwin-arm64/lib/libggml-base.a -framework Accelerate -framework Metal -framework MetalKit -framework Foundation
+#cgo darwin,amd64 CFLAGS: -I${SRCDIR}/../../third_party/build-darwin-amd64/include
+#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../third_party/build-darwin-amd64/lib/libwhisper.a ${SRCDIR}/../../third_party/build-darwin-amd64/lib/libggml.a ${SRCDIR}/../../third_party/build-darwin-amd64/lib/libggml-metal.a ${SRCDIR}/../../third_party/build-darwin-amd64/lib/libggml-blas.a ${SRCDIR}/../../third_party/build-darwin-amd64/lib/libggml-cpu.a ${SRCDIR}/../../third_party/build-darwin-amd64/lib/libggml-base.a -framework Accelerate -framework Metal -framework MetalKit -framework Foundation
 #include <stdlib.h>
 #include <stdbool.h>
 #include <whisper.h>

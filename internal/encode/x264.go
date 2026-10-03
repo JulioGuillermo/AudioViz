@@ -2,8 +2,14 @@
 package encode
 
 /*
-#cgo CFLAGS: -I${SRCDIR}/../../third_party/build/include
-#cgo LDFLAGS: ${SRCDIR}/../../third_party/build/lib/libx264.a -lm -lpthread -ldl
+#cgo linux CFLAGS: -I${SRCDIR}/../../third_party/build/include
+#cgo linux LDFLAGS: ${SRCDIR}/../../third_party/build/lib/libx264.a -lm -lpthread -ldl
+#cgo windows CFLAGS: -I${SRCDIR}/../../third_party/build-windows-amd64/include
+#cgo windows LDFLAGS: ${SRCDIR}/../../third_party/build-windows-amd64/lib/libx264.a
+#cgo darwin,arm64 CFLAGS: -I${SRCDIR}/../../third_party/build-darwin-arm64/include
+#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../third_party/build-darwin-arm64/lib/libx264.a -lm -lpthread
+#cgo darwin,amd64 CFLAGS: -I${SRCDIR}/../../third_party/build-darwin-amd64/include
+#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../third_party/build-darwin-amd64/lib/libx264.a -lm -lpthread
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>

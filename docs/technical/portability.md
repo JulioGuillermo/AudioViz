@@ -1,58 +1,55 @@
-# Portability: Windows and macOS
+# Portability: Linux, Windows and macOS
 
-AudioViz currently builds and runs on **Linux x86-64** only. Nothing in the design is Linux
-specific: every bundled library (x264, FFmpeg, whisper.cpp/ggml, demucs.cpp/Eigen) and Go
-itself build on Windows and macOS. What needs work is the thin layer that talks to the system.
-This page lists every known tie, as of this writing, and what each port needs.
+AudioViz builds for Linux (native), Windows (cross-compiled from Linux with zig) and macOS (on a
+Mac). Everything system-specific is selected at compile time:
 
-## Ties to Linux in the code
+| Where | Mechanism | Linux | Windows | macOS |
+|---|---|---|---|---|
+| Native libraries (`whisper.go`, `demucs.go`, `x264.go`, `ffdec.go`) | `#cgo <os>[,<arch>]` lines | `third_party/build`, `-l:libstdc++.a`, `-ldl` | `third_party/build-windows-amd64`, zig's `-lc++`, `-lbcrypt` (FFmpeg's random seed) | `third_party/build-darwin-<arch>`, `-lc++`, frameworks |
+| CPU baseline | `#cgo <os>,amd64 CXXFLAGS`, `CPUFLAGS` in `target.sh` | `-march=x86-64-v3` | `-mcpu=x86_64_v3` (zig's spelling) | x86-64-v3 on Intel Macs, default on Apple Silicon |
+| Speech recognition GPU (`build-ml.sh`) | CMake options per target | ggml Vulkan | ggml Vulkan | **ggml Metal** (embedded shaders) + Accelerate |
+| Vulkan loader for ggml (`vkshim.c`) | `#if defined(_WIN32)` / `!__APPLE__` | `dlopen("libvulkan.so.1")` | `LoadLibraryA("vulkan-1.dll")` | not compiled (Metal) |
+| Renderer's Vulkan loader (`vk.c`) | `#if defined(_WIN32)`, `AUDIOVIZ_MOLTENVK_STATIC` | `dlopen` | `LoadLibraryA` | MoltenVK linked statically (`moltenvk` build tag, `moltenvk_darwin.go`); otherwise a Vulkan SDK / MoltenVK dylib if installed |
+| Portability extensions | runtime check | — | — | instance flag `ENUMERATE_PORTABILITY` + device extension `VK_KHR_portability_subset` (required by MoltenVK) |
+| Opening the browser | `open_<os>.go` | `xdg-open` | `rundll32 url.dll,FileProtocolHandler` | `open` |
+| File browser roots | `fsroots_windows.go` / `fsroots_other.go` | `/` | pseudo-folder `::drives` listing `C:\`, `D:\`… above each drive root | `/` |
+| Home folder | `os.UserHomeDir` | `$HOME` | user profile | `$HOME` |
+| Paths in the YAML | `config.isRooted` | absolute | absolute, or starting with `/` / `\` (root of the current drive) | absolute |
+| Web UI paths | `basename` / picker split on `/` and `\` | | | |
+| Linking | `build.sh` | `-static-libstdc++ -static-libgcc` | `-static` (one .exe) | system frameworks (cannot be fully static) |
 
-| Where | What | Windows | macOS |
+## Robustness: drivers that hang
+
+A broken Vulkan driver can block inside its setup calls instead of failing. `gpu.New` and
+`gpu.ListDevices` run them with a 20 s limit; past it the GPU is abandoned for the rest of the
+process (`gpu.ErrStuck`) and rendering continues on the CPU. `AUDIOVIZ_VK_DEBUG=1` prints each
+Vulkan setup step, to see where a driver stops.
+
+## Status
+
+| | Linux | Windows | macOS |
 |---|---|---|---|
-| `internal/gpu/vk.c` (renderer) | Loads the Vulkan loader with `dlopen` (`libvulkan.so.1`, `libvulkan.so`, `libvulkan.1.dylib`, `libMoltenVK.dylib`) | Needs `LoadLibraryA("vulkan-1.dll")` + `GetProcAddress` (the DLL ships with NVIDIA/AMD/Intel drivers) | The names are already tried; see *GPU on macOS* below |
-| `internal/lyricsgen/vkshim.c` (ggml-vulkan) | Same idea for the 4 `vk*` symbols ggml imports, but only tries `libvulkan.so.1` / `libvulkan.so` | Same `LoadLibrary` change | Add the dylib names, or use Metal instead (below) |
-| `internal/gpu/gpu.go` | `#cgo linux LDFLAGS: -ldl` | No `-ldl` | `dlopen` is in libSystem, no flag needed |
-| cgo `LDFLAGS` in `encode/x264.go`, `lyricsgen/whisper.go`, `lyricsgen/demucs.go` | `-ldl`, `-lpthread`, `-l:libstdc++.a` (GNU ld syntax) | MinGW: `-lstdc++` static via `-static`; no `-ldl` | Apple ld has no `-l:`; libc++ is part of the system |
-| `scripts/build-ml.sh`, `#cgo CXXFLAGS` in `demucs.go` | `-march=x86-64-v3`, `GGML_AVX2/FMA/F16C` | Fine on x86-64 | Apple Silicon needs arm64 flags (NEON is on by default); Intel Macs keep x86-64-v3 |
-| `cmd/audioviz/main.go` (studio) | Opens the browser with `xdg-open` or `open` | `rundll32 url.dll,FileProtocolHandler <url>` (or `cmd /c start`) | `open` already works |
-| `internal/studio/server.go` | State sends `HOME` from `os.Getenv("HOME")` | Use `os.UserHomeDir()` | OK |
-| Studio file browser (`hFS` + `FilePicker`) | "Parent folder" uses `filepath.Dir`; no list of roots | Needs a drive list (`C:\`, `D:\`…) to switch drives | OK |
-| `build.sh`, `scripts/*.sh` | bash, `make`, `cmake`, `nasm` | Cross-compile from Linux with mingw-w64, or MSYS2 on Windows | Run on a Mac (Xcode command line tools), or osxcross |
-| `-tags netgo,osusergo`, `-extldflags '-static-libstdc++ -static-libgcc'` | Avoid glibc NSS/resolver and dynamic libstdc++ | `-extldflags -static` with MinGW gives a fully static `.exe` | macOS cannot link fully static (libSystem is always dynamic); the result still needs nothing installed |
+| Builds | ✅ | ✅ cross-compiled from Linux (zig 0.16, LLVM tools) | not built yet (needs a Mac) |
+| CPU rendering / export | ✅ | ✅ under Wine: frame identical to the Linux CPU render, MP4 export (H.264 + FLAC) | — |
+| Studio | ✅ | ✅ under Wine (UI, project with Windows paths, drive list) | — |
+| GPU rendering | ✅ | ⚠ under Wine the GPU is found (`--list-gpus` lists the real Intel GPU through Wine's Vulkan) but Wine's `vkCreateInstance` then blocks in a headless SSH session; the timeout falls back to CPU. **To test on real Windows.** | to test (MoltenVK) |
+| Lyrics generation on the GPU | ✅ Vulkan | to test (Vulkan) | to test (Metal) |
 
-Paths elsewhere use `filepath` and `os.UserCacheDir()` (cache: `%LocalAppData%\audioviz` on
-Windows, `~/Library/Caches/audioviz` on macOS), so they port as they are.
+## Windows cross-compilation in short
 
-## GPU on macOS
+`scripts/target.sh` (with `GOOS=windows`) creates wrappers named like a MinGW toolchain
+(`x86_64-w64-mingw32-gcc` → `zig cc -target x86_64-windows-gnu`, `-ar` → `llvm-ar`, etc.) in
+`third_party/toolchain-windows-amd64`, so x264's and FFmpeg's `configure` (`--cross-prefix`) and
+CMake (`CMAKE_SYSTEM_NAME=Windows`) use them. ggml-vulkan gets the Vulkan + SPIR-V headers copied
+from the build machine, a placeholder import library (the binary resolves Vulkan at runtime) and
+a host toolchain file for its shader generator. CMake names Windows static libs without the `lib`
+prefix; `build-ml.sh` normalizes them so the cgo flags are the same on every system.
 
-macOS has no native Vulkan. Options:
+## macOS in short
 
-- **MoltenVK** (Vulkan on top of Metal) can be linked statically into the binary. The compute
-  shader must be checked against MoltenVK's limits: it uses storage images/buffers and shared
-  memory for tile culling, and writes NV12 planes. Test before relying on it.
-- For **speech recognition**, ggml has a native **Metal** backend (`GGML_METAL=ON`) that is
-  better on Apple GPUs than Vulkan through MoltenVK. It would replace `libggml-vulkan.a` and the
-  shim on macOS builds.
-- Without either, everything still works on the CPU (renderer fallback, ggml CPU backend).
-
-## Windows specifics
-
-- Build from Linux with `x86_64-w64-mingw32-gcc`/`g++` (cgo: `GOOS=windows CGO_ENABLED=1 CC=...`),
-  building x264, FFmpeg, whisper.cpp and demucs.cpp with the same cross toolchain. The result is
-  a single static `.exe` that only needs the GPU driver.
-- glslc / SPIR-V: shaders are compiled at build time and embedded, so nothing changes at runtime.
-- SmartScreen warns about unsigned executables the first time; signing is optional.
-
-## macOS specifics
-
-- Build on a Mac (or osxcross) for `arm64` and/or `amd64`; a universal binary can be made with
-  `lipo`.
-- Distributing to other people without Gatekeeper blocking it requires signing and notarization
-  (Apple developer account). For personal use it can be allowed manually.
-
-## Suggested order
-
-1. Windows: `LoadLibrary` in `vk.c` and `vkshim.c`, browser opener, home dir, drive list in the
-   file browser, cross-compile scripts. Test on a real Windows machine with a GPU.
-2. macOS: arm64 flags, Metal backend for ggml, MoltenVK for the renderer (or CPU rendering
-   first), build on a Mac.
+On a Mac, `./build.sh`: whisper.cpp with `GGML_METAL=ON` (shaders embedded in the library, no
+`.metallib` to ship) and Accelerate; `scripts/build-moltenvk.sh` downloads the static
+`libMoltenVK.a` and the Vulkan headers from an official MoltenVK release; `build.sh` adds the
+`moltenvk` tag, which links it with the Metal/IOSurface/QuartzCore/… frameworks. The renderer's
+compute shader runs unchanged on Metal through MoltenVK. Distributing to other Macs without
+Gatekeeper warnings needs signing and notarization (Apple developer account).

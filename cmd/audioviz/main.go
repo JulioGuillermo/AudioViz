@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -263,12 +262,7 @@ func runStudio(args []string) {
 	err := studio.Run(studio.Options{Addr: *addr, Project: project, Version: version}, func(url string) {
 		fmt.Printf("🎛️  AudioViz Studio at %s  (Ctrl+C to quit)\n", url)
 		if !*noOpen {
-			for _, opener := range []string{"xdg-open", "open"} {
-				if p, err := exec.LookPath(opener); err == nil {
-					_ = exec.Command(p, url).Start()
-					break
-				}
-			}
+			openBrowser(url) // per system: open_*.go
 		}
 	})
 	if err != nil {

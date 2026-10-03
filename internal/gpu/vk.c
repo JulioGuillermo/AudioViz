@@ -1,13 +1,46 @@
 #define VK_NO_PROTOTYPES
 #include "vk.h"
 
-#include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <vulkan/vulkan.h>
 
 #define MAX_SLOTS 8
+
+// AUDIOVIZ_VK_DEBUG=1 prints each step of the Vulkan setup to stderr (to see where a driver fails)
+static int vk_debug = -1;
+static void vk_step(const char *what) {
+    if (vk_debug < 0) {
+        const char *e = getenv("AUDIOVIZ_VK_DEBUG");
+        vk_debug = e && *e && *e != '0';
+    }
+    if (vk_debug) fprintf(stderr, "[vulkan] %s\n", what);
+}
+
+// Loading the Vulkan loader at runtime (the binary must start without it and fall back to CPU):
+//   Linux    libvulkan.so.1 (part of the GPU driver)
+//   Windows  vulkan-1.dll (installed with the NVIDIA / AMD / Intel driver)
+//   macOS    MoltenVK (Vulkan on top of Metal): linked statically when built with
+//            AUDIOVIZ_MOLTENVK_STATIC, otherwise a Vulkan SDK / MoltenVK dylib if present
+#if defined(_WIN32)
+#include <windows.h>
+static void *dl_open(const char *n) { return (void *)LoadLibraryA(n); }
+static void *dl_sym(void *h, const char *s) { return (void *)GetProcAddress((HMODULE)h, s); }
+static const char *vk_lib_names[] = {"vulkan-1.dll", NULL};
+#else
+#include <dlfcn.h>
+static void *dl_open(const char *n) { return dlopen(n, RTLD_NOW | RTLD_LOCAL); }
+static void *dl_sym(void *h, const char *s) { return dlsym(h, s); }
+#if defined(__APPLE__)
+static const char *vk_lib_names[] = {"libvulkan.1.dylib", "libvulkan.dylib", "libMoltenVK.dylib", NULL};
+#else
+static const char *vk_lib_names[] = {"libvulkan.so.1", "libvulkan.so", NULL};
+#endif
+#endif
+#if defined(AUDIOVIZ_MOLTENVK_STATIC)
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance instance, const char *pName);
+#endif
 
 #define VK_GLOBAL_FUNCS(X) \
     X(vkCreateInstance)    \
@@ -20,6 +53,7 @@
     X(vkGetPhysicalDeviceQueueFamilyProperties)  \
     X(vkGetPhysicalDeviceMemoryProperties)       \
     X(vkCreateDevice)                            \
+    X(vkEnumerateDeviceExtensionProperties)      \
     X(vkGetDeviceProcAddr)
 
 #define VK_DEVICE_FUNCS(X)              \
@@ -104,14 +138,17 @@ struct vkr {
 };
 
 static int load_lib(char *err, int errlen) {
-    if (g_lib) return 0;
-    const char *names[] = {"libvulkan.so.1", "libvulkan.so", "libvulkan.1.dylib", "libMoltenVK.dylib", NULL};
-    for (int i = 0; names[i] && !g_lib; i++) g_lib = dlopen(names[i], RTLD_NOW | RTLD_LOCAL);
+    if (p_vkGetInstanceProcAddr) return 0;
+#if defined(AUDIOVIZ_MOLTENVK_STATIC)
+    p_vkGetInstanceProcAddr = vkGetInstanceProcAddr; // MoltenVK linked into the binary
+#else
+    for (int i = 0; vk_lib_names[i] && !g_lib; i++) g_lib = dl_open(vk_lib_names[i]);
     if (!g_lib) {
         snprintf(err, errlen, "libvulkan not found (Vulkan driver not installed)");
         return -1;
     }
-    p_vkGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)dlsym(g_lib, "vkGetInstanceProcAddr");
+    p_vkGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)dl_sym(g_lib, "vkGetInstanceProcAddr");
+#endif
     if (!p_vkGetInstanceProcAddr) {
         snprintf(err, errlen, "libvulkan has no vkGetInstanceProcAddr");
         return -1;
@@ -225,7 +262,9 @@ static int make_buf(vkr *r, vbuf *b, VkDeviceSize size, VkMemoryPropertyFlags pr
 
 int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
     *out = NULL;
+    vk_step("loading the Vulkan loader");
     if (load_lib(err, errlen) != 0) return -1;
+    vk_step("creating the instance");
     vkr *r = calloc(1, sizeof(vkr));
     r->nslots = cfg->slots > MAX_SLOTS ? MAX_SLOTS : cfg->slots;
     if (create_instance(&r->inst, err, errlen) != 0) {
@@ -234,6 +273,7 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
     }
 
     uint32_t n = 0;
+    vk_step("enumerating devices");
     p_vkEnumeratePhysicalDevices(r->inst, &n, NULL);
     if (n == 0) FAIL("no Vulkan devices");
     VkPhysicalDevice devs[16];
@@ -286,6 +326,22 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
     VkDeviceCreateInfo dci = {VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO};
     dci.queueCreateInfoCount = 1;
     dci.pQueueCreateInfos = &qci;
+    // Portability implementations (MoltenVK on macOS) require enabling this extension
+    const char *dexts[1];
+    uint32_t nde = 0;
+    if (p_vkEnumerateDeviceExtensionProperties) {
+        p_vkEnumerateDeviceExtensionProperties(r->phys, NULL, &nde, NULL);
+        VkExtensionProperties *props = calloc(nde ? nde : 1, sizeof *props);
+        p_vkEnumerateDeviceExtensionProperties(r->phys, NULL, &nde, props);
+        for (uint32_t i = 0; i < nde; i++)
+            if (!strcmp(props[i].extensionName, "VK_KHR_portability_subset")) {
+                dexts[0] = "VK_KHR_portability_subset";
+                dci.enabledExtensionCount = 1;
+                dci.ppEnabledExtensionNames = dexts;
+            }
+        free(props);
+    }
+    vk_step("creating the device");
     if (p_vkCreateDevice(r->phys, &dci, NULL, &r->dev) != VK_SUCCESS) FAIL("vkCreateDevice failed");
 #define LOADD(name)                                                    \
     p_##name = (PFN_##name)p_vkGetDeviceProcAddr(r->dev, #name);       \
@@ -298,6 +354,7 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
     smi.codeSize = cfg->spirv_size;
     smi.pCode = cfg->spirv;
     VkShaderModule sm;
+    vk_step("creating the shader and pipeline");
     if (p_vkCreateShaderModule(r->dev, &smi, NULL, &sm) != VK_SUCCESS) FAIL("invalid shader");
 
     VkDescriptorSetLayoutBinding binds[VKR_NUM_BUFS];
@@ -332,6 +389,7 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
     VkCommandPoolCreateInfo cpci = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
     cpci.queueFamilyIndex = r->qfam;
     if (p_vkCreateCommandPool(r->dev, &cpci, NULL, &r->cpool) != VK_SUCCESS) FAIL("command pool");
+    vk_step("allocating buffers");
 
     VkDeviceSize sizes[VKR_NUM_BUFS];
     sizes[VKR_BUF_PARAMS] = cfg->params_size;

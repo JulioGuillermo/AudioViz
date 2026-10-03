@@ -40,7 +40,7 @@ export function b64u8(s) {
   return a;
 }
 
-export const basename = (p) => (p ? String(p).split('/').pop() : '');
+export const basename = (p) => (p ? String(p).split(/[\\/]/).pop() : ''); // separators / and \ (Windows)
 
 export function debounce(fn, ms) {
   let t;
