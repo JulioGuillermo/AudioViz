@@ -1,5 +1,6 @@
 // Spanish UI strings (English source → Spanish)
 export const ES = {
+  'Could not recognize line {n} clearly; it was left as it was. Drag it closer to where it is sung and try again.': 'No se reconoció bien la línea {n}; se ha dejado como estaba. Arrástrala más cerca de donde se canta y vuelve a intentarlo.',
   'Audio while scrubbing: on (S)': 'Audio al desplazarse: activado (S)', 'Audio while scrubbing: off (S)': 'Audio al desplazarse: desactivado (S)',
   // --- general
   'Loading…': 'Cargando…', 'Cancel': 'Cancelar', 'Close': 'Cerrar', 'Close (Esc)': 'Cerrar (Esc)', 'Delete': 'Eliminar', 'Remove': 'Quitar',

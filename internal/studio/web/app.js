@@ -491,8 +491,13 @@ function App() {
     if (!lineSel.length) return;
     setResyncing(true);
     try {
-      const r = await api('POST', '/api/lyrics/resync', { lines: lyrRef.current.lines, targets: lineSel, lang: lyricLang });
+      const before = lyrRef.current.lines;
+      const r = await api('POST', '/api/lyrics/resync', { lines: before, targets: lineSel, lang: lyricLang });
       editLyrics((all) => { for (const i of lineSel) if (r.lines[i]) all[i] = r.lines[i]; });
+      // Lines whose voice wasn't recognized clearly enough are returned untouched
+      const same = (a, b) => a && b && a.words.length === b.words.length && a.words.every((w, k) => Math.abs(w.start - b.words[k].start) < 1e-6);
+      const kept = lineSel.filter((i) => same(before[i], r.lines[i])).map((i) => i + 1);
+      if (kept.length) showErr(t('Could not recognize line {n} clearly; it was left as it was. Drag it closer to where it is sung and try again.', { n: kept.join(', ') }));
     } catch (e) { showErr(e); }
     setResyncing(false);
   };

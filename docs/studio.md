@@ -90,9 +90,13 @@ rename it, right-click to delete it. They serve as references for placing segmen
   - the inspector shows each word with its start and end, the crosshair button sets a start at the
     cursor and ±0.05 s buttons shift the selected lines.
 - **Resync**: with one or more lines selected, *Resync line(s)* recognizes that part of the song again
-  (around the lines' current position, ±5 s, without crossing the neighbouring lines unless they overlap) and re-aligns the
-  words. If a line is far off, drag it roughly into place first and then resync. It uses the separated
-  vocals from the cache when available and takes a couple of seconds.
+  (around the lines' current position, ±5 s, without crossing the neighbouring lines unless they overlap)
+  and re-aligns the words. The line is matched to one compact run of recognized words (the closest one
+  if the phrase repeats), so it does not stretch over words of the neighbouring lines; words that are
+  not recognized at the start or end keep the rhythm the line already had. If too little is recognized
+  the line is left as it was and a notice says so. If a line is far off, drag it roughly into place
+  first and then resync. It uses the separated vocals from the cache when available and takes a couple
+  of seconds.
 - Lyric edits are **saved automatically** to the project's `.lrc` (per-word timing).
 
 ## Files
