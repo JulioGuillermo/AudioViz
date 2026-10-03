@@ -48,7 +48,7 @@ export const ES = {
   'Lyric lines': 'Líneas de letra', 'Click: go · double-click: rename · right-click: delete': 'Clic: ir · doble clic: renombrar · clic derecho: borrar',
   'Marker name (e.g. Chorus):': 'Nombre de la marca (p. ej. Estribillo):', 'New name:': 'Nuevo nombre:', 'Delete the marker “{m}”?': '¿Borrar la marca «{m}»?',
   'drag to move, Shift+click to select several': 'arrastra para mover, Mayús+clic para seleccionar varias',
-  'drag to move, left edge = start': 'arrastra para mover, borde izquierdo = inicio',
+  'drag to move, edges = start / end': 'arrastra para mover, bordes = inicio / fin',
   'Number of segments': 'Número de tramos', '{n} layer': '{n} capa', '{n} layers': '{n} capas',
 
   // --- inspector

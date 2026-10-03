@@ -308,9 +308,10 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 .lyrline.multi { border-color: var(--accent-line); background: #2a231e; color: var(--text); }
 .lyrline.edit { background: transparent; border: 1px dashed var(--accent-line); pointer-events: none; }
 .lyrword { position: absolute; top: 3px; bottom: 3px; border-radius: 3px; background: var(--surface-3); border: 1px solid #4a4f58; font-size: 10.5px;
-  padding: 0 4px 0 6px; overflow: hidden; white-space: nowrap; color: var(--text); cursor: grab; z-index: 3; }
+  padding: 0 6px; overflow: hidden; white-space: nowrap; color: var(--text); cursor: grab; z-index: 3; }
 .lyrword:hover { border-color: var(--accent-line); }
 .lyrword.now { background: #3a2a20; border-color: var(--accent); }
 .lyrword .grip { position: absolute; left: 0; top: 0; bottom: 0; width: 5px; cursor: ew-resize; background: rgba(255,255,255,.06); }
+.lyrword .grip.end { left: auto; right: 0; }
 .top .lang select { height: 26px; font-size: 12px; }
 .playhead { left: 0; will-change: transform; }

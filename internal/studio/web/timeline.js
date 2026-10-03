@@ -234,16 +234,21 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
     drag(e, (dt, ev) => {
       const lines = clone(orig);
       const w = lines[li].words[wi];
-      if (edge) {
+      if (edge === 'start') {
         // Left edge: change the start only
         w.start = Math.max(lo, Math.min(w0.end - 0.03, snap(w0.start + dt, ev)));
+      } else if (edge === 'end') {
+        // Right edge: change the end only (up to the next word, or the next line for the last one)
+        const next = lyr.lines[li + 1];
+        const max = wi + 1 < ws.length ? ws[wi + 1].start : next && next.words.length ? next.words[0].start : duration;
+        w.end = Math.max(w0.start + 0.03, Math.min(max, snap(w0.end + dt, ev)));
       } else {
         const len = w0.end - w0.start;
         w.start = Math.max(lo, Math.min(hi - Math.min(len, 0.1), snap(w0.start + dt, ev)));
         w.end = w.start + len;
       }
       if (wi > 0 && lines[li].words[wi - 1].end > w.start) lines[li].words[wi - 1].end = w.start;
-      if (wi + 1 < ws.length) w.end = Math.min(w.end, lines[li].words[wi + 1].start);
+      if (wi + 1 < ws.length && edge !== 'end') w.end = Math.min(w.end, lines[li].words[wi + 1].start);
       const l = lines[li];
       l.start = l.words[0].start;
       l.end = l.words[l.words.length - 1].end;
@@ -315,9 +320,9 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
             })}
             ${editLine >= 0 && lyr.lines[editLine].words.map((w, wi) => html`<div class=${'lyrword' + (slowTime >= w.start && slowTime < w.end ? ' now' : '')} key=${'w' + wi}
                 style=${{ left: w.start * effPps + 'px', width: Math.max(6, (w.end - w.start) * effPps - 1) + 'px' }}
-                title=${w.text + ' · ' + fmtTime(w.start) + ' — ' + t('drag to move, left edge = start')}
+                title=${w.text + ' · ' + fmtTime(w.start) + ' — ' + t('drag to move, edges = start / end')}
                 onMouseDown=${(e) => wordDrag(e, editLine, wi, false)}>
-                <div class="grip" onMouseDown=${(e) => wordDrag(e, editLine, wi, true)}></div>${w.text}</div>`)}
+                <div class="grip" onMouseDown=${(e) => wordDrag(e, editLine, wi, 'start')}></div>${w.text}<div class="grip end" onMouseDown=${(e) => wordDrag(e, editLine, wi, 'end')}></div></div>`)}
           </div>
           ${TRACKS.map((tr) => {
             const segs = proj.tracks[tr.id] || [];

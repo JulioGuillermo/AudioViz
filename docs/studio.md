@@ -85,8 +85,9 @@ rename it, right-click to delete it. They serve as references for placing segmen
   (Demucs + Whisper on the GPU); the progress shows each step with its time. See [generate.md](lyrics/generate.md).
 - **Fine-tune timings on the timeline** ("Lyric lines" track):
   - drag a line to move it; **Shift+click** selects a range of lines that then move together;
-  - with a single line selected, its words appear as blocks: drag a word to move it, or its
-    left edge to change only its start;
+  - with a single line selected, its words appear as blocks: drag a word to move it, its
+    left edge to change only its start or its right edge to change only its end (the last word can
+    stretch up to the next line);
   - the inspector shows each word with its start and end, the crosshair button sets a start at the
     cursor and ±0.05 s buttons shift the selected lines.
 - **Resync**: with one or more lines selected, *Resync line(s)* recognizes that part of the song again

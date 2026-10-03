@@ -81,6 +81,8 @@ func similarity(a, b string) float64 {
 // voice describes at which instants there is voice (20 ms frames)
 type voice struct {
 	on    []bool
+	rms   []float64
+	thr   float64
 	frame float64
 }
 
@@ -102,7 +104,7 @@ func newVoice(mono16 []float32) *voice {
 		p95 = sorted[int(float64(len(sorted)-1)*0.95)]
 	}
 	thr := math.Max(0.06*p95, 1e-5)
-	v := &voice{on: make([]bool, n), frame: 0.02}
+	v := &voice{on: make([]bool, n), rms: rms, thr: thr, frame: 0.02}
 	for i, r := range rms {
 		v.on[i] = r > thr
 	}
@@ -132,17 +134,28 @@ func (v *voice) voicedSpans(a, b float64) [][2]float64 {
 	return out
 }
 
-// voiceEnd: first silence of at least 0.3 s from t on (natural end of the voice)
-func (v *voice) voiceEnd(t, limit float64) float64 {
+// decayEnd: where a sung word ends. The level is compared with the word's own peak (in its
+// first `peakWin` seconds): the word ends when it stays below a quarter of it (-12 dB) for
+// 0.1 s. Unlike voiceEnd it is not fooled by reverb tails or backing vocals, which keep the
+// signal above the (global, very low) voice threshold long after the word is over.
+func (v *voice) decayEnd(t, peakWin, limit float64) float64 {
+	i0, i1 := v.idx(t), v.idx(limit)
+	pk, peak := i0, 0.0
+	for i := i0; i <= min(i1, v.idx(t+peakWin)); i++ {
+		if v.rms[i] > peak {
+			pk, peak = i, v.rms[i]
+		}
+	}
+	thr := math.Max(0.25*peak, v.thr)
 	run := 0
-	for i := v.idx(t); i < len(v.on) && float64(i)*v.frame < limit; i++ {
-		if v.on[i] {
-			run = 0
-		} else {
+	for i := pk; i < i1; i++ {
+		if v.rms[i] < thr {
 			run++
-			if run >= 15 {
+			if run >= 5 {
 				return float64(i-run+1) * v.frame
 			}
+		} else {
+			run = 0
 		}
 	}
 	return limit
@@ -381,8 +394,13 @@ func finish(lw []LWord, v *voice, total float64) []LLine {
 		if i+1 < len(lw) && lw[i+1].Line == lw[i].Line {
 			lw[i].End = math.Min(next, lw[i].Start+2.0)
 		} else {
-			// Last word of the line: until the voice fades out
-			e := v.voiceEnd(lw[i].Start+0.15, math.Min(next, lw[i].Start+3.0))
+			// Last word of the line: until its level fades (held notes included), and never
+			// past the next word Whisper heard (that is what a recognized word's End holds)
+			limit := math.Min(next, lw[i].Start+3.0)
+			if lw[i].anchored && lw[i].End > lw[i].Start+0.1 {
+				limit = math.Min(limit, lw[i].End)
+			}
+			e := v.decayEnd(lw[i].Start, 0.5, limit)
 			lw[i].End = math.Max(e, math.Min(lw[i].Start+0.25, next))
 		}
 	}
