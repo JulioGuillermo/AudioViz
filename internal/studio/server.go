@@ -672,7 +672,19 @@ type job struct {
 	Log      []string  `json:"log"`
 	Started  time.Time `json:"started"`
 	Gen      *lyricsgen.Status
+	Export   *exportStatus
 	cancel   context.CancelFunc
+}
+
+// exportStatus: structured progress of an export, formatted by the UI
+type exportStatus struct {
+	Stage   string  `json:"stage"` // render, mux
+	Done    int     `json:"done"`  // frames
+	Total   int     `json:"total"`
+	FPS     float64 `json:"fps"`     // render speed
+	ETA     float64 `json:"eta"`     // s left
+	Elapsed float64 `json:"elapsed"` // s since the start
+	Seconds float64 `json:"seconds"` // length of the video being exported
 }
 
 func (j *job) snapshot() map[string]any {
@@ -682,8 +694,14 @@ func (j *job) snapshot() map[string]any {
 	if len(log) > 40 {
 		log = log[len(log)-40:]
 	}
+	var exp *exportStatus
+	if j.Export != nil {
+		e := *j.Export
+		exp = &e
+	}
 	return map[string]any{"id": j.ID, "kind": j.Kind, "status": j.Status, "progress": j.Progress,
-		"message": j.Message, "output": j.Output, "log": log, "elapsed": time.Since(j.Started).Seconds(), "gen": j.Gen}
+		"message": j.Message, "output": j.Output, "log": log, "elapsed": time.Since(j.Started).Seconds(), "gen": j.Gen,
+		"export": exp}
 }
 
 func (s *Server) startJob(kind string, run func(ctx context.Context, j *job) error) (*job, error) {
@@ -749,14 +767,20 @@ func (s *Server) hExport(w http.ResponseWriter, r *http.Request) {
 		j.Output = out
 		j.mu.Unlock()
 		last := time.Time{}
+		t0 := time.Now()
+		secs := float64(end-start) / float64(fork.FPS)
 		err = fork.ExportRange(ctx, cfg.Output.Renderer, start, end, out, func(p engine.Progress) {
 			j.mu.Lock()
 			j.Progress = float64(p.Done) / float64(max(p.Total, 1))
+			stage := "render"
 			if p.Stage == "mux" {
+				stage = "mux"
 				j.Message = "Writing MP4..."
 			} else {
-				j.Message = fmt.Sprintf("Frame %d/%d · %.0f FPS · %.0f s left", p.Done, p.Total, p.FPS, p.ETA)
+				j.Message = fmt.Sprintf("Exporting · %.0f%%", j.Progress*100)
 			}
+			j.Export = &exportStatus{Stage: stage, Done: p.Done, Total: p.Total, FPS: p.FPS, ETA: p.ETA,
+				Elapsed: time.Since(t0).Seconds(), Seconds: secs}
 			j.mu.Unlock()
 			if time.Since(last) > 300*time.Millisecond || p.Stage == "mux" {
 				last = time.Now()

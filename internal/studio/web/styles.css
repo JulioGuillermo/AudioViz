@@ -359,3 +359,10 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 /* Ruler: grab to scroll the timeline */
 .lane.ruler { cursor: grab; }
 body.panning, body.panning * { cursor: grabbing !important; user-select: none; }
+
+/* Export progress: figures under the bar */
+.exp-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); }
+.exp-stats > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.exp-stats .k { font-size: 11px; color: var(--text-3); }
+.exp-stats .v { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.exp-stats .v2 { font-size: 11px; color: var(--text-3); }

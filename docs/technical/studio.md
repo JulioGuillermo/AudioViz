@@ -262,6 +262,12 @@ message is harmless.
 
 ---
 
+
+**Export progress** (`job.export`, `exportStatus`): `stage` (`render` / `mux`), `done` / `total`
+frames, `fps` (current render speed), `eta` and `elapsed` (s), `seconds` (length being exported).
+The dialog (`ExportProgress`) shows stage, bar, frames, speed (and × real time against the
+project fps), elapsed and remaining; once finished, the average speed of the whole export.
+
 ## 5. Preview frames
 
 `GET /api/frame?f=<idx>&scale=<1..4>` (`hFrame`):

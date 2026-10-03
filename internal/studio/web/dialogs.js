@@ -154,17 +154,36 @@ export function ExportDialog({ proj, meta, job, onStart, onCancel, onClose }) {
     <p class="faint">${meta.width}×${meta.height} · ${meta.fps} fps · H.264 (${proj.output.preset}, CRF ${proj.output.crf}) · ${t('lossless FLAC audio.')}
       ${' '}${t('A copy of the project as it is now is exported, so you can keep editing.')}</p>
     ${!meta.hasAudio && html`<div class="alert"><${Icon} name="triangle-alert" size=${15} />${t('The project has no audio yet.')}</div>`}
-    ${job && job.kind === 'export' && html`<${JobView} job=${job} />`}
+    ${job && job.kind === 'export' && html`<${ExportProgress} job=${job} fps=${meta.fps} />`}
   </${Modal}>`;
 }
 
-export function JobView({ job }) {
-  const cls = { done: 'st-ok', error: 'st-err', canceled: 'st-warn' }[job.status] || '';
-  const icon = { done: 'check', error: 'triangle-alert', canceled: 'x' }[job.status] || 'loader-circle';
-  return html`<div style="margin-top:12px">
-    <div class="row"><div class="progress"><i style=${{ width: (job.progress * 100).toFixed(1) + '%' }}></i></div>
-      <span class="mono faint" style="font-size:11px;width:36px;text-align:right">${(job.progress * 100).toFixed(0)}%</span></div>
-    <p class=${'row ' + cls} style="font-size:12.5px"><${Icon} name=${icon} size=${15} />${job.message}</p>
+// Export progress: stage, bar, and frames / speed / elapsed / remaining, formatted
+export function ExportProgress({ job, fps }) {
+  const e = job.export;
+  const st = job.status;
+  const pct = Math.round(job.progress * 100);
+  const final = { done: ['check', 'st-ok'], error: ['triangle-alert', 'st-err'], canceled: ['x', 'st-warn'] }[st];
+  const stage = st === 'done' ? t('Done') : st !== 'running' ? t('Stopped') : e && e.stage === 'mux' ? t('Writing the MP4') : t('Rendering frames');
+  // While rendering: current speed; once finished: the average of the whole export
+  const speed = !e ? 0 : st === 'running' ? e.fps : e.elapsed > 0 ? e.done / e.elapsed : 0;
+  const realtime = fps > 0 && speed > 0 ? speed / fps : 0;
+  return html`<div class="gen">
+    <div class="gen-row">
+      <span class="gen-l">${stage}</span>
+      <div class="progress"><i style=${{ width: (job.progress * 100).toFixed(1) + '%' }}></i></div>
+      <span class="gen-v mono">${pct}%</span>
+      <span class="gen-t mono">${fmtDur(e ? e.elapsed : job.elapsed)}</span>
+    </div>
+    ${e && html`<div class="exp-stats">
+      <div><span class="k">${t('Frames')}</span><span class="v mono">${e.done.toLocaleString()} / ${e.total.toLocaleString()}</span></div>
+      <div><span class="k">${t(st === 'running' ? 'Speed' : 'Average speed')}</span><span class="v mono">${speed > 0 ? speed.toFixed(1) + ' fps' : '–'}</span>
+        ${realtime > 0 && html`<span class="v2">${t('{x}× real time', { x: realtime.toFixed(1) })}</span>`}</div>
+      <div><span class="k">${t('Elapsed')}</span><span class="v mono">${fmtDur(e.elapsed)}</span></div>
+      <div><span class="k">${t('Remaining')}</span><span class="v mono">${st === 'running' && e.stage === 'render' && e.eta > 0 ? fmtDur(e.eta) : '–'}</span></div>
+    </div>`}
+    ${final && html`<p class=${'row ' + final[1]} style="font-size:12.5px;margin:10px 0 0"><${Icon} name=${final[0]} size=${15} />
+      ${st === 'done' && job.output ? t('Exported to {p}', { p: job.output }) : job.message}</p>`}
     ${job.log && job.log.length > 0 && html`<div class="logbox">${job.log.join('\n')}</div>`}
   </div>`;
 }

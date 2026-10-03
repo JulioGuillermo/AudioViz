@@ -1,5 +1,8 @@
 // Spanish UI strings (English source → Spanish)
 export const ES = {
+  'Average speed': 'Velocidad media',
+  'Rendering frames': 'Renderizando fotogramas', 'Writing the MP4': 'Escribiendo el MP4', 'Stopped': 'Detenido', 'Frames': 'Fotogramas',
+  'Elapsed': 'Transcurrido', 'Remaining': 'Restante', '{x}× real time': '{x}× tiempo real', 'Exported to {p}': 'Exportado en {p}', 'Exporting': 'Exportando',
   'Drag to resize · double-click: default size': 'Arrastra para cambiar el tamaño · doble clic: tamaño por defecto',
   'Drag to scroll the timeline · click to move the cursor': 'Arrastra para desplazar la línea de tiempo · clic para mover el cursor',
   'Undo (Ctrl+Z)': 'Deshacer (Ctrl+Z)', 'Redo (Ctrl+Y)': 'Rehacer (Ctrl+Y)',
