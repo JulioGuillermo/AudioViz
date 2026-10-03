@@ -427,7 +427,11 @@ run from starting after a long held note.
 
 1. **Monotonic starts**: `Start[i] ≥ Start[i−1] + 0.02`.
 2. **Ends**:
-   - A word that is not the last in its line ends at `min(next.Start, Start + 2 s)`.
+   - A word that is not the last in its line ends at `min(next.Start, Start + 2 s)`, unless there is
+     a real pause: if `decayEnd` (peak window `min(0.5 s, …)`) finds the voice fading at least
+     0.25 s before that, the word ends there (at least 0.12 s long). On the demo song this marks
+     10 of 274 word pairs, mostly after commas. `LRC` then writes an empty tag at that end so the
+     karaoke fill stops during the silence.
    - The **last word of a line** ends at `decayEnd`:
      ```
      limit = min(next word start (or total), Start + 3 s)

@@ -71,7 +71,9 @@ Per non-empty row:
 - With tags: `WordTimed = true`. Text before the first tag starts at the line start. Each tag
   starts a segment that runs until the next tag; several words under one tag split that interval
   evenly. A last segment with no following tag lasts 0.6 s. A tag with no text after it sets the
-  previous word's `End` and the line's `End` (the "end tag" written by the generator).
+  previous word's `End` — a pause inside the line — and, when it is the last tag, the line's
+  `End` (the "end tag"). The studio (`hPutLyrics`) and the generator (`lyricsgen.LRC`) write
+  such a tag after any word that ends ≥ 0.05 s before the next one.
 
 After all rows: stable sort by start; then the end of each line is resolved:
 

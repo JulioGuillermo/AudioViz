@@ -21,7 +21,11 @@ Don't have the `.lrc`? [Generate it from the audio and the plain-text lyrics](ge
 | enhanced `.lrc` | **start of each word** | `[00:58.00]<00:58.00>Text <00:58.40>of <00:58.60>the <00:58.90>line <00:59.60>` |
 
 - If there are only per-line timings, words are distributed according to their length.
-- In LRC, a final tag with no text (`<00:59.60>`) marks when the last word ends. An empty line with a timestamp (`[01:06.00]`) closes the previous one.
+- In LRC, a tag with no text marks when the previous word ends: at the end of the line
+  (`<00:59.60>`), or in the middle when there is a pause before the next word
+  (`<00:58.00>Text <00:58.30> <00:58.90>line`), so the karaoke fill stops during the silence.
+  Without it a word lasts until the next one starts. The studio and the generator write it
+  whenever a word ends at least 0.05 s before the next one. An empty line with a timestamp (`[01:06.00]`) closes the previous one.
 - Without an explicit end, a line lasts until the next one, but it hides itself if a long instrumental comes along.
 - `[offset:+/-ms]` in the LRC and multiple tags on one line (`[00:10.00][01:20.00]Chorus`) are honored.
 

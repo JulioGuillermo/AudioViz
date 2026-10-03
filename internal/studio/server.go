@@ -453,6 +453,11 @@ func (s *Server) hPutLyrics(w http.ResponseWriter, r *http.Request) {
 				b.WriteByte(' ')
 			}
 			fmt.Fprintf(&b, "<%s>%s", lrcTime(wd.Start), wd.Text)
+			// A pause before the next word: an empty tag marks where this one ends (otherwise
+			// a word lasts until the next one starts and the karaoke fill runs through the silence)
+			if i+1 < len(l.Words) && l.Words[i+1].Start-wd.End >= lrcGapMin {
+				fmt.Fprintf(&b, " <%s>", lrcTime(wd.End))
+			}
 		}
 		fmt.Fprintf(&b, " <%s>\n", lrcTime(l.Words[len(l.Words)-1].End))
 	}
@@ -949,3 +954,6 @@ func (h *hub) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 }
+
+// lrcGapMin: shortest silence between two words written to the .lrc (LRC times have 10 ms steps)
+const lrcGapMin = 0.05

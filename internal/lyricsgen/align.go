@@ -393,7 +393,13 @@ func finish(lw []LWord, v *voice, total float64) []LLine {
 			next = lw[i+1].Start
 		}
 		if i+1 < len(lw) && lw[i+1].Line == lw[i].Line {
-			lw[i].End = math.Min(next, lw[i].Start+2.0)
+			end := math.Min(next, lw[i].Start+2.0)
+			// A real pause before the next word: end where the voice fades, not at the next
+			// word (so the karaoke fill doesn't run through the silence)
+			if e := v.decayEnd(lw[i].Start, math.Min(0.5, end-lw[i].Start), end); end-e >= 0.25 {
+				end = math.Max(e, lw[i].Start+0.12)
+			}
+			lw[i].End = end
 		} else {
 			// Last word of the line: until its level fades (held notes included), and never
 			// past the next word Whisper heard (that is what a recognized word's End holds)
@@ -434,6 +440,10 @@ func LRC(lines []LLine) string {
 				b.WriteByte(' ')
 			}
 			fmt.Fprintf(&b, "<%s>%s", ts(w.Start), w.Text)
+			// A pause before the next word: an empty tag marks where this one ends
+			if i+1 < len(l.Words) && l.Words[i+1].Start-w.End >= 0.05 {
+				fmt.Fprintf(&b, " <%s>", ts(w.End))
+			}
 		}
 		fmt.Fprintf(&b, " <%s>\n", ts(l.Words[len(l.Words)-1].End))
 	}

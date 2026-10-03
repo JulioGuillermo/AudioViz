@@ -225,10 +225,13 @@ func parseLRCBody(body string, start float64) Line {
 	for i, s := range segs {
 		words := strings.Fields(s.text)
 		if len(words) == 0 {
-			// Trailing tag without text: end of the previous word
+			// Tag without text: end of the previous word (a pause before the next one, or,
+			// at the end, the end of the line)
 			if n := len(l.Words); n > 0 {
 				l.Words[n-1].End = s.t
-				l.End = s.t
+				if i == len(segs)-1 {
+					l.End = s.t
+				}
 			}
 			continue
 		}
