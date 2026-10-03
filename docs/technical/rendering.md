@@ -131,7 +131,7 @@ Must match `gpu.Params` field for field (`gpu.go`). Limits: `MAX_GRAD 8`, `MAX_G
 | `glitch[64]` | y0, y1, shiftX |
 | `bars[256]` | heightL px, heightR px, magL 0..1, magR 0..1 |
 | `parts[1024]`, `partCol[1024]` | x, y, radius, alpha / rgb, glow flag |
-| `textInfo`, `textStyle`, `text*`, `textGrad`, `tA/tB/tC` | lyrics, see [lyrics-rendering.md](lyrics-rendering.md#gpu-sampling) |
+| `textInfo`, `ts[8]` (style table), `tA/tB/tC` | lyrics and fixed texts, see [lyrics-rendering.md](lyrics-rendering.md#gpu-sampling) |
 | `bgMix` | x unused, y = visualizer opacity (`VizAlpha`) |
 | `prev` | preview scale (0/1 = off), preview width, preview height |
 | `layerA`, `layerB` | scale, offX, offY, rot of BG and BG2 (segment motion) |

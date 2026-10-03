@@ -157,12 +157,23 @@ func smoothstep(a, b, x float64) float64 {
 	return t * t * (3 - 2*t)
 }
 
-// textAt replicates the shader's drawText
-func (e *Engine) textAt(col [3]float64, px, py float64, items []Item, st *Style) [3]float64 {
-	ow := st.OutlineW
-	gr := math.Max(st.GlowR, 0.5)
+// chromaOf is the lyric chromatic aberration actually applied (same 0.3 px threshold as the GPU)
+func chromaOf(st *Style) float64 {
+	if st.Chroma > 0.3 {
+		return st.Chroma
+	}
+	return 0
+}
+
+// textAt replicates the shader's drawText. ch = -1, 0, 1: channel pass for chromatic aberration
+// (each item's point is shifted by ch times its style's chroma).
+func (e *Engine) textAt(col [3]float64, px0, py float64, ch float64, items []Item, styles []Style) [3]float64 {
 	for i := range items {
 		it := &items[i]
+		st := &styles[it.Style]
+		ow := st.OutlineW
+		gr := math.Max(st.GlowR, 0.5)
+		px := px0 + ch*chromaOf(st)
 		sc := float64(it.Scale)
 		lx, ly := (px-float64(it.CX))/sc, (py-float64(it.CY))/sc
 		hw, hh := float64(it.AW)/2, float64(it.AH)/2
@@ -198,17 +209,21 @@ func (e *Engine) textAt(col [3]float64, px, py float64, items []Item, st *Style)
 	return col
 }
 
-// DrawCPU composites the lyrics onto the image (CPU render), identical to the shader
-func (e *Engine) DrawCPU(img *image.RGBA, items []Item, st Style) {
+// DrawCPU composites the texts onto the image (CPU render), identical to the shader.
+// Each item uses styles[item.Style].
+func (e *Engine) DrawCPU(img *image.RGBA, items []Item, styles []Style) {
 	if len(items) == 0 {
 		return
 	}
 	W, H := img.Bounds().Dx(), img.Bounds().Dy()
 	// Box covering all words (with scale, glow, shadow and aberration)
 	x0, y0, x1, y1 := float64(W), float64(H), 0.0, 0.0
+	anyChroma := false
 	for _, it := range items {
+		st := &styles[it.Style]
+		anyChroma = anyChroma || chromaOf(st) > 0
 		hw, hh := float64(it.AW)*float64(it.Scale)/2, float64(it.AH)*float64(it.Scale)/2
-		ex := st.Chroma + math.Abs(st.ShadowDX) + 2
+		ex := chromaOf(st) + math.Abs(st.ShadowDX) + 2
 		ey := math.Abs(st.ShadowDY) + 2
 		x0, x1 = math.Min(x0, float64(it.CX)-hw-ex), math.Max(x1, float64(it.CX)+hw+ex)
 		y0, y1 = math.Min(y0, float64(it.CY)-hh-ey), math.Max(y1, float64(it.CY)+hh+ey)
@@ -230,12 +245,12 @@ func (e *Engine) DrawCPU(img *image.RGBA, items []Item, st Style) {
 					base := [3]float64{float64(img.Pix[o]) / 255, float64(img.Pix[o+1]) / 255, float64(img.Pix[o+2]) / 255}
 					px, py := float64(x)+0.5, float64(y)+0.5
 					var c [3]float64
-					if st.Chroma > 0 {
-						c[0] = e.textAt(base, px-st.Chroma, py, items, &st)[0]
-						c[1] = e.textAt(base, px, py, items, &st)[1]
-						c[2] = e.textAt(base, px+st.Chroma, py, items, &st)[2]
+					if anyChroma {
+						c[0] = e.textAt(base, px, py, -1, items, styles)[0]
+						c[1] = e.textAt(base, px, py, 0, items, styles)[1]
+						c[2] = e.textAt(base, px, py, 1, items, styles)[2]
 					} else {
-						c = e.textAt(base, px, py, items, &st)
+						c = e.textAt(base, px, py, 0, items, styles)
 					}
 					for ch := 0; ch < 3; ch++ {
 						img.Pix[o+ch] = uint8(clampF(c[ch], 0, 1)*255 + 0.5)

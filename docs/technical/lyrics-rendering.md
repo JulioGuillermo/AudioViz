@@ -282,12 +282,9 @@ Then, in order:
 
 | Param | Content |
 |---|---|
-| `textInfo` | nItems (≤ 96), atlas width (2048), chroma flag (`Style.Chroma > 0.3`), gradient count (≤ 8) |
-| `textStyle` | outline width, glow radius, glow intensity, chroma px |
-| `textColor`, `textUpcoming`, `textOutline`, `textGlowC` | RGBA |
-| `textShadow`, `textShadowC` | dx, dy, opacity, blur / colour |
-| `textGrad[8]` | rgb + offset |
-| `tA[i]` / `tB[i]` / `tC[i]` | atlas x, y, w, h / screen centre x, y, scale, alpha / fill, pad |
+| `textInfo` | nItems (≤ 96), atlas width (2048), any-chroma flag (some style with chroma > 0.3 px) |
+| `ts[8]` (`TStyle`) | style table: `info` (outline width, glow radius, glow intensity, chroma px or 0), `color`, `upcoming`, `outline`, `glowC`, `shadow` (dx, dy, opacity, blur), `shadowC`, `gradN`, `grad[8]` (rgb + offset) |
+| `tA[i]` / `tB[i]` / `tC[i]` | atlas x, y, w, h / screen centre x, y, scale, alpha / fill, pad, **style index** |
 
 The atlas (binding 5) is a `uint[]`; `atlasByte(x, y)` extracts byte `idx & 3` of word `idx >> 2`,
 `idx = y·atlasW + x`. It is uploaded only when `Session.LyrVer` changes (per slot).
@@ -296,7 +293,7 @@ The atlas (binding 5) is a `uint[]`; `atlasByte(x, y)` extracts byte `idx & 3` o
 neighbours clamped to the rect so sampling never bleeds into the next word), return
 `(128 − v)/4` = signed distance in atlas px. Multiplying by the item scale gives screen px.
 
-`drawText(col, p)` for each word in the tile list (`sText`, see
+`drawText(col, p, ch)` for each word in the tile list, with that word's style `ts[tC.z]` (`sText`, see
 [rendering.md](rendering.md#tile-culling-shared-memory)), in item order:
 
 ```glsl
@@ -326,8 +323,9 @@ Notes:
 - The shadow offset is applied in screen px (divided by scale in atlas space). Because the
   per-word rect clips everything, a shadow offset larger than `pad − blur − outline` gets cut at the rect edge.
 - Coverage uses `clamp(0.5 − d)`: a 1-px anti-aliased edge at every scale (the SDF is resampled, not the bitmap).
-- With lyric chroma on, `shade` calls `drawText` three times on the same base colour at
-  `p − (chroma,0)`, `p`, `p + (chroma,0)` and keeps R, G, B respectively.
+- With chroma on in any style, `shade` calls `drawText` three times on the same base colour with
+  `ch = −1, 0, +1` and keeps R, G, B respectively; each word shifts its point by `ch ·` its own
+  style's chroma (0 for styles without it).
 - Culling box per word: `rect/2 · scale + |chroma| + max(|shadow dx|, |shadow dy|) + 2`; at most 48
   words per 32×16 tile.
 
@@ -335,8 +333,7 @@ Notes:
 
 `textAt` is a line-by-line port of `drawText` (same constants and order). `DrawCPU` computes the
 union box of all items (scaled rect + chroma + shadow offset + 2 px), and processes its rows in
-`runtime.NumCPU()` goroutines (interleaved rows). Only difference: the CPU applies chroma whenever
-`Chroma > 0`; the GPU only above 0.3 px.
+`runtime.NumCPU()` goroutines (interleaved rows). Both apply chroma only above 0.3 px (`chromaOf`).
 
 ## 6. Several lyric styles over time (`multi.go`)
 
@@ -368,3 +365,29 @@ new atlas exceeds the text buffer (`Renderer.Fits`).
 | Padding | 6–30 px; large glow radius beyond `pad` is cut by the rect (glow is faded to 0 at 95 % of pad) |
 | Duplicate words | Stored once per occurrence (simple, atlas grows linearly with the lyric length) |
 | Unused code | `Engine.StyleAt`, `Engine.Band`, `lyrics.New` have no callers (the engine path uses `NewMulti` + `StyleFor`) |
+
+## 8. Fixed texts (titles) and the style table
+
+`config.TextConfig` = `text`, `start`, `end`, `label` + an inlined `LyricsConfig` (every style
+option). `DefaultText()` fills missing YAML fields (`UnmarshalYAML`); `MarshalYAML` leaves out the
+lyrics-only fields (path, offset, position, margin, mode, word_pop, upcoming_color).
+
+`lyrics.NewMulti(lyricsSegs, texts, W, H)` builds one engine per lyrics segment (as before) and
+one per enabled, non-empty text (`textEngine`), all stacked in the same atlas (`subs[:nLyr]` are
+lyrics, the rest texts). A text engine is a single `Line`:
+
+- position forced to `custom` (anchor = `position_x·W, position_y·H`), mode `line`;
+- line breaks in `text` become `BreakWord` entries that force a new row in `layoutRows`;
+- `buildEngine(..., edge=true)`: with `align: left/right` the row starts/ends **at** the anchor
+  (lyrics align inside the max width instead);
+- its line runs `[start + in_duration, end − out_duration]` so the in animation starts at `start`
+  and the out animation ends at `end` (`none` animations take no time; if the text is shorter
+  than its animations both meet in the middle).
+
+`Multi.Frame(t, feat, lerpedLyricsCfg)` returns the items **and a style table**: entry 0 is the
+lyrics style (`StyleFor` on the lerped lyrics config), then one `StyleFor(textCfg)` per text that
+has words on screen, up to `MaxStyles = 8` (a 9th simultaneous text is not drawn). Each item's
+`Style` indexes that table; `fillParams` copies it to `ts[]` and the index to `tC.z`. All texts
+share the 96-items-per-frame and 48-words-per-tile limits with the lyrics.
+
+Rebuild key (`Session.Update`): `W×H | yaml(lyrics track, texts) | mtime(lyrics file)`.

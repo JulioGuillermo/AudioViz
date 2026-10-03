@@ -1,5 +1,13 @@
 // Spanish UI strings (English source → Spanish)
 export const ES = {
+  'Texts': 'Textos', 'Titles and texts': 'Títulos y textos', 'Titles and fixed texts': 'Títulos y textos fijos', 'Title': 'Título',
+  'Text {n}': 'Texto {n}', 'Text at {t}': 'Texto en {t}', 'New text starting at the cursor': 'Texto nuevo que empieza en el cursor',
+  'Delete this text (Del)': 'Borrar este texto (Supr)', 'Ends at': 'Termina en', '{s} s': '{s} s',
+  'No texts yet. Add one at the cursor, or double-click the Texts lane on the timeline.': 'Aún no hay textos. Añade uno en el cursor o haz doble clic en la pista Textos de la timeline.',
+  'Drag on the preview to place it. In and out animations happen inside this time.': 'Arrastra sobre la vista previa para colocarlo. Las animaciones de entrada y salida ocurren dentro de este tiempo.',
+  'Drag to place the selected text': 'Arrastra para colocar el texto seleccionado', 'Text': 'Texto', 'Enter = new row': 'Intro = nueva fila',
+  'Or drag the text on the preview': 'O arrastra el texto sobre la vista previa', 'Left / right: the text starts / ends at Position X': 'Izquierda / derecha: el texto empieza / acaba en la posición X',
+  'Double-click the lane: new text at that point': 'Doble clic en la pista: texto nuevo en ese punto',
   'Towards': 'Hacia', 'Corner the camera moves to while zooming in': 'Esquina hacia la que va la cámara mientras se acerca',
   'Auto (varies per segment)': 'Auto (cambia en cada tramo)', 'Top left': 'Arriba a la izquierda', 'Top right': 'Arriba a la derecha',
   'Bottom left': 'Abajo a la izquierda', 'Bottom right': 'Abajo a la derecha',

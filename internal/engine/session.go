@@ -137,7 +137,10 @@ func (s *Session) Update(cfg *config.ProjectConfig) error {
 
 	// Lyrics: rebuilt only if their track changes
 	lk := ""
-	if b, err := yaml.Marshal(cfg.Timeline.Lyrics); err == nil {
+	if b, err := yaml.Marshal(struct {
+		L any
+		T any
+	}{cfg.Timeline.Lyrics, cfg.Texts}); err == nil {
 		lk = fmt.Sprintf("%dx%d|%s", w, h, b)
 		if st, err := os.Stat(cfg.Timeline.Lyrics[0].Cfg.Path); err == nil {
 			lk += st.ModTime().String()
@@ -145,18 +148,14 @@ func (s *Session) Update(cfg *config.ProjectConfig) error {
 	}
 	if lk != s.lyrKey {
 		s.lyr = nil
-		anyOn := false
-		for _, sg := range cfg.Timeline.Lyrics {
-			anyOn = anyOn || sg.Cfg.Enabled
+		t0 := time.Now()
+		m, err := lyrics.NewMulti(cfg.Timeline.Lyrics, cfg.Texts, w, h)
+		if err != nil {
+			return err
 		}
-		if anyOn && cfg.Timeline.Lyrics[0].Cfg.Path != "" {
-			t0 := time.Now()
-			m, err := lyrics.NewMulti(cfg.Timeline.Lyrics, w, h)
-			if err != nil {
-				return err
-			}
+		if m != nil {
 			s.lyr = m
-			s.Logf("🎤 Lyrics: atlas %dx%d (%v)", m.Atlas.W, m.Atlas.H, time.Since(t0).Round(time.Millisecond))
+			s.Logf("🎤 Lyrics and texts: atlas %dx%d (%v)", m.Atlas.W, m.Atlas.H, time.Since(t0).Round(time.Millisecond))
 		}
 		s.lyrKey = lk
 		s.LyrVer++

@@ -74,6 +74,11 @@ new segment starts at its own instant and replaces that track's configuration fr
   is not static (see [background/motion.md](background/motion.md)).
 - **Name**: give segments names ("Chorus", "Bridge") to see them on the timeline.
 
+**Texts (titles)**: *Titles and texts* in the left panel or the *Texts* lane of the timeline. Add
+one at the cursor (or double-click the lane), drag its block to move it and its edges to change
+when it starts and ends, and **drag on the preview** to place it. Each text has all the lyrics
+style options. See [texts.md](texts.md).
+
 **Lyrics** work the same way: a lyrics segment changes the style (font, position, colors,
 animations…). Each line uses the layout of the segment in which it starts being sung, so it doesn't
 move around mid-phrase.
@@ -125,7 +130,7 @@ The interface language (English / Español) is chosen in the top bar and remembe
 | ← / → | Previous / next frame (with Shift: ±1 s) |
 | Home / End | Beginning / end |
 | N | New segment at the cursor (selected track) |
-| Del | Delete the selected segment |
+| Del | Delete the selected segment or text |
 | M | Marker at the cursor |
 | S | Audio while scrubbing on / off |
 | Esc | Leave word editing |

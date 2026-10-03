@@ -5,7 +5,7 @@ import { Icon } from './icons.js';
 import { t } from './i18n.js';
 import { useStore } from './store.js';
 
-const H = { ruler: 26, audio: 74, lyrics: 30, track: 28 };
+const H = { ruler: 26, audio: 74, lyrics: 30, track: 28, textRow: 24 };
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const BAND = { bass: 'bass', mid: 'mids', treble: 'treble', overall: 'volume', transient: 'transients', beat: 'beats' };
 
@@ -145,7 +145,8 @@ function Playhead({ timeStore, pps, scroller, follow }) {
 }
 
 export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, sel, lineSel, onSeek, onSelect, onMoveSeg,
-  onAddSeg, onSelectLine, onLyrics, onLyricsCommit, onMarker, height, setHeight, wordEdit }) {
+  onAddSeg, onSelectLine, onLyrics, onLyricsCommit, onMarker, height, setHeight, wordEdit,
+  texts = [], onSelectText, onMoveText, onAddText }) {
   const scroller = useRef();
   const namesRef = useRef();
   const [pps, setPps] = useState(null); // pixels per second
@@ -285,6 +286,36 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
     }, (moved) => moved && onLyricsCommit());
   };
 
+  // --- fixed texts: drag to move, edges change start / end
+  const textDrag = (e, i, edge) => {
+    e.stopPropagation();
+    onSelectText(i);
+    if (e.button !== 0) return;
+    const { start: s0, end: e0 } = texts[i];
+    drag(e, (dt, ev) => {
+      let s = s0, en = e0;
+      if (edge === 'start') s = Math.max(0, Math.min(e0 - 0.1, snap(s0 + dt, ev)));
+      else if (edge === 'end') en = Math.min(duration, Math.max(s0 + 0.1, snap(e0 + dt, ev)));
+      else {
+        s = Math.max(0, Math.min(duration - (e0 - s0), snap(s0 + dt, ev)));
+        en = s + (e0 - s0);
+      }
+      onMoveText(i, s, en, false);
+    }, (moved) => moved && onMoveText(i, null, null, true));
+  };
+  // Overlapping texts go to separate rows of the lane
+  const textRows = useMemo(() => {
+    const ends = [], rowOf = [];
+    texts.map((x, i) => i).sort((a, b) => texts[a].start - texts[b].start).forEach((i) => {
+      let r = 0;
+      while (ends[r] !== undefined && ends[r] > texts[i].start + 1e-6) r++;
+      ends[r] = texts[i].end;
+      rowOf[i] = r;
+    });
+    return { n: Math.max(1, ends.length), rowOf };
+  }, [texts]);
+  const textLaneH = textRows.n * H.textRow + 4;
+
   const wheel = (e) => {
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
@@ -340,6 +371,8 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
         <div class="nm" style=${{ '--h': H.ruler + 'px' }}></div>
         <div class="nm" style=${{ '--h': H.audio + 'px' }}><${Icon} name="audio-waveform" size=${14} /> ${t('Audio')}</div>
         <div class="nm" style=${{ '--h': H.lyrics + 'px' }} onClick=${() => onSelect('lyrics', 0)}><${Icon} name="text-cursor-input" size=${14} /> ${t('Lyric lines')}</div>
+        <div class=${'nm' + (sel.kind === 'text' ? ' on' : '')} style=${{ '--h': textLaneH + 'px' }} onClick=${() => onSelectText(texts.length ? 0 : -1)}
+          title=${t('Double-click the lane: new text at that point')}><${Icon} name="type" size=${14} /> ${t('Texts')}</div>
         ${TRACKS.map((tr) => html`<div class=${'nm' + (sel.kind === 'track' && sel.track === tr.id ? ' on' : '')} style=${{ '--h': H.track + 'px' }}
             onClick=${() => onSelect(tr.id, null)}><${Icon} name=${tr.icon} size=${14} /> ${t(tr.label)}</div>`)}
       </div>
@@ -364,6 +397,21 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
                 title=${w.text + ' · ' + fmtTime(w.start) + ' — ' + t('drag to move, edges = start / end')}
                 onMouseDown=${(e) => wordDrag(e, editLine, wi, false)}>
                 <div class="grip" onMouseDown=${(e) => wordDrag(e, editLine, wi, 'start')}></div>${w.text}<div class="grip end" onMouseDown=${(e) => wordDrag(e, editLine, wi, 'end')}></div></div>`)}
+          </div>
+          <div class=${'lane' + (sel.kind === 'text' ? ' sel' : '')} style=${{ '--h': textLaneH + 'px' }}
+              onMouseDown=${seekDrag} onDblClick=${(e) => onAddText(snap(xToT(e.clientX), e))}>
+            ${texts.map((x, i) => {
+              const on = sel.kind === 'text' && sel.i === i;
+              return html`<div class=${'seg txt' + (on ? ' on' : '') + (x.enabled === false ? ' off' : '')} key=${'tx' + i}
+                  style=${{ left: x.start * effPps + 'px', width: Math.max(4, (x.end - x.start) * effPps - 1) + 'px',
+                    top: 3 + textRows.rowOf[i] * H.textRow + 'px', '--rowh': H.textRow + 'px' }}
+                  title=${(x.text || '').replace(/\n/g, ' / ') + ' · ' + fmtTime(x.start) + ' → ' + fmtTime(x.end)}
+                  onMouseDown=${(e) => textDrag(e, i)} onDblClick=${(e) => e.stopPropagation()}>
+                <div class="grip" onMouseDown=${(e) => textDrag(e, i, 'start')}></div>
+                <span class="t">${x.label ? html`<b>${x.label}</b> · ` : ''}${(x.text || '').replace(/\n/g, ' / ')}</span>
+                <div class="grip end" onMouseDown=${(e) => textDrag(e, i, 'end')}></div>
+              </div>`;
+            })}
           </div>
           ${TRACKS.map((tr) => {
             const segs = proj.tracks[tr.id] || [];

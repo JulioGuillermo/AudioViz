@@ -66,7 +66,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 input[type=text], input[type=number], select, textarea {
   height: 28px; background: var(--bg); border: 1px solid var(--border-2); border-radius: var(--r); padding: 0 8px; min-width: 0;
 }
-textarea { height: auto; padding: 6px 8px; }
+textarea { height: auto; padding: 6px 8px; font: inherit; resize: vertical; }
 select { padding-right: 4px; cursor: pointer; }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
 input:disabled, select:disabled { opacity: .45; }
@@ -208,6 +208,8 @@ input[type=color]::-moz-color-swatch { border: 0; border-radius: 3px; }
 .seg.on { background: #2b2420; border-color: var(--accent); color: var(--text); z-index: 2; }
 .seg.off { background: repeating-linear-gradient(135deg, #1a1c20 0 5px, #16181b 5px 10px); color: var(--text-3); border-style: dashed; }
 .seg .grip { position: absolute; left: 0; top: 0; bottom: 0; width: 6px; cursor: ew-resize; }
+.seg .grip.end { left: auto; right: 0; }
+.seg.txt { bottom: auto; height: calc(var(--rowh) - 6px); }
 .seg .fade { position: absolute; left: 0; top: 0; bottom: 0; background: linear-gradient(90deg, rgba(0, 0, 0, .55), transparent); pointer-events: none; border-right: 1px dashed rgba(255, 255, 255, .15); }
 .seg .t { position: relative; overflow: hidden; text-overflow: ellipsis; }
 .seg b { font-weight: 600; color: var(--text); }
@@ -315,3 +317,11 @@ input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer
 .lyrword .grip.end { left: auto; right: 0; }
 .top .lang select { height: 26px; font-size: 12px; }
 .playhead { left: 0; will-change: transform; }
+
+/* Fixed texts: position marker on the preview */
+.stage .pin { position: absolute; width: 22px; height: 22px; margin: -11px 0 0 -11px; pointer-events: none;
+  border: 1.5px solid var(--accent); border-radius: 50%; box-shadow: 0 0 0 1px rgba(0, 0, 0, .6); }
+.stage .pin::before, .stage .pin::after { content: ''; position: absolute; background: var(--accent); }
+.stage .pin::before { left: 10px; top: -6px; width: 1.5px; height: 32px; }
+.stage .pin::after { top: 10px; left: -6px; height: 1.5px; width: 32px; }
+.stage .pin.drag { border-color: #fff; }

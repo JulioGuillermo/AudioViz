@@ -25,7 +25,8 @@ const (
 	MaxBars   = 256
 	MaxParts  = 1024
 
-	MaxTextItems = 96
+	MaxTextItems  = 96
+	MaxTextStyles = 8
 )
 
 // Params mirrors exactly the std430 'Params' block in render.comp (all vec4/ivec4)
@@ -46,16 +47,12 @@ type Params struct {
 	Parts                       [MaxParts][4]float32
 	PartCol                     [MaxParts][4]float32
 
-	// Lyrics
-	TextInfo                                        [4]int32   // nItems, atlasW, chroma(0/1), gradCount
-	TextStyle                                       [4]float32 // outlineW, glowRadius, glowIntensity, chromaPx
-	TextColor, TextUpcoming, TextOutline, TextGlowC [4]float32
-	TextShadow                                      [4]float32 // dx, dy, opacity, blur
-	TextShadowC                                     [4]float32
-	TextGrad                                        [MaxGrad][4]float32
-	TItemA                                          [MaxTextItems][4]float32 // atlas x, y, w, h
-	TItemB                                          [MaxTextItems][4]float32 // center x, y, scale, alpha
-	TItemC                                          [MaxTextItems][4]float32 // karaoke fill, pad
+	// Texts (lyrics + fixed texts): items index a style table
+	TextInfo [4]int32 // nItems, atlasW, any chroma (0/1), -
+	TStyles  [MaxTextStyles]TextStyle
+	TItemA   [MaxTextItems][4]float32 // atlas x, y, w, h
+	TItemB   [MaxTextItems][4]float32 // center x, y, scale, alpha
+	TItemC   [MaxTextItems][4]float32 // karaoke fill, pad, style index
 
 	BgMix [4]float32 // -, visualizer opacity, -, -
 	Prev  [4]int32   // preview: scale, width, height (scale 0/1 = normal render)
@@ -64,6 +61,16 @@ type Params struct {
 	LayerA, LayerB [4]float32 // scale, offX, offY, rot of image A (BG) and B (BG2)
 	Trans          [4]int32   // mode, direction, has (bit0 A, bit1 B), seed
 	TransP         [4]float32 // progress k, -, -, -
+}
+
+// TextStyle mirrors 'TStyle' in render.comp: one entry of the per-frame text style table
+type TextStyle struct {
+	Info                            [4]float32 // outlineW, glowRadius, glowIntensity, chromaPx (0 = none)
+	Color, Upcoming, Outline, GlowC [4]float32
+	Shadow                          [4]float32 // dx, dy, opacity, blur
+	ShadowC                         [4]float32
+	GradN                           [4]int32 // gradient stop count
+	Grad                            [MaxGrad][4]float32
 }
 
 type Renderer struct {

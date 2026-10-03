@@ -38,7 +38,7 @@ per-second rates would make the look fps-independent.
 | Issue | Where |
 |---|---|
 | Silent caps on the GPU only: glitch strips ≤ 64 (exceeded above intensity ≈ 0.83 at 1920 px), particles ≤ 1024 per frame and ≤ 512 per tile, lyric words ≤ 48 per tile | `render.comp`, `vk.c` |
-| CPU/GPU differences: lyric chromatic aberration threshold (> 0 vs > 0.3 px), CPU oscilloscope ignores `gradient_axis: length`, glitch vs chromatic aberration order, ripple nearest (CPU) vs bilinear (GPU), CPU skips glitch ≤ 0.05 | see [rendering.md](rendering.md) |
+| CPU/GPU differences: CPU oscilloscope ignores `gradient_axis: length`, glitch vs chromatic aberration order, ripple nearest (CPU) vs bilinear (GPU), CPU skips glitch ≤ 0.05 | see [rendering.md](rendering.md) |
 | Each pixel only checks nearby bars (±2 circular, ±1 linear): very thick bars or wide glow get clipped | `render.comp` |
 | After a seek particles are re-simulated for 5 s: preview frames are close to, not identical to, the export; `max_life` > 5 s is not fully rebuilt | `engine/session.go` |
 | `find_mem` may fall back to non-coherent memory for Params/background/text buffers, which are never flushed | `internal/gpu/vk.c` (only matters on unusual hardware) |
@@ -104,6 +104,10 @@ WAV/MP3/OGG decoders, `Lerp`, the LRC parser or the alignment code.
   `.gitignore` line `I didn*t ask to be the devil`.
 
 ## Fixed since
+
+- `PUT /api/project` with a body of another shape decoded into an empty project and was saved over
+  the project file; it is now rejected (400) unless it has tracks, audio and output.
+- CPU and GPU now use the same 0.3 px threshold for lyric chromatic aberration.
 
 - Background transitions to/from "no background" now fade (black side), and a transition between
   two segments with the same image works (each keeps its motion) — with the background

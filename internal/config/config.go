@@ -17,6 +17,7 @@ type ProjectConfig struct {
 	Visualizer        VisualizerConfig        `yaml:"visualizer"`
 	Particles         ParticlesConfig         `yaml:"particles"`
 	Lyrics            LyricsConfig            `yaml:"lyrics"`
+	Texts             []TextConfig            `yaml:"texts,omitempty"`
 	Output            OutputConfig            `yaml:"output"`
 
 	// Changes over the course of the song (see timeline.go). Timeline is built on load.
@@ -234,6 +235,64 @@ type LyricsConfig struct {
 	React         TextReact      `yaml:"react"`
 }
 
+// TextConfig: a fixed text (title, credits...) shown from Start to End at a chosen position.
+// It has every style option of the lyrics (font, size, colors, gradient, outline, glow, shadow,
+// animations, audio reaction); position_x / position_y place it (0..1, center of the block,
+// or its left/right edge with align: left/right). Path, offset, position and mode are not used.
+type TextConfig struct {
+	Text         string  `yaml:"text"`  // several rows with line breaks
+	Start        float64 `yaml:"start"` // s: starts entering
+	End          float64 `yaml:"end"`   // s: has fully left
+	Label        string  `yaml:"label,omitempty"`
+	LyricsConfig `yaml:",inline"`
+}
+
+// DefaultText is a new text: white, centered, fading in and out
+func DefaultText() TextConfig {
+	l := DefaultConfig().Lyrics
+	l.Enabled = true
+	l.Size = 96
+	l.Position = "custom"
+	l.Mode = "line"
+	l.InAnimation, l.OutAnimation = "fade", "fade"
+	l.InDuration, l.OutDuration = 0.6, 0.6
+	l.WordPop = 0
+	l.React = TextReact{ReactTo: "bass"}
+	return TextConfig{Start: 0, End: 5, LyricsConfig: l}
+}
+
+// UnmarshalYAML fills the fields missing in the YAML with DefaultText
+func (t *TextConfig) UnmarshalYAML(n *yaml.Node) error {
+	type plain TextConfig
+	d := plain(DefaultText())
+	if err := n.Decode(&d); err != nil {
+		return err
+	}
+	*t = TextConfig(d)
+	return nil
+}
+
+// MarshalYAML leaves out the lyrics fields that a fixed text does not use
+func (t TextConfig) MarshalYAML() (any, error) {
+	type plain TextConfig
+	var n yaml.Node
+	if err := n.Encode(plain(t)); err != nil {
+		return nil, err
+	}
+	unused := map[string]bool{"path": true, "offset": true, "position": true, "margin": true,
+		"mode": true, "word_pop": true, "upcoming_color": true}
+	var kept []*yaml.Node
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		k := n.Content[i].Value
+		if unused[k] || (k == "animation" && t.Animation == "") {
+			continue
+		}
+		kept = append(kept, n.Content[i], n.Content[i+1])
+	}
+	n.Content = kept
+	return &n, nil
+}
+
 type TextGlowConfig struct {
 	Enabled   bool    `yaml:"enabled"`
 	Color     string  `yaml:"color"`     // empty = text color
@@ -449,6 +508,9 @@ func (c *ProjectConfig) mapPaths(fn func(string) string) {
 	for i := range c.Timeline.Lyrics {
 		l := &c.Timeline.Lyrics[i].Cfg
 		l.Path, l.Font = fn(l.Path), fn(l.Font)
+	}
+	for i := range c.Texts {
+		c.Texts[i].Font = fn(c.Texts[i].Font)
 	}
 }
 

@@ -36,9 +36,13 @@ type glyphWord struct {
 type layLine struct {
 	start, end float64
 	words      []glyphWord
-	side       int     // -1 left, 0 center, 1 right
-	halfH      float64 // half height of the block
+	side       int          // -1 left, 0 center, 1 right
+	halfH      float64      // half height of the block
+	breaks     map[int]bool // forced row break before these word indices (line breaks in texts)
 }
+
+// BreakWord in a line's words forces a new row (used by fixed texts with several rows)
+const BreakWord = "\n"
 
 // Item is a word visible in a frame, ready to draw
 type Item struct {
@@ -46,6 +50,7 @@ type Item struct {
 	CX, CY         float32 // center on screen
 	Scale, Alpha   float32
 	Fill           float32 // karaoke progress 0..1 (1 = all in the main color)
+	Style          int     // index into the frame's style table (0 = lyrics)
 	Pad            float32
 }
 
@@ -84,6 +89,12 @@ func New(cfg *config.LyricsConfig, w, h int) (*Engine, error) {
 }
 
 func newEngine(cfg *config.LyricsConfig, lines []Line, w, h int) (*Engine, error) {
+	return buildEngine(cfg, lines, w, h, false)
+}
+
+// buildEngine rasterizes and lays out the lines. edge: align left/right put the block's left /
+// right edge at the anchor (fixed texts) instead of aligning inside the max width (lyrics).
+func buildEngine(cfg *config.LyricsConfig, lines []Line, w, h int, edge bool) (*Engine, error) {
 	face, err := loadFace(cfg)
 	if err != nil {
 		return nil, err
@@ -129,6 +140,13 @@ func newEngine(cfg *config.LyricsConfig, lines []Line, w, h int) (*Engine, error
 			}
 		}
 		for _, wd := range ln.Words {
+			if wd.Text == BreakWord {
+				if ll.breaks == nil {
+					ll.breaks = map[int]bool{}
+				}
+				ll.breaks[len(ll.words)] = true
+				continue
+			}
 			text := wd.Text
 			if cfg.Uppercase {
 				text = strings.ToUpper(text)
@@ -157,7 +175,7 @@ func newEngine(cfg *config.LyricsConfig, lines []Line, w, h int) (*Engine, error
 		} else if ll.side > 0 {
 			align = "right"
 		}
-		ll.halfH = layoutRows(&ll, spaceAdv, maxW, lineH, align)
+		ll.halfH = layoutRows(&ll, spaceAdv, maxW, lineH, align, edge)
 		e.maxW = maxW
 		e.lines = append(e.lines, ll)
 	}
@@ -190,7 +208,7 @@ func newEngine(cfg *config.LyricsConfig, lines []Line, w, h int) (*Engine, error
 }
 
 // layoutRows splits words into rows that fit in maxW and computes their position relative to the center
-func layoutRows(ll *layLine, space, maxW, lineH float64, align string) float64 {
+func layoutRows(ll *layLine, space, maxW, lineH float64, align string, edge bool) float64 {
 	var rows [][]int
 	var cur []int
 	width := 0.0
@@ -199,7 +217,7 @@ func layoutRows(ll *layLine, space, maxW, lineH float64, align string) float64 {
 		if len(cur) > 0 {
 			add += space
 		}
-		if len(cur) > 0 && width+add > maxW {
+		if len(cur) > 0 && (width+add > maxW || ll.breaks[i]) {
 			rows = append(rows, cur)
 			cur, width, add = nil, 0, g.adv
 		}
@@ -219,10 +237,14 @@ func layoutRows(ll *layLine, space, maxW, lineH float64, align string) float64 {
 			rowW += ll.words[i].adv
 		}
 		x := -rowW / 2
-		switch align {
-		case "left":
+		switch {
+		case align == "left" && edge:
+			x = 0
+		case align == "right" && edge:
+			x = -rowW
+		case align == "left":
 			x = -maxW / 2
-		case "right":
+		case align == "right":
 			x = maxW/2 - rowW
 		}
 		y := -totalH/2 + lineH*(float64(r)+0.5)

@@ -1,5 +1,5 @@
 import { html, render, useState, useEffect, useRef } from './vendor/preact-htm.js';
-import { TRACKS, AUDIO_FIELDS, OUTPUT_FIELDS, trackById, TRANSITIONS, SIMPLE_TRANSITIONS, DIRECTED, DIRECTIONS } from './schema.js';
+import { TRACKS, AUDIO_FIELDS, OUTPUT_FIELDS, trackById, TRANSITIONS, SIMPLE_TRANSITIONS, DIRECTED, DIRECTIONS, TEXT_FIELDS } from './schema.js';
 import { api, clone, fmtTime, parseTime, b64u8, basename, debounce } from './util.js';
 import { Form, Select } from './fields.js';
 import { Icon } from './icons.js';
@@ -11,9 +11,42 @@ import { createScrubber } from './scrub.js';
 
 // ------------------------------------------------------------------ preview
 
-function Preview({ meta, timeStore, scale, rev, playing }) {
+function Preview({ meta, timeStore, scale, rev, playing, pin, onPin }) {
   const time = useStore(timeStore);
   const canvas = useRef();
+  const stage = useRef();
+  // Placing a fixed text: drag on the image (pin = its position 0..1, null when no text is selected)
+  const [dragPin, setDragPin] = useState(null);
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const f = () => setTick((v) => v + 1);
+    addEventListener('resize', f);
+    return () => removeEventListener('resize', f);
+  }, []);
+  const posFrom = (e) => {
+    const r = canvas.current.getBoundingClientRect();
+    const c = (v) => Math.max(0, Math.min(1, v));
+    return { x: c((e.clientX - r.left) / r.width), y: c((e.clientY - r.top) / r.height) };
+  };
+  const pinDown = (e) => {
+    if (!pin || e.button !== 0) return;
+    e.preventDefault();
+    let p = posFrom(e);
+    setDragPin(p);
+    const mv = (ev) => { p = posFrom(ev); setDragPin(p); };
+    const up = () => {
+      removeEventListener('mousemove', mv); removeEventListener('mouseup', up);
+      setDragPin(null);
+      onPin(+p.x.toFixed(4), +p.y.toFixed(4));
+    };
+    addEventListener('mousemove', mv); addEventListener('mouseup', up);
+  };
+  let pinStyle = null;
+  const shownPin = dragPin || pin;
+  if (shownPin && canvas.current && stage.current) {
+    const cr = canvas.current.getBoundingClientRect(), sr = stage.current.getBoundingClientRect();
+    pinStyle = { left: cr.left - sr.left + shownPin.x * cr.width + 'px', top: cr.top - sr.top + shownPin.y * cr.height + 'px' };
+  }
   // inflight: requests in progress; lat: average latency (ms); shownF: last drawn frame
   const st = useRef({ inflight: 0, lat: 40, shownKey: null, shownF: -1, shownSeq: 0, seq: 0, lastReq: '', lastT: 0 });
   const [info, setInfo] = useState({ ms: 0, fps: 0 });
@@ -75,9 +108,11 @@ function Preview({ meta, timeStore, scale, rev, playing }) {
 
   useEffect(() => { if (!playing) st.current.shownF = -1; }, [playing]);
 
-  return html`<div class="stage">
+  return html`<div class="stage" ref=${stage}>
     <canvas ref=${canvas} width=${Math.round(meta.width / scale)} height=${Math.round(meta.height / scale)}
-      style=${{ aspectRatio: `${meta.width}/${meta.height}` }}></canvas>
+      style=${{ aspectRatio: `${meta.width}/${meta.height}`, cursor: pin ? 'crosshair' : '' }} onMouseDown=${pinDown}
+      title=${pin ? t('Drag to place the selected text') : ''}></canvas>
+    ${pinStyle && html`<div class=${'pin' + (dragPin ? ' drag' : '')} style=${pinStyle}></div>`}
     <div class="hud">${meta.width}×${meta.height} · 1/${scale} · ${info.ms} ms${playing ? ' · ' + info.fps + ' fps' : ''}</div>
   </div>`;
 }
@@ -155,6 +190,46 @@ function SegHeader({ segs, i, set, meta, track }) {
     ${track === 'background' && DIRECTED.includes(s.transition.mode) && html`<div class="fld"><label>${t('Direction')}</label><div class="ctl">
       <${Select} value=${s.transition.direction || 'left'} options=${DIRECTIONS}
         onChange=${(d) => set({ ...s, transition: { ...s.transition, direction: d } })} /></div></div>`}
+  </div>`;
+}
+
+// Fixed texts (titles): list, time range and the lyrics style options, placed by hand
+function TextsInspector({ proj, sel, setSel, update, time, meta, ctx }) {
+  const texts = proj.texts;
+  const i = sel.i;
+  const x = texts[i];
+  const set = (nx) => update((p) => { p.texts[i] = nx; });
+  const clampT = (v) => Math.max(0, Math.min(meta.duration, v));
+  const name = (tx, k) => tx.label || (tx.text || '').split('\n')[0].slice(0, 22) || t('Text {n}', { n: k + 1 });
+  return html`<div>
+    <div class="insp-h">
+      <div class="insp-title"><${Icon} name="type" size=${16} cls="muted" />${t('Texts')}<span class="sub">${t('Titles and fixed texts')}</span></div>
+      ${texts.length > 0 && html`<div class="segtabs">${texts.map((tx, k) => html`<button class=${'segtab' + (k === i ? ' on' : '')} title=${tx.text}
+          onClick=${() => ctx.selectText(k)}><span class="mono">${fmtTime(tx.start, false)}</span>${name(tx, k)}</button>`)}</div>`}
+      <div class="row">
+        <button class="btn sm" onClick=${() => ctx.addText(time)} title=${t('New text starting at the cursor')}><${Icon} name="plus" size=${14} /> ${t('Text at {t}', { t: fmtTime(time) })}</button>
+        <span class="spacer"></span>
+        <button class="btn sm ghost danger" disabled=${!x} title=${t('Delete this text (Del)')}
+          onClick=${() => { update((p) => { p.texts.splice(i, 1); }); setSel({ kind: 'text', i: Math.min(i, texts.length - 2) }); }}><${Icon} name="trash-2" size=${14} /> ${t('Delete')}</button>
+      </div>
+    </div>
+    <div class="insp-b">
+      ${!x ? html`<p class="faint" style="font-size:12px">${t('No texts yet. Add one at the cursor, or double-click the Texts lane on the timeline.')}</p>` : html`
+      <div class="card">
+        <div class="fld"><label>${t('Name')}</label><div class="ctl"><input type="text" class="grow" value=${x.label || ''}
+          placeholder=${t('Optional')} onChange=${(e) => set({ ...x, label: e.target.value })} /></div></div>
+        <div class="fld"><label>${t('Starts at')}</label><div class="ctl">
+          <input type="text" class="mono" style="width:96px" value=${fmtTime(x.start)}
+            onChange=${(e) => { const v = clampT(parseTime(e.target.value)); set({ ...x, start: v, end: Math.max(x.end, v + 0.1) }); }} />
+          <span class="faint" style="font-size:11.5px">min:sec</span></div></div>
+        <div class="fld"><label>${t('Ends at')}</label><div class="ctl">
+          <input type="text" class="mono" style="width:96px" value=${fmtTime(x.end)}
+            onChange=${(e) => set({ ...x, end: Math.max(x.start + 0.1, clampT(parseTime(e.target.value))) })} />
+          <span class="faint" style="font-size:11.5px">${t('{s} s', { s: (x.end - x.start).toFixed(2) })}</span></div></div>
+        <div class="card-note">${t('Drag on the preview to place it. In and out animations happen inside this time.')}</div>
+      </div>
+      <${Form} fields=${TEXT_FIELDS} value=${x} onChange=${set} ctx=${ctx} />`}
+    </div>
   </div>`;
 }
 
@@ -447,6 +522,29 @@ function App() {
       update((p) => { p.tracks[track].splice(i + 1, 0, ns); });
       setSel({ kind: 'track', track, seg: i + 1 });
     },
+    // Fixed texts: a new one copies the style of the selected text (or the defaults)
+    addText: (tt) => {
+      const cur = projRef.current;
+      const base = (sel.kind === 'text' && cur.texts[sel.i]) || cur.textDefaults || {};
+      const st = Math.max(0, Math.min(meta.duration - 0.5, +tt.toFixed(3)));
+      const nt = { ...clone(base), text: t('Title'), label: '', start: st, end: +Math.min(meta.duration, st + 5).toFixed(3), enabled: true };
+      update((p) => { p.texts.push(nt); });
+      setSel({ kind: 'text', i: projRef.current.texts.length - 1 });
+    },
+    selectText: (i) => {
+      setSel({ kind: 'text', i });
+      const x = projRef.current.texts[i];
+      // Show it: jump into its time range if the cursor is outside
+      if (x) { const now = timeStore.get(); if (now < x.start || now > x.end) seek(x.start + Math.min(1, (x.end - x.start) / 2)); }
+    },
+  };
+  const onMoveText = (i, s, e, commit) => {
+    if (commit) { update(() => {}); return; }
+    const p = clone(projRef.current);
+    p.texts[i].start = +s.toFixed(3);
+    p.texts[i].end = +e.toFixed(3);
+    projRef.current = p;
+    setProj(p);
   };
 
   const onLyricsGenerated = (out) => {
@@ -566,6 +664,9 @@ function App() {
       else if (e.key === 'Delete' && sel.kind === 'track' && sel.seg > 0) {
         update((p) => { p.tracks[sel.track].splice(sel.seg, 1); });
         setSel({ ...sel, seg: sel.seg - 1 });
+      } else if (e.key === 'Delete' && sel.kind === 'text' && projRef.current.texts[sel.i]) {
+        update((p) => { p.texts.splice(sel.i, 1); });
+        setSel({ kind: 'text', i: Math.min(sel.i, projRef.current.texts.length - 1) });
       }
     };
     addEventListener('keydown', k);
@@ -598,12 +699,14 @@ function App() {
   const jobRunning = job && job.status === 'running';
   const saveText = { saving: t('Saving…'), saved: t('Saved {t}', { t: save.at }), error: t('Save error') }[save.kind] || '';
 
+  const selText = sel.kind === 'text' ? (proj.texts || [])[sel.i] : null;
   let inspector;
   if (sel.kind === 'audio') inspector = html`<div><div class="insp-h"><div class="insp-title"><${Icon} name="music" size=${16} cls="muted" />${t('Audio')}<span class="sub">${t('Project')}</span></div></div><div class="insp-b">
       <${Form} fields=${AUDIO_FIELDS} value=${proj.audio} onChange=${(v) => update((p) => { p.audio = v; })} ctx=${ctx} /></div></div>`;
   else if (sel.kind === 'output') inspector = html`<div><div class="insp-h"><div class="insp-title"><${Icon} name="monitor" size=${16} cls="muted" />${t('Output')}<span class="sub">${t('Project')}</span></div></div><div class="insp-b">
       <${Form} fields=${OUTPUT_FIELDS} value=${proj.output} onChange=${(v) => update((p) => { p.output = v; })} ctx=${ctx} />
       <p class="faint" style="font-size:12px">${t('Current resolution')}: ${meta.width}×${meta.height} · ${meta.fps} fps · ${fmtTime(meta.duration)}</p></div></div>`;
+  else if (sel.kind === 'text') inspector = html`<${TextsInspector} proj=${proj} sel=${sel} setSel=${setSel} update=${update} time=${time} meta=${meta} ctx=${ctx} />`;
   else if (sel.kind === 'line') inspector = html`<${LineEditor} lyr=${lyr} lines=${lineSel} time=${time} seek=${seek} saveState=${lyrSave}
       onChange=${(fn) => editLyrics(fn)} onResync=${resync} resyncing=${resyncing} lyricLang=${lyricLang} setLyricLang=${setLyricLang} wordEdit=${wordEdit} setWordEdit=${setWordEdit} />`;
   else inspector = html`<${TrackInspector} proj=${proj} track=${sel.track} segIdx=${sel.seg} time=${time} meta=${meta}
@@ -646,11 +749,17 @@ function App() {
           <${Icon} name=${tr.icon} size=${15} /><span class="lbl">${t(tr.label)}</span>
           ${segs.length > 1 && html`<span class="badge" title=${t('Number of segments')}>${segs.length}</span>`}</div>`;
       })}`)}
+      <div class="label-sm">${t('Texts')}</div>
+      <div class=${'trk' + (sel.kind === 'text' ? ' on' : '')} onClick=${() => ctx.selectText((proj.texts || []).length ? 0 : -1)}>
+        <${Icon} name="type" size=${15} /><span class="lbl">${t('Titles and texts')}</span>
+        ${(proj.texts || []).length > 0 && html`<span class="badge">${proj.texts.length}</span>`}</div>
     </div>
 
     <div class="preview">
       <div class="stage-wrap">
-        <${Preview} meta=${meta} timeStore=${timeStore} scale=${scale} rev=${rev} playing=${playing} />
+        <${Preview} meta=${meta} timeStore=${timeStore} scale=${scale} rev=${rev} playing=${playing}
+          pin=${selText ? { x: selText.position_x, y: selText.position_y } : null}
+          onPin=${(x, y) => update((p) => { const tx = p.texts[sel.i]; if (tx) { tx.position_x = x; tx.position_y = y; } })} />
         ${!hideSetup && (!proj.audio.path || !proj.tracks.background[0].cfg.path) && html`<${Setup} proj=${proj} ctx=${ctx} onHide=${() => setHideSetup(true)} />`}
       </div>
       <div class="transport">
@@ -678,6 +787,7 @@ function App() {
     <div class="inspector">${inspector}</div>
 
     <${Timeline} proj=${proj} meta=${meta} ana=${ana} lyr=${lyr} timeStore=${timeStore} slowTime=${time} playing=${playing}
+      texts=${proj.texts || []} onSelectText=${(i) => ctx.selectText(i)} onMoveText=${onMoveText} onAddText=${(tt) => ctx.addText(tt)}
       sel=${sel} lineSel=${lineSel} wordEdit=${wordEdit} height=${tlH} setHeight=${setTlH}
       onSeek=${seek} onSelect=${selTrack} onMoveSeg=${onMoveSeg} onAddSeg=${ctx.addSeg} onMarker=${onMarker}
       onSelectLine=${selectLine} onLyrics=${(lines) => editLyrics((all) => { all.splice(0, all.length, ...lines); }, false)}

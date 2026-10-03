@@ -44,7 +44,8 @@ and lossless FLAC audio inside an MP4.
 | [radial_burst](particles/radial_burst.md) | Burst from the center |
 | [ambient_dust](particles/ambient_dust.md) | Dust floating across the whole image |
 
-## Lyrics
+## Lyrics and texts
+- **[Texts (titles)](texts.md)**: fixed texts from one time to another at a position you choose, with all the lyrics styles
 - [Synced lyrics](lyrics/README.md): `.srt`, `.lrc` and LRC with per-word timing. Karaoke, positions (top/bottom/left/right/side...), in and out animations, fire colors and audio reactivity
 - [Generate the per-word `.lrc`](lyrics/generate.md) from the audio and the plain-text lyrics (Suno format supported), built into the binary · [step by step](lyrics/step-by-step.md)
 
@@ -59,6 +60,7 @@ background_effects: # one block per effect: background/*.md
 visualizer:         # visualizer/*.md
 particles:          # particles/*.md
 lyrics:             # lyrics/README.md
+texts:              # texts.md
 output:             # output.md
 ```
 Generate a template with everything: `audioviz --init nuevo.yaml`. Paths are relative to the YAML.

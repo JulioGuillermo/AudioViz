@@ -13,6 +13,20 @@ const int MAX_GLITCH = 64;
 const int MAX_BARS = 256;
 const int MAX_PARTS = 1024;
 const int MAX_TEXT = 96;
+const int MAX_TSTYLE = 8;
+
+// One entry of the per-frame text style table (lyrics = 0, fixed texts after)
+struct TStyle {
+    vec4 info;        // outlineW, glowRadius, glowIntensity, chromaPx (0 = none)
+    vec4 color;
+    vec4 upcoming;
+    vec4 outline;
+    vec4 glowC;
+    vec4 shadow;      // dx, dy, opacity, blur
+    vec4 shadowC;
+    ivec4 gradN;      // gradient stop count
+    vec4 grad[MAX_GRAD];
+};
 
 layout(std430, set = 0, binding = 0) readonly buffer Params {
     ivec4 dims;       // outW, outH, padW (stride Y en bytes), padH
@@ -38,18 +52,11 @@ layout(std430, set = 0, binding = 0) readonly buffer Params {
     vec4 parts[MAX_PARTS];     // x, y, size, alpha
     vec4 partCol[MAX_PARTS];   // rgb, glow (0/1)
 
-    ivec4 textInfo;            // nItems, atlasW, chroma(0/1), gradCount
-    vec4 textStyle;            // outlineW, glowRadius, glowIntensity, chromaPx
-    vec4 textColor;
-    vec4 textUpcoming;
-    vec4 textOutline;
-    vec4 textGlowC;
-    vec4 textShadow;           // dx, dy, opacity, blur
-    vec4 textShadowC;
-    vec4 textGrad[MAX_GRAD];
+    ivec4 textInfo;            // nItems, atlasW, any chroma (0/1), -
+    TStyle ts[MAX_TSTYLE];
     vec4 tA[MAX_TEXT];         // atlas x, y, w, h
     vec4 tB[MAX_TEXT];         // center x, y, scale, alpha
-    vec4 tC[MAX_TEXT];         // karaoke fill, pad
+    vec4 tC[MAX_TEXT];         // karaoke fill, pad, style index
     vec4 bgMix;                // -, visualizer opacity
     ivec4 prev;                // preview: scale (1 = normal), output width and height
     vec4 layerA;               // background A (BG): scale, offX, offY, rot (segment motion)
@@ -435,25 +442,29 @@ float sdfAt(vec2 a, vec4 rect) {
     return (128.0 - v) / 4.0;
 }
 
-vec3 textGradient(float t) {
-    int n = P.textInfo.w;
-    if (n <= 0) return P.textColor.rgb;
-    if (n == 1 || t <= P.textGrad[0].w) return P.textGrad[0].rgb;
-    if (t >= P.textGrad[n - 1].w) return P.textGrad[n - 1].rgb;
+vec3 textGradient(int s, float t) {
+    int n = P.ts[s].gradN.x;
+    if (n <= 0) return P.ts[s].color.rgb;
+    if (n == 1 || t <= P.ts[s].grad[0].w) return P.ts[s].grad[0].rgb;
+    if (t >= P.ts[s].grad[n - 1].w) return P.ts[s].grad[n - 1].rgb;
     for (int i = 0; i < n - 1; i++) {
-        vec4 a = P.textGrad[i], b = P.textGrad[i + 1];
+        vec4 a = P.ts[s].grad[i], b = P.ts[s].grad[i + 1];
         if (t >= a.w && t <= b.w) return mix(a.rgb, b.rgb, (t - a.w) / max(b.w - a.w, 1e-6));
     }
-    return P.textGrad[n - 1].rgb;
+    return P.ts[s].grad[n - 1].rgb;
 }
 
-// Composites the lyrics over col at point p
-vec3 drawText(vec3 col, vec2 p) {
+// Composites the texts over col at point p. ch = -1, 0, 1: channel pass for chromatic
+// aberration (each item's point is shifted by ch times its style's chroma).
+vec3 drawText(vec3 col, vec2 p0, float ch) {
     int n = min(sTextN, TILE_TEXT);
-    float ow = P.textStyle.x;
-    float gr = max(P.textStyle.y, 0.5);
     for (int ti = 0; ti < n; ti++) {
         int i = sText[ti];
+        int s = int(P.tC[i].z);
+        vec4 inf = P.ts[s].info;
+        float ow = inf.x;
+        float gr = max(inf.y, 0.5);
+        vec2 p = p0 + vec2(ch * inf.w, 0.0);
         vec4 r = P.tA[i];
         vec4 b = P.tB[i];
         float sc = b.z;
@@ -465,31 +476,32 @@ vec3 drawText(vec3 col, vec2 p) {
         float alpha = b.w;
 
         // Shadow (blurred)
-        if (P.textShadow.z > 0.0) {
-            float ds = sdfAt(a - P.textShadow.xy / sc, r) * sc - ow;
-            float blur = max(P.textShadow.w, 0.75);
-            float sa = (1.0 - smoothstep(-blur, blur, ds)) * P.textShadow.z * alpha;
-            col = mix(col, P.textShadowC.rgb, sa);
+        vec4 sh = P.ts[s].shadow;
+        if (sh.z > 0.0) {
+            float ds = sdfAt(a - sh.xy / sc, r) * sc - ow;
+            float blur = max(sh.w, 0.75);
+            float sa = (1.0 - smoothstep(-blur, blur, ds)) * sh.z * alpha;
+            col = mix(col, P.ts[s].shadowC.rgb, sa);
         }
 
         float d = sdfAt(a, r) * sc;           // distance in screen px
         // Glow
-        if (P.textStyle.z > 0.0) {
-            float g = exp(-max(d - ow, 0.0) / (gr * 0.45)) * P.textStyle.z * alpha;
+        if (inf.z > 0.0) {
+            float g = exp(-max(d - ow, 0.0) / (gr * 0.45)) * inf.z * alpha;
             g *= 1.0 - smoothstep(0.55, 0.95, (d / sc) / max(pad, 1.0)); // reaches 0 before the edge of the area
-            col = mix(col, P.textGlowC.rgb, clamp(g, 0.0, 1.0) * 0.85);
+            col = mix(col, P.ts[s].glowC.rgb, clamp(g, 0.0, 1.0) * 0.85);
         }
         // Outline
         if (ow > 0.0) {
-            col = mix(col, P.textOutline.rgb, clamp(0.5 - (d - ow), 0.0, 1.0) * P.textOutline.a * alpha);
+            col = mix(col, P.ts[s].outline.rgb, clamp(0.5 - (d - ow), 0.0, 1.0) * P.ts[s].outline.a * alpha);
         }
         // Fill: main color up to the karaoke progress, the rest in the "upcoming" color
         float fillX = r.x + pad + P.tC[i].x * (r.z - 2.0 * pad);
         float ty = clamp((a.y - r.y - pad) / max(r.w - 2.0 * pad, 1.0), 0.0, 1.0);
-        vec3 main = textGradient(ty);
+        vec3 main = textGradient(s, ty);
         float k = clamp(fillX - a.x + 0.5, 0.0, 1.0);
-        vec3 fc = mix(P.textUpcoming.rgb, main, k);
-        float fa = mix(P.textUpcoming.a, P.textColor.a, k);
+        vec3 fc = mix(P.ts[s].upcoming.rgb, main, k);
+        float fa = mix(P.ts[s].upcoming.a, P.ts[s].color.a, k);
         col = mix(col, fc, clamp(0.5 - d, 0.0, 1.0) * fa * alpha);
     }
     return col;
@@ -536,12 +548,11 @@ vec3 shade(vec2 q) {
 
     if (P.textInfo.x > 0) {
         if (P.textInfo.z != 0) {
-            // Lyrics chromatic aberration: each channel composited with an offset
-            vec2 off = vec2(P.textStyle.w, 0.0);
+            // Text chromatic aberration: each channel composited with an offset
             vec3 base = col;
-            col = vec3(drawText(base, p - off).r, drawText(base, p).g, drawText(base, p + off).b);
+            col = vec3(drawText(base, p, -1.0).r, drawText(base, p, 0.0).g, drawText(base, p, 1.0).b);
         } else {
-            col = drawText(col, p);
+            col = drawText(col, p, 0.0);
         }
     }
     return col;
@@ -569,8 +580,9 @@ void buildTileLists(vec2 lo, vec2 hi) {
         }
     }
     int nt = P.textInfo.x;
-    float extra = abs(P.textStyle.w) + max(abs(P.textShadow.x), abs(P.textShadow.y)) + 2.0;
     for (int i = int(li); i < nt; i += 64) {
+        int s = int(P.tC[i].z);
+        float extra = abs(P.ts[s].info.w) + max(abs(P.ts[s].shadow.x), abs(P.ts[s].shadow.y)) + 2.0;
         vec2 hs = P.tA[i].zw * 0.5 * P.tB[i].z + extra;
         vec2 c = P.tB[i].xy;
         if (c.x + hs.x >= lo.x && c.x - hs.x <= hi.x && c.y + hs.y >= lo.y && c.y - hs.y <= hi.y) {

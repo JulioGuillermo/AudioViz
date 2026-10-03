@@ -280,6 +280,11 @@ func (s *Server) hPutProject(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, err)
 		return
 	}
+	// A body of another shape decodes into an empty project: never save that over the user's
+	if len(p.Tracks) == 0 || p.Audio == nil || p.Output == nil {
+		fail(w, 400, errors.New("not a project: tracks, audio and output are required"))
+		return
+	}
 	s.mu.Lock()
 	if s.sess == nil {
 		s.mu.Unlock()

@@ -204,3 +204,15 @@ export const TRANSITIONS = [['cut', 'Cut'], ['fade', 'Fade'], ['dissolve', 'Diss
 export const SIMPLE_TRANSITIONS = [['cut', 'Cut'], ['fade', 'Fade']];
 export const DIRECTED = ['wipe', 'slide', 'push'];
 export const DIRECTIONS = [['left', 'Left'], ['right', 'Right'], ['up', 'Up'], ['down', 'Down']];
+
+// Fixed texts (titles): the lyrics style options, positioned by hand
+const TEXT_SKIP = new Set(['enabled', 'path', 'offset', 'position', 'margin', 'mode', 'word_pop', 'upcoming_color']);
+export const TEXT_FIELDS = [
+  { key: 'enabled', label: 'Visible', type: 'bool' },
+  { key: 'text', label: 'Text', type: 'textarea', help: 'Enter = new row' },
+  ...trackById.lyrics.fields.filter((f) => !TEXT_SKIP.has(f.key)).map((f) => {
+    if (f.key === 'position_x' || f.key === 'position_y') return { ...f, showIf: undefined, help: f.key === 'position_x' ? 'Or drag the text on the preview' : undefined };
+    if (f.key === 'align') return { ...f, showIf: undefined, help: 'Left / right: the text starts / ends at Position X' };
+    return f;
+  }),
+];

@@ -158,6 +158,8 @@ function Field({ f, v, set, ctx, isFirst }) {
       return html`<${Row} f=${f}><${Gradient} v=${v} set=${set} /></${Row}>`;
     case 'text':
       return html`<${Row} f=${f}><input type="text" class="grow" value=${v ?? ''} onChange=${(e) => set(e.target.value)} /></${Row}>`;
+    case 'textarea':
+      return html`<${Row} f=${f}><textarea class="grow" rows="3" value=${v ?? ''} onChange=${(e) => set(e.target.value)}></textarea></${Row}>`;
     case 'file':
       return html`<${Row} f=${f}><div class="filectl">
         <div class="fn" title=${v || ''}><${Icon} name=${FILE_ICON[f.kind] || 'file'} size=${14} cls="faint" />

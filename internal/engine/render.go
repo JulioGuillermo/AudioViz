@@ -20,7 +20,6 @@ import (
 	"audioviz/internal/effects"
 	"audioviz/internal/encode"
 	"audioviz/internal/gpu"
-	"audioviz/internal/lyrics"
 	"audioviz/internal/mux"
 	"audioviz/internal/visualizer"
 
@@ -466,7 +465,8 @@ func (s *Session) cpuFrame(fs *FrameState) *image.RGBA {
 		}
 	}
 	if fs.Lyr != nil {
-		fs.Lyr.DrawCPU(frame, fs.Lyr.Frame(fs.T, fs.Feat), lyrics.StyleFor(&fs.LyrSt, fs.T, fs.Feat))
+		items, styles := fs.Lyr.Frame(fs.T, fs.Feat, &fs.LyrSt)
+		fs.Lyr.DrawCPU(frame, items, styles)
 	}
 	return frame
 }
@@ -696,31 +696,38 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 	// Lyrics
 	p.TextInfo = [4]int32{}
 	if fs.Lyr != nil {
-		items := fs.Lyr.Frame(fs.T, fs.Feat)
-		st := lyrics.StyleFor(&fs.LyrSt, fs.T, fs.Feat)
+		items, styles := fs.Lyr.Frame(fs.T, fs.Feat, &fs.LyrSt)
 		n := min(len(items), gpu.MaxTextItems)
 		for i := 0; i < n; i++ {
 			it := items[i]
 			p.TItemA[i] = [4]float32{it.AX, it.AY, it.AW, it.AH}
 			p.TItemB[i] = [4]float32{it.CX, it.CY, it.Scale, it.Alpha}
-			p.TItemC[i] = [4]float32{it.Fill, it.Pad}
+			p.TItemC[i] = [4]float32{it.Fill, it.Pad, float32(it.Style)}
 		}
 		f4 := func(c [4]float64) [4]float32 {
 			return [4]float32{float32(c[0]), float32(c[1]), float32(c[2]), float32(c[3])}
 		}
-		ng := min(len(st.Grad), gpu.MaxGrad)
-		for i := 0; i < ng; i++ {
-			g := st.Grad[i]
-			p.TextGrad[i] = [4]float32{float32(g.C[0]), float32(g.C[1]), float32(g.C[2]), float32(g.Off)}
-		}
 		chroma := int32(0)
-		if st.Chroma > 0.3 {
-			chroma = 1
+		for si := 0; si < min(len(styles), gpu.MaxTextStyles); si++ {
+			st := &styles[si]
+			ts := &p.TStyles[si]
+			ch := st.Chroma
+			if ch <= 0.3 { // same threshold as the CPU (lyrics.chromaOf)
+				ch = 0
+			} else {
+				chroma = 1
+			}
+			ng := min(len(st.Grad), gpu.MaxGrad)
+			for i := 0; i < ng; i++ {
+				g := st.Grad[i]
+				ts.Grad[i] = [4]float32{float32(g.C[0]), float32(g.C[1]), float32(g.C[2]), float32(g.Off)}
+			}
+			ts.GradN = [4]int32{int32(ng)}
+			ts.Info = [4]float32{float32(st.OutlineW), float32(st.GlowR), float32(st.GlowI), float32(ch)}
+			ts.Color, ts.Upcoming, ts.Outline, ts.GlowC = f4(st.Color), f4(st.Upcoming), f4(st.Outline), f4(st.GlowC)
+			ts.Shadow = [4]float32{float32(st.ShadowDX), float32(st.ShadowDY), float32(st.ShadowOp), float32(st.Blur)}
+			ts.ShadowC = f4(st.ShadowC)
 		}
-		p.TextInfo = [4]int32{int32(n), int32(fs.Lyr.Atlas.W), chroma, int32(ng)}
-		p.TextStyle = [4]float32{float32(st.OutlineW), float32(st.GlowR), float32(st.GlowI), float32(st.Chroma)}
-		p.TextColor, p.TextUpcoming, p.TextOutline, p.TextGlowC = f4(st.Color), f4(st.Upcoming), f4(st.Outline), f4(st.GlowC)
-		p.TextShadow = [4]float32{float32(st.ShadowDX), float32(st.ShadowDY), float32(st.ShadowOp), float32(st.Blur)}
-		p.TextShadowC = f4(st.ShadowC)
+		p.TextInfo = [4]int32{int32(n), int32(fs.Lyr.Atlas.W), chroma}
 	}
 }
