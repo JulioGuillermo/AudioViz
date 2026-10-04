@@ -33,7 +33,7 @@ type Result struct {
 	Model  string
 }
 
-var stepWeights = map[string]float64{"models": 0.1, "load": 0.1, "generate": 0.8}
+var stepWeights = map[string]float64{"models": 0.05, "load": 0.02, "refs": 0.04, "prompt": 0.04, "generate": 0.8, "decode": 0.05}
 
 // maxRef: reference images are scaled down to at most this many pixels (about 1024×1024): more
 // only costs memory and time
@@ -70,11 +70,13 @@ func Generate(ctx context.Context, req Request, report func(progress.Status), on
 
 	gen.Lock()
 	defer gen.Unlock()
-	t := progress.NewTracker([]progress.Step{
-		{ID: "models", Label: "Models"},
-		{ID: "load", Label: "Load the model"},
-		{ID: "generate", Label: "Generate the image"},
-	}, stepWeights, report)
+	steps0 := []progress.Step{{ID: "models", Label: "Models"}, {ID: "load", Label: "Prepare the model"}}
+	if len(req.Refs) > 0 {
+		steps0 = append(steps0, progress.Step{ID: "refs", Label: "Encode the reference images"})
+	}
+	steps0 = append(steps0, progress.Step{ID: "prompt", Label: "Read the prompt"},
+		progress.Step{ID: "generate", Label: "Generate the image"}, progress.Step{ID: "decode", Label: "Decode the image"})
+	t := progress.NewTracker(steps0, stepWeights, report)
 
 	// 1. Models (downloaded the first time)
 	need := f.Needed(len(req.Refs) > 0)
@@ -113,7 +115,7 @@ func Generate(ctx context.Context, req Request, report func(progress.Status), on
 	if eng.ctx != nil && eng.key == key {
 		t.End("load", "skipped", "Already in memory")
 	} else {
-		t.Start("load", "Loading "+f.Name+"…")
+		t.Start("load", f.Name+"…")
 		if err := eng.load(key, paths[f.Diffusion.Name], paths[f.LLM.Name], vision, paths[f.VAE.Name]); err != nil {
 			t.End("load", "error", err.Error())
 			return nil, err
@@ -125,12 +127,12 @@ func Generate(ctx context.Context, req Request, report func(progress.Status), on
 		return nil, err
 	}
 
-	// 3. Generate: sampling steps polled from the C callbacks, with a preview at each one
+	// 3. Generate: stable-diffusion.cpp goes through its phases (references, prompt, sampling,
+	// decoding) inside one call; they are polled from the C callbacks, with a preview at each step
 	refs := make([]rgb, len(req.Refs))
 	for i, r := range req.Refs {
 		refs[i] = toRGB(r)
 	}
-	t.Start("generate", fmt.Sprintf("%d×%d · %d steps · seed %d", w, h, steps, seed))
 	type res struct {
 		img *image.NRGBA
 		err error
@@ -140,23 +142,43 @@ func Generate(ctx context.Context, req Request, report func(progress.Status), on
 		img, err := eng.run(req.Prompt, w, h, steps, f.CFG, f.Euler, seed, refs)
 		done <- res{img, err}
 	}()
+	phaseStep := map[int]string{phRefs: "refs", phText: "prompt", phSample: "generate", phDecode: "decode"}
+	cur := ""
+	doneDetail := map[string]string{"refs": fmt.Sprintf("%d image(s)", len(req.Refs)), "prompt": "Done",
+		"generate": fmt.Sprintf("%d steps · %d×%d · seed %d", steps, w, h, seed), "decode": fmt.Sprintf("%d×%d", w, h)}
+	// advance ends the current step and starts the next one (the phases only go forward)
+	advance := func(id string) {
+		if id == cur {
+			return
+		}
+		if cur != "" {
+			t.End(cur, "done", doneDetail[cur])
+		}
+		cur = id
+		t.Start(id, "")
+	}
 	buf := make([]byte, w*h*4)
 	seq := 0
-	tick := time.NewTicker(250 * time.Millisecond)
+	tick := time.NewTicker(200 * time.Millisecond)
 	defer tick.Stop()
 	canceled := false
 	for {
 		select {
 		case r := <-done:
 			if canceled || ctx.Err() != nil {
-				t.End("generate", "error", "Canceled")
+				if cur != "" {
+					t.End(cur, "error", "Canceled")
+				}
 				return nil, context.Canceled
 			}
 			if r.err != nil {
-				t.End("generate", "error", r.err.Error())
+				if cur != "" {
+					t.End(cur, "error", r.err.Error())
+				}
 				return nil, r.err
 			}
-			t.End("generate", "done", fmt.Sprintf("%d×%d · %d steps · seed %d", w, h, steps, seed))
+			advance("decode")
+			t.End("decode", "done", doneDetail["decode"])
 			return &Result{Image: r.img, Seed: seed, Steps: steps, Device: eng.device, Model: f.ID}, nil
 		case <-ctx.Done():
 			if !canceled {
@@ -164,13 +186,29 @@ func Generate(ctx context.Context, req Request, report func(progress.Status), on
 				cancel()
 			}
 		case <-tick.C:
-			// The same callback reports the sampling steps, then the image decoding (in tiles)
-			if s, n := step(); n == steps {
-				t.Progress("generate", 0.95*float64(s)/float64(n), fmt.Sprintf("Step %d of %d", s, n))
-			} else if n > 0 {
-				t.Progress("generate", 0.95+0.05*float64(s)/float64(n), "Decoding the image")
+			st := getState()
+			id, ok := phaseStep[st.phase]
+			if !ok {
+				continue
 			}
-			if onPreview != nil {
+			advance(id)
+			switch {
+			case st.loading:
+				p := 0.0
+				if st.tensorsTotal > 0 {
+					p = float64(st.tensors) / float64(st.tensorsTotal)
+				}
+				t.Progress(id, 0, fmt.Sprintf("Loading the weights to the GPU · %.0f%%", p*100))
+			case id == "generate" && st.steps > 0:
+				t.Progress(id, float64(st.step)/float64(st.steps), fmt.Sprintf("Step %d of %d · %d×%d · seed %d", st.step, st.steps, w, h, seed))
+			case id == "generate":
+				t.Progress(id, 0, fmt.Sprintf("%d steps · %d×%d · seed %d", steps, w, h, seed))
+			case id == "decode" && st.steps > 0:
+				t.Progress(id, float64(st.step)/float64(st.steps), fmt.Sprintf("Part %d of %d", st.step, st.steps))
+			default:
+				t.Progress(id, 0, "")
+			}
+			if onPreview != nil && id == "generate" {
 				var img *image.NRGBA
 				if seq, img = preview(seq, buf); img != nil {
 					onPreview(img)

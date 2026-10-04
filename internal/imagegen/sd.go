@@ -15,13 +15,31 @@ package imagegen
 #include <stdlib.h>
 #include <string.h>
 #include <stable-diffusion.h>
+#include <ggml.h>
 #include <ggml-backend.h>
 
 // stable-diffusion.cpp reports through global callbacks: they only store the state, which Go
 // polls (no calls from C into Go). One generation runs at a time (see gen in sd.go).
-static volatile int av_step, av_steps;
-static void av_progress(int step, int steps, float t, void *d) { (void)t; (void)d; av_step = step; av_steps = steps; }
-static int av_get_step(int *steps) { *steps = av_steps; return av_step; }
+//
+// The phase comes from its log messages ([EDIT mode: encode the references] → "parse '…'" text
+// encoding → "generating image" sampling → "decoding latents"). The weights are loaded
+// lazily inside each phase ("loading N/M tensors from …"); the progress callback then counts
+// tensors instead of sampling steps or VAE tiles, so it is stored apart.
+enum { PH_NONE, PH_TEXT, PH_REFS, PH_SAMPLE, PH_DECODE, PH_DONE };
+static volatile int av_phase, av_loading, av_step, av_steps, av_lstep, av_lsteps;
+static void av_progress(int step, int steps, float t, void *d) {
+    (void)t; (void)d;
+    if (av_loading) { av_lstep = step; av_lsteps = steps; }
+    else { av_step = step; av_steps = steps; }
+}
+// Current phase; steps (sampling steps or VAE tiles) and, while loading weights, tensors loaded
+static int av_get_state(int *step, int *steps, int *loading, int *lstep, int *lsteps) {
+    *step = av_step; *steps = av_steps; *loading = av_loading; *lstep = av_lstep; *lsteps = av_lsteps;
+    return av_phase;
+}
+static void av_set_phase(int p) {
+    if (p != av_phase) { av_phase = p; av_step = 0; av_steps = 0; }
+}
 
 // Latest preview (a cheap projection of the latents at each step), copied under a spin lock
 static unsigned char *av_prev;
@@ -62,13 +80,23 @@ static int av_debug;
 static void av_log(enum sd_log_level_t l, const char *t, void *d) {
     (void)d;
     if (l >= SD_LOG_ERROR) { strncpy(av_err, t, sizeof av_err - 1); }
+    if (strstr(t, "tensors from ")) { av_loading = 1; av_lstep = 0; av_lsteps = 0; }
+    else if (strstr(t, "loading tensors completed")) av_loading = 0;
+    else if (strstr(t, "EDIT mode")) av_set_phase(PH_REFS);
+    else if (strstr(t, "parse '") && av_phase < PH_SAMPLE) av_set_phase(PH_TEXT);
+    else if (strstr(t, "generating image:")) av_set_phase(PH_SAMPLE);
+    else if (strstr(t, "decoding") && strstr(t, "latents")) av_set_phase(PH_DECODE);
+    else if (strstr(t, "decode_first_stage completed")) av_set_phase(PH_DONE);
     if (av_debug) fputs(t, stderr);
 }
 
 static const char *av_last_err(void) { return av_err; }
 
+static void av_ggml_log(enum ggml_log_level l, const char *t, void *d) { (void)l; (void)d; if (av_debug) fputs(t, stderr); }
+
 static void av_setup(int debug) {
     av_debug = debug;
+    ggml_log_set(av_ggml_log, NULL); // until stable-diffusion.cpp routes it to av_log
     sd_set_log_callback(av_log, NULL);
     sd_set_progress_callback(av_progress, NULL);
     sd_set_preview_callback(av_preview, PREVIEW_PROJ, 1, true, false, NULL);
@@ -83,7 +111,7 @@ static const char *av_device(void) {
     return "CPU";
 }
 
-static sd_ctx_t *av_open(const char *diff, const char *llm, const char *vision, const char *vae) {
+static sd_ctx_t *av_open(const char *diff, const char *llm, const char *vision, const char *vae, int fa) {
     sd_ctx_params_t p;
     sd_ctx_params_init(&p);
     p.diffusion_model_path = diff;
@@ -91,7 +119,7 @@ static sd_ctx_t *av_open(const char *diff, const char *llm, const char *vision, 
     p.llm_vision_path = vision;
     p.vae_path = vae;
     p.n_threads = sd_get_num_physical_cores();
-    p.diffusion_flash_attn = true;
+    p.diffusion_flash_attn = fa;
     av_err[0] = 0;
     return new_sd_ctx(&p);
 }
@@ -111,7 +139,7 @@ static int av_generate(sd_ctx_t *ctx, const char *prompt, int w, int h, int step
     g.sample_params.sample_steps = steps;
     g.sample_params.guidance.txt_cfg = cfg;
     if (euler) g.sample_params.sample_method = EULER_SAMPLE_METHOD;
-    av_step = 0; av_steps = steps; av_err[0] = 0;
+    av_phase = PH_NONE; av_loading = 0; av_step = 0; av_steps = 0; av_err[0] = 0;
     __atomic_store_n(&av_pseq, 0, __ATOMIC_RELEASE);
     sd_cancel_generation(ctx, SD_CANCEL_RESET);
     sd_image_t *imgs = NULL;
@@ -180,11 +208,19 @@ func (e *engine) load(key, diff, llm, vision, vae string) error {
 			C.free(unsafe.Pointer(p))
 		}
 	}()
-	ctx := C.av_open(cd, cl, cv, ca)
+	// Flash attention: much faster on most GPUs, but on Intel ggml-vulkan only has the scalar
+	// kernel (its cooperative-matrix version needs 16×16×16 tiles, Intel XMX uses 8×16×16) and
+	// the plain attention is ~13 % faster there
+	dev := C.GoString(C.av_device())
+	fa := !strings.Contains(dev, "Intel")
+	if v := os.Getenv("AUDIOVIZ_SD_FA"); v != "" {
+		fa = v == "1"
+	}
+	ctx := C.av_open(cd, cl, cv, ca, C.int(btoi(fa)))
 	if ctx == nil {
 		return lastErr("could not load the image model")
 	}
-	e.ctx, e.key, e.device = ctx, key, C.GoString(C.av_device())
+	e.ctx, e.key, e.device = ctx, key, dev
 	return nil
 }
 
@@ -208,11 +244,27 @@ func cancel() {
 	}
 }
 
-// step returns the sampling step reached and the total
-func step() (int, int) {
-	var n C.int
-	s := C.av_get_step(&n)
-	return int(s), int(n)
+// Phases of a generation, as stable-diffusion.cpp goes through them
+const (
+	phNone = iota
+	phText
+	phRefs
+	phSample
+	phDecode
+	phDone
+)
+
+// state: phase, its progress (sampling steps or VAE tiles) and, while loading weights, the tensors
+type state struct {
+	phase, step, steps    int
+	loading               bool
+	tensors, tensorsTotal int
+}
+
+func getState() state {
+	var s, n, l, ls, ln C.int
+	ph := C.av_get_state(&s, &n, &l, &ls, &ln)
+	return state{int(ph), int(s), int(n), l != 0, int(ls), int(ln)}
 }
 
 // preview copies the latest preview if it is newer than seq

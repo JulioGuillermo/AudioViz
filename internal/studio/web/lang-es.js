@@ -205,6 +205,10 @@ export const ES = {
   'Fast and photorealistic, good with text in the image. From a prompt only.': 'Rápido y fotorrealista, bueno con texto en la imagen. Solo a partir del prompt.',
   'Fast, generates or edits: give it reference images (up to 4) and describe the change.': 'Rápido, genera o edita: dale imágenes de referencia (hasta 4) y describe el cambio.',
   'The highest quality and best prompt following, also edits with references. Heavy: ~11 GB of models, and slow without a dedicated GPU.': 'La mayor calidad y el que mejor sigue el prompt; también edita con referencias. Pesado: ~11 GB de modelos y lento sin una GPU dedicada.',
+  'Prepare the model': 'Preparar el modelo',
+  'Encode the reference images': 'Codificar las imágenes de referencia',
+  'Read the prompt': 'Leer el prompt',
+  'Decode the image': 'Decodificar la imagen',
   'Build the lines': 'Formar las líneas', 'Source': 'Origen', 'The lyrics as text (.txt)': 'La letra en texto (.txt)',
   'Transcribe the audio (no text needed)': 'Transcribir el audio (sin texto)', 'Detect automatically': 'Detectar automáticamente',
   'The vocals are recognized and become the lyrics, split into lines at the pauses. Then correct the words with “Edit text”: the corrected text is aligned again in seconds.':

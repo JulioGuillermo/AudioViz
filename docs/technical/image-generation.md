@@ -33,10 +33,16 @@ stable-diffusion.cpp reports through **global** callbacks (`sd_set_progress_call
 `sd_set_preview_callback`, `sd_set_log_callback`). As in `whisper.go`, the C side only stores
 state and Go polls it; nothing calls from C into Go:
 
-- progress: `av_step` / `av_steps`, read with `av_get_step`. The same callback reports the
-  sampling steps and then the VAE decoding (in tiles, a different total): `Generate` tells them
-  apart by comparing the total with the requested steps (sampling = 0–95 % of the step,
-  decoding = the rest, detail "Decoding the image").
+- phase: taken from the log messages, since `generate_image` runs everything in one call:
+  `EDIT mode` → encoding the reference images (VAE), `parse '…'` → text encoding,
+  `generating image:` → sampling, `decoding … latents` → VAE decoding. The weights are loaded
+  **lazily** inside each phase (`loading N/M tensors from …` … `loading tensors completed`).
+- progress: the same callback reports the sampling steps, the VAE tiles **and** the tensors
+  being loaded, so the C side stores them apart depending on whether a load is in progress
+  (`av_get_state`). Each phase is a step in the UI (Prepare the model, Encode the reference
+  images, Read the prompt, Generate the image, Decode the image), with "Loading the weights to
+  the GPU · n %" while its weights load. (The first version took any total other than the
+  sampling steps for the decoding, so the tensor loading showed up as "Decoding the image".)
 - preview: `PREVIEW_PROJ` (a linear projection of the latents, 1/8 of the size, nearly free) at
   every step. The callback copies the frame into a buffer under a spin lock and bumps a
   sequence number; `av_preview_get` copies it out when the number changed.
@@ -49,8 +55,9 @@ The context (`sd_ctx_t`, the loaded weights, several GB) is kept in `eng` betwee
 replaced only when the model changes (the key includes whether the vision encoder is loaded).
 The studio frees it after 10 minutes without use (`unloadAfter`); `Unload()` frees it on demand.
 
-Context parameters: `diffusion_flash_attn = true`, threads = physical cores, everything else at
-the library defaults (weights on the GPU backend; mmap off). Generation parameters: prompt,
+Context parameters: threads = physical cores, flash attention in the diffusion model **except on
+Intel GPUs** (see below; `AUDIOVIZ_SD_FA=1` / `0` forces it on / off), everything else at the library defaults
+(weights on the GPU backend). Generation parameters: prompt,
 size, steps, `txt_cfg`, seed, Euler when the family asks for it (otherwise the model's default
 sampler and scheduler), and the reference images.
 
@@ -78,13 +85,33 @@ Reference images are decoded by the caller (PNG, JPEG, GIF, WebP), scaled down t
 
 Uploads for references reuse `POST /api/upload` (into `assets/`).
 
-## Measured (Intel Lunar Lake iGPU, Vulkan, 1024×576)
+## Performance
 
-| | Total | Sampling |
+Measured at 1024×576 (Z-Image: 2,336 tokens of 3,840 channels per step, 30 layers).
+
+| | Intel Lunar Lake iGPU (Vulkan) | Apple M4 base (Metal) |
 |---|---|---|
-| Z-Image Turbo, 8 steps | 106–112 s | ~12 s/step |
-| FLUX.2 klein, 4 steps, 1 reference | 110 s | ~26 s/step (the reference doubles the tokens) |
+| Z-Image Turbo, 8 steps | ~72 s (8.3 s/step) | ~125 s (15 s/step, with flash attention) |
+| FLUX.2 klein, 4 steps, 1 reference | ~52 s (11.7 s/step) | — |
 
-Model loading takes 2–3 s from the page cache. The text encoding takes ~2.5 s.
+Where a Z-Image step goes on the Intel iGPU (`GGML_VK_PERF_LOGGER=1`, 9 s of GPU time):
+
+| | Time | |
+|---|---|---|
+| Weight matmuls (Q4_K) | 3.7 s | 8–9 TFLOPS: the XMX units are used (cooperative matrix) |
+| Attention, unfused | 2.1 s | QKᵀ, scale, softmax, ×V in f32 over a 30 × 2336² matrix (≈ 650 MB) per layer |
+| Element-wise ops | 2.8 s | scale, norms, adds, copies: memory-bound (LPDDR5x) |
+
+**Flash attention on Intel:** ggml-vulkan's fast flash-attention kernel (`FA_COOPMAT1`) needs
+16×16×16 cooperative-matrix tiles; Intel Xe2 exposes 8×16×16, so it falls back to the scalar
+kernel (≈ 0.5 TFLOPS): 5.1 s per step against 2.1 s for the unfused attention. Hence flash
+attention is off on Intel (Z-Image 13.8 → 8.3 s/step, klein 26 → 11.7 s/step). On Metal and on
+NVIDIA/AMD it is on. Q8_0 weights run at the same speed as Q4_K (compute-bound, not
+dequantization-bound). Turning cooperative matrix off makes it 50 % slower.
+
+PyTorch-based tools (ComfyUI) on Intel use oneDNN's fused bf16 attention (SDPA) on XMX, which
+ggml-vulkan cannot match on this GPU today; on NVIDIA GPUs ggml-vulkan has the coopmat2 path.
+
+Model loading takes 2–3 s from the page cache. The text encoding takes ~2 s.
 Whisper recognition with the shared ggml gives the same result as before (524 words on the
 demo song, 377/380 aligned).
