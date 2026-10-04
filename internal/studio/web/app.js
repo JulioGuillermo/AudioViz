@@ -4,6 +4,7 @@ import { api, clone, fmtTime, parseTime, b64u8, basename, debounce } from './uti
 import { Form, Select, Edit } from './fields.js';
 import { Icon } from './icons.js';
 import { Timeline, segSummary } from './timeline.js';
+import { ImagesDialog } from './images.js';
 import { FilePicker, NewProject, ExportDialog, GenLyricsDialog, LyricsTextDialog, LYRIC_LANGS, STEP_LABEL, ProjectsDialog, PackageDialog, ExportsDialog, WorkspaceGrid, uploadPackage } from './dialogs.js';
 import { createStore, useStore, useThrottledStore } from './store.js';
 import { t, setLang, langStore, LANGS } from './i18n.js';
@@ -247,7 +248,7 @@ function TextsInspector({ proj, sel, setSel, update, time, meta, ctx }) {
   </div>`;
 }
 
-function TrackInspector({ proj, track, segIdx, time, meta, update, setSel, ctx, onGenLyrics, onEditText, hasLines }) {
+function TrackInspector({ proj, track, segIdx, time, meta, update, setSel, ctx, onGenLyrics, onEditText, hasLines, onImages }) {
   const def = trackById[track];
   const segs = proj.tracks[track];
   const i = Math.min(segIdx, segs.length - 1);
@@ -270,6 +271,9 @@ function TrackInspector({ proj, track, segIdx, time, meta, update, setSel, ctx, 
     <div class="insp-b">
       <${SegHeader} segs=${segs} i=${i} set=${setSeg} meta=${meta} track=${track} />
       <${Form} fields=${def.fields} value=${seg.cfg} onChange=${(cfg) => setSeg({ ...seg, cfg })} ctx=${ctx} isFirst=${i === 0} />
+      ${track === 'background' && html`<div class="section"><div class="sh">${t('Generate an image')}</div><div class="sb">
+        <p class="faint" style="margin:2px 0 8px;font-size:12px">${t('Create a background from a description, or edit an image, with AI on your GPU.')}</p>
+        <button class="btn" onClick=${onImages}><${Icon} name="wand-sparkles" size=${15} /> ${t('Generate an image…')}</button></div></div>`}
       ${track === 'lyrics' && html`<div class="section"><div class="sh">${t('Generate lyrics')}</div><div class="sb">
         <p class="faint" style="margin:2px 0 8px;font-size:12px">${t('Creates an .lrc with the timing of every word, from the lyrics as text or transcribing the song.')}</p>
         <div class="row"><button class="btn" onClick=${onGenLyrics}><${Icon} name="wand-sparkles" size=${15} /> ${t('Generate synced lyrics…')}</button>
@@ -647,8 +651,11 @@ function App() {
     openProject: async (p) => { try { await api('POST', '/api/project/open', { path: p }); await loadAll(); } catch (e) { showErr(e); } },
     importPackage: async (f) => { try { await uploadPackage(f); await loadAll(); } catch (e) { showErr(e); } },
     setAudio: (path) => update((p) => { p.audio.path = path; }),
-    // The background goes to the segment active at the cursor (or the first one if still empty)
-    setBackground: (path) => update((p) => {
+    // The background goes to the segment active at the cursor (or the first one if still empty).
+    // keepSize: with the output size on automatic (= the background's), fix the current size so
+    // a smaller image (e.g. a generated one) doesn't shrink the video
+    setBackground: (path, keepSize) => update((p) => {
+      if (keepSize && meta && (!p.output.width || !p.output.height)) { p.output.width = meta.width; p.output.height = meta.height; }
       const segs = p.tracks.background;
       let i = 0;
       if (segs[0].cfg.path) segs.forEach((g, k) => { if (g.at <= timeStore.get()) i = k; });
@@ -847,6 +854,10 @@ function App() {
         onStart=${(o) => { if (o.lang !== 'auto') setLyricLang(o.lang); genLyrics(o); }} />`}
     ${dlg && dlg.type === 'lyrtext' && proj && html`<${LyricsTextDialog} lines=${lyr.lines} lang=${lastGen().lang} onClose=${() => setDlg(null)}
         onAlign=${(text, lang) => { genLyrics({ text, lang, fast: lastGen().fast }); setDlg({ type: 'genlyrics' }); }} />`}
+    ${dlg && dlg.type === 'images' && proj && html`<${ImagesDialog} meta=${meta} job=${job} pickFile=${ctx.pickFile}
+        onClose=${() => setDlg(null)} onCancel=${() => api('POST', '/api/job/cancel')}
+        onStart=${(o) => api('POST', '/api/images/generate', o).then(setJob).catch(showErr)}
+        onUseBackground=${(p) => { ctx.setBackground(p, true); setSel({ kind: 'track', track: 'background', seg: 0 }); setDlg(null); }} />`}
     ${pick && html`<${FilePicker} kind=${pick.kind} start=${pick.start} hasProject=${!!proj}
         onPick=${pick.cb} onClose=${() => setPick(null)} />`}
     ${toast && html`<div class="toast" onClick=${() => setToast('')}><${Icon} name="triangle-alert" size=${16} />${toast}</div>`}`;
@@ -876,7 +887,8 @@ function App() {
       onEditText=${() => setDlg({ type: 'lyrtext' })} />`;
   else inspector = html`<${TrackInspector} proj=${proj} track=${sel.track} segIdx=${sel.seg} time=${time} meta=${meta}
       update=${update} setSel=${setSel} ctx=${ctx} onGenLyrics=${() => setDlg({ type: 'genlyrics' })}
-      onEditText=${() => setDlg({ type: 'lyrtext' })} hasLines=${lyr.lines.length > 0} />`;
+      onEditText=${() => setDlg({ type: 'lyrtext' })} hasLines=${lyr.lines.length > 0}
+      onImages=${() => setDlg({ type: 'images' })} />`;
 
   return html`<div class="app" style=${{ '--tl-h': tlH + 'px', '--left-w': layout.left + 'px', '--right-w': layout.right + 'px' }}>
     <div class="split-v left" onMouseDown=${(e) => colDrag(e, 'left')} onDblClick=${() => setLayout('left', null)}
@@ -889,7 +901,7 @@ function App() {
       <span class="projname" title=${meta.path}>${meta.name}</span>
       <span class=${'save' + (save.kind === 'error' ? ' err' : '')}>${saveText && html`<${Icon} name=${save.kind === 'error' ? 'triangle-alert' : save.kind === 'saving' ? 'loader-circle' : 'check'} size=${13} />`}${saveText}</span>
       <span class="spacer"></span>
-      ${job && html`<div class="jobbar" title=${job.message} onClick=${() => setDlg({ type: job.kind === 'lyrics' ? 'genlyrics' : 'export' })}>
+      ${job && html`<div class="jobbar" title=${job.message} onClick=${() => setDlg({ type: { lyrics: 'genlyrics', image: 'images' }[job.kind] || 'export' })}>
         <${Icon} name=${job.status === 'running' ? (job.kind === 'export' ? 'film' : 'wand-sparkles') : job.status === 'done' ? 'check' : 'triangle-alert'} size=${14}
           cls=${{ done: 'st-ok', error: 'st-err', canceled: 'st-warn' }[job.status] || 'muted'} />
         <div class="progress"><i style=${{ width: (job.progress * 100).toFixed(1) + '%' }}></i></div>
@@ -905,6 +917,7 @@ function App() {
       <button class="btn ghost" onClick=${() => setDlg({ type: 'projects' })} title=${t('Your projects: open, new, import')}><${Icon} name="folder-open" size=${15} /> ${t('Projects')}</button>
       <button class="btn ghost" onClick=${() => setDlg({ type: 'package' })} title=${t('Export the project as a .zip, collect its files')}><${Icon} name="layers" size=${15} /> ${t('Package')}</button>
       <button class="btn ghost" onClick=${() => setDlg({ type: 'exports' })} title=${t('Exported videos: play, download')}><${Icon} name="film" size=${15} /> ${t('Exports')}</button>
+      <button class="btn ghost" onClick=${() => setDlg({ type: 'images' })} title=${t('Generate images with AI: backgrounds, edits')}><${Icon} name="image" size=${15} /> ${t('Images')}</button>
       <${LangSelect} />
       <button class="btn primary" disabled=${jobRunning && job.kind === 'export'} onClick=${() => setDlg({ type: 'export' })}><${Icon} name="film" size=${15} /> ${t('Export')}</button>
     </div>

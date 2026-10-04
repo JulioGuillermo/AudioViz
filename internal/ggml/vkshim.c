@@ -1,8 +1,8 @@
-// Vulkan bridge for ggml (whisper.cpp): the Vulkan backend only imports these 4 functions
+// Vulkan bridge for ggml (whisper.cpp, stable-diffusion.cpp): the Vulkan backend only imports these 4 functions
 // (it gets the rest via vkGetInstanceProcAddr). Here they are resolved by loading the Vulkan
 // loader at runtime; if it is missing, vkCreateInstance fails with an error and ggml falls back
 // to the CPU. This way the binary does not depend on libvulkan to start.
-// On macOS whisper.cpp uses Metal instead, so this file is empty there.
+// On macOS ggml uses Metal instead, so this file is empty there.
 #if !defined(__APPLE__)
 #define VK_NO_PROTOTYPES
 #include <stddef.h>

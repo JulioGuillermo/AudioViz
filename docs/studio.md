@@ -60,7 +60,7 @@ bass, aberration, glitch on beats, particles). Change whatever you like from eac
 
 | Area | What's there |
 |---|---|
-| Top | Project name, save status, job progress (export / generate lyrics), **New**, **Open**, **Export** |
+| Top | Project name, save status, job progress (export / generate lyrics / generate image), **Projects**, **Package**, **Exports**, **Images**, **Export** |
 | Left | Track list: Audio, Output, Background, each background effect, Visualizer, Particles and Lyrics. Struck through if they are off at the current instant |
 | Center | **Preview** and transport (play, frame by frame, preview quality) |
 | Right | **Inspector**: all the parameters of the selected segment |
@@ -105,6 +105,12 @@ move around mid-phrase.
 ## Markers
 The **⚑ Marker** button or the **M** key at the cursor. Click a marker to jump to it, double-click to
 rename it, right-click to delete it. They serve as references for placing segments.
+
+## Images
+**Images** (top bar, or *Generate an image…* in the background inspector) generates images from a
+prompt, or edits images given as references, on the GPU: Z-Image Turbo, FLUX.2 klein or Qwen
+Image. The image forms live in the dialog; the results are kept in the project's `images/` folder
+and can be used as the background with one click. See [images.md](images.md).
 
 ## Lyrics
 - Import a `.lrc` / `.srt` in the **Lyrics** track → *File*.

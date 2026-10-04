@@ -2,6 +2,7 @@ package lyricsgen
 
 /*
 // Per target: static libraries from scripts/build-ml.sh (Vulkan backend on Linux/Windows, Metal on macOS)
+#cgo CFLAGS: -DGGML_MAX_NAME=160
 #cgo linux CFLAGS: -I${SRCDIR}/../../third_party/build/include
 #cgo linux LDFLAGS: ${SRCDIR}/../../third_party/build/lib/libwhisper.a ${SRCDIR}/../../third_party/build/lib/libggml.a ${SRCDIR}/../../third_party/build/lib/libggml-vulkan.a ${SRCDIR}/../../third_party/build/lib/libggml-cpu.a ${SRCDIR}/../../third_party/build/lib/libggml-base.a -lm -lpthread -ldl
 #cgo windows CFLAGS: -I${SRCDIR}/../../third_party/build-windows-amd64/include -I${SRCDIR}/../../third_party/vulkan-headers
@@ -80,6 +81,8 @@ import (
 	"sync"
 	"time"
 	"unsafe"
+
+	_ "audioviz/internal/ggml" // Vulkan loader bridge
 )
 
 // Word is a recognized word with its timestamp (s)

@@ -189,4 +189,4 @@ function Field({ f, v, set, ctx, isFirst }) {
   return null;
 }
 
-export const FILE_ICON = { audio: 'file-audio', bg: 'image', lyrics: 'file-text', txt: 'file-text', font: 'type', project: 'file', dir: 'folder' };
+export const FILE_ICON = { audio: 'file-audio', bg: 'image', image: 'image', lyrics: 'file-text', txt: 'file-text', font: 'type', project: 'file', dir: 'folder' };

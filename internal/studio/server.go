@@ -30,6 +30,7 @@ import (
 	"audioviz/internal/gpu"
 	"audioviz/internal/lyrics"
 	"audioviz/internal/lyricsgen"
+	"audioviz/internal/progress"
 	"audioviz/internal/video"
 )
 
@@ -114,6 +115,10 @@ func Run(opt Options, ready func(url string)) error {
 	mux.HandleFunc("POST /api/export", s.hExport)
 	mux.HandleFunc("POST /api/lyrics/generate", s.hGenLyrics)
 	mux.HandleFunc("POST /api/lyrics/resync", s.hResync)
+	mux.HandleFunc("GET /api/images", s.hImages)
+	mux.HandleFunc("POST /api/images/generate", s.hGenImage)
+	mux.HandleFunc("GET /api/images/preview", s.hImagePreview)
+	mux.HandleFunc("DELETE /api/images", s.hDeleteImage)
 	mux.HandleFunc("POST /api/job/cancel", s.hCancel)
 	mux.HandleFunc("GET /api/events", s.hub.serve)
 
@@ -540,6 +545,7 @@ func (s *Server) hFrame(w http.ResponseWriter, r *http.Request) {
 
 var kindExts = map[string][]string{
 	"audio":   {".flac", ".wav", ".mp3", ".ogg"},
+	"image":   {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"},
 	"bg":      {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"},
 	"lyrics":  {".lrc", ".srt"},
 	"txt":     {".txt"},
@@ -693,8 +699,9 @@ type job struct {
 	Output   string    `json:"output"`
 	Log      []string  `json:"log"`
 	Started  time.Time `json:"started"`
-	Gen      *lyricsgen.Status
+	Gen      *progress.Status
 	Export   *exportStatus
+	Previews int // image generation: previews received so far
 	cancel   context.CancelFunc
 }
 

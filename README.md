@@ -21,6 +21,8 @@ the music. Everything runs from a **single binary with nothing to install**, ren
   colors and audio reaction — and **generated from the plain-text lyrics** inside the binary
   (vocal separation with Demucs + Whisper recognition on the GPU + alignment to your text), or
   **transcribed from the song** when there is no text, then corrected as text and re-aligned.
+- **Images with AI**: backgrounds generated from a prompt, or existing images edited and combined
+  with reference images (Z-Image Turbo, FLUX.2 klein, Qwen Image), on the GPU inside the binary.
 - **Texts**: titles and credits placed by hand, with the same styles as the lyrics.
 - **Output**: H.264 (x264) with lossless FLAC audio in an MP4.
 
@@ -32,6 +34,7 @@ the music. Everything runs from a **single binary with nothing to install**, ren
 ./audioviz studio                # opens the studio in the browser (New → creates a project)
 ./audioviz studio my-video/      # opens an existing project folder
 ./audioviz project.yaml          # renders a project from the command line
+./audioviz image -p "..." -o bg.png   # generates an image (see docs/images.md)
 ./audioviz --init project.yaml   # writes a project template with every option
 ```
 
@@ -58,8 +61,8 @@ SPIR-V headers and `glslc`; other systems in [docs/build.md](docs/build.md). The
 demucs.cpp once, as static libraries that end up inside the binary; on Linux the result depends
 only on the C library. Details in [docs/build.md](docs/build.md).
 
-The AI models for lyrics generation (Whisper large-v3-turbo, ~574 MB; htdemucs, ~84 MB) are
-downloaded on first use to the user cache folder.
+The AI models (lyrics: Whisper large-v3-turbo ~574 MB and htdemucs ~84 MB; images: 5–11 GB per
+model) are downloaded on first use to the user cache folder.
 
 ## Platforms
 
