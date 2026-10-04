@@ -189,6 +189,9 @@ in Go, encoding is x264 and muxing is our own MP4 writer (see [media-io.md](medi
   changes the size of `struct ggml_tensor`, so the superproject sets it for everything, and the
   cgo files (`whisper.go`, `sd.go`) define it too. Without it whisper.cpp would read tensors with
   the wrong layout.
+- **Patches.** `scripts/ml/patches/*.patch` are applied to the ggml checkout (after resetting
+  it) before building: `ggml-vulkan-intel-fa.patch` adds flash attention for GPUs with only
+  8×16×16 cooperative matrices (Intel), see [image-generation.md](image-generation.md).
 - WebP/WebM support of stable-diffusion.cpp is off (`SD_WEBP=OFF SD_WEBM=OFF`): Go writes the PNGs.
   Its other dependencies (zip, oniguruma, utf8proc) are object libraries inside `libstable-diffusion.a`.
 - CMake:

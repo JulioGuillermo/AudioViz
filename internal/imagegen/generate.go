@@ -64,6 +64,9 @@ type Result struct {
 
 var stepWeights = map[string]float64{"models": 0.05, "load": 0.02, "refs": 0.04, "prompt": 0.04, "generate": 0.8, "decode": 0.05}
 
+// vaeTileAbove: from this many pixels on, the VAE works in tiles
+const vaeTileAbove = 1536 * 1024
+
 // maxRef: reference images are scaled down to at most this many pixels (about 1024×1024): more
 // only costs memory and time
 const maxRef = 1024 * 1024
@@ -186,7 +189,7 @@ func Generate(ctx context.Context, req Request, report func(progress.Status), on
 		init = &r
 	}
 	sp := sampling{negative: req.Negative, w: w, h: h, steps: steps, cfg: cfg, sampler: req.Sampler, scheduler: req.Scheduler,
-		euler: f.Euler, seed: seed, strength: strength}
+		euler: f.Euler, seed: seed, strength: strength, tile: w*h > vaeTileAbove}
 	type res struct {
 		img *image.NRGBA
 		err error

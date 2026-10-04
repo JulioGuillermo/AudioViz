@@ -128,7 +128,7 @@ static sd_ctx_t *av_open(const char *diff, const char *llm, const char *vision, 
 // the model's default (or Euler if euler); init: optional starting image (img2img) with strength
 static int av_generate(sd_ctx_t *ctx, const char *prompt, const char *negative, int w, int h, int steps,
                        float cfg, const char *sampler, const char *scheduler, int euler, long long seed,
-                       sd_image_t *refs, int nrefs, sd_image_t *init, float strength, sd_image_t *out) {
+                       sd_image_t *refs, int nrefs, sd_image_t *init, float strength, int tile, sd_image_t *out) {
     sd_img_gen_params_t g;
     sd_img_gen_params_init(&g);
     g.prompt = prompt;
@@ -145,6 +145,9 @@ static int av_generate(sd_ctx_t *ctx, const char *prompt, const char *negative, 
     if (sampler) g.sample_params.sample_method = str_to_sample_method(sampler);
     if (scheduler) g.sample_params.scheduler = str_to_scheduler(scheduler);
     if (init) { g.init_image = *init; g.strength = strength; }
+    // Large images: the VAE decodes (and encodes) in tiles; its attention over every latent
+    // pixel otherwise grows with the square of the size (217 s instead of 28 s at 1920x1088)
+    g.vae_tiling_params.enabled = tile;
     av_phase = PH_NONE; av_loading = 0; av_step = 0; av_steps = 0; av_err[0] = 0;
     __atomic_store_n(&av_pseq, 0, __ATOMIC_RELEASE);
     sd_cancel_generation(ctx, SD_CANCEL_RESET);
@@ -315,6 +318,7 @@ type sampling struct {
 	euler              bool   // the default is Euler (the family asks for it)
 	seed               int64
 	strength           float32 // with an initial image
+	tile               bool    // VAE in tiles (large images)
 }
 
 func (sp sampling) cstr(s string) *C.char {
@@ -352,7 +356,7 @@ func (e *engine) run(prompt string, sp sampling, refs []rgb, init *rgb) (*image.
 	}
 	var out C.sd_image_t
 	if C.av_generate(e.ctx, cp, cn, C.int(sp.w), C.int(sp.h), C.int(sp.steps), C.float(sp.cfg), csa, csc,
-		C.int(btoi(sp.euler)), C.longlong(sp.seed), cr, C.int(len(refs)), ci, C.float(sp.strength), &out) == 0 {
+		C.int(btoi(sp.euler)), C.longlong(sp.seed), cr, C.int(len(refs)), ci, C.float(sp.strength), C.int(btoi(sp.tile)), &out) == 0 {
 		return nil, lastErr("the image could not be generated")
 	}
 	defer C.free(unsafe.Pointer(out.data))

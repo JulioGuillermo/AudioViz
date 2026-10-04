@@ -117,8 +117,27 @@ Where a Z-Image step goes on the Intel iGPU (`GGML_VK_PERF_LOGGER=1`, 9 s of GPU
 | Element-wise ops | 2.8 s | scale, norms, adds, copies: memory-bound (LPDDR5x) |
 
 **Flash attention on Intel:** ggml-vulkan's fast flash-attention kernel (`FA_COOPMAT1`) needs
-16×16×16 cooperative-matrix tiles; Intel Xe2 exposes 8×16×16, so it falls back to the scalar
-kernel (≈ 0.5 TFLOPS): 5.1 s per step against 2.1 s for the unfused attention. Hence flash
+16×16×16 cooperative-matrix tiles; Intel Xe exposes only 8×16×16 (checked with
+`vkGetPhysicalDeviceCooperativeMatrixPropertiesKHR` on Lunar Lake: M8 N16 K16 for f16/bf16, K32
+for int8), so upstream falls back to the scalar kernel (≈ 0.5 TFLOPS).
+`scripts/ml/patches/ggml-vulkan-intel-fa.patch` adds an 8-row variant of that kernel, used
+only on devices without 16×16×16 (f16 K/V): each 16×16 tile of K·Qᵀ and P·V is computed as two
+8×16 halves, everything else (shared memory, softmax) unchanged; Intel uses 16-wide subgroups
+for it, and only the last, partial KV block is staged through shared memory. It passes all
+5,299 `test-backend-ops` FLASH_ATTN_EXT cases against the CPU; a Z-Image image made with it and
+one made with the plain attention differ by 0.2/255 on average.
+
+| Lunar Lake iGPU | Scalar FA (upstream) | No FA | 8-row FA (patch) |
+|---|---|---|---|
+| FA call, 2304 tokens × 30 heads | 157 ms | — | 36 ms (2.2 TFLOPS) |
+| Z-Image 1024×576 | 13.8 s/step | ~9 s/step | ~9.8 s/step |
+| klein 1344×768 + 1 reference | ~95 s/step | stalls (6 GB per layer) | ~36 s/step |
+| Z-Image 1920×1088 | doesn't finish | doesn't fit | ~37 s/step |
+
+Large images also need the VAE in tiles: its attention runs over every latent pixel (32,640 at
+1920×1088): 217 s to decode without tiles, 28 s with them (`vaeTileAbove`, 1.5 MP).
+
+Before the patch: Hence flash
 attention *off* is faster on Intel for small images (Z-Image 13.8 → 8.3 s/step, klein 26 →
 11.7 s/step), but the plain attention materializes heads × tokens² × 4 bytes: 2.4 GB at 5,000
 tokens, 6 GB at 8,000 (1344×768 plus one reference), where a step takes minutes. So it is a

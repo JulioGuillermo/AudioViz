@@ -22,6 +22,11 @@ if [ ! -f "$OUT/lib/libwhisper.a" ] || [ ! -f "$OUT/lib/libstable-diffusion.a" ]
   fi
   git -C "$TP/stable-diffusion.cpp" checkout -q "$SD_REV"
   git -C "$TP/stable-diffusion.cpp" submodule update --init --depth 1 ggml
+  # Our patches to ggml (scripts/ml/patches), applied to a clean checkout
+  git -C "$TP/stable-diffusion.cpp/ggml" checkout -q -- .
+  for p in "$ROOT"/scripts/ml/patches/*.patch; do
+    [ -f "$p" ] && git -C "$TP/stable-diffusion.cpp/ggml" apply "$p"
+  done
   B="$OBJDIR/ml"
   args=(-DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_OPENMP=OFF -DGGML_NATIVE=OFF
     -DSD_SRC="$TP/stable-diffusion.cpp" -DWHISPER_SRC="$TP/whisper.cpp"
