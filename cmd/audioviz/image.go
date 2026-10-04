@@ -36,7 +36,7 @@ func runImage(args []string) {
 	cfg := fs.Float64("cfg", 0, "Guidance scale (0 = the model's default)")
 	sampler := fs.String("sampler", "", "Sampler: "+strings.Join(imagegen.Samplers, ", "))
 	scheduler := fs.String("scheduler", "", "Scheduler: "+strings.Join(imagegen.Schedulers, ", "))
-	fa := fs.String("fa", "", "Flash attention: on, off (default: automatic for the GPU)")
+	fa := fs.String("fa", "on", "Flash attention: on, off (off is faster on Intel GPUs for small images, but needs much more memory)")
 	initPath := fs.String("init", "", "Starting image (img2img): keeps its composition")
 	strength := fs.Float64("strength", 0.75, "With --init: how much it changes (denoise 0..1)")
 	var refs multiFlag

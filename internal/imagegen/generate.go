@@ -29,7 +29,7 @@ type Request struct {
 	CFG       float32     // guidance scale
 	Sampler   string      // stable-diffusion.cpp names: euler, euler_a, dpm++2m, …
 	Scheduler string      // discrete, karras, simple, …
-	FlashAttn string      // "on", "off", "" = automatic (DefaultFlashAttn)
+	FlashAttn string      // "on", "off", "" = DefaultFlashAttn (on)
 	Init      image.Image // starting image (img2img): the result keeps its composition
 	Strength  float32     // with Init: how much it changes (denoise, 0..1; 0 = 0.75)
 }

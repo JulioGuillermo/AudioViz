@@ -135,7 +135,7 @@ func (s *Server) hImages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"models": imagegen.Models(), "images": listGenImages(cfg.Dir),
 		"assets": projectImages(s), "dir": filepath.Join(cfg.Dir, imagesDir),
 		"samplers": imagegen.Samplers, "schedulers": imagegen.Schedulers,
-		"device": imagegen.Device(), "flashAttn": imagegen.DefaultFlashAttn()})
+		"device": imagegen.Device(), "intel": imagegen.IntelGPU(), "flashAttn": imagegen.DefaultFlashAttn()})
 }
 
 var slugRe = regexp.MustCompile(`[^a-z0-9]+`)
@@ -167,7 +167,7 @@ func (s *Server) hGenImage(w http.ResponseWriter, r *http.Request) {
 		CFG       float32 `json:"cfg"`
 		Sampler   string  `json:"sampler"`
 		Scheduler string  `json:"scheduler"`
-		FlashAttn string  `json:"flashAttn"` // on, off, "" = automatic
+		FlashAttn string  `json:"flashAttn"` // on, off ("" = on)
 		Init      string  `json:"init"`      // starting image (img2img)
 		Strength  float32 `json:"strength"`
 	}

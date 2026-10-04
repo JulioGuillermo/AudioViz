@@ -205,16 +205,19 @@ func Device() string {
 	return C.GoString(C.av_device())
 }
 
-// DefaultFlashAttn: whether flash attention is used when not chosen. It is much faster on most
-// GPUs, but on Intel ggml-vulkan only has the scalar kernel (its cooperative-matrix version needs
-// 16×16×16 tiles, Intel XMX uses 8×16×16) and the plain attention is ~1.6× faster there.
-// AUDIOVIZ_SD_FA=1 / 0 overrides it.
-func DefaultFlashAttn() bool {
-	if v := os.Getenv("AUDIOVIZ_SD_FA"); v != "" {
-		return v == "1"
-	}
-	return !strings.Contains(Device(), "Intel")
-}
+// DefaultFlashAttn: flash attention when the request doesn't say (on: its memory stays small
+// at any size). On Intel GPUs ggml-vulkan only has its scalar kernel (the cooperative-matrix
+// version needs 16×16×16 tiles, Intel XMX uses 8×16×16), so turning it off is ~1.6× faster for
+// small images, but the plain attention needs heads × tokens² × 4 bytes (2.4 GB at 5000 tokens,
+// 6 GB at 8000). It is the user's choice. AUDIOVIZ_SD_FA=0 changes the default.
+func DefaultFlashAttn() bool { return os.Getenv("AUDIOVIZ_SD_FA") != "0" }
+
+// IntelGPU: the device is an Intel GPU (where large images are slow: see DefaultFlashAttn)
+func IntelGPU() bool { return strings.Contains(Device(), "Intel") }
+
+// Tokens: how many the model processes for an image of w×h with n reference images (the
+// references are resized to the image size; 16×16 pixels per token)
+func Tokens(w, h, refs int) int { return (round32(w) / 16) * (round32(h) / 16) * (1 + refs) }
 
 // load opens the models (if not already loaded); paths: diffusion, text encoder, vision (or ""), VAE
 func (e *engine) load(key, diff, llm, vision, vae string, fa bool) error {

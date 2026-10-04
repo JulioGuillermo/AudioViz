@@ -213,7 +213,6 @@ export const ES = {
   '{n} changed': '{n} cambiados',
   'Fused attention: faster on most GPUs, slower on Intel ones': 'Atención fusionada: más rápida en la mayoría de GPUs, más lenta en las Intel',
   'Flash attention': 'Flash attention',
-  'Auto ({v})': 'Auto ({v})',
   'On': 'Activada',
   'Off': 'Desactivada',
   'How strictly the image follows the prompt. The fast models (Turbo, klein) are made for 1.': 'Cuánto se ciñe la imagen al prompt. Los modelos rápidos (Turbo, klein) están hechos para 1.',
@@ -231,6 +230,9 @@ export const ES = {
   'Reset to the defaults': 'Volver a los valores por defecto',
   '{n} steps': '{n} pasos',
   'from {f} ({s})': 'desde {f} ({s})',
+  'Large for this GPU ({n} tokens): each step can take more than a minute. A smaller size or fewer references is much faster.': 'Grande para esta GPU ({n} tokens): cada paso puede tardar más de un minuto. Un tamaño menor o menos referencias es mucho más rápido.',
+  'Fused attention: little memory at any size. On Intel GPUs turning it off is ~1.6× faster for small images, but the memory grows with the square of the size.': 'Atención fusionada: poca memoria con cualquier tamaño. En GPUs Intel desactivarla es ~1,6× más rápido con imágenes pequeñas, pero la memoria crece con el cuadrado del tamaño.',
+  'Without flash attention this size needs several GB per step and can stall: turn it on or use a smaller size.': 'Sin flash attention este tamaño necesita varios GB por paso y puede atascarse: actívala o usa un tamaño menor.',
   'Build the lines': 'Formar las líneas', 'Source': 'Origen', 'The lyrics as text (.txt)': 'La letra en texto (.txt)',
   'Transcribe the audio (no text needed)': 'Transcribir el audio (sin texto)', 'Detect automatically': 'Detectar automáticamente',
   'The vocals are recognized and become the lyrics, split into lines at the pauses. Then correct the words with “Edit text”: the corrected text is aligned again in seconds.':

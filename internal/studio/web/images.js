@@ -26,8 +26,13 @@ function imageSize(aspect, quality, vw, vh) {
 }
 
 // Advanced settings: empty = the model's default
-const ADV0 = { fa: '', cfg: '', sampler: '', scheduler: '', negative: '', init: '', strength: 0.75 };
-const loadAdv = () => { try { return { ...ADV0, ...JSON.parse(localStorage.getItem('audioviz.img.adv') || '{}'), init: '' }; } catch (e) { return { ...ADV0 }; } };
+const ADV0 = { fa: 'on', cfg: '', sampler: '', scheduler: '', negative: '', init: '', strength: 0.75 };
+const loadAdv = () => {
+  let a = { ...ADV0 };
+  try { a = { ...ADV0, ...JSON.parse(localStorage.getItem('audioviz.img.adv') || '{}'), init: '' }; } catch (e) { /* ignore */ }
+  if (a.fa !== 'off') a.fa = 'on';
+  return a;
+};
 const advChanged = (a) => Object.keys(ADV0).filter((k) => k !== 'strength' && a[k] !== ADV0[k]).length;
 
 const remember = (k, v) => { try { localStorage.setItem('audioviz.img.' + k, v); } catch (e) { /* ignore */ } };
@@ -61,6 +66,11 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onUseBackg
   const fam = data && data.models.find((m) => m.id === model);
   const maxRefs = fam ? fam.refs : 0;
   const [w, h] = imageSize(aspect, quality, meta.width || 1920, meta.height || 1080);
+  // Tokens the model processes (16×16 px each; the references are resized to the image size).
+  // On Intel GPUs the cost grows fast beyond ~5000 (see imagegen.DefaultFlashAttn)
+  const tokens = (w / 16) * (h / 16) * (1 + Math.min(refs.length, maxRefs));
+  const slow = data && data.intel && tokens > 5000;
+  const faMem = adv.fa === 'off' && tokens > 5000; // the plain attention needs heads × tokens² × 4 bytes
   const set = (k, setter) => (v) => { setter(v); remember(k, v); };
   const pickImage = (p) => { if (picking === 'init') { setAdv('init', p); setPicking(false); } else addRef(p); };
   const addRef = (p) => setRefs((r) => (r.includes(p) || r.length >= Math.max(maxRefs, 1) ? r : [...r, p]));
@@ -76,7 +86,7 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onUseBackg
     setPrompt(im.prompt || '');
     setSeed(String(im.seed ?? ''));
     setRefs(im.refs || []);
-    setAdvState((a) => ({ ...a, fa: im.flashAttn || '', cfg: im.cfg ? String(im.cfg) : '', sampler: im.sampler || '', scheduler: im.scheduler || '',
+    setAdvState((a) => ({ ...a, fa: im.flashAttn === 'off' ? 'off' : 'on', cfg: im.cfg ? String(im.cfg) : '', sampler: im.sampler || '', scheduler: im.scheduler || '',
       negative: im.negative || '', init: im.init || '', strength: im.strength || 0.75 }));
     setCur(null);
   };
@@ -126,9 +136,9 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onUseBackg
       ${seed !== '' && html`<button class="btn icon sm" title=${t('Random')} onClick=${() => setSeed('')}><${Icon} name="shuffle" size=${13} /></button>`}</div></div>
     <details class="ig-adv" open=${recall('advOpen', '') === '1'} onToggle=${(e) => remember('advOpen', e.target.open ? '1' : '')}>
       <summary>${t('Advanced settings')}${advChanged(adv) ? html` <span class="badge">${t('{n} changed', { n: advChanged(adv) })}</span>` : ''}</summary>
-      <div class="fld"><label title=${t('Fused attention: faster on most GPUs, slower on Intel ones')}>${t('Flash attention')}</label><div class="ctl">
-        <${Select} value=${adv.fa} onChange=${(v) => setAdv('fa', v)} translate=${false}
-          options=${[['', t('Auto ({v})', { v: t(data && data.flashAttn ? 'on' : 'off') })], ['on', t('On')], ['off', t('Off')]]} /></div></div>
+      <div class="fld"><label title=${t('Fused attention: little memory at any size. On Intel GPUs turning it off is ~1.6× faster for small images, but the memory grows with the square of the size.')}>${t('Flash attention')}</label><div class="ctl">
+        <${Select} value=${adv.fa || 'on'} onChange=${(v) => setAdv('fa', v)} options=${[['on', 'On'], ['off', 'Off']]} /></div></div>
+      ${faMem && html`<p class="ig-hint st-warn">${t('Without flash attention this size needs several GB per step and can stall: turn it on or use a smaller size.')}</p>`}
       <div class="fld"><label title=${t('How strictly the image follows the prompt. The fast models (Turbo, klein) are made for 1.')}>CFG</label><div class="ctl">
         <input type="number" min="1" max="20" step="0.5" value=${adv.cfg} placeholder=${fam ? String(fam.cfg) : ''} onInput=${(e) => setAdv('cfg', e.target.value)} /></div></div>
       <label class="ig-l">${t('Negative prompt')} <span class="faint">${(+adv.cfg || (fam && fam.cfg) || 1) <= 1 ? t('(only with CFG above 1)') : ''}</span></label>
@@ -149,6 +159,7 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onUseBackg
       ${advChanged(adv) > 0 && html`<button class="btn sm ghost" style="margin-top:6px" onClick=${() => { setAdvState({ ...ADV0 }); remember('adv', '{}'); }}>
         <${Icon} name="rotate-ccw" size=${13} /> ${t('Reset to the defaults')}</button>`}
     </details>
+    ${slow && html`<p class="ig-hint st-warn"><${Icon} name="triangle-alert" size=${12} /> ${t('Large for this GPU ({n} tokens): each step can take more than a minute. A smaller size or fewer references is much faster.', { n: Math.round(tokens) })}</p>`}
     ${toDownload > 0 && html`<p class="faint ig-hint"><${Icon} name="download" size=${12} /> ${t('The first time, {s} of models are downloaded (once).', { s: fmtSize(toDownload) })}</p>`}
   </div>`;
 

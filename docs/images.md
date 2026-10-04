@@ -25,7 +25,7 @@ to `~/.cache/audioviz/models`.
 
 | Setting | What it does |
 |---|---|
-| Flash attention | Fused attention. *Automatic* turns it on except on Intel GPUs, where it is slower (~1.6×). |
+| Flash attention | On (default) or off, by hand. On keeps the memory small at any size. On Intel GPUs *off* is ~1.6× faster for small images (e.g. 1024×576, even with a reference), but its memory grows with the square of the size: with large images or several references it needs several GB per step and can stall (the dialog warns). |
 | CFG | How strictly the image follows the prompt. Z-Image Turbo and klein are distilled for 1; Qwen Image uses 6. |
 | Negative prompt | What to avoid. Only has an effect with CFG above 1 (and makes each step twice as slow). |
 | Sampler / scheduler | The sampling algorithm and the noise schedule (`euler`, `dpm++2m`, `karras`, `simple`…). |

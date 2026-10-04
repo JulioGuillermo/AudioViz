@@ -55,9 +55,17 @@ The context (`sd_ctx_t`, the loaded weights, several GB) is kept in `eng` betwee
 replaced only when the model changes (the key includes whether the vision encoder is loaded).
 The studio frees it after 10 minutes without use (`unloadAfter`); `Unload()` frees it on demand.
 
-Context parameters: threads = physical cores, flash attention in the diffusion model **except on
-Intel GPUs** (see below; `AUDIOVIZ_SD_FA=1` / `0` forces it on / off), everything else at the library defaults
-(weights on the GPU backend). Generation parameters: prompt,
+Context parameters: threads = physical cores, flash attention in the diffusion model as the
+user chooses (on by default; `AUDIOVIZ_SD_FA=0` changes the default), everything else at the
+library defaults (weights on the GPU backend).
+
+**GPU job timeout.** ggml-vulkan sends up to 100 operations per submission by default. With
+large images (or flash attention's scalar kernel on Intel) one submission can take longer than
+the driver allows a compute job — 5 s on Intel's `xe` (`/sys/class/drm/card*/device/tile0/gt0/engines/ccs/job_timeout_ms`).
+The driver then resets the engine (`xe … Engine reset: engine_class=ccs` in the kernel log)
+and the generation hangs forever. `internal/ggml` sets `GGML_VK_MAX_NODES_PER_SUBMIT=8` at
+startup (unless already set): no measurable cost (26.6 vs 26.7 s on a Z-Image test) and each
+submission stays far below the limit. Generation parameters: prompt,
 size, steps, `txt_cfg`, seed, Euler when the family asks for it (otherwise the model's default
 sampler and scheduler), and the reference images.
 
@@ -111,8 +119,11 @@ Where a Z-Image step goes on the Intel iGPU (`GGML_VK_PERF_LOGGER=1`, 9 s of GPU
 **Flash attention on Intel:** ggml-vulkan's fast flash-attention kernel (`FA_COOPMAT1`) needs
 16×16×16 cooperative-matrix tiles; Intel Xe2 exposes 8×16×16, so it falls back to the scalar
 kernel (≈ 0.5 TFLOPS): 5.1 s per step against 2.1 s for the unfused attention. Hence flash
-attention is off on Intel (Z-Image 13.8 → 8.3 s/step, klein 26 → 11.7 s/step). On Metal and on
-NVIDIA/AMD it is on. Q8_0 weights run at the same speed as Q4_K (compute-bound, not
+attention *off* is faster on Intel for small images (Z-Image 13.8 → 8.3 s/step, klein 26 →
+11.7 s/step), but the plain attention materializes heads × tokens² × 4 bytes: 2.4 GB at 5,000
+tokens, 6 GB at 8,000 (1344×768 plus one reference), where a step takes minutes. So it is a
+manual setting, on by default, and the dialog warns when it is off with more than 5,000 tokens.
+On Metal it makes no difference (48.7 s with, 50.7 s without, M4). Q8_0 weights run at the same speed as Q4_K (compute-bound, not
 dequantization-bound). Turning cooperative matrix off makes it 50 % slower.
 
 PyTorch-based tools (ComfyUI) on Intel use oneDNN's fused bf16 attention (SDPA) on XMX, which
