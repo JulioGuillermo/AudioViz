@@ -6,15 +6,15 @@ import { t } from './i18n.js';
 
 const KIND_LABEL = {
   audio: 'Choose audio', bg: 'Choose background', lyrics: 'Choose lyrics', txt: 'Choose lyrics text',
-  font: 'Choose font', project: 'Open project', dir: 'Choose folder', zip: 'Import project package',
+  font: 'Choose font', image: 'Choose image', project: 'Open project', dir: 'Choose folder', zip: 'Import project package',
 };
 const KIND_HINT = {
   audio: 'FLAC, WAV, MP3 or OGG', bg: 'Image, GIF or video (MP4, MOV, MKV, WebM, AVI)', lyrics: '.lrc or .srt',
-  txt: '.txt (Suno format works)', font: '.ttf or .otf', project: 'project.yaml', zip: 'A project exported as .zip',
+  txt: '.txt (Suno format works)', font: '.ttf or .otf', image: 'PNG, JPG, WebP or GIF', project: 'project.yaml', zip: 'A project exported as .zip',
   dir: 'Browse to the folder and press “Use this folder”',
 };
 
-export function Modal({ title, icon, onClose, children, footer, wide }) {
+export function Modal({ title, icon, onClose, children, footer, wide, width }) {
   const ref = useRef();
   useEffect(() => {
     const k = (e) => {
@@ -26,7 +26,7 @@ export function Modal({ title, icon, onClose, children, footer, wide }) {
     return () => removeEventListener('keydown', k);
   }, []);
   return html`<div class="modal-bg" ref=${ref} onMouseDown=${(e) => e.target === e.currentTarget && onClose()}>
-    <div class="modal" style=${wide ? { width: 'min(820px,96vw)' } : null}>
+    <div class="modal" style=${width ? { width } : wide ? { width: 'min(820px,96vw)' } : null}>
       <div class="modal-h">${icon && html`<${Icon} name=${icon} size=${16} cls="muted" />`}${title}<span class="spacer"></span>
         <button class="btn icon ghost" title=${t('Close (Esc)')} onClick=${onClose}><${Icon} name="x" size=${16} /></button></div>
       <div class="mb">${children}</div>
@@ -41,7 +41,7 @@ const VIDEO_EXT = /\.(mp4|mov|mkv|webm|avi|m4v)$/i;
 export function FilePicker({ kind, start, onPick, onClose, hasProject }) {
   const [dir, setDir] = useState(null);
   // Images and videos: thumbnail grid (or list), remembered by the browser
-  const canGrid = kind === 'bg';
+  const canGrid = kind === 'bg' || kind === 'image';
   const [view, setViewState] = useState(() => { try { return localStorage.getItem('audioviz.pickerView') || 'grid'; } catch (e) { return 'grid'; } });
   const setView = (v) => { setViewState(v); try { localStorage.setItem('audioviz.pickerView', v); } catch (e) { /* ignore */ } };
   const grid = canGrid && view === 'grid';
@@ -227,7 +227,7 @@ export function GenSteps({ gen, status }) {
         <span class="t mono">${st.state === 'done' || st.state === 'running' ? fmtDur(st.elapsed) : ''}</span>
       </div>`)}
     </div>
-    ${gen.device && html`<div class="faint" style="font-size:11.5px;margin-top:6px">${t('Recognition running on: {d}', { d: gen.device })}</div>`}
+    ${gen.device && html`<div class="faint" style="font-size:11.5px;margin-top:6px">${t('Running on: {d}', { d: gen.device })}</div>`}
   </div>`;
 }
 
@@ -294,9 +294,9 @@ export function GenLyricsDialog({ meta, job, models, pickFile, onStart, onCancel
 
 // ------------------------------------------------------------------ projects, packages, exports
 
-const fmtSize = (b) => (b >= 1073741824 ? (b / 1073741824).toFixed(1) + ' GB' : b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB');
-const fmtDate = (d) => new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
-const thumbURL = (p) => '/api/thumb?s=320&path=' + encodeURIComponent(p);
+export const fmtSize = (b) => (b >= 1073741824 ? (b / 1073741824).toFixed(1) + ' GB' : b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.max(1, Math.round(b / 1024)) + ' KB');
+export const fmtDate = (d) => new Date(d).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+export const thumbURL = (p) => '/api/thumb?s=320&path=' + encodeURIComponent(p);
 
 // Upload a project package (zip) with progress; resolves with the new state
 export function uploadPackage(file, onProgress) {

@@ -10,7 +10,7 @@ After the first `./build.sh` (which builds the static libraries), a plain `go in
 works too. Put `~/go/bin` in your `PATH` to run `audioviz` from any folder.
 
 The result is a single file with nothing to install. x264, a minimal FFmpeg (video decoding
-only), whisper.cpp and demucs.cpp are downloaded and built once per target as static libraries
+only), whisper.cpp, stable-diffusion.cpp and demucs.cpp are downloaded and built once per target as static libraries
 (`third_party/build` for Linux, `third_party/build-<os>-<arch>` for the others) and end up inside
 the binary, just like the studio's web interface.
 
@@ -37,7 +37,7 @@ Vulkan setup step).
 These are built as static libraries, only once per target:
 - `scripts/build-x264.sh`: x264 (H.264 encoding)
 - `scripts/build-ffmpeg.sh`: minimal FFmpeg (only for decoding video backgrounds)
-- `scripts/build-ml.sh`: whisper.cpp (Vulkan or Metal backend + CPU) and demucs.cpp (vocal separation)
+- `scripts/build-ml.sh`: whisper.cpp (lyrics) and stable-diffusion.cpp (images) on one ggml (Vulkan or Metal backend + CPU), and demucs.cpp (vocal separation)
 - `scripts/build-moltenvk.sh`: macOS only, MoltenVK for the renderer
 - `scripts/target.sh`: shared by all of them, describes the target and the cross toolchain
 

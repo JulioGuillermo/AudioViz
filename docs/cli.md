@@ -7,6 +7,7 @@ If no project is given, `project.yaml` is used.
 
 Subcommands:
 - `audioviz studio [project.yaml] [--addr 127.0.0.1:8787] [--no-open] [--workspace ~/AudioViz]`: graphical interface (see [studio.md](studio.md)).
+- `audioviz image -p "prompt" [--model zimage|klein|qwen] [-r ref.png]... [-W 1024 -H 576] [--steps N] [--seed N] [-o image.png]`: generate or edit an image (see [images.md](images.md)); `--list` shows the models.
 - `audioviz lyrics <audio> [lyrics.txt] [-o lyrics.lrc] [--lang en|auto] [--fast]`: generate a per-word synced `.lrc`; without the `.txt` the song is transcribed (see [lyrics/generate.md](lyrics/generate.md)).
 
 | Option | Description |

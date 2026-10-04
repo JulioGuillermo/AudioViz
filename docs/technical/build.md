@@ -32,7 +32,7 @@ Inside the binary:
 | Vulkan compute shader `render.spv` | `//go:embed shaders/render.spv` (internal/gpu/gpu.go) |
 | x264 (H.264 encoder) | static `libx264.a` via cgo (internal/encode/x264.go) |
 | Decode-only FFmpeg (libavformat, libavcodec, libswscale, libavutil) | static `.a` via cgo (internal/video/ffdec.go) |
-| whisper.cpp + ggml (CPU and Vulkan backends, incl. ggml's own SPIR-V shaders) | static `.a` via cgo (internal/lyricsgen/whisper.go) |
+| whisper.cpp + stable-diffusion.cpp on **one** ggml (CPU and Vulkan backends, incl. ggml's own SPIR-V shaders) | static `.a` via cgo (internal/lyricsgen/whisper.go, internal/imagegen/sd.go; Vulkan bridge in internal/ggml) |
 | demucs.cpp (+ header-only Eigen) | static `libdemucs.a` + cgo C++ glue `dmx.cpp` (internal/lyricsgen/demucs.go) |
 | libstdc++, libgcc | linked statically (`-static-libstdc++ -static-libgcc`, `-l:libstdc++.a`) |
 | libvulkan | **not linked**: opened with `dlopen` at runtime if present |
@@ -94,14 +94,16 @@ third_party/
 ├── x264/            git clone (branch stable, depth 1)            ← .gitignore
 ├── ffmpeg/          git clone (branch release/7.1, depth 1)       ← .gitignore
 ├── whisper.cpp/     git clone, checked out at WHISPER_REV         ← .gitignore
-│   └── build/       cmake build tree
+├── stable-diffusion.cpp/  git clone at SD_REV (+ its ggml submodule) ← .gitignore
+├── obj-<os>-<arch>/ml/    cmake build tree of scripts/ml (both + ggml)
 ├── demucs.cpp/      git clone, checked out at DEMUCS_REV          ← .gitignore
 │   ├── vendor/eigen submodule (depth 1)
 │   └── obj/         object files
 └── build/                                                           ← .gitignore
-    ├── include/     x264.h, libav*/…, whisper.h, ggml*.h
+    ├── include/     x264.h, libav*/…, whisper.h, stable-diffusion.h, ggml*.h
     └── lib/         libx264.a, libavformat.a, libavcodec.a, libswscale.a, libavutil.a,
-                     libwhisper.a, libggml.a, libggml-base.a, libggml-cpu.a, libggml-vulkan.a,
+                     libwhisper.a, libstable-diffusion.a, libggml.a, libggml-base.a,
+                     libggml-cpu.a, libggml-vulkan.a,
                      libdemucs.a  (+ pkgconfig/ from the autotools installs)
 ```
 
@@ -112,7 +114,7 @@ Nothing under `third_party/` is committed. Each script decides what to do by loo
 |---|---|---|
 | `build-x264.sh` | `libx264.a` exists | delete `third_party/build/lib/libx264.a` (and `third_party/x264` to fetch a newer `stable`) |
 | `build-ffmpeg.sh` | `libavcodec.a` **and** `libswscale.a` exist | delete those (and `third_party/ffmpeg` to re-clone) |
-| `build-ml.sh` (whisper part) | `libwhisper.a` exists | delete `libwhisper.a`; the script then re-checks out `WHISPER_REV` and rebuilds |
+| `build-ml.sh` (whisper + stable-diffusion part) | `libwhisper.a` **and** `libstable-diffusion.a` exist | delete either; the script then re-checks out `WHISPER_REV` / `SD_REV` and rebuilds both |
 | `build-ml.sh` (demucs part) | `libdemucs.a` exists | delete `libdemucs.a` |
 
 Pitfall: changing `WHISPER_REV`/`DEMUCS_REV` in the script does **nothing** while the `.a`
@@ -174,10 +176,21 @@ in Go, encoding is x264 and muxing is our own MP4 writer (see [media-io.md](medi
   `LDFLAGS: libavformat.a libavcodec.a libswscale.a libavutil.a -lm -lpthread` (order matters
   for static linking: users before their dependencies).
 
-### whisper.cpp / ggml — `scripts/build-ml.sh`
+### whisper.cpp + stable-diffusion.cpp on one ggml — `scripts/build-ml.sh`, `scripts/ml/`
 
-- Source: `https://github.com/ggml-org/whisper.cpp`, pinned
-  **`WHISPER_REV=60c0be6ac8fa71b1a2ae2dd938a31a34a508e774`**.
+- Sources: `https://github.com/ggml-org/whisper.cpp`, pinned
+  **`WHISPER_REV=60c0be6ac8fa71b1a2ae2dd938a31a34a508e774`**, and
+  `https://github.com/leejet/stable-diffusion.cpp`, pinned **`SD_REV=3f8527a46c54ecf4cb4ed6003da8e8982283c73c`**
+  with its `ggml` submodule (leejet's fork of ggml).
+- **One ggml.** Both projects vendor ggml; two static copies in one binary would clash at link
+  time. `scripts/ml/CMakeLists.txt` is a small superproject: `add_subdirectory` of
+  stable-diffusion.cpp (which builds its ggml) and then of whisper.cpp, whose CMake reuses an
+  existing `ggml` target. stable-diffusion.cpp compiles ggml with **`GGML_MAX_NAME=160`**, which
+  changes the size of `struct ggml_tensor`, so the superproject sets it for everything, and the
+  cgo files (`whisper.go`, `sd.go`) define it too. Without it whisper.cpp would read tensors with
+  the wrong layout.
+- WebP/WebM support of stable-diffusion.cpp is off (`SD_WEBP=OFF SD_WEBM=OFF`): Go writes the PNGs.
+  Its other dependencies (zip, oniguruma, utf8proc) are object libraries inside `libstable-diffusion.a`.
 - CMake:
 
   ```
@@ -185,16 +198,17 @@ in Go, encoding is x264 and muxing is our own MP4 writer (see [media-io.md](medi
   -DGGML_OPENMP=OFF                      # no libgomp.so dependency; ggml uses its own threadpool
   -DGGML_NATIVE=OFF                      # don't tune for the build machine...
   -DGGML_AVX=ON -DGGML_AVX2=ON -DGGML_FMA=ON -DGGML_F16C=ON   # ...but target x86-64-v3
-  -DGGML_VULKAN=ON                       # GPU backend
+  -DGGML_VULKAN=ON -DSD_VULKAN=ON        # GPU backend (macOS: GGML_METAL / SD_METAL)
+  -DSD_BUILD_EXAMPLES=OFF -DSD_WEBP=OFF -DSD_WEBM=OFF
   -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=OFF -DWHISPER_BUILD_SERVER=OFF
   ```
 
-  built with `--target whisper`. The Vulkan backend's build compiles its compute shaders from
+  built with `--target whisper stable-diffusion`. The Vulkan backend's build compiles its compute shaders from
   GLSL with `glslc` (via its `vulkan-shaders-gen` helper) and embeds them in
   `libggml-vulkan.a` — this is why `glslc` and the Vulkan headers are needed even if
   `render.comp` never changes.
-- Copied out: `libwhisper.a libggml.a libggml-base.a libggml-cpu.a libggml-vulkan.a` and the
-  headers `whisper.h`, `ggml/include/*.h`.
+- Copied out: `libwhisper.a libstable-diffusion.a libggml.a libggml-base.a libggml-cpu.a
+  libggml-vulkan.a` and the headers `whisper.h`, `stable-diffusion.h`, ggml's `include/*.h`.
 - cgo (`internal/lyricsgen/whisper.go`): `CFLAGS: -I…/include`;
   `LDFLAGS: libwhisper.a libggml.a libggml-vulkan.a libggml-cpu.a libggml-base.a -lm -lpthread -ldl`.
   Note there is **no `-lvulkan`**: see "Runtime Vulkan loading".
