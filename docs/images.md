@@ -45,8 +45,8 @@ The loaded model stays in memory between images (the next one starts sooner) and
 ## Models
 | Model | Good for | References | Download | Time (1024×576, Intel Lunar Lake iGPU) |
 |---|---|---|---|---|
-| **Z-Image Turbo** | Fast, photorealistic, text inside the image | — | 6.7 GB | ≈ 1 min 10 s (8 steps) |
-| **FLUX.2 klein 4B** | Fast generation **and editing** | up to 4 | 5.3 GB (the text encoder is shared with Z-Image: 2.8 GB if you already have it) | ≈ 50 s (4 steps, 1 reference) |
+| **Z-Image Turbo** | Fast, photorealistic, text inside the image | — | 6.7 GB | ≈ 1 min 20 s (8 steps); 1920×1088: ≈ 5 min 30 s |
+| **FLUX.2 klein 4B** | Fast generation **and editing** | up to 4 | 5.3 GB (the text encoder is shared with Z-Image: 2.8 GB if you already have it) | ≈ 1 min (4 steps, 1 reference) |
 | **Qwen Image 2.1** | Highest quality and prompt following, editing | up to 3 | 9.9 GB (+0.75 GB to edit) | several minutes; meant for a dedicated GPU |
 
 All three have permissive licenses (Apache-2.0): the images are yours to use. A dedicated GPU

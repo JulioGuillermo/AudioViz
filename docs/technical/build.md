@@ -114,7 +114,7 @@ Nothing under `third_party/` is committed. Each script decides what to do by loo
 |---|---|---|
 | `build-x264.sh` | `libx264.a` exists | delete `third_party/build/lib/libx264.a` (and `third_party/x264` to fetch a newer `stable`) |
 | `build-ffmpeg.sh` | `libavcodec.a` **and** `libswscale.a` exist | delete those (and `third_party/ffmpeg` to re-clone) |
-| `build-ml.sh` (whisper + stable-diffusion part) | `libwhisper.a` **and** `libstable-diffusion.a` exist | delete either; the script then re-checks out `WHISPER_REV` / `SD_REV` and rebuilds both |
+| `build-ml.sh` (whisper + stable-diffusion part) | `libwhisper.a` and `libstable-diffusion.a` exist **and** `lib/.ml-stamp` matches (revisions, `scripts/ml/CMakeLists.txt` and the patches) | changing a revision or a patch rebuilds automatically; or delete either library |
 | `build-ml.sh` (demucs part) | `libdemucs.a` exists | delete `libdemucs.a` |
 
 Pitfall: changing `WHISPER_REV`/`DEMUCS_REV` in the script does **nothing** while the `.a`

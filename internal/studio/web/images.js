@@ -67,9 +67,10 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onUseBackg
   const maxRefs = fam ? fam.refs : 0;
   const [w, h] = imageSize(aspect, quality, meta.width || 1920, meta.height || 1080);
   // Tokens the model processes (16×16 px each; the references are resized to the image size).
-  // On Intel GPUs the cost grows fast beyond ~5000 (see imagegen.DefaultFlashAttn)
+  // The cost per step grows with their square: on an integrated Intel GPU 1920×1088 (8160
+  // tokens) takes ~40 s per step, more than that gets slow
   const tokens = (w / 16) * (h / 16) * (1 + Math.min(refs.length, maxRefs));
-  const slow = data && data.intel && tokens > 5000;
+  const slow = data && data.intel && tokens > 8500;
   const faMem = adv.fa === 'off' && tokens > 5000; // the plain attention needs heads × tokens² × 4 bytes
   const set = (k, setter) => (v) => { setter(v); remember(k, v); };
   const pickImage = (p) => { if (picking === 'init') { setAdv('init', p); setPicking(false); } else addRef(p); };
@@ -159,7 +160,7 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onUseBackg
       ${advChanged(adv) > 0 && html`<button class="btn sm ghost" style="margin-top:6px" onClick=${() => { setAdvState({ ...ADV0 }); remember('adv', '{}'); }}>
         <${Icon} name="rotate-ccw" size=${13} /> ${t('Reset to the defaults')}</button>`}
     </details>
-    ${slow && html`<p class="ig-hint st-warn"><${Icon} name="triangle-alert" size=${12} /> ${t('Large for this GPU ({n} tokens): each step can take more than a minute. A smaller size or fewer references is much faster.', { n: Math.round(tokens) })}</p>`}
+    ${slow && html`<p class="ig-hint st-warn"><${Icon} name="triangle-alert" size=${12} /> ${t('Large for this GPU ({n} tokens): each step can take a minute or more. A smaller size or fewer references is much faster.', { n: Math.round(tokens) })}</p>`}
     ${toDownload > 0 && html`<p class="faint ig-hint"><${Icon} name="download" size=${12} /> ${t('The first time, {s} of models are downloaded (once).', { s: fmtSize(toDownload) })}</p>`}
   </div>`;
 

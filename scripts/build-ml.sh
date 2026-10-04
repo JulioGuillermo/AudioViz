@@ -12,7 +12,12 @@ WHISPER_REV=60c0be6ac8fa71b1a2ae2dd938a31a34a508e774
 DEMUCS_REV=f1206e9adeea103aef4a636b9e62297cf1f8e34e
 SD_REV=3f8527a46c54ecf4cb4ed6003da8e8982283c73c
 
-if [ ! -f "$OUT/lib/libwhisper.a" ] || [ ! -f "$OUT/lib/libstable-diffusion.a" ]; then
+# What the whisper + stable-diffusion libraries are built from: the revisions, the superproject
+# and our ggml patches. When it changes (e.g. a new patch), they are rebuilt.
+ML_STAMP="$WHISPER_REV $SD_REV $(cat "$ROOT/scripts/ml/CMakeLists.txt" "$ROOT"/scripts/ml/patches/*.patch 2>/dev/null | cksum)"
+
+if [ ! -f "$OUT/lib/libwhisper.a" ] || [ ! -f "$OUT/lib/libstable-diffusion.a" ] ||
+   [ "$(cat "$OUT/lib/.ml-stamp" 2>/dev/null)" != "$ML_STAMP" ]; then
   if [ ! -d "$TP/whisper.cpp" ]; then
     git clone https://github.com/ggml-org/whisper.cpp "$TP/whisper.cpp"
   fi
@@ -71,6 +76,7 @@ EOF
   done < <(find "$B" -name '*.a' \( -name '*whisper.a' -o -name '*stable-diffusion.a' -o -name '*ggml*.a' \))
   cp "$TP/whisper.cpp/include/whisper.h" "$TP/stable-diffusion.cpp/include/stable-diffusion.h" \
     "$TP/stable-diffusion.cpp/ggml/include/"*.h "$OUT/include/"
+  echo "$ML_STAMP" > "$OUT/lib/.ml-stamp"
 fi
 
 if [ ! -f "$OUT/lib/libdemucs.a" ]; then

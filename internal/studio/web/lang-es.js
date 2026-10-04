@@ -230,7 +230,7 @@ export const ES = {
   'Reset to the defaults': 'Volver a los valores por defecto',
   '{n} steps': '{n} pasos',
   'from {f} ({s})': 'desde {f} ({s})',
-  'Large for this GPU ({n} tokens): each step can take more than a minute. A smaller size or fewer references is much faster.': 'Grande para esta GPU ({n} tokens): cada paso puede tardar más de un minuto. Un tamaño menor o menos referencias es mucho más rápido.',
+  'Large for this GPU ({n} tokens): each step can take a minute or more. A smaller size or fewer references is much faster.': 'Grande para esta GPU ({n} tokens): cada paso puede tardar un minuto o más. Un tamaño menor o menos referencias es mucho más rápido.',
   'Fused attention: little memory at any size. On Intel GPUs turning it off is ~1.6× faster for small images, but the memory grows with the square of the size.': 'Atención fusionada: poca memoria con cualquier tamaño. En GPUs Intel desactivarla es ~1,6× más rápido con imágenes pequeñas, pero la memoria crece con el cuadrado del tamaño.',
   'Without flash attention this size needs several GB per step and can stall: turn it on or use a smaller size.': 'Sin flash attention este tamaño necesita varios GB por paso y puede atascarse: actívala o usa un tamaño menor.',
   'Build the lines': 'Formar las líneas', 'Source': 'Origen', 'The lyrics as text (.txt)': 'La letra en texto (.txt)',
