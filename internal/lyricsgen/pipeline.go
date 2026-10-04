@@ -12,31 +12,16 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
-	"time"
 	"unsafe"
+
+	"audioviz/internal/progress"
 )
 
-// Step is one step of the process, with its state and progress
-type Step struct {
-	ID       string  `json:"id"`
-	Label    string  `json:"label"`
-	State    string  `json:"state"` // pending, running, done, skipped, error
-	Progress float64 `json:"progress"`
-	Detail   string  `json:"detail"`
-	Elapsed  float64 `json:"elapsed"` // s
-	ETA      float64 `json:"eta"`     // estimated remaining s (-1 = unknown)
-	started  time.Time
-}
-
-// Status is the full state sent to the UI
-type Status struct {
-	Steps    []Step  `json:"steps"`
-	Current  int     `json:"current"`
-	Progress float64 `json:"progress"` // global 0..1
-	Device   string  `json:"device"`   // GPU/CPU used for recognition
-	Elapsed  float64 `json:"elapsed"`
-}
+// Step and Status: the progress reported to the UI (see the progress package)
+type (
+	Step   = progress.Step
+	Status = progress.Status
+)
 
 type Options struct {
 	Stereo     []float32 // interleaved stereo audio
@@ -70,97 +55,6 @@ func (r *Result) Text() string {
 
 // Weight of each step in the global progress (roughly proportional to its duration)
 var stepWeights = map[string]float64{"models": 0.05, "prepare": 0.03, "separate": 0.62, "recognize": 0.22, "align": 0.08, "lines": 0.08}
-
-type tracker struct {
-	mu     sync.Mutex
-	st     Status
-	t0     time.Time
-	report func(Status)
-	last   time.Time
-}
-
-func (t *tracker) idx(id string) int {
-	for i, s := range t.st.Steps {
-		if s.ID == id {
-			return i
-		}
-	}
-	return -1
-}
-
-func (t *tracker) emit(force bool) {
-	if !force && time.Since(t.last) < 150*time.Millisecond {
-		return
-	}
-	t.last = time.Now()
-	var wsum, done float64
-	for i := range t.st.Steps {
-		s := &t.st.Steps[i]
-		w := stepWeights[s.ID]
-		if s.State == "skipped" {
-			continue
-		}
-		wsum += w
-		switch s.State {
-		case "done":
-			done += w
-		case "running":
-			done += w * s.Progress
-			s.Elapsed = time.Since(s.started).Seconds()
-			s.ETA = -1
-			if s.Progress > 0.02 && s.Elapsed > 1 {
-				s.ETA = s.Elapsed * (1 - s.Progress) / s.Progress
-			}
-		}
-	}
-	if wsum > 0 {
-		t.st.Progress = done / wsum
-	}
-	t.st.Elapsed = time.Since(t.t0).Seconds()
-	cp := t.st
-	cp.Steps = append([]Step(nil), t.st.Steps...)
-	if t.report != nil {
-		t.report(cp)
-	}
-}
-
-func (t *tracker) start(id, detail string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	i := t.idx(id)
-	t.st.Current = i
-	t.st.Steps[i].State, t.st.Steps[i].Detail, t.st.Steps[i].started, t.st.Steps[i].Progress = "running", detail, time.Now(), 0
-	t.emit(true)
-}
-
-func (t *tracker) progress(id string, p float64, detail string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	i := t.idx(id)
-	t.st.Steps[i].Progress = math.Max(0, math.Min(1, p))
-	if detail != "" {
-		t.st.Steps[i].Detail = detail
-	}
-	t.emit(false)
-}
-
-func (t *tracker) end(id, state, detail string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	i := t.idx(id)
-	s := &t.st.Steps[i]
-	if !s.started.IsZero() {
-		s.Elapsed = time.Since(s.started).Seconds()
-	}
-	s.State, s.ETA = state, 0
-	if state == "done" {
-		s.Progress = 1
-	}
-	if detail != "" {
-		s.Detail = detail
-	}
-	t.emit(true)
-}
 
 func mb(b int64) string { return fmt.Sprintf("%.0f MB", float64(b)/1e6) }
 
@@ -203,18 +97,17 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 	if opt.Lang == "" {
 		opt.Lang = "en"
 	}
-	t := &tracker{t0: time.Now(), report: report}
-	last := Step{ID: "align", Label: "Align with the lyrics", State: "pending"}
+	last := Step{ID: "align", Label: "Align with the lyrics"}
 	if transcribe {
-		last = Step{ID: "lines", Label: "Build the lines", State: "pending"}
+		last = Step{ID: "lines", Label: "Build the lines"}
 	}
-	t.st.Steps = []Step{
-		{ID: "models", Label: "Models", State: "pending"},
-		{ID: "prepare", Label: "Prepare audio", State: "pending"},
-		{ID: "separate", Label: "Separate the vocals", State: "pending"},
-		{ID: "recognize", Label: "Recognize the vocals", State: "pending"},
+	t := progress.NewTracker([]Step{
+		{ID: "models", Label: "Models"},
+		{ID: "prepare", Label: "Prepare audio"},
+		{ID: "separate", Label: "Separate the vocals"},
+		{ID: "recognize", Label: "Recognize the vocals"},
 		last,
-	}
+	}, stepWeights, report)
 	cachePath := vocalsCachePath(fmt.Sprintf("%s|%d|%d", opt.AudioKey, opt.SampleRate, len(opt.Stereo)))
 	var vocals16 []float32
 	if opt.Separate && cachePath != "" {
@@ -222,7 +115,7 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 	}
 
 	// 1. Models (downloaded the first time)
-	t.start("models", "Checking…")
+	t.Start("models", "Checking…")
 	need := []Model{WhisperModel}
 	if opt.Separate && vocals16 == nil {
 		need = append(need, DemucsModel)
@@ -244,51 +137,51 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 			if rate > 0 {
 				d += fmt.Sprintf(" · %.1f MB/s", rate/1e6)
 			}
-			t.progress("models", float64(base+done)/float64(missing), d)
+			t.Progress("models", float64(base+done)/float64(missing), d)
 		})
 		if err != nil {
-			t.end("models", "error", err.Error())
+			t.End("models", "error", err.Error())
 			return nil, err
 		}
 		got += m.Size
 	}
 	if missing == 0 {
-		t.end("models", "done", "Already downloaded")
+		t.End("models", "done", "Already downloaded")
 	} else {
-		t.end("models", "done", "Downloaded ("+mb(missing)+")")
+		t.End("models", "done", "Downloaded ("+mb(missing)+")")
 	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
 
 	// 2. Prepare audio (resampling)
-	t.start("prepare", "Resampling…")
+	t.Start("prepare", "Resampling…")
 	var stereo44 []float32
 	mix16 := ToMono(Resample(opt.Stereo, 2, opt.SampleRate, 16000))
 	if opt.Separate && vocals16 == nil {
 		stereo44 = Resample(opt.Stereo, 2, opt.SampleRate, 44100)
 	}
-	t.end("prepare", "done", fmt.Sprintf("%.0f s of audio", float64(len(mix16))/16000))
+	t.End("prepare", "done", fmt.Sprintf("%.0f s of audio", float64(len(mix16))/16000))
 
 	// 3. Separate the vocals
 	switch {
 	case !opt.Separate:
-		t.end("separate", "skipped", "Fast mode: using the full mix")
+		t.End("separate", "skipped", "Fast mode: using the full mix")
 		vocals16 = mix16
 	case vocals16 != nil:
-		t.end("separate", "skipped", "Reused from the cache")
+		t.End("separate", "skipped", "Reused from the cache")
 	default:
-		t.start("separate", "Demucs htdemucs · CPU")
-		v44, err := SeparateVocals(ctx, DemucsModel.Path(), stereo44, func(p float64) { t.progress("separate", p, "") })
+		t.Start("separate", "Demucs htdemucs · CPU")
+		v44, err := SeparateVocals(ctx, DemucsModel.Path(), stereo44, func(p float64) { t.Progress("separate", p, "") })
 		if err != nil {
-			t.end("separate", "error", err.Error())
+			t.End("separate", "error", err.Error())
 			return nil, err
 		}
 		vocals16 = ToMono(Resample(v44, 2, 44100, 16000))
 		if cachePath != "" {
 			saveF32(cachePath, vocals16)
 		}
-		t.end("separate", "done", "")
+		t.End("separate", "done", "")
 	}
 	total := float64(len(vocals16)) / 16000
 	v := newVoice(vocals16)
@@ -305,9 +198,7 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 			return nil, err
 		}
 		w = ww
-		t.mu.Lock()
-		t.st.Device = w.Device
-		t.mu.Unlock()
+		t.SetDevice(w.Device)
 		return w, nil
 	}
 	defer func() {
@@ -318,22 +209,22 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 	recPath := recCachePath(cachePath, opt.Lang, opt.Separate)
 	rec := loadRec(recPath)
 	if rec != nil {
-		t.end("recognize", "skipped", fmt.Sprintf("Reused from the cache · %d words", len(rec)))
+		t.End("recognize", "skipped", fmt.Sprintf("Reused from the cache · %d words", len(rec)))
 	} else {
-		t.start("recognize", "Loading the model…")
+		t.Start("recognize", "Loading the model…")
 		if _, err := openW(); err != nil {
-			t.end("recognize", "error", err.Error())
+			t.End("recognize", "error", err.Error())
 			return nil, err
 		}
-		t.progress("recognize", 0, "Whisper large-v3-turbo · "+w.Device)
+		t.Progress("recognize", 0, "Whisper large-v3-turbo · "+w.Device)
 		var err error
-		rec, err = w.Transcribe(ctx, vocals16, 0, opt.Lang, "", func(p float64) { t.progress("recognize", p, "") })
+		rec, err = w.Transcribe(ctx, vocals16, 0, opt.Lang, "", func(p float64) { t.Progress("recognize", p, "") })
 		if err != nil {
-			t.end("recognize", "error", err.Error())
+			t.End("recognize", "error", err.Error())
 			return nil, err
 		}
 		saveRec(recPath, rec)
-		t.end("recognize", "done", fmt.Sprintf("%d words recognized · %s", len(rec), w.Device))
+		t.End("recognize", "done", fmt.Sprintf("%d words recognized · %s", len(rec), w.Device))
 	}
 	device := "cache"
 	if w != nil {
@@ -350,7 +241,7 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 
 	// 5a. No lyrics text: the recognized words, grouped into lines, are the lyrics
 	if transcribe {
-		t.start("lines", "Grouping the words into lines…")
+		t.Start("lines", "Grouping the words into lines…")
 		nrec := len(rec)
 		rec = dropSilent(rec, v)
 		out := finish(linesFromWords(rec, v), v, total)
@@ -358,12 +249,12 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 		for _, l := range out {
 			nw += len(l.Words)
 		}
-		t.end("lines", "done", fmt.Sprintf("%d lines · %d words · %d discarded in silence", len(out), nw, nrec-len(rec)))
+		t.End("lines", "done", fmt.Sprintf("%d lines · %d words · %d discarded in silence", len(out), nw, nrec-len(rec)))
 		return &Result{Lines: out, LRC: LRC(out), Device: device}, nil
 	}
 
 	// 5. Align with the lyrics (+ repair of poorly recognized lines)
-	t.start("align", "Aligning…")
+	t.Start("align", "Aligning…")
 	lw := lyricWords(lines)
 	nrec := len(rec)
 	rec = dropSilent(rec, v)
@@ -389,7 +280,7 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
-		t.progress("align", float64(gi)/float64(len(groups)), fmt.Sprintf("Reviewing %d of %d doubtful sections", gi+1, len(groups)))
+		t.Progress("align", float64(gi)/float64(len(groups)), fmt.Sprintf("Reviewing %d of %d doubtful sections", gi+1, len(groups)))
 		// Window: from the end of the previous good line to the start of the next one
 		var wb []int
 		for k := range lw {
@@ -456,7 +347,7 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 			anchored++
 		}
 	}
-	t.end("align", "done", fmt.Sprintf("%d lines · %d of %d words recognized (%.0f%%) · %d sections reviewed · %d words discarded in silence",
+	t.End("align", "done", fmt.Sprintf("%d lines · %d of %d words recognized (%.0f%%) · %d sections reviewed · %d words discarded in silence",
 		len(out), anchored, len(lw), 100*float64(anchored)/float64(len(lw)), repaired, dropped))
 	if w != nil {
 		device = w.Device

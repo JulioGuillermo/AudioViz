@@ -28,6 +28,10 @@ func main() {
 		runLyrics(os.Args[2:])
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "image" {
+		runImage(os.Args[2:])
+		return
+	}
 	var (
 		flagOutput   string
 		flagAudio    string

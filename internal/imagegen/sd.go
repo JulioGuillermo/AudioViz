@@ -1,0 +1,283 @@
+package imagegen
+
+/*
+// Per target: static libraries from scripts/build-ml.sh (stable-diffusion.cpp on the same ggml as whisper.cpp)
+#cgo CFLAGS: -DGGML_MAX_NAME=160
+#cgo linux CFLAGS: -I${SRCDIR}/../../third_party/build/include
+#cgo linux LDFLAGS: ${SRCDIR}/../../third_party/build/lib/libstable-diffusion.a ${SRCDIR}/../../third_party/build/lib/libggml.a ${SRCDIR}/../../third_party/build/lib/libggml-vulkan.a ${SRCDIR}/../../third_party/build/lib/libggml-cpu.a ${SRCDIR}/../../third_party/build/lib/libggml-base.a -lm -lpthread -ldl
+#cgo windows CFLAGS: -I${SRCDIR}/../../third_party/build-windows-amd64/include
+#cgo windows LDFLAGS: ${SRCDIR}/../../third_party/build-windows-amd64/lib/libstable-diffusion.a ${SRCDIR}/../../third_party/build-windows-amd64/lib/libggml.a ${SRCDIR}/../../third_party/build-windows-amd64/lib/libggml-vulkan.a ${SRCDIR}/../../third_party/build-windows-amd64/lib/libggml-cpu.a ${SRCDIR}/../../third_party/build-windows-amd64/lib/libggml-base.a
+#cgo darwin,arm64 CFLAGS: -I${SRCDIR}/../../third_party/build-darwin-arm64/include
+#cgo darwin,arm64 LDFLAGS: ${SRCDIR}/../../third_party/build-darwin-arm64/lib/libstable-diffusion.a ${SRCDIR}/../../third_party/build-darwin-arm64/lib/libggml.a ${SRCDIR}/../../third_party/build-darwin-arm64/lib/libggml-metal.a ${SRCDIR}/../../third_party/build-darwin-arm64/lib/libggml-blas.a ${SRCDIR}/../../third_party/build-darwin-arm64/lib/libggml-cpu.a ${SRCDIR}/../../third_party/build-darwin-arm64/lib/libggml-base.a -framework Accelerate -framework Metal -framework MetalKit -framework Foundation
+#cgo darwin,amd64 CFLAGS: -I${SRCDIR}/../../third_party/build-darwin-amd64/include
+#cgo darwin,amd64 LDFLAGS: ${SRCDIR}/../../third_party/build-darwin-amd64/lib/libstable-diffusion.a ${SRCDIR}/../../third_party/build-darwin-amd64/lib/libggml.a ${SRCDIR}/../../third_party/build-darwin-amd64/lib/libggml-metal.a ${SRCDIR}/../../third_party/build-darwin-amd64/lib/libggml-blas.a ${SRCDIR}/../../third_party/build-darwin-amd64/lib/libggml-cpu.a ${SRCDIR}/../../third_party/build-darwin-amd64/lib/libggml-base.a -framework Accelerate -framework Metal -framework MetalKit -framework Foundation
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stable-diffusion.h>
+#include <ggml-backend.h>
+
+// stable-diffusion.cpp reports through global callbacks: they only store the state, which Go
+// polls (no calls from C into Go). One generation runs at a time (see gen in sd.go).
+static volatile int av_step, av_steps;
+static void av_progress(int step, int steps, float t, void *d) { (void)t; (void)d; av_step = step; av_steps = steps; }
+static int av_get_step(int *steps) { *steps = av_steps; return av_step; }
+
+// Latest preview (a cheap projection of the latents at each step), copied under a spin lock
+static unsigned char *av_prev;
+static int av_pw, av_ph, av_pc, av_pcap;
+static volatile int av_pseq, av_plock;
+static void lock(void) { while (__atomic_exchange_n(&av_plock, 1, __ATOMIC_ACQUIRE)) {} }
+static void unlock(void) { __atomic_store_n(&av_plock, 0, __ATOMIC_RELEASE); }
+static void av_preview(int step, int n, sd_image_t *f, bool noisy, void *d) {
+    (void)step; (void)noisy; (void)d;
+    if (n < 1 || !f[0].data) return;
+    int sz = f[0].width * f[0].height * f[0].channel;
+    lock();
+    if (sz > av_pcap) { free(av_prev); av_prev = malloc(sz); av_pcap = av_prev ? sz : 0; }
+    if (av_prev) {
+        memcpy(av_prev, f[0].data, sz);
+        av_pw = f[0].width; av_ph = f[0].height; av_pc = f[0].channel;
+        av_pseq++;
+    }
+    unlock();
+}
+// Copies the latest preview if newer than seq; returns its sequence number (0 = none yet)
+static int av_preview_get(int seq, unsigned char *dst, int cap, int *w, int *h, int *c) {
+    lock();
+    int s = av_pseq;
+    if (s != seq && av_prev && av_pw * av_ph * av_pc <= cap) {
+        memcpy(dst, av_prev, av_pw * av_ph * av_pc);
+        *w = av_pw; *h = av_ph; *c = av_pc;
+    } else if (s != seq) {
+        s = seq;
+    }
+    unlock();
+    return s;
+}
+
+// Logs: the last error is kept for the error message; AUDIOVIZ_DEBUG_SD=1 prints everything
+static char av_err[512];
+static int av_debug;
+static void av_log(enum sd_log_level_t l, const char *t, void *d) {
+    (void)d;
+    if (l >= SD_LOG_ERROR) { strncpy(av_err, t, sizeof av_err - 1); }
+    if (av_debug) fputs(t, stderr);
+}
+
+static const char *av_last_err(void) { return av_err; }
+
+static void av_setup(int debug) {
+    av_debug = debug;
+    sd_set_log_callback(av_log, NULL);
+    sd_set_progress_callback(av_progress, NULL);
+    sd_set_preview_callback(av_preview, PREVIEW_PROJ, 1, true, false, NULL);
+}
+
+static const char *av_device(void) {
+    for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
+        ggml_backend_dev_t d = ggml_backend_dev_get(i);
+        enum ggml_backend_dev_type t = ggml_backend_dev_type(d);
+        if (t != GGML_BACKEND_DEVICE_TYPE_CPU && t != GGML_BACKEND_DEVICE_TYPE_ACCEL) return ggml_backend_dev_description(d);
+    }
+    return "CPU";
+}
+
+static sd_ctx_t *av_open(const char *diff, const char *llm, const char *vision, const char *vae) {
+    sd_ctx_params_t p;
+    sd_ctx_params_init(&p);
+    p.diffusion_model_path = diff;
+    p.llm_path = llm;
+    p.llm_vision_path = vision;
+    p.vae_path = vae;
+    p.n_threads = sd_get_num_physical_cores();
+    p.diffusion_flash_attn = true;
+    av_err[0] = 0;
+    return new_sd_ctx(&p);
+}
+
+static int av_generate(sd_ctx_t *ctx, const char *prompt, int w, int h, int steps, float cfg, int euler,
+                       long long seed, sd_image_t *refs, int nrefs, sd_image_t *out) {
+    sd_img_gen_params_t g;
+    sd_img_gen_params_init(&g);
+    g.prompt = prompt;
+    g.negative_prompt = "";
+    g.width = w;
+    g.height = h;
+    g.seed = seed;
+    g.batch_count = 1;
+    g.ref_images = refs;
+    g.ref_images_count = nrefs;
+    g.sample_params.sample_steps = steps;
+    g.sample_params.guidance.txt_cfg = cfg;
+    if (euler) g.sample_params.sample_method = EULER_SAMPLE_METHOD;
+    av_step = 0; av_steps = steps; av_err[0] = 0;
+    __atomic_store_n(&av_pseq, 0, __ATOMIC_RELEASE);
+    sd_cancel_generation(ctx, SD_CANCEL_RESET);
+    sd_image_t *imgs = NULL;
+    int n = 0;
+    if (!generate_image(ctx, &g, &imgs, &n) || n < 1 || !imgs || !imgs[0].data) {
+        if (imgs) { for (int i = 0; i < n; i++) free(imgs[i].data); free(imgs); }
+        return 0;
+    }
+    *out = imgs[0];
+    for (int i = 1; i < n; i++) free(imgs[i].data);
+    free(imgs);
+    return 1;
+}
+*/
+import "C"
+
+import (
+	"errors"
+	"image"
+	"os"
+	"strings"
+	"sync"
+	"unsafe"
+
+	_ "audioviz/internal/ggml" // Vulkan loader bridge
+)
+
+var setupOnce sync.Once
+
+// engine keeps the loaded models between generations (loading takes seconds and the next image
+// usually uses the same model); a different model replaces them.
+type engine struct {
+	ctx    *C.sd_ctx_t
+	key    string
+	device string
+}
+
+var (
+	gen sync.Mutex // one generation at a time (the C callbacks are global)
+	eng engine
+)
+
+func lastErr(def string) error {
+	if s := strings.TrimSpace(C.GoString(C.av_last_err())); s != "" {
+		return errors.New(s)
+	}
+	return errors.New(def)
+}
+
+// load opens the models (if not already loaded); paths: diffusion, text encoder, vision (or ""), VAE
+func (e *engine) load(key, diff, llm, vision, vae string) error {
+	setupOnce.Do(func() { C.av_setup(C.int(btoi(os.Getenv("AUDIOVIZ_DEBUG_SD") != ""))) })
+	if e.ctx != nil && e.key == key {
+		return nil
+	}
+	e.free()
+	cs := func(s string) *C.char {
+		if s == "" {
+			return nil
+		}
+		return C.CString(s)
+	}
+	cd, cl, cv, ca := cs(diff), cs(llm), cs(vision), cs(vae)
+	defer func() {
+		for _, p := range []*C.char{cd, cl, cv, ca} {
+			C.free(unsafe.Pointer(p))
+		}
+	}()
+	ctx := C.av_open(cd, cl, cv, ca)
+	if ctx == nil {
+		return lastErr("could not load the image model")
+	}
+	e.ctx, e.key, e.device = ctx, key, C.GoString(C.av_device())
+	return nil
+}
+
+func (e *engine) free() {
+	if e.ctx != nil {
+		C.free_sd_ctx(e.ctx)
+		e.ctx, e.key = nil, ""
+	}
+}
+
+// Unload frees the loaded image model (its memory), e.g. before another heavy job
+func Unload() {
+	gen.Lock()
+	defer gen.Unlock()
+	eng.free()
+}
+
+func cancel() {
+	if eng.ctx != nil {
+		C.sd_cancel_generation(eng.ctx, C.SD_CANCEL_ALL)
+	}
+}
+
+// step returns the sampling step reached and the total
+func step() (int, int) {
+	var n C.int
+	s := C.av_get_step(&n)
+	return int(s), int(n)
+}
+
+// preview copies the latest preview if it is newer than seq
+func preview(seq int, buf []byte) (int, *image.NRGBA) {
+	var w, h, c C.int
+	s := int(C.av_preview_get(C.int(seq), (*C.uchar)(unsafe.Pointer(&buf[0])), C.int(len(buf)), &w, &h, &c))
+	if s == seq || w == 0 {
+		return seq, nil
+	}
+	return s, toNRGBA(buf[:int(w*h*c)], int(w), int(h), int(c))
+}
+
+// rgb is an image as tightly packed 8-bit RGB, as stable-diffusion.cpp takes it
+type rgb struct {
+	w, h int
+	pix  []byte
+}
+
+// run generates one image with the loaded model
+func (e *engine) run(prompt string, w, h, steps int, cfg float32, euler bool, seed int64, refs []rgb) (*image.NRGBA, error) {
+	cp := C.CString(prompt)
+	defer C.free(unsafe.Pointer(cp))
+	var cr *C.sd_image_t
+	if len(refs) > 0 {
+		cr = (*C.sd_image_t)(C.calloc(C.size_t(len(refs)), C.size_t(unsafe.Sizeof(C.sd_image_t{}))))
+		defer C.free(unsafe.Pointer(cr))
+		arr := unsafe.Slice(cr, len(refs))
+		for i, r := range refs {
+			p := C.CBytes(r.pix)
+			defer C.free(p)
+			arr[i] = C.sd_image_t{width: C.uint32_t(r.w), height: C.uint32_t(r.h), channel: 3, data: (*C.uint8_t)(p)}
+		}
+	}
+	var out C.sd_image_t
+	if C.av_generate(e.ctx, cp, C.int(w), C.int(h), C.int(steps), C.float(cfg), C.int(btoi(euler)),
+		C.longlong(seed), cr, C.int(len(refs)), &out) == 0 {
+		return nil, lastErr("the image could not be generated")
+	}
+	defer C.free(unsafe.Pointer(out.data))
+	n := int(out.width * out.height * out.channel)
+	return toNRGBA(unsafe.Slice((*byte)(unsafe.Pointer(out.data)), n), int(out.width), int(out.height), int(out.channel)), nil
+}
+
+func toNRGBA(pix []byte, w, h, c int) *image.NRGBA {
+	img := image.NewNRGBA(image.Rect(0, 0, w, h))
+	for i := 0; i < w*h; i++ {
+		d := img.Pix[i*4 : i*4+4]
+		s := pix[i*c:]
+		switch c {
+		case 1:
+			d[0], d[1], d[2] = s[0], s[0], s[0]
+		default:
+			d[0], d[1], d[2] = s[0], s[1], s[2]
+		}
+		d[3] = 255
+		if c == 4 {
+			d[3] = s[3]
+		}
+	}
+	return img
+}
+
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
