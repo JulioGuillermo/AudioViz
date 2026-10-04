@@ -1,4 +1,4 @@
-import { html, useEffect, useState } from './vendor/preact-htm.js';
+import { html, useEffect, useRef, useState } from './vendor/preact-htm.js';
 import { api, basename } from './util.js';
 import { Icon } from './icons.js';
 import { Select } from './fields.js';
@@ -48,7 +48,12 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onUseBackg
   const [quality, setQuality] = useState(() => recall('quality', 'fast'));
   const [steps, setSteps] = useState('');
   const [seed, setSeed] = useState('');
-  const [cur, setCur] = useState(null); // image shown big
+  const [cur, setCur] = useState(null); // image shown big (list view)
+  // Views: 'list' (all the images, the default), 'create' (the generator). A running
+  // generation opens on the generator.
+  const [view, setView] = useState(() => (job && job.kind === 'image' && job.status === 'running' ? 'create' : 'list'));
+  const [filter, setFilterState] = useState(() => recall('filter', 'all'));
+  const setFilter = (v) => { setFilterState(v); remember('filter', v); };
   const [picking, setPicking] = useState(false); // choosing images from the project: 'refs' | 'init' | false
   const [adv, setAdvState] = useState(loadAdv);
   const setAdv = (k, v) => setAdvState((a) => { const n = { ...a, [k]: v }; remember('adv', JSON.stringify({ ...n, init: '' })); return n; });
@@ -57,11 +62,15 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onUseBackg
 
   const load = () => api('GET', '/api/images').then((d) => { setData(d); return d; }).catch((e) => setErr(e.message));
   useEffect(() => { load(); }, []);
-  // When a generation finishes: reload and show the new image
+  // When a generation finishes (seen running here): reload and show the new image
+  const prevStatus = useRef(mine && mine.status);
   useEffect(() => {
-    if (mine && mine.status === 'done' && mine.output) load().then((d) => { const im = d && d.images.find((i) => i.path === mine.output); if (im) setCur(im); });
+    const was = prevStatus.current;
+    prevStatus.current = mine && mine.status;
+    if (was === 'running' && mine && mine.status === 'done' && mine.output) {
+      load().then((d) => { const im = d && d.images.find((i) => i.path === mine.output); if (im) { setCur({ ...im, gen: true }); setView('list'); } });
+    }
   }, [mine && mine.status, mine && mine.output]);
-  useEffect(() => { if (running) setCur(null); }, [running]);
 
   const fam = data && data.models.find((m) => m.id === model);
   const maxRefs = fam ? fam.refs : 0;
@@ -90,10 +99,23 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onUseBackg
     setAdvState((a) => ({ ...a, fa: im.flashAttn === 'off' ? 'off' : 'on', cfg: im.cfg ? String(im.cfg) : '', sampler: im.sampler || '', scheduler: im.scheduler || '',
       negative: im.negative || '', init: im.init || '', strength: im.strength || 0.75 }));
     setCur(null);
+    setView('create');
   };
   const del = async (im) => {
     if (!confirm(t('Delete {f}? This cannot be undone.', { f: im.name }))) return;
     try { await api('DELETE', '/api/images?name=' + encodeURIComponent(im.name)); setCur(null); load(); } catch (e) { setErr(e.message); }
+  };
+  const uploadAssets = async (files) => {
+    for (const f of files) {
+      const fd = new FormData();
+      fd.append('file', f);
+      try {
+        const r = await fetch('/api/upload', { method: 'POST', body: fd });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || r.statusText);
+      } catch (e) { setErr(e.message); }
+    }
+    load();
   };
   const upload = async (files) => {
     for (const f of files) {
@@ -165,70 +187,110 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onUseBackg
   </div>`;
 
   // ---- right: progress / the chosen image / the reference picker / the gallery
-  let side;
-  if (picking) {
-    const all = [...(data ? data.images.map((i) => i.path) : []), ...(data ? data.assets : [])];
-    side = html`<div class="ig-side">
-      <div class="row" style="margin-bottom:8px"><b>${t(picking === 'init' ? 'Choose the initial image' : 'Choose reference images')}</b><span class="spacer"></span>
-        <label class="btn sm"><${Icon} name="upload" size=${13} /> ${t('Upload…')}<input type="file" accept="image/*" multiple=${picking !== 'init'} hidden onChange=${(e) => upload([...e.target.files])} /></label>
-        <button class="btn sm" onClick=${() => pickFile('image', (p) => pickImage(p))}><${Icon} name="folder-open" size=${13} /> ${t('Browse…')}</button>
-        <button class="btn sm primary" onClick=${() => setPicking(false)}>${t('Done')}</button></div>
-      ${all.length === 0 ? html`<p class="faint">${t('No images in the project yet: upload one or browse your files.')}</p>` : html`<div class="tiles ig-tiles">
-        ${all.map((p) => html`<div class=${'tile' + ((picking === 'init' ? adv.init === p : refs.includes(p)) ? ' cur' : '')} key=${p} title=${p}
-          onClick=${() => (picking !== 'init' && refs.includes(p) ? setRefs(refs.filter((x) => x !== p)) : pickImage(p))}>
-          <div class="th"><img loading="lazy" alt="" src=${thumbURL(p)} /></div><div class="nm">${basename(p)}</div></div>`)}
-      </div>`}
-    </div>`;
-  } else if (mine && (running || mine.status === 'error' || mine.status === 'canceled')) {
-    const pv = mine.gen && mine.gen.preview;
-    side = html`<div class="ig-side">
-      <div class="ig-stage">${pv ? html`<img class="pv" src=${pv} alt="" style=${{ aspectRatio: (mine.gen && mine.gen.steps && w / h) || 'auto' }} />` : html`<div class="faint ig-wait"><${Icon} name=${running ? 'loader-circle' : 'image'} size=${28} cls=${running ? 'spin' : ''} />
-        ${running ? t('The image appears here as it forms…') : ''}</div>`}</div>
-      <${GenSteps} gen=${mine.gen} status=${mine.status} />
-      ${mine.status !== 'running' && html`<p class=${'row ' + (mine.status === 'error' ? 'st-err' : 'st-warn')} style="font-size:12.5px">
-        <${Icon} name=${mine.status === 'error' ? 'triangle-alert' : 'x'} size=${15} />${mine.message}</p>`}
-    </div>`;
-  } else if (cur) {
-    side = html`<div class="ig-side">
+  // All the images: the generated ones (newest first) and the project's (backgrounds, assets/)
+  const items = !data ? [] : [
+    ...data.images.map((im) => ({ ...im, gen: true })),
+    ...data.assets.filter((p) => !data.images.some((im) => im.path === p)).map((p) => ({ path: p, name: basename(p), gen: false })),
+  ];
+  const shown = items.filter((it) => filter === 'all' || (filter === 'gen') === it.gen);
+  // Edit an image with AI: it becomes a reference (switching to a model that takes them), or the initial image
+  const editWith = (p, mode) => {
+    if (mode === 'init') { setAdv('init', p); } else { if (!maxRefs) set('model', setModel)('klein'); setRefs([p]); }
+    setCur(null);
+    setView('create');
+  };
+  const runningBar = running && view !== 'create' && html`<div class="ig-runbar" onClick=${() => { setCur(null); setView('create'); }}>
+    <${Icon} name="loader-circle" size=${14} cls="spin" /><span>${t('Generating an image')} · ${Math.round((mine.progress || 0) * 100)}%</span>
+    <div class="progress"><i style=${{ width: ((mine.progress || 0) * 100).toFixed(1) + '%' }}></i></div><span class="faint">${t('View')}</span></div>`;
+
+  let body;
+  if (view === 'list' && cur) {
+    // ---- one image, big
+    body = html`<div class="ig-detail">
       <div class="ig-stage"><img src=${media(cur.path)} alt="" /></div>
       <div class="ig-meta">
-        <p class="ig-ptext">${cur.prompt || html`<span class="faint">${cur.name}</span>`}</p>
+        <div class="row" style="gap:6px"><span class=${'badge' + (cur.gen ? ' ig-genb' : '')}>${t(cur.gen ? 'Generated' : 'Project')}</span><b class="ig-name">${cur.name}</b></div>
+        ${cur.gen && html`<p class="ig-ptext">${cur.prompt}</p>
         <div class="faint mono" style="font-size:11px">${[cur.model, cur.width && cur.width + '×' + cur.height, cur.steps && t('{n} steps', { n: cur.steps }),
           cur.seed != null && t('seed {n}', { n: cur.seed }), cur.cfg && 'CFG ' + cur.cfg, cur.sampler, cur.scheduler, cur.flashAttn && 'FA ' + cur.flashAttn,
           cur.init && t('from {f} ({s})', { f: basename(cur.init), s: cur.strength }), cur.elapsed && fmtDur(cur.elapsed), fmtDate(cur.created)].filter(Boolean).join(' · ')}</div>
-        ${cur.negative && html`<div class="faint" style="font-size:11.5px;margin-top:2px">${t('Negative prompt')}: ${cur.negative}</div>`}
-        <div class="row" style="margin-top:10px;flex-wrap:wrap;gap:6px">
-          <button class="btn primary sm" onClick=${() => onUseBackground(cur.path)}><${Icon} name="image" size=${13} /> ${t('Use as background')}</button>
-          <button class="btn sm" onClick=${() => { if (!maxRefs) set('model', setModel)('klein'); setRefs([cur.path]); setCur(null); }}
-            title=${t('Edit this image: it becomes the reference of a new one')}><${Icon} name="wand-sparkles" size=${13} /> ${t('Edit / vary')}</button>
-          <button class="btn sm" onClick=${() => reuse(cur)} title=${t('Load its prompt, model and seed')}><${Icon} name="rotate-ccw" size=${13} /> ${t('Reuse settings')}</button>
-          <a class="btn sm" href=${media(cur.path, true)} download=${cur.name}><${Icon} name="download" size=${13} /> ${t('Download')}</a>
-          <span class="spacer"></span>
-          <button class="btn sm ghost danger" onClick=${() => del(cur)}><${Icon} name="trash-2" size=${13} /> ${t('Delete')}</button>
+        ${cur.negative && html`<div class="faint" style="font-size:11.5px;margin-top:2px">${t('Negative prompt')}: ${cur.negative}</div>`}`}
+        ${!cur.gen && html`<div class="faint mono" style="font-size:11px;word-break:break-all">${cur.path}</div>`}
+        <div class="ig-actions">
+          <button class="btn primary" onClick=${() => onUseBackground(cur.path)}><${Icon} name="image" size=${14} /> ${t('Use as background')}</button>
+          <button class="btn" onClick=${() => editWith(cur.path, 'ref')} title=${t('Edit this image: it becomes the reference of a new one')}><${Icon} name="wand-sparkles" size=${14} /> ${t('Edit with AI')}</button>
+          <button class="btn" onClick=${() => editWith(cur.path, 'init')} title=${t('Start from an image instead of noise: the result keeps its composition (img2img)')}><${Icon} name="layers" size=${14} /> ${t('Use as initial image')}</button>
+          ${cur.gen && html`<button class="btn" onClick=${() => reuse(cur)} title=${t('Load its prompt, model and seed')}><${Icon} name="rotate-ccw" size=${14} /> ${t('Reuse settings')}</button>`}
+          <a class="btn" href=${media(cur.path, true)} download=${cur.name}><${Icon} name="download" size=${14} /> ${t('Download')}</a>
+          ${cur.gen && html`<button class="btn ghost danger" onClick=${() => del(cur)}><${Icon} name="trash-2" size=${14} /> ${t('Delete')}</button>`}
         </div>
       </div>
     </div>`;
-  } else {
-    side = html`<div class="ig-side">
-      ${!data ? html`<p class="faint">${t('Loading…')}</p>` : data.images.length === 0
-        ? html`<div class="ig-empty faint"><${Icon} name="image" size=${32} /><p>${t('Write a prompt and press Generate. The images are saved in the project, in:')}</p>
-            <div class="mono" style="font-size:11px">${data.dir}</div></div>`
-        : html`<div class="tiles ig-tiles">
-          ${data.images.map((im) => html`<div class="tile" key=${im.path} title=${im.prompt || im.name} onClick=${() => setCur(im)}>
-            <div class="th"><img loading="lazy" alt="" src=${thumbURL(im.path)} /></div>
-            <div class="nm">${im.prompt || im.name}</div><div class="sz">${im.model || ''} · ${fmtDate(im.created)}</div></div>`)}
+  } else if (view === 'list') {
+    // ---- every image (the default view)
+    const n = (f) => items.filter((it) => f === 'all' || (f === 'gen') === it.gen).length;
+    body = html`<div>
+      ${runningBar}
+      <div class="row ig-toolbar">
+        <div class="btngroup">${[['all', 'All'], ['gen', 'Generated'], ['project', 'Project']].map(([v, l]) => html`
+          <button class=${'btn sm' + (filter === v ? ' on' : '')} onClick=${() => setFilter(v)}>${t(l)} <span class="faint">${n(v)}</span></button>`)}</div>
+        <span class="spacer"></span>
+        <label class="btn sm"><${Icon} name="upload" size=${13} /> ${t('Upload…')}<input type="file" accept="image/*" multiple hidden onChange=${(e) => uploadAssets([...e.target.files])} /></label>
+      </div>
+      ${!data ? html`<p class="faint">${t('Loading…')}</p>` : shown.length === 0
+        ? html`<div class="ig-empty faint"><${Icon} name="image" size=${32} /><p>${t(filter === 'project' ? 'No images in the project yet: upload one or browse your files.' : 'No images yet. Press “New image” to generate one from a description.')}</p></div>`
+        : html`<div class="tiles ig-tiles ig-list">
+          ${shown.map((it) => html`<div class="tile" key=${it.path} title=${it.gen ? it.prompt : it.path} onClick=${() => setCur(it)}>
+            <div class="th"><img loading="lazy" alt="" src=${thumbURL(it.path)} />${it.gen && html`<span class="vid"><${Icon} name="wand-sparkles" size=${10} /></span>`}</div>
+            <div class="nm">${it.gen ? it.prompt || it.name : it.name}</div>
+            <div class="sz">${it.gen ? [it.model, fmtDate(it.created)].filter(Boolean).join(' · ') : t('Project')}</div></div>`)}
         </div>`}
     </div>`;
+  } else {
+    // ---- the generator: the request on the left, references picker / progress on the right
+    let side;
+    if (picking) {
+      const all = items.map((it) => it.path);
+      side = html`<div class="ig-side">
+        <div class="row" style="margin-bottom:8px"><b>${t(picking === 'init' ? 'Choose the initial image' : 'Choose reference images')}</b><span class="spacer"></span>
+          <label class="btn sm"><${Icon} name="upload" size=${13} /> ${t('Upload…')}<input type="file" accept="image/*" multiple=${picking !== 'init'} hidden onChange=${(e) => upload([...e.target.files])} /></label>
+          <button class="btn sm" onClick=${() => pickFile('image', (p) => pickImage(p))}><${Icon} name="folder-open" size=${13} /> ${t('Browse…')}</button>
+          <button class="btn sm primary" onClick=${() => setPicking(false)}>${t('Done')}</button></div>
+        ${all.length === 0 ? html`<p class="faint">${t('No images in the project yet: upload one or browse your files.')}</p>` : html`<div class="tiles ig-tiles">
+          ${all.map((p) => html`<div class=${'tile' + ((picking === 'init' ? adv.init === p : refs.includes(p)) ? ' cur' : '')} key=${p} title=${p}
+            onClick=${() => (picking !== 'init' && refs.includes(p) ? setRefs(refs.filter((x) => x !== p)) : pickImage(p))}>
+            <div class="th"><img loading="lazy" alt="" src=${thumbURL(p)} /></div><div class="nm">${basename(p)}</div></div>`)}
+        </div>`}
+      </div>`;
+    } else if (mine && mine.status !== 'done') {
+      const pv = mine.gen && mine.gen.preview;
+      side = html`<div class="ig-side">
+        <div class="ig-stage">${pv ? html`<img class="pv" src=${pv} alt="" style=${{ aspectRatio: w / h }} />` : html`<div class="faint ig-wait"><${Icon} name=${running ? 'loader-circle' : 'image'} size=${28} cls=${running ? 'spin' : ''} />
+          ${running ? t('The image appears here as it forms…') : ''}</div>`}</div>
+        <${GenSteps} gen=${mine.gen} status=${mine.status} />
+        ${mine.status !== 'running' && html`<p class=${'row ' + (mine.status === 'error' ? 'st-err' : 'st-warn')} style="font-size:12.5px">
+          <${Icon} name=${mine.status === 'error' ? 'triangle-alert' : 'x'} size=${15} />${mine.message}</p>`}
+      </div>`;
+    } else {
+      side = html`<div class="ig-side"><div class="ig-stage"><div class="faint ig-wait"><${Icon} name="wand-sparkles" size=${28} />
+        <p style="max-width:340px;text-align:center">${t('Describe the image and press Generate. It forms here step by step and is saved in the project, in:')}</p>
+        <div class="mono" style="font-size:11px">${data ? data.dir : ''}</div></div></div></div>`;
+    }
+    body = html`<div class="ig">${form}${side}</div>`;
   }
 
-  return html`<${Modal} title=${t('Images')} icon="image" onClose=${onClose} width="min(1100px,96vw)"
-    footer=${html`${cur && !running && html`<button class="btn ghost" onClick=${() => setCur(null)}><${Icon} name="chevron-left" size=${15} /> ${t('All images')}</button>`}
+  const back = view === 'create' || cur;
+  return html`<${Modal} title=${t(view === 'create' ? 'New image' : 'Images')} icon="image" onClose=${onClose} width="min(1100px,96vw)"
+    footer=${html`${back && html`<button class="btn ghost" onClick=${() => { setCur(null); setPicking(false); setView('list'); }}>
+        <${Icon} name="chevron-left" size=${15} /> ${t('All images')}</button>`}
       <span class="spacer"></span>
       <button class="btn" onClick=${onClose}>${t(running ? 'Keep running in the background' : 'Close')}</button>
-      ${running ? html`<button class="btn danger" onClick=${onCancel}><${Icon} name="x" size=${15} /> ${t('Cancel')}</button>`
-        : html`<button class="btn primary" disabled=${!prompt.trim() || !data || (job && job.status === 'running')} onClick=${start} title="Ctrl+Enter">
-            <${Icon} name="wand-sparkles" size=${15} /> ${t('Generate')}</button>`}`}>
+      ${view === 'create'
+        ? (running ? html`<button class="btn danger" onClick=${onCancel}><${Icon} name="x" size=${15} /> ${t('Cancel')}</button>`
+          : html`<button class="btn primary" disabled=${!prompt.trim() || !data || (job && job.status === 'running')} onClick=${start} title="Ctrl+Enter">
+              <${Icon} name="wand-sparkles" size=${15} /> ${t('Generate')}</button>`)
+        : html`<button class="btn primary" onClick=${() => { setCur(null); setRefs([]); setAdv('init', ''); setView('create'); }}><${Icon} name="plus" size=${15} /> ${t('New image')}</button>`}`}>
     ${err && html`<div class="alert err" style="margin-bottom:10px"><${Icon} name="triangle-alert" size=${15} />${err}</div>`}
-    <div class="ig">${form}${side}</div>
+    ${body}
   </${Modal}>`;
 }

@@ -406,3 +406,17 @@ a.btn { text-decoration: none; }
 .ig-adv summary { cursor: pointer; font-size: 12.5px; color: var(--text-2); padding: 4px 0; user-select: none; }
 .ig-adv[open] summary { margin-bottom: 4px; }
 .ig-neg { width: 100%; min-height: 44px; }
+.ig-toolbar { margin-bottom: 10px; }
+.ig-toolbar .btn.on { background: var(--accent-soft); border-color: var(--accent-line); color: var(--text); }
+.ig-list { max-height: 64vh; }
+.ig-runbar { display: flex; align-items: center; gap: 8px; padding: 8px 10px; margin-bottom: 10px; border: 1px solid var(--accent-line);
+  border-radius: var(--r); background: var(--accent-soft); cursor: pointer; font-size: 12.5px; }
+.ig-runbar .progress { flex: 1; }
+.ig-detail { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px; }
+.ig-detail .ig-stage { max-height: 64vh; min-height: 300px; margin-bottom: 0; }
+.ig-detail .ig-stage img { max-height: 64vh; }
+.ig-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.ig-genb { background: var(--accent-soft); color: var(--text); }
+.ig-actions { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; }
+.ig-actions .btn { justify-content: flex-start; }
+@media (max-width: 760px) { .ig-detail { grid-template-columns: 1fr; } }

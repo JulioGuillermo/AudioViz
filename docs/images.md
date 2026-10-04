@@ -6,8 +6,19 @@ Mac): nothing to install, no account, nothing leaves your machine. The models ar
 to `~/.cache/audioviz/models`.
 
 ## From the studio
-**Images** (top bar), or *Generate an image…* in the background inspector.
+**Images** (top bar), or *Generate an image…* in the background inspector. The dialog opens on
+the **list of every image**: the generated ones (newest first, marked with a wand) and the
+project's (backgrounds and `assets/`), with filters *All / Generated / Project* and *Upload…*.
 
+Click an image to see it big, with:
+- **Use as background**: puts it in the background segment at the cursor.
+- **Edit with AI**: opens the generator with it as a reference image (switches to FLUX.2 klein
+  if the model doesn't take references); describe the change.
+- **Use as initial image**: img2img from it (see *Initial image* below).
+- **Reuse settings** (generated): loads its prompt, model, seed and advanced settings.
+- **Download**, and **Delete** (only generated images).
+
+**New image** opens the generator; *All images* goes back to the list:
 1. Choose the **model** (see below).
 2. Write the **prompt**: what the image shows — subject, place, light, style, framing. English
    works best (e.g. *"a neon-lit synthwave city skyline at night seen from a rooftop, rain,
@@ -16,16 +27,16 @@ to `~/.cache/audioviz/models`.
    or from any folder) and describe the change: *"make it a sunset"*, *"the singer from image 1 on
    the stage of image 2"*.
 4. **Shape** (like the video, 16:9, square, vertical…) and **size**: *fast* (≈0.6 megapixels),
-   *detailed* (≈1 MP) or *video size* (slow). The background is scaled to the video anyway, so the
-   fast size is usually enough.
-5. **Generate**. The image appears roughly as it forms, step by step; you can close the dialog
-   and keep working (the job bar shows the progress) or cancel.
+   *detailed* (≈1 MP) or *video size*.
+5. **Generate**. The image appears roughly as it forms, step by step. You can go back to the
+   list (a bar shows the progress), close the dialog and keep working, or cancel. When it
+   finishes, the new image opens.
 
 **Advanced settings** (collapsible, remembered; empty = the model's default):
 
 | Setting | What it does |
 |---|---|
-| Flash attention | On (default) or off, by hand. On keeps the memory small at any size. On Intel GPUs *off* is ~1.6× faster for small images (e.g. 1024×576, even with a reference), but its memory grows with the square of the size: with large images or several references it needs several GB per step and can stall (the dialog warns). |
+| Flash attention | On (default, recommended) or off. On keeps the memory small at any size. Off is a little faster for small images (~8 % at 1024×576), but its memory grows with the square of the size: with large images or references it needs several GB per step and can stall (the dialog warns). |
 | CFG | How strictly the image follows the prompt. Z-Image Turbo and klein are distilled for 1; Qwen Image uses 6. |
 | Negative prompt | What to avoid. Only has an effect with CFG above 1 (and makes each step twice as slow). |
 | Sampler / scheduler | The sampling algorithm and the noise schedule (`euler`, `dpm++2m`, `karras`, `simple`…). |
