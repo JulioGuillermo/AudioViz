@@ -32,6 +32,13 @@ func runImage(args []string) {
 	steps := fs.Int("steps", 0, "Sampling steps (0 = the model's default)")
 	seed := fs.Int64("seed", -1, "Seed (-1 = random)")
 	list := fs.Bool("list", false, "List the models")
+	neg := fs.String("neg", "", "Negative prompt (with --cfg above 1)")
+	cfg := fs.Float64("cfg", 0, "Guidance scale (0 = the model's default)")
+	sampler := fs.String("sampler", "", "Sampler: "+strings.Join(imagegen.Samplers, ", "))
+	scheduler := fs.String("scheduler", "", "Scheduler: "+strings.Join(imagegen.Schedulers, ", "))
+	fa := fs.String("fa", "", "Flash attention: on, off (default: automatic for the GPU)")
+	initPath := fs.String("init", "", "Starting image (img2img): keeps its composition")
+	strength := fs.Float64("strength", 0.75, "With --init: how much it changes (denoise 0..1)")
 	var refs multiFlag
 	fs.Var(&refs, "r", "Reference image (repeat for several; klein and qwen)")
 	fs.Parse(args)
@@ -53,7 +60,15 @@ func runImage(args []string) {
 		fmt.Println("       audioviz image --list")
 		os.Exit(1)
 	}
-	req := imagegen.Request{Model: *model, Prompt: *prompt, Width: *w, Height: *h, Steps: *steps, Seed: *seed}
+	req := imagegen.Request{Model: *model, Prompt: *prompt, Width: *w, Height: *h, Steps: *steps, Seed: *seed,
+		Negative: *neg, CFG: float32(*cfg), Sampler: *sampler, Scheduler: *scheduler, FlashAttn: *fa, Strength: float32(*strength)}
+	if *initPath != "" {
+		img, err := loadImage(*initPath)
+		if err != nil {
+			fail(err)
+		}
+		req.Init = img
+	}
 	for _, p := range refs {
 		img, err := loadImage(p)
 		if err != nil {

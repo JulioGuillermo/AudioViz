@@ -21,6 +21,16 @@ to `~/.cache/audioviz/models`.
 5. **Generate**. The image appears roughly as it forms, step by step; you can close the dialog
    and keep working (the job bar shows the progress) or cancel.
 
+**Advanced settings** (collapsible, remembered; empty = the model's default):
+
+| Setting | What it does |
+|---|---|
+| Flash attention | Fused attention. *Automatic* turns it on except on Intel GPUs, where it is slower (~1.6×). |
+| CFG | How strictly the image follows the prompt. Z-Image Turbo and klein are distilled for 1; Qwen Image uses 6. |
+| Negative prompt | What to avoid. Only has an effect with CFG above 1 (and makes each step twice as slow). |
+| Sampler / scheduler | The sampling algorithm and the noise schedule (`euler`, `dpm++2m`, `karras`, `simple`…). |
+| Initial image + denoise | img2img: start from an image instead of noise; the result keeps its composition. Denoise 0.3 changes little (style, colors), 0.8 keeps only the rough layout, 1 ignores it. Works with every model. |
+
 Each image is saved in the project's `images/` folder as a PNG, with a `.json` next to it
 holding the prompt, model and seed. From an image:
 - **Use as background**: puts it in the background segment at the cursor.
@@ -48,6 +58,8 @@ CPU, very slowly.
 ./audioviz image -p "a lone guitarist on a cliff at sunset, cinematic" -o guitarist.png
 ./audioviz image --model klein -r guitarist.png -p "make it a snowy night with northern lights" -o winter.png
 ./audioviz image -p "..." -W 1920 -H 1088 --steps 12 --seed 42 -o big.png
+./audioviz image -p "an oil painting" --init photo.png --strength 0.6 -o painting.png   # img2img
+./audioviz image -p "..." --cfg 4 --neg "blurry, text" --sampler dpm++2m --scheduler karras --fa off
 ./audioviz image --list          # the models and what is downloaded
 ```
 Ctrl+C cancels. `AUDIOVIZ_DEBUG_SD=1` prints the engine's log.

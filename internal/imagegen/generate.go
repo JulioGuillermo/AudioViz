@@ -23,14 +23,43 @@ type Request struct {
 	Steps         int           // 0 = the model's default
 	Seed          int64         // < 0 = random
 	Refs          []image.Image // reference images (models that accept them)
+
+	// Advanced (zero values = the model's defaults)
+	Negative  string      // negative prompt (only has an effect with CFG > 1)
+	CFG       float32     // guidance scale
+	Sampler   string      // stable-diffusion.cpp names: euler, euler_a, dpm++2m, …
+	Scheduler string      // discrete, karras, simple, …
+	FlashAttn string      // "on", "off", "" = automatic (DefaultFlashAttn)
+	Init      image.Image // starting image (img2img): the result keeps its composition
+	Strength  float32     // with Init: how much it changes (denoise, 0..1; 0 = 0.75)
+}
+
+// Samplers and Schedulers accepted in Request (stable-diffusion.cpp names)
+var (
+	Samplers   = []string{"euler", "euler_a", "heun", "dpm2", "dpm++2s_a", "dpm++2m", "dpm++2mv2", "ipndm", "ipndm_v", "lcm", "ddim_trailing", "tcd", "res_multistep", "res_2s", "er_sde", "lms"}
+	Schedulers = []string{"discrete", "karras", "exponential", "ays", "gits", "sgm_uniform", "simple", "smoothstep", "kl_optimal", "beta", "flux", "flux2"}
+)
+
+func valid(v string, list []string) bool {
+	if v == "" {
+		return true
+	}
+	for _, x := range list {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 type Result struct {
-	Image  *image.NRGBA
-	Seed   int64
-	Steps  int
-	Device string
-	Model  string
+	Image     *image.NRGBA
+	Seed      int64
+	Steps     int
+	CFG       float32
+	FlashAttn bool
+	Device    string
+	Model     string
 }
 
 var stepWeights = map[string]float64{"models": 0.05, "load": 0.02, "refs": 0.04, "prompt": 0.04, "generate": 0.8, "decode": 0.05}
@@ -62,6 +91,24 @@ func Generate(ctx context.Context, req Request, report func(progress.Status), on
 	steps := req.Steps
 	if steps <= 0 {
 		steps = f.Steps
+	}
+	if !valid(req.Sampler, Samplers) || !valid(req.Scheduler, Schedulers) {
+		return nil, fmt.Errorf("unknown sampler %q or scheduler %q", req.Sampler, req.Scheduler)
+	}
+	cfg := req.CFG
+	if cfg <= 0 {
+		cfg = f.CFG
+	}
+	strength := req.Strength
+	if strength <= 0 || strength > 1 {
+		strength = 0.75
+	}
+	fa := DefaultFlashAttn()
+	switch req.FlashAttn {
+	case "on":
+		fa = true
+	case "off":
+		fa = false
 	}
 	seed := req.Seed
 	if seed < 0 {
@@ -111,12 +158,12 @@ func Generate(ctx context.Context, req Request, report func(progress.Status), on
 	if len(req.Refs) > 0 && f.Vision != nil {
 		vision = paths[f.Vision.Name]
 	}
-	key := f.ID + "|" + vision
+	key := fmt.Sprintf("%s|%s|fa=%v", f.ID, vision, fa)
 	if eng.ctx != nil && eng.key == key {
 		t.End("load", "skipped", "Already in memory")
 	} else {
 		t.Start("load", f.Name+"…")
-		if err := eng.load(key, paths[f.Diffusion.Name], paths[f.LLM.Name], vision, paths[f.VAE.Name]); err != nil {
+		if err := eng.load(key, paths[f.Diffusion.Name], paths[f.LLM.Name], vision, paths[f.VAE.Name], fa); err != nil {
 			t.End("load", "error", err.Error())
 			return nil, err
 		}
@@ -133,13 +180,20 @@ func Generate(ctx context.Context, req Request, report func(progress.Status), on
 	for i, r := range req.Refs {
 		refs[i] = toRGB(r)
 	}
+	var init *rgb
+	if req.Init != nil {
+		r := fitRGB(req.Init, w, h)
+		init = &r
+	}
+	sp := sampling{negative: req.Negative, w: w, h: h, steps: steps, cfg: cfg, sampler: req.Sampler, scheduler: req.Scheduler,
+		euler: f.Euler, seed: seed, strength: strength}
 	type res struct {
 		img *image.NRGBA
 		err error
 	}
 	done := make(chan res, 1)
 	go func() {
-		img, err := eng.run(req.Prompt, w, h, steps, f.CFG, f.Euler, seed, refs)
+		img, err := eng.run(req.Prompt, sp, refs, init)
 		done <- res{img, err}
 	}()
 	phaseStep := map[int]string{phRefs: "refs", phText: "prompt", phSample: "generate", phDecode: "decode"}
@@ -179,7 +233,7 @@ func Generate(ctx context.Context, req Request, report func(progress.Status), on
 			}
 			advance("decode")
 			t.End("decode", "done", doneDetail["decode"])
-			return &Result{Image: r.img, Seed: seed, Steps: steps, Device: eng.device, Model: f.ID}, nil
+			return &Result{Image: r.img, Seed: seed, Steps: steps, CFG: cfg, FlashAttn: fa, Device: eng.device, Model: f.ID}, nil
 		case <-ctx.Done():
 			if !canceled {
 				canceled = true
@@ -228,7 +282,7 @@ func Models() []map[string]any {
 		for _, m := range f.Needed(f.Vision != nil) {
 			size += m.Size
 		}
-		out = append(out, map[string]any{"id": f.ID, "name": f.Name, "desc": f.Desc, "refs": f.Refs, "steps": f.Steps,
+		out = append(out, map[string]any{"id": f.ID, "name": f.Name, "desc": f.Desc, "refs": f.Refs, "steps": f.Steps, "cfg": f.CFG,
 			"heavy": f.Heavy, "license": f.License, "size": size, "missing": Missing(f.Needed(false)),
 			"missingRefs": Missing(f.Needed(true))})
 	}
@@ -246,6 +300,22 @@ func toRGB(src image.Image) rgb {
 	w, h = max(16, w/16*16), max(16, h/16*16)
 	dst := image.NewNRGBA(image.Rect(0, 0, w, h))
 	draw.CatmullRom.Scale(dst, dst.Bounds(), src, b, draw.Src, nil)
+	pix := make([]byte, w*h*3)
+	for i := 0; i < w*h; i++ {
+		copy(pix[i*3:i*3+3], dst.Pix[i*4:i*4+3])
+	}
+	return rgb{w: w, h: h, pix: pix}
+}
+
+// fitRGB: the image covering w×h (scaled and cropped at the center), as packed RGB
+func fitRGB(src image.Image, w, h int) rgb {
+	b := src.Bounds()
+	sw, sh := float64(b.Dx()), float64(b.Dy())
+	s := math.Max(float64(w)/sw, float64(h)/sh)
+	cw, ch := float64(w)/s, float64(h)/s
+	crop := image.Rect(b.Min.X+int((sw-cw)/2), b.Min.Y+int((sh-ch)/2), b.Min.X+int((sw+cw)/2), b.Min.Y+int((sh+ch)/2))
+	dst := image.NewNRGBA(image.Rect(0, 0, w, h))
+	draw.CatmullRom.Scale(dst, dst.Bounds(), src, crop, draw.Src, nil)
 	pix := make([]byte, w*h*3)
 	for i := 0; i < w*h; i++ {
 		copy(pix[i*3:i*3+3], dst.Pix[i*4:i*4+3])

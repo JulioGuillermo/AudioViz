@@ -25,6 +25,11 @@ function imageSize(aspect, quality, vw, vh) {
   return [round32(w), round32(w / ar)];
 }
 
+// Advanced settings: empty = the model's default
+const ADV0 = { fa: '', cfg: '', sampler: '', scheduler: '', negative: '', init: '', strength: 0.75 };
+const loadAdv = () => { try { return { ...ADV0, ...JSON.parse(localStorage.getItem('audioviz.img.adv') || '{}'), init: '' }; } catch (e) { return { ...ADV0 }; } };
+const advChanged = (a) => Object.keys(ADV0).filter((k) => k !== 'strength' && a[k] !== ADV0[k]).length;
+
 const remember = (k, v) => { try { localStorage.setItem('audioviz.img.' + k, v); } catch (e) { /* ignore */ } };
 const recall = (k, d) => { try { return localStorage.getItem('audioviz.img.' + k) || d; } catch (e) { return d; } };
 
@@ -39,7 +44,9 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onUseBackg
   const [steps, setSteps] = useState('');
   const [seed, setSeed] = useState('');
   const [cur, setCur] = useState(null); // image shown big
-  const [picking, setPicking] = useState(false); // choosing references from the project
+  const [picking, setPicking] = useState(false); // choosing images from the project: 'refs' | 'init' | false
+  const [adv, setAdvState] = useState(loadAdv);
+  const setAdv = (k, v) => setAdvState((a) => { const n = { ...a, [k]: v }; remember('adv', JSON.stringify({ ...n, init: '' })); return n; });
   const mine = job && job.kind === 'image' ? job : null;
   const running = mine && mine.status === 'running';
 
@@ -55,17 +62,22 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onUseBackg
   const maxRefs = fam ? fam.refs : 0;
   const [w, h] = imageSize(aspect, quality, meta.width || 1920, meta.height || 1080);
   const set = (k, setter) => (v) => { setter(v); remember(k, v); };
+  const pickImage = (p) => { if (picking === 'init') { setAdv('init', p); setPicking(false); } else addRef(p); };
   const addRef = (p) => setRefs((r) => (r.includes(p) || r.length >= Math.max(maxRefs, 1) ? r : [...r, p]));
   const start = () => {
     setErr('');
     remember('prompt', prompt);
-    onStart({ model, prompt, refs: refs.slice(0, maxRefs), width: w, height: h, steps: +steps || 0, seed: seed === '' ? -1 : +seed });
+    onStart({ model, prompt, refs: refs.slice(0, maxRefs), width: w, height: h, steps: +steps || 0, seed: seed === '' ? -1 : +seed,
+      flashAttn: adv.fa, cfg: +adv.cfg || 0, sampler: adv.sampler, scheduler: adv.scheduler, negative: adv.negative.trim(),
+      init: adv.init, strength: adv.init ? +adv.strength : 0 });
   };
   const reuse = (im) => {
     if (im.model) set('model', setModel)(im.model);
     setPrompt(im.prompt || '');
     setSeed(String(im.seed ?? ''));
     setRefs(im.refs || []);
+    setAdvState((a) => ({ ...a, fa: im.flashAttn || '', cfg: im.cfg ? String(im.cfg) : '', sampler: im.sampler || '', scheduler: im.scheduler || '',
+      negative: im.negative || '', init: im.init || '', strength: im.strength || 0.75 }));
     setCur(null);
   };
   const del = async (im) => {
@@ -80,7 +92,7 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onUseBackg
         const r = await fetch('/api/upload', { method: 'POST', body: fd });
         const j = await r.json();
         if (!r.ok) throw new Error(j.error || r.statusText);
-        addRef(j.path);
+        pickImage(j.path);
       } catch (e) { setErr(e.message); }
     }
     load();
@@ -100,7 +112,7 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onUseBackg
       <div class="ig-refs">
         ${refs.map((p) => html`<div class="ig-ref" key=${p} title=${p}><img src=${thumbURL(p)} alt="" />
           <button class="btn icon sm" title=${t('Remove')} onClick=${() => setRefs(refs.filter((x) => x !== p))}><${Icon} name="x" size=${12} /></button></div>`)}
-        ${refs.length < maxRefs && html`<button class="ig-add" title=${t('Add a reference image')} onClick=${() => setPicking(!picking)}><${Icon} name="plus" size=${18} /></button>`}
+        ${refs.length < maxRefs && html`<button class="ig-add" title=${t('Add a reference image')} onClick=${() => setPicking(picking === 'refs' ? false : 'refs')}><${Icon} name="plus" size=${18} /></button>`}
       </div>
       <p class="faint ig-hint">${t('Optional. With references, describe the change (“make it night”, “the person from image 1 in the place of image 2”).')}</p>`}
     ${maxRefs === 0 && refs.length > 0 && html`<p class="faint ig-hint st-warn">${t('This model does not use reference images; choose FLUX.2 klein or Qwen Image to edit.')}</p>`}
@@ -112,6 +124,31 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onUseBackg
     <div class="fld"><label>${t('Seed')}</label><div class="ctl"><input type="number" min="0" value=${seed} placeholder=${t('Random')}
       onInput=${(e) => setSeed(e.target.value)} title=${t('The same seed and prompt give the same image: change only the prompt to make variations.')} />
       ${seed !== '' && html`<button class="btn icon sm" title=${t('Random')} onClick=${() => setSeed('')}><${Icon} name="shuffle" size=${13} /></button>`}</div></div>
+    <details class="ig-adv" open=${recall('advOpen', '') === '1'} onToggle=${(e) => remember('advOpen', e.target.open ? '1' : '')}>
+      <summary>${t('Advanced settings')}${advChanged(adv) ? html` <span class="badge">${t('{n} changed', { n: advChanged(adv) })}</span>` : ''}</summary>
+      <div class="fld"><label title=${t('Fused attention: faster on most GPUs, slower on Intel ones')}>${t('Flash attention')}</label><div class="ctl">
+        <${Select} value=${adv.fa} onChange=${(v) => setAdv('fa', v)} translate=${false}
+          options=${[['', t('Auto ({v})', { v: t(data && data.flashAttn ? 'on' : 'off') })], ['on', t('On')], ['off', t('Off')]]} /></div></div>
+      <div class="fld"><label title=${t('How strictly the image follows the prompt. The fast models (Turbo, klein) are made for 1.')}>CFG</label><div class="ctl">
+        <input type="number" min="1" max="20" step="0.5" value=${adv.cfg} placeholder=${fam ? String(fam.cfg) : ''} onInput=${(e) => setAdv('cfg', e.target.value)} /></div></div>
+      <label class="ig-l">${t('Negative prompt')} <span class="faint">${(+adv.cfg || (fam && fam.cfg) || 1) <= 1 ? t('(only with CFG above 1)') : ''}</span></label>
+      <textarea class="ig-neg" rows="2" value=${adv.negative} placeholder=${t('What to avoid: blurry, text, watermark…')} onInput=${(e) => setAdv('negative', e.target.value)}></textarea>
+      <div class="fld"><label>${t('Sampler')}</label><div class="ctl"><${Select} value=${adv.sampler} onChange=${(v) => setAdv('sampler', v)} translate=${false}
+        options=${[['', t('Model default')], ...((data && data.samplers) || []).map((x) => [x, x])]} /></div></div>
+      <div class="fld"><label>${t('Scheduler')}</label><div class="ctl"><${Select} value=${adv.scheduler} onChange=${(v) => setAdv('scheduler', v)} translate=${false}
+        options=${[['', t('Model default')], ...((data && data.schedulers) || []).map((x) => [x, x])]} /></div></div>
+      <label class="ig-l" title=${t('Start from an image instead of noise: the result keeps its composition (img2img)')}>${t('Initial image')}</label>
+      <div class="ig-refs">
+        ${adv.init ? html`<div class="ig-ref" title=${adv.init}><img src=${thumbURL(adv.init)} alt="" />
+          <button class="btn icon sm" title=${t('Remove')} onClick=${() => setAdv('init', '')}><${Icon} name="x" size=${12} /></button></div>`
+          : html`<button class="ig-add" title=${t('Choose the initial image')} onClick=${() => setPicking(picking === 'init' ? false : 'init')}><${Icon} name="plus" size=${18} /></button>`}
+      </div>
+      ${adv.init && html`<div class="fld"><label title=${t('How much the initial image changes: low keeps it, 1 ignores it')}>${t('Denoise')}</label><div class="ctl">
+        <input type="range" min="0.05" max="1" step="0.05" value=${adv.strength} onInput=${(e) => setAdv('strength', +e.target.value)} />
+        <span class="mono faint" style="font-size:11px;width:32px;text-align:right">${(+adv.strength).toFixed(2)}</span></div></div>`}
+      ${advChanged(adv) > 0 && html`<button class="btn sm ghost" style="margin-top:6px" onClick=${() => { setAdvState({ ...ADV0 }); remember('adv', '{}'); }}>
+        <${Icon} name="rotate-ccw" size=${13} /> ${t('Reset to the defaults')}</button>`}
+    </details>
     ${toDownload > 0 && html`<p class="faint ig-hint"><${Icon} name="download" size=${12} /> ${t('The first time, {s} of models are downloaded (once).', { s: fmtSize(toDownload) })}</p>`}
   </div>`;
 
@@ -120,12 +157,13 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onUseBackg
   if (picking) {
     const all = [...(data ? data.images.map((i) => i.path) : []), ...(data ? data.assets : [])];
     side = html`<div class="ig-side">
-      <div class="row" style="margin-bottom:8px"><b>${t('Choose reference images')}</b><span class="spacer"></span>
-        <label class="btn sm"><${Icon} name="upload" size=${13} /> ${t('Upload…')}<input type="file" accept="image/*" multiple hidden onChange=${(e) => upload([...e.target.files])} /></label>
-        <button class="btn sm" onClick=${() => pickFile('image', (p) => addRef(p))}><${Icon} name="folder-open" size=${13} /> ${t('Browse…')}</button>
+      <div class="row" style="margin-bottom:8px"><b>${t(picking === 'init' ? 'Choose the initial image' : 'Choose reference images')}</b><span class="spacer"></span>
+        <label class="btn sm"><${Icon} name="upload" size=${13} /> ${t('Upload…')}<input type="file" accept="image/*" multiple=${picking !== 'init'} hidden onChange=${(e) => upload([...e.target.files])} /></label>
+        <button class="btn sm" onClick=${() => pickFile('image', (p) => pickImage(p))}><${Icon} name="folder-open" size=${13} /> ${t('Browse…')}</button>
         <button class="btn sm primary" onClick=${() => setPicking(false)}>${t('Done')}</button></div>
       ${all.length === 0 ? html`<p class="faint">${t('No images in the project yet: upload one or browse your files.')}</p>` : html`<div class="tiles ig-tiles">
-        ${all.map((p) => html`<div class=${'tile' + (refs.includes(p) ? ' cur' : '')} key=${p} title=${p} onClick=${() => (refs.includes(p) ? setRefs(refs.filter((x) => x !== p)) : addRef(p))}>
+        ${all.map((p) => html`<div class=${'tile' + ((picking === 'init' ? adv.init === p : refs.includes(p)) ? ' cur' : '')} key=${p} title=${p}
+          onClick=${() => (picking !== 'init' && refs.includes(p) ? setRefs(refs.filter((x) => x !== p)) : pickImage(p))}>
           <div class="th"><img loading="lazy" alt="" src=${thumbURL(p)} /></div><div class="nm">${basename(p)}</div></div>`)}
       </div>`}
     </div>`;
@@ -143,8 +181,10 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onUseBackg
       <div class="ig-stage"><img src=${media(cur.path)} alt="" /></div>
       <div class="ig-meta">
         <p class="ig-ptext">${cur.prompt || html`<span class="faint">${cur.name}</span>`}</p>
-        <div class="faint mono" style="font-size:11px">${[cur.model, cur.width && cur.width + '×' + cur.height, cur.seed != null && t('seed {n}', { n: cur.seed }),
-          cur.elapsed && fmtDur(cur.elapsed), fmtDate(cur.created)].filter(Boolean).join(' · ')}</div>
+        <div class="faint mono" style="font-size:11px">${[cur.model, cur.width && cur.width + '×' + cur.height, cur.steps && t('{n} steps', { n: cur.steps }),
+          cur.seed != null && t('seed {n}', { n: cur.seed }), cur.cfg && 'CFG ' + cur.cfg, cur.sampler, cur.scheduler, cur.flashAttn && 'FA ' + cur.flashAttn,
+          cur.init && t('from {f} ({s})', { f: basename(cur.init), s: cur.strength }), cur.elapsed && fmtDur(cur.elapsed), fmtDate(cur.created)].filter(Boolean).join(' · ')}</div>
+        ${cur.negative && html`<div class="faint" style="font-size:11.5px;margin-top:2px">${t('Negative prompt')}: ${cur.negative}</div>`}
         <div class="row" style="margin-top:10px;flex-wrap:wrap;gap:6px">
           <button class="btn primary sm" onClick=${() => onUseBackground(cur.path)}><${Icon} name="image" size=${13} /> ${t('Use as background')}</button>
           <button class="btn sm" onClick=${() => { if (!maxRefs) set('model', setModel)('klein'); setRefs([cur.path]); setCur(null); }}

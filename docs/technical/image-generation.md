@@ -61,6 +61,12 @@ Intel GPUs** (see below; `AUDIOVIZ_SD_FA=1` / `0` forces it on / off), everythin
 size, steps, `txt_cfg`, seed, Euler when the family asks for it (otherwise the model's default
 sampler and scheduler), and the reference images.
 
+Advanced settings (`Request`): negative prompt, CFG (`txt_cfg`), sampler and scheduler by
+name (`str_to_sample_method` / `str_to_scheduler`; only the names in `Samplers` / `Schedulers`
+are accepted), flash attention per request (part of the context key, so changing it reloads
+the model), and an initial image for img2img (`init_image` + `strength`), scaled and
+center-cropped to the output size (`fitRGB`).
+
 Cancel: `sd_cancel_generation(ctx, SD_CANCEL_ALL)` from `Generate` when the context is done;
 the generation returns at the next step. `SD_CANCEL_RESET` is called before each generation.
 
@@ -79,7 +85,7 @@ Reference images are decoded by the caller (PNG, JPEG, GIF, WebP), scaled down t
 | Endpoint | |
 |---|---|
 | `GET /api/images` | models (with bytes missing, with and without refs), generated images (`images/*.png` + `.json`, newest first), project images usable as references (backgrounds, `assets/`) |
-| `POST /api/images/generate` | `{model, prompt, refs[], width, height, steps, seed}` → job `image`. Saves `images/<date>-<first words>.png` and its `.json` (prompt, model, seed, steps, size, refs, device, elapsed) |
+| `POST /api/images/generate` | `{model, prompt, refs[], width, height, steps, seed}` and the advanced `{negative, cfg, sampler, scheduler, flashAttn: on/off/"", init, strength}` → job `image`. Saves `images/<date>-<first words>.png` and its `.json` (prompt, model, seed, steps, size, refs, device, elapsed) |
 | `GET /api/images/preview` | the latest preview as JPEG; `job.gen.preview` carries its URL with a counter so the `<img>` reloads |
 | `DELETE /api/images?name=` | deletes an image of `images/` (name only) and its `.json` |
 

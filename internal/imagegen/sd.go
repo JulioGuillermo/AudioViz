@@ -124,12 +124,15 @@ static sd_ctx_t *av_open(const char *diff, const char *llm, const char *vision, 
     return new_sd_ctx(&p);
 }
 
-static int av_generate(sd_ctx_t *ctx, const char *prompt, int w, int h, int steps, float cfg, int euler,
-                       long long seed, sd_image_t *refs, int nrefs, sd_image_t *out) {
+// sampler / scheduler: names as in stable-diffusion.cpp ("euler", "dpm++2m", "karras"…), NULL =
+// the model's default (or Euler if euler); init: optional starting image (img2img) with strength
+static int av_generate(sd_ctx_t *ctx, const char *prompt, const char *negative, int w, int h, int steps,
+                       float cfg, const char *sampler, const char *scheduler, int euler, long long seed,
+                       sd_image_t *refs, int nrefs, sd_image_t *init, float strength, sd_image_t *out) {
     sd_img_gen_params_t g;
     sd_img_gen_params_init(&g);
     g.prompt = prompt;
-    g.negative_prompt = "";
+    g.negative_prompt = negative ? negative : "";
     g.width = w;
     g.height = h;
     g.seed = seed;
@@ -139,6 +142,9 @@ static int av_generate(sd_ctx_t *ctx, const char *prompt, int w, int h, int step
     g.sample_params.sample_steps = steps;
     g.sample_params.guidance.txt_cfg = cfg;
     if (euler) g.sample_params.sample_method = EULER_SAMPLE_METHOD;
+    if (sampler) g.sample_params.sample_method = str_to_sample_method(sampler);
+    if (scheduler) g.sample_params.scheduler = str_to_scheduler(scheduler);
+    if (init) { g.init_image = *init; g.strength = strength; }
     av_phase = PH_NONE; av_loading = 0; av_step = 0; av_steps = 0; av_err[0] = 0;
     __atomic_store_n(&av_pseq, 0, __ATOMIC_RELEASE);
     sd_cancel_generation(ctx, SD_CANCEL_RESET);
@@ -189,9 +195,30 @@ func lastErr(def string) error {
 	return errors.New(def)
 }
 
-// load opens the models (if not already loaded); paths: diffusion, text encoder, vision (or ""), VAE
-func (e *engine) load(key, diff, llm, vision, vae string) error {
+func setup() {
 	setupOnce.Do(func() { C.av_setup(C.int(btoi(os.Getenv("AUDIOVIZ_DEBUG_SD") != ""))) })
+}
+
+// Device is the GPU used (or "CPU")
+func Device() string {
+	setup()
+	return C.GoString(C.av_device())
+}
+
+// DefaultFlashAttn: whether flash attention is used when not chosen. It is much faster on most
+// GPUs, but on Intel ggml-vulkan only has the scalar kernel (its cooperative-matrix version needs
+// 16×16×16 tiles, Intel XMX uses 8×16×16) and the plain attention is ~1.6× faster there.
+// AUDIOVIZ_SD_FA=1 / 0 overrides it.
+func DefaultFlashAttn() bool {
+	if v := os.Getenv("AUDIOVIZ_SD_FA"); v != "" {
+		return v == "1"
+	}
+	return !strings.Contains(Device(), "Intel")
+}
+
+// load opens the models (if not already loaded); paths: diffusion, text encoder, vision (or ""), VAE
+func (e *engine) load(key, diff, llm, vision, vae string, fa bool) error {
+	setup()
 	if e.ctx != nil && e.key == key {
 		return nil
 	}
@@ -208,14 +235,7 @@ func (e *engine) load(key, diff, llm, vision, vae string) error {
 			C.free(unsafe.Pointer(p))
 		}
 	}()
-	// Flash attention: much faster on most GPUs, but on Intel ggml-vulkan only has the scalar
-	// kernel (its cooperative-matrix version needs 16×16×16 tiles, Intel XMX uses 8×16×16) and
-	// the plain attention is ~13 % faster there
 	dev := C.GoString(C.av_device())
-	fa := !strings.Contains(dev, "Intel")
-	if v := os.Getenv("AUDIOVIZ_SD_FA"); v != "" {
-		fa = v == "1"
-	}
 	ctx := C.av_open(cd, cl, cv, ca, C.int(btoi(fa)))
 	if ctx == nil {
 		return lastErr("could not load the image model")
@@ -283,10 +303,33 @@ type rgb struct {
 	pix  []byte
 }
 
-// run generates one image with the loaded model
-func (e *engine) run(prompt string, w, h, steps int, cfg float32, euler bool, seed int64, refs []rgb) (*image.NRGBA, error) {
-	cp := C.CString(prompt)
-	defer C.free(unsafe.Pointer(cp))
+// sampling: what run needs besides the prompt and the images
+type sampling struct {
+	negative           string
+	w, h, steps        int
+	cfg                float32
+	sampler, scheduler string // "" = default
+	euler              bool   // the default is Euler (the family asks for it)
+	seed               int64
+	strength           float32 // with an initial image
+}
+
+func (sp sampling) cstr(s string) *C.char {
+	if s == "" {
+		return nil
+	}
+	return C.CString(s)
+}
+
+// run generates one image with the loaded model; init (optional) is the starting image, at the output size
+func (e *engine) run(prompt string, sp sampling, refs []rgb, init *rgb) (*image.NRGBA, error) {
+	cp, cn := C.CString(prompt), C.CString(sp.negative)
+	csa, csc := sp.cstr(sp.sampler), sp.cstr(sp.scheduler)
+	defer func() {
+		for _, p := range []*C.char{cp, cn, csa, csc} {
+			C.free(unsafe.Pointer(p))
+		}
+	}()
 	var cr *C.sd_image_t
 	if len(refs) > 0 {
 		cr = (*C.sd_image_t)(C.calloc(C.size_t(len(refs)), C.size_t(unsafe.Sizeof(C.sd_image_t{}))))
@@ -298,9 +341,15 @@ func (e *engine) run(prompt string, w, h, steps int, cfg float32, euler bool, se
 			arr[i] = C.sd_image_t{width: C.uint32_t(r.w), height: C.uint32_t(r.h), channel: 3, data: (*C.uint8_t)(p)}
 		}
 	}
+	var ci *C.sd_image_t
+	if init != nil {
+		p := C.CBytes(init.pix)
+		defer C.free(p)
+		ci = &C.sd_image_t{width: C.uint32_t(init.w), height: C.uint32_t(init.h), channel: 3, data: (*C.uint8_t)(p)}
+	}
 	var out C.sd_image_t
-	if C.av_generate(e.ctx, cp, C.int(w), C.int(h), C.int(steps), C.float(cfg), C.int(btoi(euler)),
-		C.longlong(seed), cr, C.int(len(refs)), &out) == 0 {
+	if C.av_generate(e.ctx, cp, cn, C.int(sp.w), C.int(sp.h), C.int(sp.steps), C.float(sp.cfg), csa, csc,
+		C.int(btoi(sp.euler)), C.longlong(sp.seed), cr, C.int(len(refs)), ci, C.float(sp.strength), &out) == 0 {
 		return nil, lastErr("the image could not be generated")
 	}
 	defer C.free(unsafe.Pointer(out.data))

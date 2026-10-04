@@ -35,18 +35,26 @@ var imageExt = map[string]bool{".png": true, ".jpg": true, ".jpeg": true, ".webp
 
 // genImage: a generated image and how it was made (its .json)
 type genImage struct {
-	Name    string    `json:"name"`
-	Path    string    `json:"path"`
-	Prompt  string    `json:"prompt"`
-	Model   string    `json:"model"`
-	Seed    int64     `json:"seed"`
-	Steps   int       `json:"steps"`
-	Width   int       `json:"width"`
-	Height  int       `json:"height"`
-	Refs    []string  `json:"refs,omitempty"`
-	Device  string    `json:"device,omitempty"`
-	Elapsed float64   `json:"elapsed,omitempty"` // s
-	Created time.Time `json:"created"`
+	Name   string   `json:"name"`
+	Path   string   `json:"path"`
+	Prompt string   `json:"prompt"`
+	Model  string   `json:"model"`
+	Seed   int64    `json:"seed"`
+	Steps  int      `json:"steps"`
+	Width  int      `json:"width"`
+	Height int      `json:"height"`
+	Refs   []string `json:"refs,omitempty"`
+	// Advanced settings (empty = the model's defaults)
+	Negative  string    `json:"negative,omitempty"`
+	CFG       float32   `json:"cfg,omitempty"`
+	Sampler   string    `json:"sampler,omitempty"`
+	Scheduler string    `json:"scheduler,omitempty"`
+	FlashAttn string    `json:"flashAttn,omitempty"` // on / off as used
+	Init      string    `json:"init,omitempty"`
+	Strength  float32   `json:"strength,omitempty"`
+	Device    string    `json:"device,omitempty"`
+	Elapsed   float64   `json:"elapsed,omitempty"` // s
+	Created   time.Time `json:"created"`
 }
 
 var (
@@ -125,7 +133,9 @@ func (s *Server) hImages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"models": imagegen.Models(), "images": listGenImages(cfg.Dir),
-		"assets": projectImages(s), "dir": filepath.Join(cfg.Dir, imagesDir)})
+		"assets": projectImages(s), "dir": filepath.Join(cfg.Dir, imagesDir),
+		"samplers": imagegen.Samplers, "schedulers": imagegen.Schedulers,
+		"device": imagegen.Device(), "flashAttn": imagegen.DefaultFlashAttn()})
 }
 
 var slugRe = regexp.MustCompile(`[^a-z0-9]+`)
@@ -152,6 +162,14 @@ func (s *Server) hGenImage(w http.ResponseWriter, r *http.Request) {
 		Height int      `json:"height"`
 		Steps  int      `json:"steps"`
 		Seed   int64    `json:"seed"`
+
+		Negative  string  `json:"negative"`
+		CFG       float32 `json:"cfg"`
+		Sampler   string  `json:"sampler"`
+		Scheduler string  `json:"scheduler"`
+		FlashAttn string  `json:"flashAttn"` // on, off, "" = automatic
+		Init      string  `json:"init"`      // starting image (img2img)
+		Strength  float32 `json:"strength"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		fail(w, 400, err)
@@ -187,6 +205,15 @@ func (s *Server) hGenImage(w http.ResponseWriter, r *http.Request) {
 		}
 		refs = append(refs, img)
 	}
+	var initImg image.Image
+	if req.Init != "" {
+		img, err := decodeImage(req.Init)
+		if err != nil {
+			fail(w, 400, err)
+			return
+		}
+		initImg = img
+	}
 	dir := filepath.Join(cfg.Dir, imagesDir)
 	j, err := s.startJob("image", func(ctx context.Context, j *job) error {
 		if unloadTimer != nil {
@@ -197,7 +224,8 @@ func (s *Server) hGenImage(w http.ResponseWriter, r *http.Request) {
 		previewMu.Unlock()
 		t0 := time.Now()
 		res, err := imagegen.Generate(ctx, imagegen.Request{Model: req.Model, Prompt: req.Prompt, Width: req.Width, Height: req.Height,
-			Steps: req.Steps, Seed: req.Seed, Refs: refs}, func(st progress.Status) {
+			Steps: req.Steps, Seed: req.Seed, Refs: refs, Negative: req.Negative, CFG: req.CFG, Sampler: req.Sampler,
+			Scheduler: req.Scheduler, FlashAttn: req.FlashAttn, Init: initImg, Strength: req.Strength}, func(st progress.Status) {
 			j.mu.Lock()
 			st.Preview = j.preview()
 			j.Gen = &st
@@ -241,7 +269,12 @@ func (s *Server) hGenImage(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		meta := genImage{Prompt: req.Prompt, Model: res.Model, Seed: res.Seed, Steps: res.Steps, Width: res.Image.Rect.Dx(),
-			Height: res.Image.Rect.Dy(), Refs: req.Refs, Device: res.Device, Elapsed: time.Since(t0).Seconds(), Created: time.Now()}
+			Height: res.Image.Rect.Dy(), Refs: req.Refs, Device: res.Device, Elapsed: time.Since(t0).Seconds(), Created: time.Now(),
+			Negative: req.Negative, CFG: res.CFG, Sampler: req.Sampler, Scheduler: req.Scheduler, FlashAttn: map[bool]string{true: "on", false: "off"}[res.FlashAttn],
+			Init: req.Init}
+		if req.Init != "" {
+			meta.Strength = req.Strength
+		}
 		if mb, err := json.MarshalIndent(meta, "", "  "); err == nil {
 			_ = os.WriteFile(strings.TrimSuffix(out, ".png")+".json", mb, 0o644)
 		}
