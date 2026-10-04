@@ -88,6 +88,7 @@ type Word struct {
 	Start, End float64
 	Prob       float64
 	T0, DTW    float64 // raw whisper timings (debugging)
+	Seg        int     // whisper segment (a phrase): used to split a transcription into lines
 }
 
 type Whisper struct {
@@ -213,7 +214,7 @@ loop:
 				if strings.TrimSpace(text) == "" {
 					continue
 				}
-				words = append(words, Word{Text: strings.TrimSpace(text), Start: at + offset, End: segT1 + offset, Prob: float64(td.p), T0: t0 + offset, DTW: dtw + offset})
+				words = append(words, Word{Text: strings.TrimSpace(text), Start: at + offset, End: segT1 + offset, Prob: float64(td.p), T0: t0 + offset, DTW: dtw + offset, Seg: s})
 			} else {
 				last := &words[len(words)-1]
 				last.Text += text

@@ -199,7 +199,7 @@ export const fmtDur = (s) => {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 };
 
-export const STEP_LABEL = { models: 'Models', prepare: 'Prepare audio', separate: 'Separate the vocals', recognize: 'Recognize the vocals', align: 'Align with the lyrics' };
+export const STEP_LABEL = { models: 'Models', prepare: 'Prepare audio', separate: 'Separate the vocals', recognize: 'Recognize the vocals', align: 'Align with the lyrics', lines: 'Build the lines' };
 
 // Lyrics generation steps: overall bar + current step bar + list of steps
 export function GenSteps({ gen, status }) {
@@ -233,8 +233,29 @@ export function GenSteps({ gen, status }) {
 
 export const LYRIC_LANGS = [['en', 'English'], ['es', 'Spanish'], ['fr', 'French'], ['de', 'German'], ['it', 'Italian'], ['pt', 'Portuguese'], ['ja', 'Japanese']];
 
-export function GenLyricsDialog({ meta, job, models, pickFile, onStart, onCancel, onClose, initialTxt }) {
+const GEN_LANGS = [['auto', 'Detect automatically'], ...LYRIC_LANGS];
+
+// Lyrics as plain text, one line per row: correct the words (a transcription, typos), add or
+// remove lines, then align the text again. The recognition of the song is cached, so this
+// takes seconds.
+export function LyricsTextDialog({ lines, lang: lang0, onAlign, onClose }) {
+  const [text, setText] = useState(() => (lines || []).map((l) => l.words.map((w) => w.text).join(' ')).join('\n'));
+  const [lang, setLang] = useState(lang0 || 'en');
+  const n = text.split('\n').filter((s) => s.trim()).length;
+  return html`<${Modal} wide title=${t('Edit the lyrics text')} icon="pencil" onClose=${onClose}
+    footer=${html`<span class="faint" style="font-size:12px">${n} ${t('lines')}</span><span class="spacer"></span>
+      <button class="btn" onClick=${onClose}>${t('Cancel')}</button>
+      <button class="btn primary" disabled=${!n} onClick=${() => onAlign(text, lang)}><${Icon} name="wand-sparkles" size=${15} /> ${t('Align again')}</button>`}>
+    <p class="faint" style="margin-top:0">${t('One line of the lyrics per row. Fix misheard words, split or join lines, then align: the words get their times again from the song (the recognition is reused, so it takes seconds). Manual timing changes are replaced.')}</p>
+    <textarea class="lyrtext" spellcheck="false" value=${text} onInput=${(e) => setText(e.target.value)}></textarea>
+    <div class="fld"><label>${t('Language')}</label><div class="ctl"><${Select} value=${lang} options=${GEN_LANGS} onChange=${setLang} /></div></div>
+  </${Modal}>`;
+}
+
+export function GenLyricsDialog({ meta, job, models, pickFile, onStart, onCancel, onClose, initialTxt, onEditText }) {
   const [txt, setTxt] = useState(initialTxt || '');
+  // Source: the lyrics as text (aligned) or nothing (the audio is transcribed)
+  const [src, setSrc] = useState('text');
   const [lang, setLang] = useState('en');
   const [mode, setMode] = useState('precise');
   const mine = job && job.kind === 'lyrics' ? job : null;
@@ -244,14 +265,19 @@ export function GenLyricsDialog({ meta, job, models, pickFile, onStart, onCancel
     footer=${html`
       <button class="btn" onClick=${onClose}>${t(running ? 'Keep running in the background' : 'Close')}</button>
       ${running ? html`<button class="btn danger" onClick=${onCancel}><${Icon} name="x" size=${15} /> ${t('Cancel')}</button>`
-        : html`<button class="btn primary" disabled=${!txt || !meta.hasAudio} onClick=${() => onStart(txt, lang, mode === 'fast')}>
+        : html`<button class="btn primary" disabled=${(src === 'text' && !txt) || !meta.hasAudio}
+            onClick=${() => onStart({ txt: src === 'text' ? txt : '', transcribe: src === 'transcribe', lang, fast: mode === 'fast' })}>
           <${Icon} name="wand-sparkles" size=${15} /> ${t(mine && mine.status === 'done' ? 'Generate again' : 'Generate')}</button>`}`}>
     ${!running && html`
-      <p class="faint" style="margin-top:0">${t('From the lyrics as text (Suno format works: [ ] tags are ignored) it works out when every word is sung. Everything runs inside AudioViz; recognition uses the GPU when available.')}</p>
-      <div class="fld"><label>${t('Lyrics text')}</label><div class="ctl filectl">
+      <div class="fld"><label>${t('Source')}</label><div class="ctl"><${Select} value=${src} onChange=${setSrc}
+        options=${[['text', 'The lyrics as text (.txt)'], ['transcribe', 'Transcribe the audio (no text needed)']]} /></div></div>
+      <p class="faint" style="margin-top:0">${src === 'text'
+        ? t('From the lyrics as text (Suno format works: [ ] tags are ignored) it works out when every word is sung. Everything runs inside AudioViz; recognition uses the GPU when available.')
+        : t('The vocals are recognized and become the lyrics, split into lines at the pauses. Then correct the words with “Edit text”: the corrected text is aligned again in seconds.')}</p>
+      ${src === 'text' && html`<div class="fld"><label>${t('Lyrics text')}</label><div class="ctl filectl">
         <div class="fn"><${Icon} name="file-text" size=${14} cls="faint" /><span>${txt ? basename(txt) : html`<span class="faint">${t('None')}</span>`}</span></div>
-        <button class="btn icon" title=${t('Choose file')} onClick=${() => pickFile('txt', setTxt, txt)}><${Icon} name="folder-open" size=${15} /></button></div></div>
-      <div class="fld"><label>${t('Language')}</label><div class="ctl"><${Select} value=${lang} options=${LYRIC_LANGS} onChange=${setLang} /></div></div>
+        <button class="btn icon" title=${t('Choose file')} onClick=${() => pickFile('txt', setTxt, txt)}><${Icon} name="folder-open" size=${15} /></button></div></div>`}
+      <div class="fld"><label>${t('Language')}</label><div class="ctl"><${Select} value=${lang} options=${src === 'transcribe' ? GEN_LANGS : LYRIC_LANGS} onChange=${setLang} /></div></div>
       <div class="fld"><label>${t('Mode')}</label><div class="ctl"><${Select} value=${mode} onChange=${setMode}
         options=${[['precise', 'Precise: separates the vocals first (≈ song length)'], ['fast', 'Fast: on the full mix (seconds, less reliable)']]} /></div></div>
       ${toDownload > 0 && html`<div class="alert" style="margin-top:8px"><${Icon} name="info" size=${15} />
@@ -260,6 +286,9 @@ export function GenLyricsDialog({ meta, job, models, pickFile, onStart, onCancel
     ${mine && mine.gen && html`<${GenSteps} gen=${mine.gen} status=${mine.status} />`}
     ${mine && mine.status !== 'running' && html`<p class=${'row ' + ({ done: 'st-ok', error: 'st-err', canceled: 'st-warn' }[mine.status] || '')} style="font-size:12.5px">
       <${Icon} name=${{ done: 'check', error: 'triangle-alert', canceled: 'x' }[mine.status] || 'info'} size=${15} />${mine.message}</p>`}
+    ${mine && mine.status === 'done' && onEditText && html`<div class="row" style="margin-top:6px">
+      <span class="faint" style="font-size:12px">${t('Check the words and fix what was misheard:')}</span>
+      <button class="btn sm" onClick=${onEditText}><${Icon} name="pencil" size=${13} /> ${t('Edit text')}</button></div>`}
   </${Modal}>`;
 }
 

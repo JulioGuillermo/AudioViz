@@ -39,7 +39,7 @@ background as thumbnail; click one to open it. From there you can also create a 
      as the song (without audio it lasts 30 s, so you can start building the visuals).
    - **Choose background…**: image, GIF or video. The video resolution will be the background's (you can
      set a different one in **Output**). Until you pick one it is 1080×1920 with a black background.
-   - **Lyrics** (optional): a `.lrc`/`.srt`, or *Generate from .txt…*.
+   - **Lyrics** (optional): a `.lrc`/`.srt`, or *Generate…* (from a `.txt`, or transcribing the song).
 3. The guide hides itself once there is audio and a background. From then on everything is adjusted in the tracks.
 
 **Drag and drop**: drop files anywhere in the window. They are copied to `assets/`
@@ -109,7 +109,8 @@ rename it, right-click to delete it. They serve as references for placing segmen
 ## Lyrics
 - Import a `.lrc` / `.srt` in the **Lyrics** track → *File*.
 - **Generate synced lyrics…** (in the lyrics inspector, or by dragging in the `.txt`): choose the
-  `.txt` (Suno format works), the language and the mode (accurate / fast). It is built into the binary
+  `.txt` (Suno format works) — or *Transcribe the audio* if you have no text —, the language and the
+  mode (accurate / fast). It is built into the binary
   (Demucs + Whisper on the GPU); the progress shows each step with its time. See [generate.md](lyrics/generate.md).
 - **Fine-tune timings on the timeline** ("Lyric lines" track):
   - click a line to select it; once selected, drag it to move it (an unselected line never moves,
@@ -128,6 +129,11 @@ rename it, right-click to delete it. They serve as references for placing segmen
   the line is left as it was and a notice says so. If a line is far off, drag it roughly into place
   first and then resync. It uses the separated vocals from the cache when available and takes a couple
   of seconds.
+- **Edit text** (lyrics or line inspector): the whole lyrics as plain text; correct it and *Align
+  again* to recompute the times (seconds, it reuses the cached recognition). Ideal after a transcription.
+- **Split / join lines** (line inspector): the scissors on a word start a new line there, *Split at
+  cursor* cuts before the first word after the playhead, *Join next* merges the line with the next one.
+  The words keep their times.
 - Lyric edits are **saved automatically** to the project's `.lrc` (per-word timing).
 
 ## Files

@@ -4,8 +4,8 @@ Everything runs **inside the binary**: no Python, no Whisper, nothing to install
 are downloaded once (≈ 660 MB) to `~/.cache/audioviz/models`, and after that it works offline.
 
 ## From the studio
-**Lyrics** track → *Generate synced lyrics…* (or drag the `.txt` onto the window). Choose the `.txt`, the
-language and the mode. The progress view shows an overall bar, another one for the current step (with elapsed
+**Lyrics** track → *Generate synced lyrics…* (or drag the `.txt` onto the window). Choose the source
+(the lyrics as a `.txt`, or *Transcribe the audio* when you have no text — see below), the language and the mode. The progress view shows an overall bar, another one for the current step (with elapsed
 and remaining time) and the list of steps. When it finishes, the lyrics are saved to the project's `lyrics.lrc` and
 loaded automatically; if there already was one, the previous file is kept with the date in its name.
 
@@ -14,7 +14,25 @@ loaded automatically; if there already was one, the previous file is kept with t
 ./audioviz lyrics "song.flac" lyrics.txt -o lyrics.lrc            # accurate mode
 ./audioviz lyrics "song.flac" lyrics.txt -o lyrics.lrc --fast     # fast mode
 ./audioviz lyrics "song.flac" lyrics.txt -o lyrics.lrc --lang es  # another language
+./audioviz lyrics "song.flac" -o lyrics.lrc --lang auto           # no text: transcribe the song
 ```
+
+## Without the lyrics text: transcription
+With no text, the words Whisper hears become the lyrics. They are split into lines at the pauses in
+the voice, at Whisper's phrase breaks and after punctuation (a line never exceeds 14 words); `♪`,
+`[Music]` and similar marks are dropped, and so are words "heard" in silence. The language can be
+detected automatically (`auto`), although choosing it is more reliable.
+
+Then correct it in the studio:
+1. **Edit text** (in the generate dialog when it finishes, in the lyrics inspector or in the line inspector):
+   the whole lyrics as text, one line per row. Fix misheard words, split or join lines, and press
+   **Align again**: the corrected text is aligned like a `.txt` would be, reusing the cached separation
+   and recognition, so it takes seconds. Timing tweaks made by hand are replaced.
+2. Fine-tune timings with the usual tools: dragging lines and words, *Resync*, and **split / join**
+   lines in the line inspector (scissors on a word, *Split at cursor*, *Join next*).
+
+On the demo song the transcription got 97 % of the words right (word-level comparison with the real
+lyrics) and 63 lines against 60 in the original.
 
 ## What it does (steps)
 | Step | What it does | Where it runs |
@@ -44,7 +62,7 @@ Measured on *I didn't ask to be the devil* against a reference forced alignment:
 - A specific word: in the studio, click the line (*Lyric lines* track) and adjust its start; or edit
   its `<mm:ss.xx>` tag in the `.lrc`.
 - If a phrase is sung more times than it appears in the `.txt`, add it to the `.txt` and generate again
-  (with the vocals already cached it takes a few seconds).
+  (with the vocals already cached it takes a few seconds), or add it with *Edit text*.
 
 ## Without a GPU
 It works the same on the CPU (recognition takes longer). To force the CPU for recognition: `AUDIOVIZ_NO_VULKAN=1` (the video renderer has its own `--renderer cpu`).

@@ -92,9 +92,9 @@ export const ES = {
   'Getting started': 'Primeros pasos', 'Choose the song': 'Elige la canción', 'Choose the background': 'Elige el fondo', 'Add the lyrics': 'Añade la letra',
   'FLAC, WAV, MP3 or OGG. It is analyzed right away: bass, mids, treble and beats.': 'FLAC, WAV, MP3 u OGG. Se analiza al momento: graves, medios, agudos y golpes.',
   'Image, GIF or video. The video resolution will be the background’s (it can be changed in Output).': 'Imagen, GIF o vídeo. La resolución del vídeo final será la del fondo (se puede cambiar en Salida).',
-  'An already synced .lrc / .srt, or generate it from a .txt with the lyrics.': 'Un .lrc / .srt ya sincronizado, o genérala desde un .txt con la letra.',
+  'An already synced .lrc / .srt, or generate it: from a .txt with the lyrics, or transcribed from the song.': 'Un .lrc / .srt ya sincronizado, o genérala: desde un .txt con la letra, o transcribiendo la canción.',
   'Choose audio…': 'Elegir audio…', 'Choose background…': 'Elegir fondo…', 'Choose .lrc / .srt…': 'Elegir .lrc / .srt…',
-  'Generate from .txt…': 'Generar desde .txt…', 'Change…': 'Cambiar…',
+  'Generate…': 'Generar…', 'Change…': 'Cambiar…',
   'You can also drop files onto the window: they are copied to assets/ and placed automatically.': 'También puedes arrastrar archivos a la ventana: se copian a assets/ y se colocan solos.',
 
   // --- files
@@ -124,7 +124,7 @@ export const ES = {
   'First segment: applies from the start until the next change.': 'Tramo inicial: se aplica desde el principio hasta el siguiente cambio.',
   'Starts at': 'Empieza en', 'Transition': 'Transición', 'Cut': 'Corte', 'Fade': 'Fundido', 'Duration (s)': 'Duración (s)', 'Current resolution': 'Resolución actual',
   'Generate lyrics': 'Generar letra', 'Generate synced lyrics…': 'Generar letra sincronizada…',
-  'Creates an .lrc with the timing of every word from the lyrics as text.': 'Crea un .lrc con el tiempo de cada palabra a partir de la letra en texto.',
+  'Creates an .lrc with the timing of every word, from the lyrics as text or transcribing the song.': 'Crea un .lrc con el tiempo de cada palabra, desde la letra en texto o transcribiendo la canción.',
   'Use a custom value (off = automatic)': 'Usar un valor propio (apagado = automático)', 'Use a custom color': 'Usar un color propio',
   'Position': 'Posición', 'Remove color': 'Quitar color', 'Reverse the gradient': 'Invertir el gradiente', 'Reverse': 'Invertir',
   'Layer': 'Capa', 'Layer {n}': 'Capa {n}', 'Duplicate layer': 'Duplicar capa', 'Delete layer': 'Eliminar capa',
@@ -153,6 +153,17 @@ export const ES = {
   'From the lyrics as text (Suno format works: [ ] tags are ignored) it works out when every word is sung. Everything runs inside AudioViz; recognition uses the GPU when available.': 'A partir de la letra en texto (vale el formato de Suno: las etiquetas [ ] se ignoran) se calcula cuándo se canta cada palabra. Todo se hace dentro de AudioViz; el reconocimiento usa la GPU si hay.',
   'The first time the models are downloaded (≈ {mb} MB) to the cache; after that it works offline.': 'La primera vez se descargan los modelos (≈ {mb} MB) a la caché; después funciona sin conexión.',
   'Models': 'Modelos', 'Prepare audio': 'Preparar audio', 'Separate the vocals': 'Separar la voz', 'Recognize the vocals': 'Reconocer la voz',
+  'Build the lines': 'Formar las líneas', 'Source': 'Origen', 'The lyrics as text (.txt)': 'La letra en texto (.txt)',
+  'Transcribe the audio (no text needed)': 'Transcribir el audio (sin texto)', 'Detect automatically': 'Detectar automáticamente',
+  'The vocals are recognized and become the lyrics, split into lines at the pauses. Then correct the words with “Edit text”: the corrected text is aligned again in seconds.':
+    'Se reconoce la voz y se convierte en la letra, partida en líneas en las pausas. Luego corrige las palabras con «Editar texto»: el texto corregido se vuelve a alinear en segundos.',
+  'Check the words and fix what was misheard:': 'Revisa las palabras y corrige lo que se entendió mal:', 'Edit text': 'Editar texto',
+  'Edit the lyrics text': 'Editar el texto de la letra', 'lines': 'líneas', 'Align again': 'Volver a alinear',
+  'One line of the lyrics per row. Fix misheard words, split or join lines, then align: the words get their times again from the song (the recognition is reused, so it takes seconds). Manual timing changes are replaced.':
+    'Una línea de la letra por fila. Corrige palabras mal entendidas, parte o une líneas y alinea: las palabras vuelven a tomar sus tiempos de la canción (se reutiliza el reconocimiento, así que tarda segundos). Los ajustes de tiempo hechos a mano se sustituyen.',
+  'Correct the whole lyrics as text and align it again': 'Corregir toda la letra como texto y volver a alinearla',
+  'Split the line before the first word after the cursor': 'Partir la línea antes de la primera palabra tras el cursor', 'Split at cursor': 'Partir en el cursor',
+  'Join this line with the next one': 'Unir esta línea con la siguiente', 'Join next': 'Unir con la siguiente', 'Start a new line at this word': 'Empezar una línea nueva en esta palabra',
   'Align with the lyrics': 'Alinear con la letra', 'Elapsed / remaining': 'Transcurrido / restante', 'Recognition running on: {d}': 'Reconocimiento en: {d}',
 
   // --- schema: tracks and groups

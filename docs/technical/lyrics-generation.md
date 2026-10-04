@@ -34,14 +34,16 @@ Callers:
 `Generate(ctx, Options, report func(Status)) (*Result, error)` in `pipeline.go`:
 
 ```
-CleanLyrics(text) ──► lines
+CleanLyrics(text) ──► lines          (no text: transcription mode, no lines)
                          │
  1 models     WhisperModel (+ DemucsModel if separation is needed and the vocals are not cached)
  2 prepare    stereo@SR ─► Resample ─► mono 16 kHz (mix16)      [+ stereo 44.1 kHz for Demucs]
  3 separate   stereo44 ─► Demucs htdemucs ─► vocals stereo44 ─► mono 16 kHz (vocals16) ─► cache
               (fast mode: vocals16 = mix16; cache hit: step skipped)
- 4 recognize  Whisper large-v3-turbo (Vulkan or CPU), DTW token timestamps ─► []Word
+ 4 recognize  Whisper large-v3-turbo (Vulkan or CPU), DTW token timestamps ─► []Word ─► rec cache
+              (cache hit: step skipped, Whisper not even loaded)
  5 align      dropSilent ─► alignNW ─► repair doubtful lines ─► fillUnanchored ─► finish ─► LRC
+ 5 lines      (transcription) dropSilent ─► linesFromWords ─► finish ─► LRC
 ```
 
 `Options`:
@@ -51,11 +53,12 @@ CleanLyrics(text) ──► lines
 | `Stereo []float32` | Interleaved stereo PCM, normalized to [-1, 1) by the caller (`int / 2^(bits-1)`) |
 | `SampleRate` | Sample rate of `Stereo` |
 | `AudioKey` | Identifies the audio file for the vocals cache. Empty disables the cache. |
-| `Lyrics` | Plain text. Suno format is accepted (see `CleanLyrics`). |
-| `Lang` | Whisper language code. Defaults to `"en"`. |
+| `Lyrics` | Plain text. Suno format is accepted (see `CleanLyrics`). Empty = transcription mode. |
+| `Lang` | Whisper language code (`"auto"` = detect). Defaults to `"en"`. |
 | `Separate` | `true` = accurate mode (Demucs). `false` = fast mode (`--fast` / `"fast": true`). |
 
-`Result` holds `Lines []LLine`, the `LRC` text, and the `Device` used for recognition.
+`Result` holds `Lines []LLine`, the `LRC` text, and the `Device` used for recognition (`"cache"`
+when the recognition came from the cache). `Result.Text()` gives the lyrics as plain text.
 
 ### 1.1 Progress model (`Status` / `Step`)
 
@@ -181,6 +184,15 @@ AudioKey = "<path>|<size>|<mtime unix>"           (studio: audioKey(); CLI: same
 - Fast mode neither reads nor writes the cache. `Resync` reads it but never writes it.
 - On a cache hit, Demucs is not needed, so its model is not downloaded, and the 44.1 kHz resample
   is skipped.
+
+### 2.3 Recognition cache (`transcribe.go`)
+
+The full-song recognition (`[]Word` with `Seg`, the Whisper segment) is saved as JSON next to the
+vocals: `<cache>/vocals/<hash>.<lang>.<vocals|mix>.rec.json` (`recCachePath`). It is keyed by the
+same audio key plus the language and the mode, and is written in both modes. It is what makes
+"correct the text and align again" take seconds: the second `Generate` with the same song, language
+and mode skips steps 3 and 4 and only aligns. The doubtful-line repair (6.5) still opens Whisper
+lazily if it needs it. Delete the `.rec.json` files to force a new recognition.
 
 ---
 
@@ -478,6 +490,30 @@ If set to a file path:
 - `Resync` **appends** a header per group,
   `lines A-B window LO-HI anchored N/M`, followed by `  start  end  text` for the recognized words of
   that window, after `dropSilent`.
+
+---
+
+### 6.9 Transcription mode (`transcribe.go`)
+
+With empty `Lyrics` the recognized words become the lyrics. After `dropSilent`, `linesFromWords`
+walks the words, dropping non-lyric tokens (`cleanWord`: `♪`, `[Music]`, `(…)`, symbol-only), and
+starts a new line when:
+
+| Condition | Constant |
+|---|---|
+| silence before the word ≥ 0.6 s (measured from where the previous word's voice decays, `decayEnd`) | `pauseBreak` |
+| Whisper segment changes, or the previous word ends in `. ! ? … ;`, and the line has ≥ 3 words | `minWords` |
+| the previous word ends in a comma and the line has ≥ 4 words | `commaWords` |
+| the line has ≥ 10 words and there is a segment change, a ≥ 0.25 s pause or a comma | `softMax`, `phrasePause` |
+| the line has 14 words | `hardMax` |
+
+Every word is anchored at its recognized start; `finish` sets the ends from the voice as usual. On
+the demo song: 524 recognized words, 414 after `dropSilent`, 63 lines (60 in the real lyrics), 97.4 %
+word match (`difflib` over normalized words). The studio then lets the user correct the text and
+re-run `Generate` with it (section 2.3 makes that fast).
+
+Whistle (Cactus) was considered as the recognizer: it is speech-only, 30 s per call and around
+Whisper Base quality, so large-v3-turbo on the separated vocals stays.
 
 ---
 

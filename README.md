@@ -19,7 +19,8 @@ the music. Everything runs from a **single binary with nothing to install**, ren
 - **Particles**: sparks, bursts and dust, in layers that react to different bands.
 - **Lyrics**: `.srt` / `.lrc` with per-word karaoke, positions, in/out animations, fire-like
   colors and audio reaction — and **generated from the plain-text lyrics** inside the binary
-  (vocal separation with Demucs + Whisper recognition on the GPU + alignment to your text).
+  (vocal separation with Demucs + Whisper recognition on the GPU + alignment to your text), or
+  **transcribed from the song** when there is no text, then corrected as text and re-aligned.
 - **Texts**: titles and credits placed by hand, with the same styles as the lyrics.
 - **Output**: H.264 (x264) with lossless FLAC audio in an MP4.
 

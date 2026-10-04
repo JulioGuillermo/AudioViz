@@ -4,7 +4,7 @@ import { api, clone, fmtTime, parseTime, b64u8, basename, debounce } from './uti
 import { Form, Select, Edit } from './fields.js';
 import { Icon } from './icons.js';
 import { Timeline, segSummary } from './timeline.js';
-import { FilePicker, NewProject, ExportDialog, GenLyricsDialog, LYRIC_LANGS, STEP_LABEL, ProjectsDialog, PackageDialog, ExportsDialog, WorkspaceGrid, uploadPackage } from './dialogs.js';
+import { FilePicker, NewProject, ExportDialog, GenLyricsDialog, LyricsTextDialog, LYRIC_LANGS, STEP_LABEL, ProjectsDialog, PackageDialog, ExportsDialog, WorkspaceGrid, uploadPackage } from './dialogs.js';
 import { createStore, useStore, useThrottledStore } from './store.js';
 import { t, setLang, langStore, LANGS } from './i18n.js';
 import { createScrubber } from './scrub.js';
@@ -158,9 +158,9 @@ function Setup({ proj, ctx, onHide }) {
       btn: 'Choose audio…', act: () => ctx.pickFile('audio', ctx.setAudio) },
     { done: !!proj.tracks.background[0].cfg.path, title: 'Choose the background', text: 'Image, GIF or video. The video resolution will be the background’s (it can be changed in Output).',
       btn: 'Choose background…', act: () => ctx.pickFile('bg', ctx.setBackground) },
-    { done: !!lyr.path, optional: true, title: 'Add the lyrics', text: 'An already synced .lrc / .srt, or generate it from a .txt with the lyrics.',
+    { done: !!lyr.path, optional: true, title: 'Add the lyrics', text: 'An already synced .lrc / .srt, or generate it: from a .txt with the lyrics, or transcribed from the song.',
       btn: 'Choose .lrc / .srt…', act: () => ctx.pickFile('lyrics', ctx.setLyrics),
-      btn2: 'Generate from .txt…', act2: () => ctx.dialog({ type: 'genlyrics' }) },
+      btn2: 'Generate…', act2: () => ctx.dialog({ type: 'genlyrics' }) },
   ];
   return html`<div class="setup">
     <div class="setup-h"><span>${t('Getting started')}</span><span class="spacer"></span>
@@ -247,7 +247,7 @@ function TextsInspector({ proj, sel, setSel, update, time, meta, ctx }) {
   </div>`;
 }
 
-function TrackInspector({ proj, track, segIdx, time, meta, update, setSel, ctx, onGenLyrics }) {
+function TrackInspector({ proj, track, segIdx, time, meta, update, setSel, ctx, onGenLyrics, onEditText, hasLines }) {
   const def = trackById[track];
   const segs = proj.tracks[track];
   const i = Math.min(segIdx, segs.length - 1);
@@ -271,13 +271,14 @@ function TrackInspector({ proj, track, segIdx, time, meta, update, setSel, ctx, 
       <${SegHeader} segs=${segs} i=${i} set=${setSeg} meta=${meta} track=${track} />
       <${Form} fields=${def.fields} value=${seg.cfg} onChange=${(cfg) => setSeg({ ...seg, cfg })} ctx=${ctx} isFirst=${i === 0} />
       ${track === 'lyrics' && html`<div class="section"><div class="sh">${t('Generate lyrics')}</div><div class="sb">
-        <p class="faint" style="margin:2px 0 8px;font-size:12px">${t('Creates an .lrc with the timing of every word from the lyrics as text.')}</p>
-        <button class="btn" onClick=${onGenLyrics}><${Icon} name="wand-sparkles" size=${15} /> ${t('Generate synced lyrics…')}</button></div></div>`}
+        <p class="faint" style="margin:2px 0 8px;font-size:12px">${t('Creates an .lrc with the timing of every word, from the lyrics as text or transcribing the song.')}</p>
+        <div class="row"><button class="btn" onClick=${onGenLyrics}><${Icon} name="wand-sparkles" size=${15} /> ${t('Generate synced lyrics…')}</button>
+        ${hasLines && html`<button class="btn" title=${t('Correct the whole lyrics as text and align it again')} onClick=${onEditText}><${Icon} name="pencil" size=${14} /> ${t('Edit text')}</button>`}</div></div></div>`}
     </div>
   </div>`;
 }
 
-function LineEditor({ lyr, lines, time, onChange, seek, saveState, onResync, resyncing, lyricLang, setLyricLang, wordEdit, setWordEdit }) {
+function LineEditor({ lyr, lines, time, onChange, seek, saveState, onResync, resyncing, lyricLang, setLyricLang, wordEdit, setWordEdit, onEditText }) {
   const idx = lines[0];
   const line = lyr.lines[idx];
   if (!line) return html`<div class="insp-b faint" style="padding-top:14px">${t('Select a line in the lyrics track.')}</div>`;
@@ -296,6 +297,21 @@ function LineEditor({ lyr, lines, time, onChange, seek, saveState, onResync, res
       l.words.forEach((w) => { w.start += dt; w.end += dt; });
       l.start += dt; l.end += dt;
     }
+  });
+  const fix = (l) => { l.start = l.words[0].start; l.end = l.words[l.words.length - 1].end; return l; };
+  // Split the line before word k (the words keep their times); join it with the next line
+  const split = (k) => onChange((all) => {
+    const a = clone(line);
+    const b = { ...clone(line), words: a.words.splice(k) };
+    all.splice(idx, 1, fix(a), fix(b));
+  });
+  // The first word sung after the cursor starts the new line (cursor inside the line)
+  const splitAt = time > line.start && time < line.end ? line.words.findIndex((w, k) => k > 0 && w.start >= time) : -1;
+  const next = lyr.lines[idx + 1];
+  const join = () => onChange((all) => {
+    const a = clone(line);
+    a.words = a.words.concat(clone(next.words));
+    all.splice(idx, 2, fix(a));
   });
   const status = { saving: t('Saving…'), saved: t('Saved'), error: t('Save error') }[saveState] || '';
   return html`<div>
@@ -317,6 +333,12 @@ function LineEditor({ lyr, lines, time, onChange, seek, saveState, onResync, res
           onClick=${onResync}><${Icon} name=${resyncing ? 'loader-circle' : 'wand-sparkles'} size=${14} cls=${resyncing ? 'spin' : ''} /> ${t(multi ? 'Resync lines' : 'Resync line')}</button>
         <${Select} cls="" value=${lyricLang} options=${LYRIC_LANGS} onChange=${setLyricLang} title=${t('Lyrics language')} />
       </div>
+      ${!multi && html`<div class="row" style="margin-top:8px">
+        <button class="btn sm" disabled=${splitAt < 0} title=${t('Split the line before the first word after the cursor')} onClick=${() => split(splitAt)}>
+          <${Icon} name="scissors" size=${13} /> ${t('Split at cursor')}</button>
+        <button class="btn sm" disabled=${!next} title=${t('Join this line with the next one')} onClick=${join}><${Icon} name="merge" size=${13} /> ${t('Join next')}</button>
+        <button class="btn sm" title=${t('Correct the whole lyrics as text and align it again')} onClick=${onEditText}><${Icon} name="file-text" size=${13} /> ${t('Edit text')}</button>
+      </div>`}
     </div>
     ${multi ? html`<div class="insp-b"><p class="faint" style="font-size:12px">${t('Several lines selected (Shift+click). Drag them together on the timeline, shift them with the buttons, or resync them.')}</p></div>`
       : html`<div class="insp-b"><div class="words">
@@ -325,7 +347,8 @@ function LineEditor({ lyr, lines, time, onChange, seek, saveState, onResync, res
         <${Edit} type="text" value=${w.text} onChange=${(e) => setWord(k, 'text', e.target.value)} />
         <${Edit} type="number" step="0.01" value=${w.start.toFixed(2)} onChange=${(e) => setWord(k, 'start', +e.target.value)} />
         <${Edit} type="number" step="0.01" value=${w.end.toFixed(2)} onChange=${(e) => setWord(k, 'end', +e.target.value)} />
-        <button class="btn icon" title=${t('Set the start at the cursor')} onClick=${() => setWord(k, 'start', +time.toFixed(2))}><${Icon} name="crosshair" size=${14} /></button>
+        <span class="row" style="gap:2px"><button class="btn icon" title=${t('Set the start at the cursor')} onClick=${() => setWord(k, 'start', +time.toFixed(2))}><${Icon} name="crosshair" size=${14} /></button>
+        ${k > 0 && html`<button class="btn icon" title=${t('Start a new line at this word')} onClick=${() => split(k)}><${Icon} name="scissors" size=${14} /></button>`}</span>
       </div>`)}
     </div>
     <p class="faint" style="font-size:12px">${t('Tip: with Edit words, drag the words (or their edges) on the timeline; or play, pause right when a word starts and press the crosshair button. If a line is far off, drag it roughly into place and press Resync.')}</p></div>`}
@@ -668,6 +691,14 @@ function App() {
     setProj(p);
   };
 
+  // The last generation's language and mode: aligning an edited text with the same ones reuses
+  // the cached recognition
+  const lastGen = () => { try { return JSON.parse(localStorage.getItem('audioviz.lastGen')) || {}; } catch (e) { return {}; } };
+  const genLyrics = (o) => {
+    try { localStorage.setItem('audioviz.lastGen', JSON.stringify({ lang: o.lang, fast: !!o.fast })); } catch (e) { /* ignore */ }
+    api('POST', '/api/lyrics/generate', o).then(setJob).catch(showErr);
+  };
+
   const onLyricsGenerated = (out) => {
     if (!projRef.current || !out) return;
     update((q) => { q.tracks.lyrics.forEach((s) => { s.cfg.path = out; }); q.tracks.lyrics[0].cfg.enabled = true; });
@@ -812,7 +843,10 @@ function App() {
         onStart=${(o) => api('POST', '/api/export', o).then(setJob).catch(showErr)} onCancel=${() => api('POST', '/api/job/cancel')} />`}
     ${dlg && dlg.type === 'genlyrics' && proj && html`<${GenLyricsDialog} meta=${meta} job=${job} models=${st.models} initialTxt=${dlg.txt}
         pickFile=${ctx.pickFile} onClose=${() => setDlg(null)} onCancel=${() => api('POST', '/api/job/cancel')}
-        onStart=${(txt, lang, fast) => { setLyricLang(lang); api('POST', '/api/lyrics/generate', { txt, lang, fast }).then(setJob).catch(showErr); }} />`}
+        onEditText=${() => setDlg({ type: 'lyrtext' })}
+        onStart=${(o) => { if (o.lang !== 'auto') setLyricLang(o.lang); genLyrics(o); }} />`}
+    ${dlg && dlg.type === 'lyrtext' && proj && html`<${LyricsTextDialog} lines=${lyr.lines} lang=${lastGen().lang} onClose=${() => setDlg(null)}
+        onAlign=${(text, lang) => { genLyrics({ text, lang, fast: lastGen().fast }); setDlg({ type: 'genlyrics' }); }} />`}
     ${pick && html`<${FilePicker} kind=${pick.kind} start=${pick.start} hasProject=${!!proj}
         onPick=${pick.cb} onClose=${() => setPick(null)} />`}
     ${toast && html`<div class="toast" onClick=${() => setToast('')}><${Icon} name="triangle-alert" size=${16} />${toast}</div>`}`;
@@ -838,9 +872,11 @@ function App() {
       <p class="faint" style="font-size:12px">${t('Current resolution')}: ${meta.width}×${meta.height} · ${meta.fps} fps · ${fmtTime(meta.duration)}</p></div></div>`;
   else if (sel.kind === 'text') inspector = html`<${TextsInspector} proj=${proj} sel=${sel} setSel=${setSel} update=${update} time=${time} meta=${meta} ctx=${ctx} />`;
   else if (sel.kind === 'line') inspector = html`<${LineEditor} lyr=${lyr} lines=${lineSel} time=${time} seek=${seek} saveState=${lyrSave}
-      onChange=${(fn) => editLyrics(fn)} onResync=${resync} resyncing=${resyncing} lyricLang=${lyricLang} setLyricLang=${setLyricLang} wordEdit=${wordEdit} setWordEdit=${setWordEdit} />`;
+      onChange=${(fn) => editLyrics(fn)} onResync=${resync} resyncing=${resyncing} lyricLang=${lyricLang} setLyricLang=${setLyricLang} wordEdit=${wordEdit} setWordEdit=${setWordEdit}
+      onEditText=${() => setDlg({ type: 'lyrtext' })} />`;
   else inspector = html`<${TrackInspector} proj=${proj} track=${sel.track} segIdx=${sel.seg} time=${time} meta=${meta}
-      update=${update} setSel=${setSel} ctx=${ctx} onGenLyrics=${() => setDlg({ type: 'genlyrics' })} />`;
+      update=${update} setSel=${setSel} ctx=${ctx} onGenLyrics=${() => setDlg({ type: 'genlyrics' })}
+      onEditText=${() => setDlg({ type: 'lyrtext' })} hasLines=${lyr.lines.length > 0} />`;
 
   return html`<div class="app" style=${{ '--tl-h': tlH + 'px', '--left-w': layout.left + 'px', '--right-w': layout.right + 'px' }}>
     <div class="split-v left" onMouseDown=${(e) => colDrag(e, 'left')} onDblClick=${() => setLayout('left', null)}

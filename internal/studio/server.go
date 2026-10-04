@@ -886,18 +886,32 @@ func audioKey(path string) string {
 
 // hGenLyrics generates the synchronized lyrics inside the binary itself (Demucs + Whisper + alignment)
 func (s *Server) hGenLyrics(w http.ResponseWriter, r *http.Request) {
+	// The lyrics come from a .txt file (txt), as text (text: the studio's lyrics editor), or
+	// not at all (transcribe: the recognized words become the lyrics)
 	var req struct {
-		Txt  string `json:"txt"`
-		Lang string `json:"lang"`
-		Fast bool   `json:"fast"`
+		Txt        string `json:"txt"`
+		Text       string `json:"text"`
+		Transcribe bool   `json:"transcribe"`
+		Lang       string `json:"lang"`
+		Fast       bool   `json:"fast"`
 	}
-	if err := readJSON(r, &req); err != nil || req.Txt == "" {
-		fail(w, 400, errors.New("specify the .txt file with the lyrics"))
+	if err := readJSON(r, &req); err != nil {
+		fail(w, 400, err)
 		return
 	}
-	txt, err := os.ReadFile(req.Txt)
-	if err != nil {
-		fail(w, 400, err)
+	txt := []byte(req.Text)
+	switch {
+	case req.Transcribe:
+		txt = nil
+	case req.Txt != "":
+		b, err := os.ReadFile(req.Txt)
+		if err != nil {
+			fail(w, 400, err)
+			return
+		}
+		txt = b
+	case strings.TrimSpace(req.Text) == "":
+		fail(w, 400, errors.New("give the lyrics (.txt file or text), or choose to transcribe the audio"))
 		return
 	}
 	s.mu.Lock()

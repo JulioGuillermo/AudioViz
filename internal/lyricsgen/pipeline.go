@@ -42,7 +42,7 @@ type Options struct {
 	Stereo     []float32 // interleaved stereo audio
 	SampleRate int
 	AudioKey   string // identifies the audio for the separated-vocals cache (e.g. path)
-	Lyrics     string // plain-text lyrics (Suno format is accepted)
+	Lyrics     string // plain-text lyrics (Suno format is accepted); empty = transcribe the audio
 	Lang       string
 	Separate   bool // separate the vocals before recognizing (more accurate, slower)
 }
@@ -53,8 +53,23 @@ type Result struct {
 	Device string
 }
 
+// Text is the lyrics as plain text, one line per row
+func (r *Result) Text() string {
+	var b strings.Builder
+	for _, l := range r.Lines {
+		for i, w := range l.Words {
+			if i > 0 {
+				b.WriteByte(' ')
+			}
+			b.WriteString(w.Text)
+		}
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
 // Weight of each step in the global progress (roughly proportional to its duration)
-var stepWeights = map[string]float64{"models": 0.05, "prepare": 0.03, "separate": 0.62, "recognize": 0.22, "align": 0.08}
+var stepWeights = map[string]float64{"models": 0.05, "prepare": 0.03, "separate": 0.62, "recognize": 0.22, "align": 0.08, "lines": 0.08}
 
 type tracker struct {
 	mu     sync.Mutex
@@ -177,20 +192,28 @@ func saveF32(path string, v []float32) {
 
 // Generate runs the whole process
 func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, error) {
-	lines := CleanLyrics(opt.Lyrics)
-	if len(lines) == 0 {
-		return nil, fmt.Errorf("the lyrics are empty (after removing the [ ] tags)")
+	// Without lyrics text the recognized words themselves become the lyrics (transcription)
+	transcribe := strings.TrimSpace(opt.Lyrics) == ""
+	var lines []string
+	if !transcribe {
+		if lines = CleanLyrics(opt.Lyrics); len(lines) == 0 {
+			return nil, fmt.Errorf("the lyrics are empty (after removing the [ ] tags)")
+		}
 	}
 	if opt.Lang == "" {
 		opt.Lang = "en"
 	}
 	t := &tracker{t0: time.Now(), report: report}
+	last := Step{ID: "align", Label: "Align with the lyrics", State: "pending"}
+	if transcribe {
+		last = Step{ID: "lines", Label: "Build the lines", State: "pending"}
+	}
 	t.st.Steps = []Step{
 		{ID: "models", Label: "Models", State: "pending"},
 		{ID: "prepare", Label: "Prepare audio", State: "pending"},
 		{ID: "separate", Label: "Separate the vocals", State: "pending"},
 		{ID: "recognize", Label: "Recognize the vocals", State: "pending"},
-		{ID: "align", Label: "Align with the lyrics", State: "pending"},
+		last,
 	}
 	cachePath := vocalsCachePath(fmt.Sprintf("%s|%d|%d", opt.AudioKey, opt.SampleRate, len(opt.Stereo)))
 	var vocals16 []float32
@@ -270,24 +293,52 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 	total := float64(len(vocals16)) / 16000
 	v := newVoice(vocals16)
 
-	// 4. Recognize
-	t.start("recognize", "Loading the model…")
-	w, err := OpenWhisper(WhisperModel.Path(), aheadsLargeV3Turbo, true)
-	if err != nil {
-		t.end("recognize", "error", err.Error())
-		return nil, err
+	// 4. Recognize (the result is cached with the vocals: correcting the text and aligning
+	// again then takes seconds). Whisper is opened only when it is needed.
+	var w *Whisper
+	openW := func() (*Whisper, error) {
+		if w != nil {
+			return w, nil
+		}
+		ww, err := OpenWhisper(WhisperModel.Path(), aheadsLargeV3Turbo, true)
+		if err != nil {
+			return nil, err
+		}
+		w = ww
+		t.mu.Lock()
+		t.st.Device = w.Device
+		t.mu.Unlock()
+		return w, nil
 	}
-	defer w.Close()
-	t.mu.Lock()
-	t.st.Device = w.Device
-	t.mu.Unlock()
-	t.progress("recognize", 0, "Whisper large-v3-turbo · "+w.Device)
-	rec, err := w.Transcribe(ctx, vocals16, 0, opt.Lang, "", func(p float64) { t.progress("recognize", p, "") })
-	if err != nil {
-		t.end("recognize", "error", err.Error())
-		return nil, err
+	defer func() {
+		if w != nil {
+			w.Close()
+		}
+	}()
+	recPath := recCachePath(cachePath, opt.Lang, opt.Separate)
+	rec := loadRec(recPath)
+	if rec != nil {
+		t.end("recognize", "skipped", fmt.Sprintf("Reused from the cache · %d words", len(rec)))
+	} else {
+		t.start("recognize", "Loading the model…")
+		if _, err := openW(); err != nil {
+			t.end("recognize", "error", err.Error())
+			return nil, err
+		}
+		t.progress("recognize", 0, "Whisper large-v3-turbo · "+w.Device)
+		var err error
+		rec, err = w.Transcribe(ctx, vocals16, 0, opt.Lang, "", func(p float64) { t.progress("recognize", p, "") })
+		if err != nil {
+			t.end("recognize", "error", err.Error())
+			return nil, err
+		}
+		saveRec(recPath, rec)
+		t.end("recognize", "done", fmt.Sprintf("%d words recognized · %s", len(rec), w.Device))
 	}
-	t.end("recognize", "done", fmt.Sprintf("%d words recognized · %s", len(rec), w.Device))
+	device := "cache"
+	if w != nil {
+		device = w.Device
+	}
 	if dbg := os.Getenv("AUDIOVIZ_DEBUG_REC"); dbg != "" {
 		if f, err := os.Create(dbg); err == nil {
 			for _, x := range rec {
@@ -295,6 +346,20 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 			}
 			f.Close()
 		}
+	}
+
+	// 5a. No lyrics text: the recognized words, grouped into lines, are the lyrics
+	if transcribe {
+		t.start("lines", "Grouping the words into lines…")
+		nrec := len(rec)
+		rec = dropSilent(rec, v)
+		out := finish(linesFromWords(rec, v), v, total)
+		nw := 0
+		for _, l := range out {
+			nw += len(l.Words)
+		}
+		t.end("lines", "done", fmt.Sprintf("%d lines · %d words · %d discarded in silence", len(out), nw, nrec-len(rec)))
+		return &Result{Lines: out, LRC: LRC(out), Device: device}, nil
 	}
 
 	// 5. Align with the lyrics (+ repair of poorly recognized lines)
@@ -352,6 +417,9 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 			prompt = append(prompt, lines[li])
 		}
 		seg := vocals16[int(a*16000):min(len(vocals16), int(b*16000))]
+		if _, err := openW(); err != nil {
+			return nil, err
+		}
 		rec2, err := w.Transcribe(ctx, seg, a, opt.Lang, strings.Join(prompt, " "), nil)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -390,5 +458,8 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 	}
 	t.end("align", "done", fmt.Sprintf("%d lines · %d of %d words recognized (%.0f%%) · %d sections reviewed · %d words discarded in silence",
 		len(out), anchored, len(lw), 100*float64(anchored)/float64(len(lw)), repaired, dropped))
-	return &Result{Lines: out, LRC: LRC(out), Device: w.Device}, nil
+	if w != nil {
+		device = w.Device
+	}
+	return &Result{Lines: out, LRC: LRC(out), Device: device}, nil
 }

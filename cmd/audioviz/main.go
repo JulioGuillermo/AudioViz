@@ -171,7 +171,7 @@ func main() {
 func runLyrics(args []string) {
 	fs := flag.NewFlagSet("lyrics", flag.ExitOnError)
 	out := fs.String("o", "lyrics.lrc", "Output .lrc file")
-	lang := fs.String("lang", "en", "Lyrics language (en, es, fr...)")
+	lang := fs.String("lang", "en", "Lyrics language (en, es, fr..., auto = detect)")
 	fast := fs.Bool("fast", false, "Fast mode: skip vocal separation (less accurate)")
 	var pos []string
 	for len(args) > 0 {
@@ -183,14 +183,18 @@ func runLyrics(args []string) {
 		pos = append(pos, args[0])
 		args = args[1:]
 	}
-	if len(pos) != 2 {
-		fmt.Println("Usage: audioviz lyrics <audio> <lyrics.txt> [-o lyrics.lrc] [--lang en] [--fast]")
+	if len(pos) < 1 || len(pos) > 2 {
+		fmt.Println("Usage: audioviz lyrics <audio> [lyrics.txt] [-o lyrics.lrc] [--lang en|auto] [--fast]")
+		fmt.Println("       without lyrics.txt the lyrics are transcribed from the audio")
 		os.Exit(1)
 	}
-	txt, err := os.ReadFile(pos[1])
-	if err != nil {
-		fmt.Printf("❌ %v\n", err)
-		os.Exit(1)
+	var txt []byte
+	if len(pos) == 2 {
+		var err error
+		if txt, err = os.ReadFile(pos[1]); err != nil {
+			fmt.Printf("❌ %v\n", err)
+			os.Exit(1)
+		}
 	}
 	dec, err := audio.DecodeAudio(pos[0], 1)
 	if err != nil {
@@ -277,7 +281,7 @@ func printHelp() {
 Usage:
   audioviz [path_to_project.yaml] [options]
   audioviz studio [project] [--addr 127.0.0.1:8787] [--no-open]   # GUI
-  audioviz lyrics <audio> <lyrics.txt> [-o lyrics.lrc] [--lang en] [--fast]   # synced lyrics
+  audioviz lyrics <audio> [lyrics.txt] [-o lyrics.lrc] [--lang en] [--fast]   # synced lyrics (transcribed if no .txt)
 
 Examples:
   audioviz project.yaml                       # Render the full video (Vulkan GPU if available)
