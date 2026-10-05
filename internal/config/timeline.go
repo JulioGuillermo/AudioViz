@@ -26,11 +26,26 @@ type Transition struct {
 	Mode      string  `yaml:"mode"`
 	Duration  float64 `yaml:"duration"`            // seconds (not for cut)
 	Direction string  `yaml:"direction,omitempty"` // left, right, up, down: wipe, slide and push
+	Burn      *Burn   `yaml:"burn,omitempty"`      // options of the burn transition
 }
+
+// Burn: the old image burns like paper from one or more ignition points, revealing the new one
+type Burn struct {
+	Origins   string       `yaml:"origins,omitempty" json:"origins,omitempty"`     // random (default) or points
+	Count     int          `yaml:"count,omitempty" json:"count,omitempty"`         // random: ignition points, 1..8 (default 3)
+	Seed      int          `yaml:"seed,omitempty" json:"seed,omitempty"`           // random: 0 = a different one per segment
+	Points    [][2]float64 `yaml:"points,omitempty" json:"points,omitempty"`       // points: x, y in 0..1 of the frame (up to 8)
+	Edge      float64      `yaml:"edge,omitempty" json:"edge,omitempty"`           // 0..1: width of the charred edge and the ember (default 0.5)
+	Roughness float64      `yaml:"roughness,omitempty" json:"roughness,omitempty"` // 0..1: how irregular the fire front is (default 0.5)
+	Color     string       `yaml:"color,omitempty" json:"color,omitempty"`         // ember color (default #ff7a1f)
+}
+
+// MaxBurnPoints: ignition points the renderer takes
+const MaxBurnPoints = 8
 
 // TransitionModes are the background transitions (the renderer numbers them in this order)
 var TransitionModes = []string{"cut", "fade", "dissolve", "dip_black", "flash", "wipe", "slide", "push",
-	"zoom_in", "zoom_out", "circle", "clock", "glitch", "pixelate"}
+	"zoom_in", "zoom_out", "circle", "clock", "glitch", "pixelate", "burn"}
 
 // Directions for wipe, slide and push: where the new image moves
 var TransitionDirections = []string{"left", "right", "up", "down"}

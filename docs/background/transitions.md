@@ -27,11 +27,35 @@ timeline:
 | `clock` | Radial sweep from 12 o'clock, clockwise |
 | `glitch` | Bands switch to the new image with shifts and RGB split |
 | `pixelate` | Pixelates, swaps at the middle, sharpens again |
+| `burn` | The old image burns like paper from ignition points; the new one shows through the holes (`burn`) |
 
 - `duration` (seconds) is how long it takes; the transition starts at the segment's `at`.
 - `direction` (`left`, `right`, `up`, `down`) is where the new image moves, for `wipe`, `slide`
   and `push`. `left` = it enters from the right side.
 - Each image keeps its own [motion](motion.md) during the transition.
+
+### Burn options
+```yaml
+timeline:
+  background:
+    - at: 42
+      path: forest.png
+      transition:
+        mode: burn
+        duration: 3
+        burn:
+          origins: random      # random (default) or points
+          count: 3             # random: ignition points, 1..8
+          seed: 0              # random: 0 = different per segment; another number = other points
+          points: [[0.3, 0.6], [0.8, 0.25]]   # points: x, y in 0..1 of the frame (up to 8)
+          edge: 0.5            # 0..1 width of the charred edge and the ember
+          roughness: 0.5       # 0..1 how irregular the fire front is
+          color: "#ff7a1f"     # ember color
+```
+The fire grows from each point with an irregular front (the paper fibers): ahead of it the
+paper browns and blackens, a thin ember line flickers along the edge with sparks, and the new
+image appears through the hole, sooty near the edge. In the studio, with *Points I choose*, click
+on the preview to add a point, drag one to move it, Shift+click to remove it.
 - If one side has no image, black is used.
 - Other tracks (visualizer, effects, particles, lyrics) only have `cut` and `fade`; any other
   mode on them behaves as `fade`.

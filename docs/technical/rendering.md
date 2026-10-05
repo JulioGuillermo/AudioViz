@@ -274,6 +274,7 @@ same math is in Go (`effects.Compose` / `transitionPixel`, used by the CPU path)
 | clock | B where the angle from 12 o'clock `< ke·2π` |
 | glitch | 24 bands, re-rolled 16× during the transition: each band shows B if `hash < k`, shifted `±4 %·W·sin(πk)` with an RGB split of `8 px·sin(πk)` |
 | pixelate | blocks of `1 + 48·sin(πk)` px (at 1080 p), A → B at k = 0.5 |
+| burn | `effects/burn.go` / `burnPixel`: distance (in frame heights) to the nearest ignition point + `0.25·roughness·(fbm−0.5)·2` + fine crinkle noise; front `r = ke·(maxD + 2amp + 2charW) − (amp + charW)` so it starts nowhere and ends everywhere; charring ahead of it, ember line (broken by noise, flickering with k) on the paper side, sparks, soot on B. Ignition points (random ones from the seed) and `maxD` are computed once per frame on the CPU (`BurnSetup`) and passed as `burnP / burnCol / burnPts[8]` |
 
 Effects (glitch slices, ripple, zoom/shake, chroma) act on the composited result, so both images
 are warped identically.

@@ -104,6 +104,7 @@ type Trans struct {
 	K          float64 // progress 0..1
 	Seed       uint32
 	HasA, HasB bool // false = that side is black (no background)
+	Burn       BurnParams
 }
 
 // Hash as in the shader (PCG): deterministic noise for dissolve and glitch
@@ -293,6 +294,8 @@ func transitionPixel(sa, sb *sampler, x, y float64, w, h int, tr Trans) rgb {
 		}
 		xs := x + shift
 		return rgb{s.at(xs+split, y)[0], s.at(xs, y)[1], s.at(xs-split, y)[2]}
+	case "burn":
+		return burnPixel(sa, sb, x, y, w, h, tr)
 	case "pixelate":
 		bs := 1 + math.Floor(math.Sin(math.Pi*k)*48*(H/1080))
 		px, py := (math.Floor(x/bs)+0.5)*bs, (math.Floor(y/bs)+0.5)*bs

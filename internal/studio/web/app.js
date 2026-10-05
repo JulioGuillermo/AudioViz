@@ -12,7 +12,7 @@ import { createScrubber } from './scrub.js';
 
 // ------------------------------------------------------------------ preview
 
-function Preview({ meta, timeStore, scale, rev, playing, pin, onPin }) {
+function Preview({ meta, timeStore, scale, rev, playing, pin, onPin, points, onPoints }) {
   const time = useStore(timeStore);
   const canvas = useRef();
   const stage = useRef();
@@ -42,7 +42,29 @@ function Preview({ meta, timeStore, scale, rev, playing, pin, onPin }) {
     const c = (v) => Math.max(0, Math.min(1, v));
     return { x: c((e.clientX - r.left) / r.width), y: c((e.clientY - r.top) / r.height) };
   };
+  // Points (burn ignition points): click adds one (up to 8), drag moves the nearest, Shift+click removes it
+  const [dragPts, setDragPts] = useState(null);
+  const ptsDown = (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const r = canvas.current.getBoundingClientRect();
+    let pts = points.map((q) => ({ ...q }));
+    let p = posFrom(e);
+    let k = -1, best = 14;
+    pts.forEach((q, j) => { const dd = Math.hypot((q.x - p.x) * r.width, (q.y - p.y) * r.height); if (dd < best) { best = dd; k = j; } });
+    if (e.shiftKey) { if (k >= 0) { pts.splice(k, 1); onPoints(pts); } return; }
+    if (k < 0) { if (pts.length >= 8) return; pts.push(p); k = pts.length - 1; }
+    setDragPts(pts);
+    const mv = (ev) => { p = posFrom(ev); pts = pts.map((q, j) => (j === k ? p : q)); setDragPts(pts); };
+    const up = () => {
+      removeEventListener('mousemove', mv); removeEventListener('mouseup', up);
+      setDragPts(null);
+      onPoints(pts.map((q) => ({ x: +q.x.toFixed(4), y: +q.y.toFixed(4) })));
+    };
+    addEventListener('mousemove', mv); addEventListener('mouseup', up);
+  };
   const pinDown = (e) => {
+    if (points) { ptsDown(e); return; }
     if (!pin || e.button !== 0) return;
     e.preventDefault();
     let p = posFrom(e);
@@ -55,6 +77,12 @@ function Preview({ meta, timeStore, scale, rev, playing, pin, onPin }) {
     };
     addEventListener('mousemove', mv); addEventListener('mouseup', up);
   };
+  let ptsStyle = [];
+  const shownPts = dragPts || points;
+  if (shownPts && canvas.current && stage.current) {
+    const cr = canvas.current.getBoundingClientRect(), sr = stage.current.getBoundingClientRect();
+    ptsStyle = shownPts.map((q) => ({ left: cr.left - sr.left + q.x * cr.width + 'px', top: cr.top - sr.top + q.y * cr.height + 'px' }));
+  }
   let pinStyle = null;
   const shownPin = dragPin || pin;
   if (shownPin && canvas.current && stage.current) {
@@ -124,9 +152,10 @@ function Preview({ meta, timeStore, scale, rev, playing, pin, onPin }) {
 
   return html`<div class="stage" ref=${stage}>
     <canvas ref=${canvas} width=${Math.round(meta.width / scale)} height=${Math.round(meta.height / scale)}
-      style=${{ width: box ? box.w + 'px' : '', height: box ? box.h + 'px' : '', cursor: pin ? 'crosshair' : '' }} onMouseDown=${pinDown}
-      title=${pin ? t('Drag to place the selected text') : ''}></canvas>
+      style=${{ width: box ? box.w + 'px' : '', height: box ? box.h + 'px' : '', cursor: pin || points ? 'crosshair' : '' }} onMouseDown=${pinDown}
+      title=${points ? t('Click to add an ignition point, drag one to move it, Shift+click to remove it') : pin ? t('Drag to place the selected text') : ''}></canvas>
     ${pinStyle && html`<div class=${'pin' + (dragPin ? ' drag' : '')} style=${pinStyle}></div>`}
+    ${ptsStyle.map((st, j) => html`<div class="pin fire" style=${st}><span>${j + 1}</span></div>`)}
     <div class="hud">${meta.width}×${meta.height} · 1/${scale} · ${info.ms} ms${playing ? ' · ' + info.fps + ' fps' : ''}</div>
   </div>`;
 }
@@ -183,7 +212,7 @@ function Setup({ proj, ctx, onHide }) {
 
 // ------------------------------------------------------------------ inspector
 
-function SegHeader({ segs, i, set, meta, track }) {
+function SegHeader({ segs, i, set, meta, track, ctx }) {
   const s = segs[i];
   const name = html`<div class="fld"><label>${t('Name')}</label><div class="ctl"><${Edit} type="text" class="grow" value=${s.label}
       placeholder=${i === 0 ? t('Optional') : t('e.g. Chorus')} onChange=${(e) => set({ ...s, label: e.target.value })} /></div></div>`;
@@ -204,6 +233,40 @@ function SegHeader({ segs, i, set, meta, track }) {
     ${track === 'background' && DIRECTED.includes(s.transition.mode) && html`<div class="fld"><label>${t('Direction')}</label><div class="ctl">
       <${Select} value=${s.transition.direction || 'left'} options=${DIRECTIONS}
         onChange=${(d) => set({ ...s, transition: { ...s.transition, direction: d } })} /></div></div>`}
+    ${track === 'background' && s.transition.mode === 'burn' && html`<${BurnOptions} s=${s} set=${set} ctx=${ctx} />`}
+  </div>`;
+}
+
+// Options of the burn transition: where the fire starts and how the burning edge looks
+function BurnOptions({ s, set, ctx }) {
+  const b = s.transition.burn || {};
+  const upd = (k, v) => set({ ...s, transition: { ...s.transition, burn: { ...b, [k]: v } } });
+  const origins = b.origins || 'random';
+  const pts = b.points || [];
+  const slider = (k, label, def, title) => html`<div class="fld"><label title=${title || ''}>${t(label)}</label><div class="ctl">
+    <input type="range" min="0.05" max="1" step="0.05" value=${b[k] || def} onInput=${(e) => upd(k, +e.target.value)} />
+    <span class="mono faint" style="font-size:11px;width:30px;text-align:right">${(b[k] || def).toFixed(2)}</span></div></div>`;
+  return html`<div class="burnopts">
+    <div class="fld"><label>${t('Fire starts at')}</label><div class="ctl">
+      <${Select} value=${origins} options=${[['random', 'Random points'], ['points', 'Points I choose']]} onChange=${(v) => upd('origins', v)} /></div></div>
+    ${origins === 'random' ? html`
+      <div class="fld"><label>${t('Ignition points')}</label><div class="ctl">
+        <input type="number" min="1" max="8" step="1" value=${b.count || 3} onInput=${(e) => upd('count', Math.max(1, Math.min(8, +e.target.value || 3)))} />
+        <button class="btn sm icon" title=${t('Other random points')} onClick=${() => upd('seed', 1 + Math.floor(Math.random() * 999999))}><${Icon} name="shuffle" size=${13} /></button>
+      </div></div>` : html`
+      <p class="faint" style="font-size:11.5px;margin:2px 0 6px">${t('Click on the preview to add a point (up to 8), drag one to move it, Shift+click to remove it.')}</p>
+      <div class="row" style="flex-wrap:wrap;gap:4px;margin-bottom:6px">
+        ${pts.map((q, j) => html`<span class="chip">${j + 1}<span class="mono faint">${q[0].toFixed(2)}, ${q[1].toFixed(2)}</span>
+          <button class="btn icon sm ghost" title=${t('Remove')} onClick=${() => upd('points', pts.filter((_, n) => n !== j))}><${Icon} name="x" size=${11} /></button></span>`)}
+        ${pts.length === 0 ? html`<span class="faint" style="font-size:11.5px">${t('No points: the fire starts at the center.')}</span>`
+          : html`<button class="btn sm ghost" onClick=${() => upd('points', [])}>${t('Clear')}</button>`}
+      </div>`}
+    ${slider('edge', 'Burnt edge', 0.5, t('Width of the charred edge and the ember'))}
+    ${slider('roughness', 'Irregularity', 0.5, t('How irregular the fire front is'))}
+    <div class="fld"><label>${t('Ember color')}</label><div class="ctl">
+      <input type="color" value=${b.color || '#ff7a1f'} onInput=${(e) => upd('color', e.target.value)} /></div></div>
+    <button class="btn sm" style="margin-top:4px" onClick=${() => ctx.seek(s.at + s.transition.duration * 0.45)}>
+      <${Icon} name="play" size=${13} /> ${t('Go to the middle of the transition')}</button>
   </div>`;
 }
 
@@ -269,7 +332,7 @@ function TrackInspector({ proj, track, segIdx, time, meta, update, setSel, ctx, 
       </div>
     </div>
     <div class="insp-b">
-      <${SegHeader} segs=${segs} i=${i} set=${setSeg} meta=${meta} track=${track} />
+      <${SegHeader} segs=${segs} i=${i} set=${setSeg} meta=${meta} track=${track} ctx=${ctx} />
       <${Form} fields=${def.fields} value=${seg.cfg} onChange=${(cfg) => setSeg({ ...seg, cfg })} ctx=${ctx} isFirst=${i === 0} />
       ${track === 'background' && html`<div class="section"><div class="sh">${t('Generate an image')}</div><div class="sb">
         <p class="faint" style="margin:2px 0 8px;font-size:12px">${t('Create a background from a description, or edit an image, with AI on your GPU.')}</p>
@@ -875,6 +938,9 @@ function App() {
   const saveText = { saving: t('Saving…'), saved: t('Saved {t}', { t: save.at }), error: t('Save error') }[save.kind] || '';
 
   const selText = sel.kind === 'text' ? (proj.texts || [])[sel.i] : null;
+  // Burn transition with chosen points: they are placed on the preview
+  const selBg = sel.kind === 'track' && sel.track === 'background' ? proj.tracks.background[sel.seg] : null;
+  const burnSel = selBg && sel.seg > 0 && selBg.transition.mode === 'burn' && (selBg.transition.burn || {}).origins === 'points' ? selBg.transition.burn : null;
   let inspector;
   if (sel.kind === 'audio') inspector = html`<div><div class="insp-h"><div class="insp-title"><${Icon} name="music" size=${16} cls="muted" />${t('Audio')}<span class="sub">${t('Project')}</span></div></div><div class="insp-b">
       <${Form} fields=${AUDIO_FIELDS} value=${proj.audio} onChange=${(v) => update((p) => { p.audio = v; })} ctx=${ctx} /></div></div>`;
@@ -949,6 +1015,8 @@ function App() {
       <div class="stage-wrap">
         <${Preview} meta=${meta} timeStore=${timeStore} scale=${scale} rev=${rev} playing=${playing}
           pin=${selText ? { x: selText.position_x, y: selText.position_y } : null}
+          points=${burnSel ? (burnSel.points || []).map((q) => ({ x: q[0], y: q[1] })) : null}
+          onPoints=${(pts) => update((p) => { const tr = p.tracks.background[sel.seg].transition; tr.burn = { ...(tr.burn || {}), points: pts.map((q) => [q.x, q.y]) }; })}
           onPin=${(x, y) => update((p) => { const tx = p.texts[sel.i]; if (tx) { tx.position_x = x; tx.position_y = y; } })} />
         ${!hideSetup && (!proj.audio.path || !proj.tracks.background[0].cfg.path) && html`<${Setup} proj=${proj} ctx=${ctx} onHide=${() => setHideSetup(true)} />`}
       </div>

@@ -313,8 +313,15 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 		}
 		fs.LayerA = s.motionAt(bi-1, t)
 		tr := tl.Background[bi].Transition
+		seed := effects.Hash(uint32(bi)) & 0x7fffffff
+		if tr.Burn != nil && tr.Burn.Seed > 0 {
+			seed = uint32(tr.Burn.Seed) & 0x7fffffff
+		}
 		fs.Trans = effects.Trans{Mode: tr.ModeIndex(), Dir: tr.DirectionIndex(), K: k,
-			Seed: effects.Hash(uint32(bi)) & 0x7fffffff, HasA: fs.BgA != nil, HasB: fs.BgB != nil}
+			Seed: seed, HasA: fs.BgA != nil, HasB: fs.BgB != nil}
+		if tr.Mode == "burn" {
+			fs.Trans.Burn = effects.BurnSetup(tr.Burn, seed, s.W, s.H)
+		}
 	}
 
 	// Visualizer: same type -> interpolate; type change -> one fades out and the other fades in

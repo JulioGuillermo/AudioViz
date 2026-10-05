@@ -420,3 +420,8 @@ a.btn { text-decoration: none; }
 .ig-actions { display: flex; flex-direction: column; gap: 6px; margin-top: 14px; }
 .ig-actions .btn { justify-content: flex-start; }
 @media (max-width: 760px) { .ig-detail { grid-template-columns: 1fr; } }
+.stage .pin.fire { border-color: #ff8a2a; }
+.stage .pin.fire::before, .stage .pin.fire::after { background: #ff8a2a; }
+.stage .pin.fire span { position: absolute; left: 14px; top: -16px; font: 600 11px var(--mono); color: #ffb067; text-shadow: 0 0 3px #000; }
+.burnopts { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.chip { display: inline-flex; align-items: center; gap: 5px; padding: 1px 2px 1px 7px; border: 1px solid var(--border-2); border-radius: 999px; font-size: 11.5px; }

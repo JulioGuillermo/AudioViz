@@ -576,6 +576,15 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 	p.LayerA, p.LayerB = layer(fs.LayerA), layer(fs.LayerB)
 	p.Trans = [4]int32{int32(tr.Mode), int32(tr.Dir), has, int32(tr.Seed & 0x7fffffff)}
 	p.TransP = [4]float32{float32(tr.K)}
+	if b := tr.Burn; len(b.Pts) > 0 {
+		p.BurnP = [4]float32{float32(b.Edge), float32(b.Rough), float32(b.MaxD), float32(len(b.Pts))}
+		p.BurnCol = [4]float32{float32(b.Color[0]), float32(b.Color[1]), float32(b.Color[2])}
+		for i, q := range b.Pts {
+			if i < len(p.BurnPts) {
+				p.BurnPts[i] = [4]float32{float32(q[0]), float32(q[1])}
+			}
+		}
+	}
 
 	// Particles
 	np := 0

@@ -63,6 +63,9 @@ layout(std430, set = 0, binding = 0) readonly buffer Params {
     vec4 layerB;               // background B (BG2), only during a transition
     ivec4 trans;               // mode (0 = none, see config.TransitionModes), direction, has (bit0 A, bit1 B), seed
     vec4 transP;               // progress k
+    vec4 burnP;                // burn: edge, roughness, max distance, point count
+    vec4 burnCol;              // burn: ember color
+    vec4 burnPts[8];           // burn: ignition points (x, y in units of the frame height)
 } P;
 
 // Per-tile (workgroup) lists: particles and words that may touch the tile
@@ -133,8 +136,61 @@ vec2 dirVec(int d) {
     return vec2(-1.0, 0.0);
 }
 
+// Burn (internal/effects/burn.go): value noise and fbm in units of the frame height
+float vnoise(vec2 p, uint seed) {
+    vec2 i = floor(p), f = p - i;
+    vec2 u = f * f * (3.0 - 2.0 * f);
+    uint cx = uint(int(i.x) + 4096), cy = uint(int(i.y) + 4096);
+    float a = hash3(cx, cy, seed), b = hash3(cx + 1u, cy, seed);
+    float c = hash3(cx, cy + 1u, seed), d = hash3(cx + 1u, cy + 1u, seed);
+    return a + (b - a) * u.x + (c - a) * u.y + (a - b - c + d) * u.x * u.y;
+}
+
+float fbm(vec2 p, uint seed) {
+    float s = 0.0, amp = 0.5, tot = 0.0;
+    for (int o = 0; o < 4; o++) {
+        s += amp * vnoise(p, seed + uint(o) * 101u);
+        tot += amp;
+        p = p * 2.0 + vec2(17.3, 5.1);
+        amp *= 0.5;
+    }
+    return s / tot;
+}
+
+vec3 burnPixel(vec2 q, float k, uint seed) {
+    float Hf = float(H);
+    float ke = k * k * (3.0 - 2.0 * k);
+    vec2 u = q / Hf;
+    float amp = 0.25 * P.burnP.y;
+    float charW = 0.02 + 0.1 * P.burnP.x;
+    float emberW = 0.004 + 0.012 * P.burnP.x;
+    float d = 1e9;
+    int n = int(P.burnP.w);
+    for (int i = 0; i < n; i++) d = min(d, distance(u, P.burnPts[i].xy));
+    d += amp * (fbm(u * 5.0, seed) - 0.5) * 2.0 + 0.012 * (vnoise(u * 90.0, seed + 5u) - 0.5);
+    float r = ke * (P.burnP.z + 2.0 * amp + 2.0 * charW) - (amp + charW);
+    float s = r - d; // > 0: burned
+    vec3 a = layerAt(0, q), b = layerAt(1, q);
+    float ch = smoothstep(-charW, 0.0, s);
+    a = mix(a, a * vec3(0.55, 0.38, 0.22), ch * 0.8);
+    a = mix(a, vec3(13.0, 8.0, 5.0) / 255.0, smoothstep(-charW * 0.35, 0.0, s) * 0.9);
+    if (s > 0.0) b *= 1.0 - 0.45 * exp(-s / (charW * 0.4));
+    vec3 c = mix(a, b, smoothstep(0.0, 1.5 / Hf, s));
+    float brk = smoothstep(0.3, 0.7, vnoise(u * 25.0 + vec2(k * 6.0, -k * 4.0), seed + 11u));
+    float e = (s + emberW * 1.2) / emberW;
+    float em = exp(-e * e) * (0.35 + 0.9 * brk);
+    float g = s / (emberW * 5.0);
+    em += 0.22 * exp(-g * g) * (0.5 + 0.5 * brk);
+    if (s < 0.0 && s > -charW * 0.6) {
+        uint cell = uint(floor(q.x / (Hf / 360.0))), row = uint(floor(q.y / (Hf / 360.0)));
+        if (hash3(cell, row, seed + uint(k * 24.0)) > 0.985) em += 0.8 * (1.0 + s / (charW * 0.6));
+    }
+    float hot = pow(min(em, 1.0), 3.0) * 0.6;
+    return c + P.burnCol.rgb * em * 1.6 + vec3(hot, hot * 0.9, hot * 0.6);
+}
+
 // Modes in config.TransitionModes order: 0 cut (A only), 1 fade, 2 dissolve, 3 dip_black,
-// 4 flash, 5 wipe, 6 slide, 7 push, 8 zoom_in, 9 zoom_out, 10 circle, 11 clock, 12 glitch, 13 pixelate
+// 4 flash, 5 wipe, 6 slide, 7 push, 8 zoom_in, 9 zoom_out, 10 circle, 11 clock, 12 glitch, 13 pixelate, 14 burn
 vec3 composite(vec2 q) {
     int mode = P.trans.x;
     if (mode == 0) return layerAt(0, q);
@@ -196,6 +252,7 @@ vec3 composite(vec2 q) {
         float xs = q.x + shift;
         return vec3(layerAt(img, vec2(xs + split, q.y)).r, layerAt(img, vec2(xs, q.y)).g, layerAt(img, vec2(xs - split, q.y)).b);
     }
+    if (mode == 14) return burnPixel(q, k, seed); // burn (paper)
     if (mode == 13) { // pixelate: blocks grow, swap at the middle, shrink
         float bs = 1.0 + floor(sin(3.14159265 * k) * 48.0 * (S.y / 1080.0));
         vec2 qp = (floor(q / bs) + 0.5) * bs;

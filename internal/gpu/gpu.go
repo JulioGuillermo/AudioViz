@@ -99,6 +99,10 @@ type Params struct {
 	LayerA, LayerB [4]float32 // scale, offX, offY, rot of image A (BG) and B (BG2)
 	Trans          [4]int32   // mode, direction, has (bit0 A, bit1 B), seed
 	TransP         [4]float32 // progress k, -, -, -
+	// Burn transition: edge, roughness, max distance, point count; ember color; points (x, y)
+	BurnP   [4]float32
+	BurnCol [4]float32
+	BurnPts [8][4]float32
 }
 
 // TextStyle mirrors 'TStyle' in render.comp: one entry of the per-frame text style table

@@ -200,7 +200,7 @@ export const trackById = Object.fromEntries(TRACKS.map((t) => [t.id, t]));
 // Transitions between segments. The background has visual transitions; other tracks blend.
 export const TRANSITIONS = [['cut', 'Cut'], ['fade', 'Fade'], ['dissolve', 'Dissolve'], ['dip_black', 'Dip to black'],
   ['flash', 'Flash (white)'], ['wipe', 'Wipe'], ['slide', 'Slide'], ['push', 'Push'], ['zoom_in', 'Zoom in'],
-  ['zoom_out', 'Zoom out'], ['circle', 'Circle (iris)'], ['clock', 'Clock wipe'], ['glitch', 'Glitch'], ['pixelate', 'Pixelate']];
+  ['zoom_out', 'Zoom out'], ['circle', 'Circle (iris)'], ['clock', 'Clock wipe'], ['glitch', 'Glitch'], ['pixelate', 'Pixelate'], ['burn', 'Burn (paper)']];
 export const SIMPLE_TRANSITIONS = [['cut', 'Cut'], ['fade', 'Fade']];
 export const DIRECTED = ['wipe', 'slide', 'push'];
 export const DIRECTIONS = [['left', 'Left'], ['right', 'Right'], ['up', 'Up'], ['down', 'Down']];
