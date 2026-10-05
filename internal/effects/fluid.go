@@ -19,8 +19,10 @@ import (
 //     heads for its slot on its own (leaving at its own moment), with inertia. Particles are
 //     solid and cannot overlap: they push each other, get compressed, give way and then head
 //     back to their slots, so the paths come out of the collisions, like in a fluid.
-//  3. Rendering. Each frame draws the particles where they are, with a color going from the old
-//     pixel to the new one as each one arrives. It starts as the old image and ends as the new.
+//  3. Rendering. Each frame draws every particle as a crisp square carrying its own piece of the
+//     image (the pixels of its block in the old image, changing to those of its slot in the new
+//     one as it arrives). At rest the squares tile the frame: it starts exactly as the old image
+//     and ends exactly as the new one. Only where particles left a gap, a soft fill shows.
 
 // FluidOpts: 0..1 knobs (0 = default)
 type FluidOpts struct {
@@ -339,10 +341,10 @@ func (f *Fluid) Render(dst *image.RGBA, k float64, sa, sb *sampler) {
 	xs, ys := make([]float32, n), make([]float32, n)
 	bands := runtime.NumCPU() * 4
 	bandH := (H + bands - 1) / bands
-	R := 2 // splat radius in pixels (the particles are ~3 px apart at 1080p)
-	if f.cell > 3 {
-		R = int(math.Ceil(f.cell * 0.75))
-	}
+	// Each particle is drawn as a crisp square the size of its block, carrying its own piece of
+	// the image: at rest the squares tile the frame exactly (the old image, pixel for pixel)
+	hbw, hbh := float32(f.W)/float32(f.gx)*0.5, float32(f.H)/float32(f.gy)*0.5
+	R := int(math.Ceil(float64(hbh))) + 1
 	lists := make([][]int32, bands)
 	for i := range n {
 		b0, b1 := s0*n*2+2*i, (s0+1)*n*2+2*i
@@ -355,7 +357,6 @@ func (f *Fluid) Render(dst *image.RGBA, k float64, sa, sb *sampler) {
 			lists[b] = append(lists[b], int32(i))
 		}
 	}
-	sig2 := float32(2 * (f.cell * 0.55) * (f.cell * 0.55))
 	var wg sync.WaitGroup
 	jobs := make(chan int, bands)
 	for b := range bands {
@@ -370,28 +371,40 @@ func (f *Fluid) Render(dst *image.RGBA, k float64, sa, sb *sampler) {
 				ylo, yhi := b*bandH, min(H, (b+1)*bandH)
 				for _, i := range lists[b] {
 					x, y := xs[i], ys[i]
-					// Its color goes from the old pixel to the new one as it gets there
+					// From its old piece to its new piece as it gets there
 					dd := math.Hypot(float64(f.tx[i]-f.sx[i]), float64(f.ty[i]-f.sy[i]))
 					rem := math.Hypot(float64(f.tx[i]-x), float64(f.ty[i]-y))
 					p := 1.0
 					if dd > 1 {
 						p = 1 - math.Min(1, rem/dd)
 					}
-					p = smooth01(math.Max(p, (k-0.75)/0.25))
-					ca, cb := f.colA[i], f.colB[i]
-					cr := float32(ch(ca, 0) + (ch(cb, 0)-ch(ca, 0))*p)
-					cg := float32(ch(ca, 1) + (ch(cb, 1)-ch(ca, 1))*p)
-					cbb := float32(ch(ca, 2) + (ch(cb, 2)-ch(ca, 2))*p)
-					ix, iy := int(x), int(y)
-					for yy := max(ylo, iy-R); yy <= min(yhi-1, iy+R); yy++ {
-						dy := float32(yy) + 0.5 - y
-						for xx := max(0, ix-R); xx <= min(W-1, ix+R); xx++ {
-							dx := float32(xx) + 0.5 - x
-							wgt := float32(math.Exp(float64(-(dx*dx + dy*dy) / sig2)))
+					p = smooth01(math.Max(p, (k-0.8)/0.2))
+					// Square [x-hbw, x+hbw) × [y-hbh, y+hbh), antialiased by pixel coverage
+					x0, x1, y0, y1 := x-hbw, x+hbw, y-hbh, y+hbh
+					for yy := max(ylo, int(math.Floor(float64(y0)))); yy <= min(yhi-1, int(math.Ceil(float64(y1)))-1); yy++ {
+						cy := min(float32(yy+1), y1) - max(float32(yy), y0)
+						if cy <= 0 {
+							continue
+						}
+						for xx := max(0, int(math.Floor(float64(x0)))); xx <= min(W-1, int(math.Ceil(float64(x1)))-1); xx++ {
+							cx := min(float32(xx+1), x1) - max(float32(xx), x0)
+							if cx <= 0 {
+								continue
+							}
+							wgt := cx * cy
+							// The piece it carries: the same offset inside its block, in each image
+							ox, oy := float64(xx)+0.5-float64(x), float64(yy)+0.5-float64(y)
+							var c rgb
+							if p < 1 {
+								c = sa.at(float64(f.sx[i])+ox-0.5, float64(f.sy[i])+oy-0.5)
+							}
+							if p > 0 {
+								c = mixc(c, sb.at(float64(f.tx[i])+ox-0.5, float64(f.ty[i])+oy-0.5), p)
+							}
 							o := (yy*W + xx) * 4
-							f.acc[o] += cr * wgt
-							f.acc[o+1] += cg * wgt
-							f.acc[o+2] += cbb * wgt
+							f.acc[o] += float32(c[0]) * wgt
+							f.acc[o+1] += float32(c[1]) * wgt
+							f.acc[o+2] += float32(c[2]) * wgt
 							f.acc[o+3] += wgt
 						}
 					}
@@ -433,8 +446,7 @@ func (f *Fluid) Render(dst *image.RGBA, k float64, sa, sb *sampler) {
 		}
 		coarse, tmp = tmp, coarse
 	}
-	in := smooth01(k / 0.05)
-	out := smooth01((k - 0.93) / 0.07)
+	out := smooth01((k - 0.96) / 0.04)
 	parallelFor(H, func(y0, y1 int) {
 		for y := y0; y < y1; y++ {
 			for x := 0; x < W; x++ {
@@ -451,15 +463,23 @@ func (f *Fluid) Render(dst *image.RGBA, k float64, sa, sb *sampler) {
 					b := float64(coarse[(r1*cw+c0)*4+ch])*(1-gx) + float64(coarse[(r1*cw+c1)*4+ch])*gx
 					return a*(1-gy) + b*gy
 				}
-				const alpha = 0.0003 // the blurred coarse cells sum 64 × 81 pixels
-				ww := w + alpha*cb(3) + 1e-6
-				base := mixc(A, B, k) // only where there is nothing at all nearby
-				c := rgb{
-					(float64(f.acc[o]) + alpha*cb(0) + base[0]*1e-6) / ww,
-					(float64(f.acc[o+1]) + alpha*cb(1) + base[1]*1e-6) / ww,
-					(float64(f.acc[o+2]) + alpha*cb(2) + base[2]*1e-6) / ww,
+				// Covered pixels show their particles as they are; only the uncovered part of a pixel
+				// takes the soft color of the particles around (a gap in the fluid)
+				var c rgb
+				if w > 1e-4 {
+					c = rgb{float64(f.acc[o]) / w, float64(f.acc[o+1]) / w, float64(f.acc[o+2]) / w}
 				}
-				c = mixc(A, c, in)
+				if w < 1 {
+					// Where the area is almost empty (e.g. edges the particles left), fade to a
+					// dim mix of both images instead of stretching a few particles' colors
+					dim := mixc(A, B, k)
+					dim = rgb{dim[0] * 0.5, dim[1] * 0.5, dim[2] * 0.5}
+					g := dim
+					if cw := cb(3); cw > 1e-3 {
+						g = mixc(dim, rgb{cb(0) / cw, cb(1) / cw, cb(2) / cw}, smooth01(cw/40))
+					}
+					c = mixc(g, c, w)
+				}
 				c = mixc(c, B, out)
 				d := y*dst.Stride + x*4
 				dst.Pix[d] = uint8(math.Max(0, math.Min(255, c[0]+0.5)))

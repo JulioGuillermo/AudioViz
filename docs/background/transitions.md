@@ -28,7 +28,7 @@ timeline:
 | `glitch` | Bands switch to the new image with shifts and RGB split |
 | `pixelate` | Pixelates, swaps at the middle, sharpens again |
 | `burn` | The old image burns like paper from ignition points; the new one shows through the holes (`burn`) |
-| `fluid` | The old image flows like a liquid, with eddies, into the new one; each part seeks similar colors (`fluid`) |
+| `fluid` | Every bit of the old image travels to a similar color of the new one, pushing the others on its way like the particles of a fluid (`fluid`) |
 
 - `duration` (seconds) is how long it takes; the transition starts at the segment's `at`.
 - `direction` (`left`, `right`, `up`, `down`) is where the new image moves, for `wipe`, `slide`
@@ -50,8 +50,8 @@ Every bit of the old image (a particle of ~4 px at 1080p) looks for a place of s
 the new one and travels there on its own: it leaves at its own moment and paces itself to arrive
 in time. Particles are solid and cannot overlap, so on the way they push the ones in front, which
 give way, get compressed and then go back to their own destinations: the paths come out of those
-collisions, like the particles of a fluid. Each one changes from its old color to its new one as
-it arrives. It starts exactly as the old image and ends exactly as the new one. The motion is
+collisions, like the particles of a fluid. Each one is a crisp piece of the image (its pixels of
+the old image, changing to those of its destination in the new one as it arrives). It starts exactly as the old image and ends exactly as the new one. The motion is
 simulated once (a few seconds, the first time the transition is shown or exported), then each
 frame only draws it.
 
