@@ -234,7 +234,7 @@ function SegHeader({ segs, i, set, meta, track, ctx }) {
       <${Select} value=${s.transition.direction || 'left'} options=${DIRECTIONS}
         onChange=${(d) => set({ ...s, transition: { ...s.transition, direction: d } })} /></div></div>`}
     ${track === 'background' && s.transition.mode === 'burn' && html`<${BurnOptions} s=${s} set=${set} ctx=${ctx} />`}
-    ${track === 'background' && s.transition.mode === 'fluid' && html`<${FluidOptions} s=${s} set=${set} ctx=${ctx} />`}
+    ${track === 'background' && (s.transition.mode === 'fluid' || s.transition.mode === 'liquid') && html`<${FluidOptions} s=${s} set=${set} ctx=${ctx} />`}
   </div>`;
 }
 
@@ -246,7 +246,8 @@ function FluidOptions({ s, set, ctx }) {
     <input type="range" min="0.05" max="1" step="0.05" value=${f[k] || def} onInput=${(e) => upd(k, +e.target.value)} />
     <span class="mono faint" style="font-size:11px;width:30px;text-align:right">${(f[k] || def).toFixed(2)}</span></div></div>`;
   return html`<div class="burnopts">
-    ${slider('color_weight', 'Color seeking', 0.6, t('Low: each part flows nearby. High: it travels to the most similar color of the new image'))}
+    ${slider('color_weight', 'Color seeking', s.transition.mode === 'liquid' ? 0.3 : 0.6, t('Low: each part flows nearby. High: it travels to the most similar color of the new image'))}
+    ${s.transition.mode === 'liquid' && slider('viscosity', 'Viscosity', 0.6, t('How much neighbors move together: high, thick streams; low, more like separate drops'))}
     ${slider('interaction', 'Interaction', 0.5, t('How solid the particles are: high, they push each other hard; low, they slip past each other'))}
     ${slider('stagger', 'Stagger', 0.5, t('How spread out in time the departures are'))}
     <div class="row" style="gap:6px;margin-top:4px">

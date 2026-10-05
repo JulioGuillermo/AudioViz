@@ -36,6 +36,7 @@ type Fluid struct {
 	ColorWeight float64 `yaml:"color_weight,omitempty" json:"color_weight,omitempty"` // 0..1 0 = stay near, 1 = go to the most similar color anywhere (default 0.6)
 	Interaction float64 `yaml:"interaction,omitempty" json:"interaction,omitempty"`   // 0..1 how solid the particles are (how much they push each other, default 0.5)
 	Stagger     float64 `yaml:"stagger,omitempty" json:"stagger,omitempty"`           // 0..1 how spread out in time the departures are (default 0.5)
+	Viscosity   float64 `yaml:"viscosity,omitempty" json:"viscosity,omitempty"`       // liquid: 0..1 how much neighbors move together (default 0.6)
 	Seed        int     `yaml:"seed,omitempty" json:"seed,omitempty"`                 // 0 = a different one per segment
 }
 
@@ -55,7 +56,7 @@ const MaxBurnPoints = 8
 
 // TransitionModes are the background transitions (the renderer numbers them in this order)
 var TransitionModes = []string{"cut", "fade", "dissolve", "dip_black", "flash", "wipe", "slide", "push",
-	"zoom_in", "zoom_out", "circle", "clock", "glitch", "pixelate", "burn", "fluid"}
+	"zoom_in", "zoom_out", "circle", "clock", "glitch", "pixelate", "burn", "fluid", "liquid"}
 
 // Directions for wipe, slide and push: where the new image moves
 var TransitionDirections = []string{"left", "right", "up", "down"}

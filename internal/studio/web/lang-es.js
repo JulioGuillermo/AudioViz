@@ -272,6 +272,8 @@ export const ES = {
   'Stagger': 'Escalonado',
   'How spread out in time the departures are': 'Cuán repartidas en el tiempo están las salidas',
   'Other variation': 'Otra variante',
+  'Liquid': 'Líquido',
+  'How much neighbors move together: high, thick streams; low, more like separate drops': 'Cuánto se mueven juntas las vecinas: alto, corrientes espesas; bajo, más como gotas sueltas',
   'Build the lines': 'Formar las líneas', 'Source': 'Origen', 'The lyrics as text (.txt)': 'La letra en texto (.txt)',
   'Transcribe the audio (no text needed)': 'Transcribir el audio (sin texto)', 'Detect automatically': 'Detectar automáticamente',
   'The vocals are recognized and become the lyrics, split into lines at the pauses. Then correct the words with “Edit text”: the corrected text is aligned again in seconds.':

@@ -29,6 +29,7 @@ timeline:
 | `pixelate` | Pixelates, swaps at the middle, sharpens again |
 | `burn` | The old image burns like paper from ignition points; the new one shows through the holes (`burn`) |
 | `fluid` | Every bit of the old image travels to a similar color of the new one, pushing the others on its way like the particles of a fluid (`fluid`) |
+| `liquid` | The old image flows as a liquid (streams, swirls, no gaps) and settles into the new one (`fluid` options, plus `viscosity`) |
 
 - `duration` (seconds) is how long it takes; the transition starts at the segment's `at`.
 - `direction` (`left`, `right`, `up`, `down`) is where the new image moves, for `wipe`, `slide`
@@ -54,6 +55,19 @@ collisions, like the particles of a fluid. Each one is a crisp piece of the imag
 the old image, changing to those of its destination in the new one as it arrives). It starts exactly as the old image and ends exactly as the new one. The motion is
 simulated once (a few seconds, the first time the transition is shown or exported), then each
 frame only draws it.
+
+### Liquid
+`mode: liquid` takes the same `fluid:` options (with `color_weight` 0.3 by default) plus
+`viscosity` (0..1, default 0.6: how much neighbors move together). It is the fluid transition
+behaving as a liquid instead of a swarm:
+1. First the image is carried by a stream: where the parts would like to go, smoothed over each
+   area and made incompressible (it can turn and flow but not compress or stretch, so the
+   liquid never shrinks or opens holes), slowing down near the edges like a wall.
+2. Then every particle gets a slot near where the stream left it, of similar brightness among
+   its neighbors, and settles there while the colors change to the new image.
+
+Neighbors share their velocity (viscosity), pressure keeps the density even, and whole areas
+leave together.
 
 ### Burn options
 ```yaml

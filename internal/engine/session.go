@@ -323,7 +323,7 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 		if tr.Mode == "burn" {
 			fs.Trans.Burn = effects.BurnSetup(tr.Burn, seed, s.W, s.H)
 		}
-		if tr.Mode == "fluid" && fs.BgA != nil && fs.BgB != nil {
+		if (tr.Mode == "fluid" || tr.Mode == "liquid") && fs.BgA != nil && fs.BgB != nil {
 			// Simulated once per transition (the first frame that needs it), then only drawn
 			fl := s.fluidFor(bi, tr, seed, fs.BgA, fs.BgB)
 			frame := image.NewRGBA(image.Rect(0, 0, s.W, s.H))
@@ -601,9 +601,9 @@ func (s *Session) Duration() float64 { return float64(s.Frames) / float64(s.FPS)
 // fluidFor returns the simulation of the fluid transition into background segment bi, running
 // it the first time (it depends on both images, the size, the duration and the options)
 func (s *Session) fluidFor(bi int, tr config.Transition, seed uint32, a, b *image.RGBA) *effects.Fluid {
-	o := effects.FluidOpts{Seed: seed}
+	o := effects.FluidOpts{Seed: seed, Liquid: tr.Mode == "liquid"}
 	if tr.Fluid != nil {
-		o.ColorWeight, o.Interaction, o.Stagger = tr.Fluid.ColorWeight, tr.Fluid.Interaction, tr.Fluid.Stagger
+		o.ColorWeight, o.Interaction, o.Stagger, o.Viscosity = tr.Fluid.ColorWeight, tr.Fluid.Interaction, tr.Fluid.Stagger, tr.Fluid.Viscosity
 		if tr.Fluid.Seed > 0 {
 			o.Seed = uint32(tr.Fluid.Seed)
 		}
