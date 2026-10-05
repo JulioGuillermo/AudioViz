@@ -13,10 +13,11 @@ import (
 // as an explicit list of segments (the first one, at at=0, is the base block).
 
 type TransJSON struct {
-	Mode      string       `json:"mode"`
-	Duration  float64      `json:"duration"`
-	Direction string       `json:"direction,omitempty"`
-	Burn      *config.Burn `json:"burn,omitempty"`
+	Mode      string        `json:"mode"`
+	Duration  float64       `json:"duration"`
+	Direction string        `json:"direction,omitempty"`
+	Burn      *config.Burn  `json:"burn,omitempty"`
+	Fluid     *config.Fluid `json:"fluid,omitempty"`
 }
 
 type SegJSON struct {
@@ -84,7 +85,7 @@ func fromMap(m map[string]any, dst any) error {
 func segsToJSON[T any](segs []config.Seg[T]) []SegJSON {
 	out := make([]SegJSON, len(segs))
 	for i, s := range segs {
-		out[i] = SegJSON{At: s.At, Label: s.Label, Transition: TransJSON{s.Transition.Mode, s.Transition.Duration, s.Transition.Direction, s.Transition.Burn}, Cfg: toMap(s.Cfg)}
+		out[i] = SegJSON{At: s.At, Label: s.Label, Transition: TransJSON{s.Transition.Mode, s.Transition.Duration, s.Transition.Direction, s.Transition.Burn, s.Transition.Fluid}, Cfg: toMap(s.Cfg)}
 	}
 	return out
 }
@@ -113,7 +114,7 @@ func segsFromJSON[T any](name string, in []SegJSON, def T, fix func(*T)) ([]conf
 			mode = "cut"
 		}
 		out = append(out, config.Seg[T]{At: at, Label: s.Label, Cfg: cfg,
-			Transition: config.Transition{Mode: mode, Duration: s.Transition.Duration, Direction: s.Transition.Direction, Burn: s.Transition.Burn}})
+			Transition: config.Transition{Mode: mode, Duration: s.Transition.Duration, Direction: s.Transition.Direction, Burn: s.Transition.Burn, Fluid: s.Transition.Fluid}})
 	}
 	// Sort by time (the first one always at 0)
 	for i := 1; i < len(out); i++ {

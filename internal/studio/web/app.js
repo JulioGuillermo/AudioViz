@@ -234,6 +234,26 @@ function SegHeader({ segs, i, set, meta, track, ctx }) {
       <${Select} value=${s.transition.direction || 'left'} options=${DIRECTIONS}
         onChange=${(d) => set({ ...s, transition: { ...s.transition, direction: d } })} /></div></div>`}
     ${track === 'background' && s.transition.mode === 'burn' && html`<${BurnOptions} s=${s} set=${set} ctx=${ctx} />`}
+    ${track === 'background' && s.transition.mode === 'fluid' && html`<${FluidOptions} s=${s} set=${set} ctx=${ctx} />`}
+  </div>`;
+}
+
+// Options of the fluid transition (it is simulated once, the first time it is shown)
+function FluidOptions({ s, set, ctx }) {
+  const f = s.transition.fluid || {};
+  const upd = (k, v) => set({ ...s, transition: { ...s.transition, fluid: { ...f, [k]: v } } });
+  const slider = (k, label, def, title) => html`<div class="fld"><label title=${title || ''}>${t(label)}</label><div class="ctl">
+    <input type="range" min="0.05" max="1" step="0.05" value=${f[k] || def} onInput=${(e) => upd(k, +e.target.value)} />
+    <span class="mono faint" style="font-size:11px;width:30px;text-align:right">${(f[k] || def).toFixed(2)}</span></div></div>`;
+  return html`<div class="burnopts">
+    ${slider('turbulence', 'Turbulence', 0.5, t('How many eddies and swirls'))}
+    ${slider('viscosity', 'Viscosity', 0.3, t('How thick the fluid is: higher is calmer'))}
+    ${slider('color_weight', 'Color seeking', 0.6, t('Low: each part flows nearby. High: it travels to the most similar color of the new image'))}
+    <div class="row" style="gap:6px;margin-top:4px">
+      <button class="btn sm" title=${t('Another flow with the same settings')} onClick=${() => upd('seed', 1 + Math.floor(Math.random() * 999999))}><${Icon} name="shuffle" size=${13} /> ${t('Other flow')}</button>
+      <button class="btn sm" onClick=${() => ctx.seek(s.at + s.transition.duration * 0.5)}><${Icon} name="play" size=${13} /> ${t('Go to the middle of the transition')}</button>
+    </div>
+    <p class="faint" style="font-size:11.5px;margin:6px 0 0">${t('The flow is simulated the first time the transition is shown (a few seconds); then it plays smoothly.')}</p>
   </div>`;
 }
 

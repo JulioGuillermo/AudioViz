@@ -27,6 +27,15 @@ type Transition struct {
 	Duration  float64 `yaml:"duration"`            // seconds (not for cut)
 	Direction string  `yaml:"direction,omitempty"` // left, right, up, down: wipe, slide and push
 	Burn      *Burn   `yaml:"burn,omitempty"`      // options of the burn transition
+	Fluid     *Fluid  `yaml:"fluid,omitempty"`     // options of the fluid transition
+}
+
+// Fluid: the old image flows into the new one like a liquid, each bit going to a similar color
+type Fluid struct {
+	Turbulence  float64 `yaml:"turbulence,omitempty" json:"turbulence,omitempty"`     // 0..1 eddies (default 0.5)
+	Viscosity   float64 `yaml:"viscosity,omitempty" json:"viscosity,omitempty"`       // 0..1 how thick the fluid is (default 0.3)
+	ColorWeight float64 `yaml:"color_weight,omitempty" json:"color_weight,omitempty"` // 0..1 0 = stay near, 1 = go to the most similar color anywhere (default 0.6)
+	Seed        int     `yaml:"seed,omitempty" json:"seed,omitempty"`                 // 0 = a different flow per segment
 }
 
 // Burn: the old image burns like paper from one or more ignition points, revealing the new one
@@ -45,7 +54,7 @@ const MaxBurnPoints = 8
 
 // TransitionModes are the background transitions (the renderer numbers them in this order)
 var TransitionModes = []string{"cut", "fade", "dissolve", "dip_black", "flash", "wipe", "slide", "push",
-	"zoom_in", "zoom_out", "circle", "clock", "glitch", "pixelate", "burn"}
+	"zoom_in", "zoom_out", "circle", "clock", "glitch", "pixelate", "burn", "fluid"}
 
 // Directions for wipe, slide and push: where the new image moves
 var TransitionDirections = []string{"left", "right", "up", "down"}

@@ -38,7 +38,8 @@ type Session struct {
 	lyrKey   string
 	LyrVer   int // changes every time the lyrics atlas is rebuilt
 	sim      particleSim
-	silent   []audio.FrameFeatures // when the project has no audio yet
+	fluids   map[string]*effects.Fluid // simulated fluid transitions (see fluidFor)
+	silent   []audio.FrameFeatures     // when the project has no audio yet
 }
 
 type anaKey struct {
@@ -322,6 +323,15 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 		if tr.Mode == "burn" {
 			fs.Trans.Burn = effects.BurnSetup(tr.Burn, seed, s.W, s.H)
 		}
+		if tr.Mode == "fluid" && fs.BgA != nil && fs.BgB != nil {
+			// Simulated once per transition (the first frame that needs it), then only drawn
+			fl := s.fluidFor(bi, tr, seed, fs.BgA, fs.BgB)
+			frame := image.NewRGBA(image.Rect(0, 0, s.W, s.H))
+			fl.Render(frame, k, effects.NewSampler(fs.BgA, fs.LayerA, s.W, s.H), effects.NewSampler(fs.BgB, fs.LayerB, s.W, s.H))
+			fs.BgA, fs.VerA, fs.LayerA = frame, fmt.Sprintf("fluid:%p:%.6f", fl, k), effects.Identity
+			fs.BgB, fs.VerB = nil, ""
+			fs.Trans = effects.Trans{HasA: true}
+		}
 	}
 
 	// Visualizer: same type -> interpolate; type change -> one fades out and the other fades in
@@ -587,3 +597,31 @@ func (s *Session) Fork() (*Session, error) {
 
 // Duration returns the timeline duration in seconds
 func (s *Session) Duration() float64 { return float64(s.Frames) / float64(s.FPS) }
+
+// fluidFor returns the simulation of the fluid transition into background segment bi, running
+// it the first time (it depends on both images, the size, the duration and the options)
+func (s *Session) fluidFor(bi int, tr config.Transition, seed uint32, a, b *image.RGBA) *effects.Fluid {
+	o := effects.FluidOpts{Seed: seed}
+	if tr.Fluid != nil {
+		o.Turbulence, o.Viscosity, o.ColorWeight = tr.Fluid.Turbulence, tr.Fluid.Viscosity, tr.Fluid.ColorWeight
+		if tr.Fluid.Seed > 0 {
+			o.Seed = uint32(tr.Fluid.Seed)
+		}
+	}
+	frames := max(2, int(tr.Duration*float64(s.FPS)))
+	key := fmt.Sprintf("%d|%dx%d|%d|%+v|%p|%p", bi, s.W, s.H, frames, o, a, b)
+	// s.mu is held (called from Prepare)
+	if f := s.fluids[key]; f != nil {
+		return f
+	}
+	t0 := time.Now()
+	f := effects.NewFluid(a, b, s.W, s.H, frames, o)
+	if s.Logf != nil {
+		s.Logf("🌊 Fluid transition simulated in %v", time.Since(t0).Round(time.Millisecond))
+	}
+	if s.fluids == nil || len(s.fluids) >= 4 {
+		s.fluids = map[string]*effects.Fluid{}
+	}
+	s.fluids[key] = f
+	return f
+}
