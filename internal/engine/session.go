@@ -603,7 +603,7 @@ func (s *Session) Duration() float64 { return float64(s.Frames) / float64(s.FPS)
 func (s *Session) fluidFor(bi int, tr config.Transition, seed uint32, a, b *image.RGBA) *effects.Fluid {
 	o := effects.FluidOpts{Seed: seed}
 	if tr.Fluid != nil {
-		o.Turbulence, o.Viscosity, o.ColorWeight = tr.Fluid.Turbulence, tr.Fluid.Viscosity, tr.Fluid.ColorWeight
+		o.ColorWeight, o.Interaction, o.Stagger = tr.Fluid.ColorWeight, tr.Fluid.Interaction, tr.Fluid.Stagger
 		if tr.Fluid.Seed > 0 {
 			o.Seed = uint32(tr.Fluid.Seed)
 		}

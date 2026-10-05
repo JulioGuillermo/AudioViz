@@ -267,6 +267,11 @@ export const ES = {
   'Another flow with the same settings': 'Otro flujo con los mismos ajustes',
   'Other flow': 'Otro flujo',
   'The flow is simulated the first time the transition is shown (a few seconds); then it plays smoothly.': 'El flujo se simula la primera vez que se muestra la transición (unos segundos); después se reproduce con fluidez.',
+  'Interaction': 'Interacción',
+  'How solid the particles are: high, they push each other hard; low, they slip past each other': 'Cuán sólidas son las partículas: alto, se empujan con fuerza; bajo, se cuelan unas entre otras',
+  'Stagger': 'Escalonado',
+  'How spread out in time the departures are': 'Cuán repartidas en el tiempo están las salidas',
+  'Other variation': 'Otra variante',
   'Build the lines': 'Formar las líneas', 'Source': 'Origen', 'The lyrics as text (.txt)': 'La letra en texto (.txt)',
   'Transcribe the audio (no text needed)': 'Transcribir el audio (sin texto)', 'Detect automatically': 'Detectar automáticamente',
   'The vocals are recognized and become the lyrics, split into lines at the pauses. Then correct the words with “Edit text”: the corrected text is aligned again in seconds.':

@@ -30,12 +30,13 @@ type Transition struct {
 	Fluid     *Fluid  `yaml:"fluid,omitempty"`     // options of the fluid transition
 }
 
-// Fluid: the old image flows into the new one like a liquid, each bit going to a similar color
+// Fluid: every bit of the old image travels to a place of similar color in the new one, pushing
+// the others on its way (they cannot overlap), like the particles of a fluid
 type Fluid struct {
-	Turbulence  float64 `yaml:"turbulence,omitempty" json:"turbulence,omitempty"`     // 0..1 eddies (default 0.5)
-	Viscosity   float64 `yaml:"viscosity,omitempty" json:"viscosity,omitempty"`       // 0..1 how thick the fluid is (default 0.3)
 	ColorWeight float64 `yaml:"color_weight,omitempty" json:"color_weight,omitempty"` // 0..1 0 = stay near, 1 = go to the most similar color anywhere (default 0.6)
-	Seed        int     `yaml:"seed,omitempty" json:"seed,omitempty"`                 // 0 = a different flow per segment
+	Interaction float64 `yaml:"interaction,omitempty" json:"interaction,omitempty"`   // 0..1 how solid the particles are (how much they push each other, default 0.5)
+	Stagger     float64 `yaml:"stagger,omitempty" json:"stagger,omitempty"`           // 0..1 how spread out in time the departures are (default 0.5)
+	Seed        int     `yaml:"seed,omitempty" json:"seed,omitempty"`                 // 0 = a different one per segment
 }
 
 // Burn: the old image burns like paper from one or more ignition points, revealing the new one

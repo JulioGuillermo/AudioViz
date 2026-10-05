@@ -41,17 +41,19 @@ timeline:
         mode: fluid
         duration: 4
         fluid:
-          turbulence: 0.5     # 0..1 eddies and swirls
-          viscosity: 0.3      # 0..1 thicker = calmer
-          color_weight: 0.6   # 0..1 low: flows nearby; high: travels to the most similar color
-          seed: 0             # 0 = a different flow per segment; another number = another flow
+          color_weight: 0.6   # 0..1 low: each part goes somewhere near; high: to the most similar color anywhere
+          interaction: 0.5    # 0..1 how solid the particles are: how hard they push each other
+          stagger: 0.5        # 0..1 how spread out in time the departures are
+          seed: 0             # 0 = a different one per segment; another number = another variation
 ```
-Each part of the old image looks for a place of similar color in the new one, and a simulated
-incompressible fluid carries it there: the parts push each other, which turns into eddies.
-Both images are drawn warped by that flow and blend while swirling, so it starts exactly as the
-old image and ends exactly as the new one, sharp all along. The flow depends on the two images,
-so every transition is different. It is simulated once (a few seconds, the first time the
-transition is shown or exported), then each frame only draws it (~80 ms at 1080p, on the CPU).
+Every bit of the old image (a particle of ~4 px at 1080p) looks for a place of similar color in
+the new one and travels there on its own: it leaves at its own moment and paces itself to arrive
+in time. Particles are solid and cannot overlap, so on the way they push the ones in front, which
+give way, get compressed and then go back to their own destinations: the paths come out of those
+collisions, like the particles of a fluid. Each one changes from its old color to its new one as
+it arrives. It starts exactly as the old image and ends exactly as the new one. The motion is
+simulated once (a few seconds, the first time the transition is shown or exported), then each
+frame only draws it.
 
 ### Burn options
 ```yaml
