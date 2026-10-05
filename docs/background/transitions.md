@@ -29,7 +29,7 @@ timeline:
 | `pixelate` | Pixelates, swaps at the middle, sharpens again |
 | `burn` | The old image burns like paper from ignition points; the new one shows through the holes (`burn`) |
 | `fluid` | Every bit of the old image travels to a similar color of the new one, pushing the others on its way like the particles of a fluid (`fluid`) |
-| `liquid` | The old image flows as a liquid (streams, swirls, no gaps) and settles into the new one (`fluid` options, plus `viscosity`) |
+| `liquid` | The image flows as a liquid from start to end; each drop changes little by little into the new image (`fluid` options, plus `viscosity`) |
 
 - `duration` (seconds) is how long it takes; the transition starts at the segment's `at`.
 - `direction` (`left`, `right`, `up`, `down`) is where the new image moves, for `wipe`, `slide`
@@ -58,16 +58,14 @@ frame only draws it.
 
 ### Liquid
 `mode: liquid` takes the same `fluid:` options (with `color_weight` 0.3 by default) plus
-`viscosity` (0..1, default 0.6: how much neighbors move together). It is the fluid transition
-behaving as a liquid instead of a swarm:
-1. First the image is carried by a stream: where the parts would like to go, smoothed over each
-   area and made incompressible (it can turn and flow but not compress or stretch, so the
-   liquid never shrinks or opens holes), slowing down near the edges like a wall.
-2. Then every particle gets a slot near where the stream left it, of similar brightness among
-   its neighbors, and settles there while the colors change to the new image.
-
-Neighbors share their velocity (viscosity), pressure keeps the density even, and whole areas
-leave together.
+`viscosity` (0..1, default 0.6: how much neighbors move together). The image behaves as a
+liquid from start to end: a stream carries it (where its parts would like to go to find
+similar colors, smoothed over each area and made incompressible: it turns, stretches and swirls
+but never compresses or opens holes, and slides along the edges), slowing down to rest at the
+end. There is no crossfade between the images: every drop of the liquid changes little by
+little from its piece of the old image to the piece of the new one where it will end, each
+area at its own moment, so the new image appears inside the flowing liquid and is exactly in
+place when the motion stops.
 
 ### Burn options
 ```yaml

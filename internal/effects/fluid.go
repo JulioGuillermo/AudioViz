@@ -49,8 +49,8 @@ type Fluid struct {
 	sx, sy     []float32
 	tx, ty     []float32
 	acc        []float32 // per-frame splat buffer (r, g, b, w per pixel)
-	slotCol    []uint32  // color of each slot of the new image (by slot index)
 	liquid     bool
+	delay      []float32 // liquid: when each particle starts changing color
 	mu         sync.Mutex
 }
 
@@ -106,7 +106,7 @@ func NewFluid(a, b *image.RGBA, w, h, frames int, o FluidOpts) *Fluid {
 		}
 	})
 	match := sliceMatch(ca, cb, f.gx, f.gy, o)
-	f.colA, f.colB, f.slotCol = ca, make([]uint32, f.n), cb
+	f.colA, f.colB = ca, make([]uint32, f.n)
 	f.sx, f.sy = make([]float32, f.n), make([]float32, f.n)
 	f.tx, f.ty = make([]float32, f.n), make([]float32, f.n)
 	for i, j := range match {
@@ -270,36 +270,22 @@ func (f *Fluid) simulate(frames int, o FluidOpts) {
 		}
 		wg.Wait()
 	}
-	const rematchAt = 0.6
-	rematched := false
 	for st := 1; st <= steps; st++ {
 		t := float32(st) * dt
-		if o.Liquid && !rematched && t >= rematchAt {
-			// Liquid: the stream has brought each area near its colors; now each particle gets an
-			// exact slot close to where it is (similar color, but position matters a lot), so the
-			// final settling is a short move, not a race back across the frame
-			f.rematch(px, py, o.Seed+101)
-			rematched = true
-		}
 		// 1. Each particle wants to cover what is left of its way in the time it has left (so the
 		// journey spreads over the whole transition), starting gently; predicts its position
 		par(func(lo, hi int) {
 			for i := lo; i < hi; i++ {
 				var wx, wy float32
-				if flow != nil && t < rematchAt {
-					// Liquid, first stage: carried by the incompressible stream (no own goal), so
-					// the density stays even: the liquid moves and turns without holes. The rate
-					// integrates to 1 over the stage
+				if flow != nil {
+					// Liquid: carried by the incompressible stream (no own goal), so the density
+					// stays even: the liquid moves and turns without holes. The rate integrates to
+					// 1 over the transition and slows down to rest at the end
 					fu, fv := flow.at(px[i], py[i])
-					rate := float32(math.Pi / (2 * rematchAt) * math.Sin(math.Pi*float64(t)/rematchAt))
+					rate := float32(math.Pi / 2 * math.Sin(math.Pi*float64(t)))
 					// The stream kept only the turning part of the wanted motion (smaller): amplified
-					const streamGain = 2.5
+					const streamGain = 2.2
 					wx, wy = fu*rate*streamGain, fv*rate*streamGain
-				} else if flow != nil {
-					// Liquid, second stage: short moves to the slots assigned near each particle
-					ramp := float32(smooth01(float64((t - rematchAt) / 0.12)))
-					gain := ramp / max(0.05, t1[i]-t)
-					wx, wy = (f.tx[i]-px[i])*gain, (f.ty[i]-py[i])*gain
 				} else if t >= t0[i] {
 					ramp := float32(smooth01(float64((t - t0[i]) / 0.18)))
 					gain := ramp / max(0.05, t1[i]-t)
@@ -384,6 +370,18 @@ func (f *Fluid) simulate(frames int, o FluidOpts) {
 			store(st / sub)
 		}
 	}
+	if o.Liquid {
+		// Each particle ends where the stream left it: that is its place in the new image (the
+		// flow is incompressible, so those places cover the frame). It changes color little by
+		// little from its piece of the old image to the piece of the new one there, each area at
+		// its own moment
+		f.delay = make([]float32, n)
+		for i := range n {
+			f.tx[i], f.ty[i] = px[i], py[i]
+			u, v := float64(f.sx[i])/float64(f.H)*2, float64(f.sy[i])/float64(f.H)*2
+			f.delay[i] = float32(0.12 + 0.4*math.Max(0, math.Min(1, fbm(u, v, o.Seed+91)*1.8-0.4)))
+		}
+	}
 }
 
 // Render draws instant k (0..1) of the transition into dst (w×h). sa / sb are the two images as
@@ -451,8 +449,8 @@ func (f *Fluid) Render(dst *image.RGBA, k float64, sa, sb *sampler) {
 					}
 					p = smooth01(math.Max(p, (k-0.8)/0.2))
 					if f.liquid {
-						// Liquid: the color changes over the second half, as the liquid settles
-						p = smooth01((k - 0.5) / 0.38)
+						// Liquid: the color changes little by little, each area at its own moment
+						p = smooth01((k - float64(f.delay[i])) / 0.42)
 					}
 					// Square [x-hbw, x+hbw) × [y-hbh, y+hbh), antialiased by pixel coverage
 					x0, x1, y0, y1 := x-hbw, x+hbw, y-hbh, y+hbh
@@ -604,7 +602,7 @@ func (f *Fluid) liquidStep(px, py, vx, vy, qx, qy, den, mvx, mvy []float32, gc f
 		}
 		den[k] /= rest // 1 = rest density
 	}
-	visc := float32(o.Viscosity * 0.9 * (1 - smooth01((float64(t)-0.7)/0.2)))
+	visc := float32(o.Viscosity * 0.9)
 	pres := float32(0.45)
 	at := func(g []float32, x, y int) float32 { return g[min(max(y, 0), ny-1)*nx+min(max(x, 0), nx-1)] }
 	par(func(lo, hi int) {
@@ -692,53 +690,6 @@ func (f *Fluid) smoothedTargets(r int) ([]float32, []float32) {
 
 // AUDIOVIZ_FLUID_DEBUG=1 paints the gaps (pixels without particles) magenta
 var fluidDebug = os.Getenv("AUDIOVIZ_FLUID_DEBUG") != ""
-
-// rematch gives every particle a new slot near its current position (liquid, second stage).
-// The particles are sorted into rows by height and each row by x, so the k-th particle of the
-// r-th row takes a slot of row r near column k: a one-to-one assignment with short moves, since
-// the stream kept the density even. Within small groups of neighbors the slots are shared out by
-// brightness (dark with dark, light with light), so it still seeks colors, locally.
-func (f *Fluid) rematch(px, py []float32, seed uint32) {
-	_ = seed
-	n, gx := f.n, f.gx
-	bx, by := float32(f.W)/float32(f.gx), float32(f.H)/float32(f.gy)
-	idx := make([]int32, n)
-	for i := range idx {
-		idx[i] = int32(i)
-	}
-	slices.SortFunc(idx, func(a, b int32) int { return cmpF(py[a], py[b]) })
-	lum := func(c uint32) float32 { return float32(0.3*ch(c, 0) + 0.59*ch(c, 1) + 0.11*ch(c, 2)) }
-	const group = 6
-	var sum, mx float64
-	parallelFor(f.gy, func(r0, r1 int) {
-		for r := r0; r < r1; r++ {
-			row := idx[r*gx : (r+1)*gx]
-			slices.SortFunc(row, func(a, b int32) int { return cmpF(px[a], px[b]) })
-			for c := 0; c < gx; c += group {
-				ps := slices.Clone(row[c:min(gx, c+group)])
-				sl := make([]int, len(ps))
-				for k := range sl {
-					sl[k] = r*gx + c + k
-				}
-				slices.SortFunc(ps, func(a, b int32) int { return cmpF(lum(f.colA[a]), lum(f.colA[b])) })
-				slices.SortFunc(sl, func(a, b int) int { return cmpF(lum(f.slotCol[a]), lum(f.slotCol[b])) })
-				for k, i := range ps {
-					j := sl[k]
-					f.colB[i] = f.slotCol[j]
-					f.tx[i], f.ty[i] = (float32(j%gx)+0.5)*bx, (float32(j/gx)+0.5)*by
-				}
-			}
-		}
-	})
-	if fluidDebug {
-		for i := range n {
-			d := math.Hypot(float64(f.tx[i]-px[i]), float64(f.ty[i]-py[i]))
-			sum += d
-			mx = math.Max(mx, d)
-		}
-		println("rematch: mean distance", int(sum/float64(n)), "max", int(mx))
-	}
-}
 
 // streamTargets: the stream each area follows (liquid, first stage). The particles' wanted
 // displacements are smoothed over their neighborhood and then made divergence-free (Helmholtz
