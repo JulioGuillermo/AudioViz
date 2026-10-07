@@ -557,6 +557,14 @@ func (s *Server) hFrame(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Layers", string(b))
 		}
 	}
+	// Where each fixed text is: the editor draws its handles
+	if fs.Lyr != nil {
+		if bs := lyrics.Boxes(fs.TextItems, fs.TextStyles); len(bs) > 0 {
+			if b, err := json.Marshal(bs); err == nil {
+				w.Header().Set("X-Texts", string(b))
+			}
+		}
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Render-Ms", strconv.FormatInt(renderMs, 10))
 	w.Header().Set("X-Total-Ms", strconv.FormatInt(time.Since(t0).Milliseconds(), 10))

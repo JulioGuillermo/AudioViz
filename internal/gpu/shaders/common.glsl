@@ -34,7 +34,8 @@ struct TStyle {
     vec4 glowC;
     vec4 shadow;      // dx, dy, opacity, blur
     vec4 shadowC;
-    ivec4 gradN;      // gradient stop count
+    ivec4 gradN;      // gradient stop count, stage
+    ivec4 mask;       // screen mask: offset in lay (words; a byte per px), width, height, on
     vec4 grad[MAX_GRAD];
 };
 
@@ -66,7 +67,7 @@ layout(std430, set = 0, binding = 0) readonly buffer Params {
     TStyle ts[MAX_TSTYLE];
     vec4 tA[MAX_TEXT];         // atlas x, y, w, h
     vec4 tB[MAX_TEXT];         // center x, y, scale, alpha
-    vec4 tC[MAX_TEXT];         // karaoke fill, pad, style index
+    vec4 tC[MAX_TEXT];         // karaoke fill, pad, style index, rotation (rad)
     vec4 bgMix;                // -, visualizer opacity
     ivec4 prev;                // preview: scale (1 = normal), output width and height
     vec4 layerA;               // background A (BG): scale, offX, offY, rot (segment motion)

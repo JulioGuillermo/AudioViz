@@ -95,7 +95,7 @@ are read through `readJSON`, capped at **64 MiB** (`io.LimitReader`).
 | GET | `/api/analysis` | — | `{fps, frames, bass, mid, treble, rms, wave, beats: [frame...]}` | `hAnalysis`: per-frame curves for the timeline, each as **base64 of one byte per frame** (`b64u8`, value×255 clamped). `rms` is `min(OverallRMS*3, 1)`. `wave` is the stereo peak per frame column |
 | GET | `/api/lyrics` | — | `{path, lines: [{start, end, words: [{text, start, end}]}]}` | `hGetLyrics`: parses the lyrics file of the first lyrics segment with offset **0** (offset is applied only when rendering) |
 | PUT | `/api/lyrics` | `{lines, path?}` | `{path}` | `hPutLyrics`: writes a word-timed `.lrc`, see §6 |
-| GET | `/api/frame?f=<frame>&scale=1..4` | — | `image/jpeg` (+ `X-Render-Ms`, `X-Total-Ms`, `Cache-Control: no-store`) | `hFrame`: renders one preview frame, see §5 |
+| GET | `/api/frame?f=<frame>&scale=1..4` | — | `image/jpeg` (+ `X-Render-Ms`, `X-Total-Ms`, `X-Layers` and `X-Texts`: where the clips and the fixed texts are, for the handles; `Cache-Control: no-store`) | `hFrame`: renders one preview frame, see §5 |
 | GET | `/api/fs?path=&kind=` | — | `{path, parent, entries: [{name, path, dir, size}]}` | `hFS`: file browser, see §7 |
 | POST | `/api/upload` | multipart, field `file` | `{path}` | `hUpload`: copies into `<project>/assets/<basename>` |
 | GET | `/api/media?path=[&download=1]` | — | file bytes | `hMedia`: `http.ServeFile` (Range, `Last-Modified`, content type); `download=1` adds `Content-Disposition: attachment` |

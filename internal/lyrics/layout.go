@@ -52,6 +52,7 @@ type Item struct {
 	Fill           float32 // karaoke progress 0..1 (1 = all in the main color)
 	Style          int     // index into the frame's style table (0 = lyrics)
 	Pad            float32
+	Rot            float32 // radians, clockwise on screen
 }
 
 type Engine struct {

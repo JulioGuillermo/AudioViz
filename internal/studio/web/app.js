@@ -7,9 +7,9 @@ import { Timeline, segSummary } from './timeline.js';
 import { keyApi, valueAt, setIn, KEY_EPS } from './keys.js';
 import { useFrameStream } from './frames.js';
 import { Editor } from './editor.js';
-import { maskShapes, setMaskShapes } from './masks.js';
+import { maskShapes, setMaskShapes, MaskSection, segMaskOwner, editSegMasks } from './masks.js';
 import { ContextMenu, openMenu } from './menu.js';
-import { LayerInspector, ClipHandles, geoOf, frontFirst, layerName, newLayerId, setClipProps, duplicateClip } from './layers.js';
+import { LayerInspector, ClipHandles, TextHandles, textBoxOf, geoOf, frontFirst, layerName, newLayerId, setClipProps, duplicateClip } from './layers.js';
 import { ImagesDialog } from './images.js';
 import { FilePicker, NewProject, ExportDialog, GenLyricsDialog, LyricsTextDialog, LYRIC_LANGS, STEP_LABEL, ProjectsDialog, PackageDialog, ExportsDialog, WorkspaceGrid, uploadPackage } from './dialogs.js';
 import { createStore, useStore, useThrottledStore } from './store.js';
@@ -18,7 +18,7 @@ import { createScrubber } from './scrub.js';
 
 // ------------------------------------------------------------------ preview
 
-function Preview({ meta, timeStore, scale, rev, playing, pin, onPin, points, onPoints, clip, clipRef, onClip }) {
+function Preview({ meta, timeStore, scale, rev, playing, pin, onPin, points, onPoints, clip, clipRef, onClip, text, textIdx, onText }) {
   const time = useStore(timeStore);
   const canvas = useRef();
   const stage = useRef();
@@ -89,13 +89,16 @@ function Preview({ meta, timeStore, scale, rev, playing, pin, onPin, points, onP
     const cr = canvas.current.getBoundingClientRect(), sr = stage.current.getBoundingClientRect();
     ptsStyle = shownPts.map((q) => ({ left: cr.left - sr.left + q.x * cr.width + 'px', top: cr.top - sr.top + q.y * cr.height + 'px' }));
   }
+  const info = useFrameStream(canvas, { meta, time, scale, rev, playing });
+  // The selected text on screen: handles; otherwise (not shown now) the pin places it
+  const tbox = text && textIdx != null ? textBoxOf(info.texts, textIdx) : null;
+  if (tbox) pin = null;
   let pinStyle = null;
   const shownPin = dragPin || pin;
   if (shownPin && canvas.current && stage.current) {
     const cr = canvas.current.getBoundingClientRect(), sr = stage.current.getBoundingClientRect();
     pinStyle = { left: cr.left - sr.left + shownPin.x * cr.width + 'px', top: cr.top - sr.top + shownPin.y * cr.height + 'px' };
   }
-  const info = useFrameStream(canvas, { meta, time, scale, rev, playing });
 
   return html`<div class="stage" ref=${stage}>
     <canvas ref=${canvas} width=${Math.round(meta.width / scale)} height=${Math.round(meta.height / scale)}
@@ -109,6 +112,12 @@ function Preview({ meta, timeStore, scale, rev, playing, pin, onPin, points, onP
       return html`<${ClipHandles} clip=${clip} time=${time} meta=${meta} k=${k} ox=${cr.left - sr.left} oy=${cr.top - sr.top}
         geo=${clipRef && geoOf(info.layers, clipRef.id, clipRef.clip)}
         toFrame=${(cx, cy) => ({ x: (cx - cr.left) / k, y: (cy - cr.top) / k })} onChange=${onClip} />`;
+    })()}
+    ${tbox && canvas.current && stage.current && (() => {
+      const cr = canvas.current.getBoundingClientRect(), sr = stage.current.getBoundingClientRect();
+      const k = cr.width / meta.width;
+      return html`<${TextHandles} text=${text} box=${tbox} time=${time} meta=${meta} k=${k} ox=${cr.left - sr.left} oy=${cr.top - sr.top}
+        toFrame=${(cx, cy) => ({ x: (cx - cr.left) / k, y: (cy - cr.top) / k })} onChange=${onText} />`;
     })()}
     ${ptsStyle.map((st, j) => html`<div class="pin fire" style=${st}><span>${j + 1}</span></div>`)}
     <div class="hud">${meta.width}×${meta.height} · 1/${scale} · ${info.ms} ms${playing ? ' · ' + info.fps + ' fps' : ''}</div>
@@ -284,7 +293,12 @@ function TextsInspector({ proj, sel, setSel, update, time, meta, ctx }) {
       </div>
       <${Form} fields=${TEXT_FIELDS} value=${x} onChange=${set} ctx=${ctx} kf=${keyApi({ keys: x.keys, u: time - x.start, max: x.end - x.start,
         focus: ctx.kfFocus, setFocus: ctx.setKfFocus, seek: (u) => ctx.seek(x.start + u),
-        edit: (fn) => update((p) => { const tx = p.texts[i]; fn(tx, tx); }) })} />`}
+        edit: (fn) => update((p) => { const tx = p.texts[i]; fn(tx, tx); }) })} />
+      <${MaskSection} clip=${x} screen=${true} kf=${keyApi({ keys: x.keys, u: time - x.start, max: x.end - x.start,
+        focus: ctx.kfFocus, setFocus: ctx.setKfFocus, seek: (u) => ctx.seek(x.start + u),
+        edit: (fn) => update((p) => { const tx = p.texts[i]; fn(tx, tx); }) })}
+        selMask=${ctx.selMask} setSelMask=${ctx.setSelMask} ctx=${ctx} openEditor=${ctx.openEditor}
+        editClip=${(fn) => update((p) => fn(p.texts[i]))} />`}
     </div>
   </div>`;
 }
@@ -318,6 +332,9 @@ function TrackInspector({ proj, track, segIdx, time, meta, update, setSel, ctx, 
       ${track === 'background' && html`<div class="section"><div class="sh">${t('Generate an image')}</div><div class="sb">
         <p class="faint" style="margin:2px 0 8px;font-size:12px">${t('Create a background from a description, or edit an image, with AI on your GPU.')}</p>
         <button class="btn" onClick=${onImages}><${Icon} name="wand-sparkles" size=${15} /> ${t('Generate an image…')}</button></div></div>`}
+      ${track === 'lyrics' && html`<${MaskSection} clip=${segMaskOwner(seg)} screen=${true} kf=${kf}
+        selMask=${ctx.selMask} setSelMask=${ctx.setSelMask} ctx=${ctx} openEditor=${ctx.openEditor}
+        editClip=${(fn) => update((p) => editSegMasks(p.tracks.lyrics[i], fn))} />`}
       ${track === 'lyrics' && html`<div class="section"><div class="sh">${t('Generate lyrics')}</div><div class="sb">
         <p class="faint" style="margin:2px 0 8px;font-size:12px">${t('Creates an .lrc with the timing of every word, from the lyrics as text or transcribing the song.')}</p>
         <div class="row"><button class="btn" onClick=${onGenLyrics}><${Icon} name="wand-sparkles" size=${15} /> ${t('Generate synced lyrics…')}</button>
@@ -450,7 +467,7 @@ function App() {
   const [editor, setEditor] = useState(false); // the full-screen editor
   const [editorTool, setEditorTool] = useState('select');
   const [selMask, setSelMask] = useState(null); // the mask of the selected clip being edited
-  useEffect(() => setSelMask(null), [sel.kind, sel.id, sel.clip]);
+  useEffect(() => setSelMask(null), [sel.kind, sel.id, sel.clip, sel.i, sel.track, sel.seg]);
   useEffect(() => setKfFocus(null), [sel.kind, sel.track, sel.seg, sel.i, sel.id, sel.clip]);
   const [playing, setPlaying] = useState(false);
   const [scale, setScale] = useState(2);
@@ -1163,31 +1180,37 @@ function App() {
     p.layers = ff.reverse();
   });
   const selClip = sel.kind === 'layer' && layerById_(sel.id) ? layerById_(sel.id).clips[sel.clip] : null;
-  // A mask tool was picked: use the selected mask if it is of that kind, else the clip's first of
-  // that kind, else a new one
+  const selText = sel.kind === 'text' ? (proj.texts || [])[sel.i] : null;
+  // What the mask tools work on: the selected clip (its image space), fixed text or lyrics segment
+  // (the screen). { obj: { masks, keys, start }, screen, edit(fn(obj)) inside an update }
+  const selLyrSeg = sel.kind === 'track' && sel.track === 'lyrics' ? proj.tracks.lyrics[sel.seg] : null;
+  const maskOwner = selClip ? { obj: selClip, screen: false, edit: (fn) => update((p) => fn(p.layers.find((l) => l.id === sel.id).clips[sel.clip])) }
+    : selText ? { obj: selText, screen: true, edit: (fn) => update((p) => fn(p.texts[sel.i])) }
+    : selLyrSeg ? { obj: segMaskOwner(selLyrSeg), screen: true, edit: (fn) => update((p) => editSegMasks(p.tracks.lyrics[sel.seg], fn)) }
+    : null;
+  // A mask tool was picked: use the selected mask if it is of that kind, else the first of that
+  // kind, else a new one
   const needMask = (kind) => {
-    const c = selClip;
-    if (!c) return;
-    const ms = c.masks || [];
+    if (!maskOwner) return;
+    const ms = maskOwner.obj.masks || [];
     if (selMask != null && ms[selMask] && (ms[selMask].kind || 'vector') === kind) return;
     const k = ms.findIndex((m) => (m.kind || 'vector') === kind);
     if (k >= 0) { setSelMask(k); return; }
-    update((p) => { const cc = p.layers.find((l) => l.id === sel.id).clips[sel.clip];
-      cc.masks = [...(cc.masks || []), { id: newLayerId(), kind, mode: 'inside', feather: 0, opacity: 1, shapes: [], path: '' }]; });
+    maskOwner.edit((o) => { o.masks = [...(o.masks || []), { id: newLayerId(), kind, mode: 'inside', feather: 0, opacity: 1, shapes: [], path: '' }]; });
     setSelMask(ms.length);
   };
   // A stroke of the brush / eraser ended: the painted mask is saved as a PNG in the project
   const onPainted = (blob) => {
-    const c = selClip, m = c && c.masks && c.masks[selMask];
+    const m = maskOwner && maskOwner.obj.masks && maskOwner.obj.masks[selMask];
     if (!m) return;
+    const k = selMask, own = maskOwner;
     fetch('/api/mask?name=' + encodeURIComponent(m.id || newLayerId()), { method: 'PUT', body: blob })
       .then((r) => r.json()).then((r) => {
         if (r.error) throw new Error(r.error);
-        update((p) => { const cc = p.layers.find((l) => l.id === sel.id).clips[sel.clip]; cc.masks[selMask].path = r.path; });
+        own.edit((o) => { o.masks[k].path = r.path; });
         setRev((x) => x + 1);
       }).catch(showErr);
   };
-  const selText = sel.kind === 'text' ? (proj.texts || [])[sel.i] : null;
   // The selection's time range and keys, for the editor's small timeline
   // The selection's time range and its keys (and how to change them), for the editor's small
   // timeline: { start, end, keys, target } or null
@@ -1296,7 +1319,9 @@ function App() {
           pin=${selText ? { x: selText.position_x, y: selText.position_y } : null}
           points=${burnSel ? (burnSel.points || []).map((q) => ({ x: q[0], y: q[1] })) : null}
           onPoints=${(pts) => update((p) => { const tr = p.tracks.background[sel.seg].transition; tr.burn = { ...(tr.burn || {}), points: pts.map((q) => [q.x, q.y]) }; })}
-          onPin=${(x, y) => update((p) => { const tx = p.texts[sel.i]; if (tx) { tx.position_x = x; tx.position_y = y; } })}
+          onPin=${(x, y) => update((p) => { const tx = p.texts[sel.i]; if (tx) setClipProps(tx, { position_x: x, position_y: y }, timeStore.get()); })}
+          text=${selText} textIdx=${selText ? sel.i : null}
+          onText=${(props) => update((p) => { const tx = p.texts[sel.i]; if (tx) setClipProps(tx, props, timeStore.get()); })}
           clip=${selClip && selClip.path && time >= selClip.start && time < selClip.end ? selClip : null}
           clipRef=${sel.kind === 'layer' ? { id: sel.id, clip: sel.clip } : null}
           onClip=${(props) => update((p) => { const c = p.layers.find((l) => l.id === sel.id).clips[sel.clip]; setClipProps(c, props, timeStore.get()); })} />
@@ -1340,9 +1365,10 @@ function App() {
     ${editor && html`<${Editor} meta=${meta} timeStore=${timeStore} playing=${playing} setPlaying=${setPlaying} seek=${seek} rev=${rev}
       selClip=${selClip} inspector=${inspector} onClose=${() => { setEditor(false); setEditorTool('select'); }} marks=${editorMarks} onKeys=${onKeys}
       tool=${editorTool} selMask=${selMask} onNeedMask=${needMask} selId=${sel.id} selClipIdx=${sel.clip}
-      editMask=${(fn) => update((p) => { const c = p.layers.find((l) => l.id === sel.id).clips[sel.clip]; const tt = timeStore.get();
-        setMaskShapes(c, selMask, tt, fn(maskShapes(c, selMask, tt))); })}
-      onPainted=${onPainted}
+      maskOwner=${maskOwner} editMask=${(fn) => maskOwner && maskOwner.edit((o) => { const tt = timeStore.get();
+        setMaskShapes(o, selMask, tt, fn(maskShapes(o, selMask, tt))); })}
+      onPainted=${onPainted} selText=${selText} selTextIdx=${selText ? sel.i : null}
+      onText=${(props) => update((p) => { const tx = p.texts[sel.i]; if (tx) setClipProps(tx, props, timeStore.get()); })}
       onClip=${(props) => update((p) => { const c = p.layers.find((l) => l.id === sel.id).clips[sel.clip]; setClipProps(c, props, timeStore.get()); })} />`}
     ${dialogs}
     <${ContextMenu} />

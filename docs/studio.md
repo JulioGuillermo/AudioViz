@@ -194,8 +194,10 @@ keys are marked on it).
   two fingers; the ° button resets it.
 - **Touch**: two fingers pan, zoom and rotate at the same time.
 - **Pen**: the status line shows the pointer type, the pen's pressure and tilt.
-- The selection tool (**V**) has the same handles as the preview (move, scale, rotate a clip).
-- **Masks** of the selected clip ([layers.md](layers.md#masks)): shape (**S**), nodes (**N**), brush
+- The selection tool (**V**) has the same handles as the preview (move, scale, rotate a clip or a
+  text).
+- **Masks** of the selected clip ([layers.md](layers.md#masks)), text or lyrics segment
+  ([texts.md](texts.md#masks)): shape (**S**), nodes (**N**), brush
   (**B**) and eraser (**E**), with the brush's size, hardness, opacity and pressure options in the
   top bar.
 - **Esc** closes it.

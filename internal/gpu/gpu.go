@@ -93,7 +93,7 @@ type Params struct {
 	TStyles  [MaxTextStyles]TextStyle
 	TItemA   [MaxTextItems][4]float32 // atlas x, y, w, h
 	TItemB   [MaxTextItems][4]float32 // center x, y, scale, alpha
-	TItemC   [MaxTextItems][4]float32 // karaoke fill, pad, style index
+	TItemC   [MaxTextItems][4]float32 // karaoke fill, pad, style index, rotation (rad)
 
 	BgMix [4]float32 // -, visualizer opacity, -, -
 	Prev  [4]int32   // preview: scale, width, height (scale 0/1 = normal render)
@@ -145,7 +145,8 @@ type TextStyle struct {
 	Color, Upcoming, Outline, GlowC [4]float32
 	Shadow                          [4]float32 // dx, dy, opacity, blur
 	ShadowC                         [4]float32
-	GradN                           [4]int32 // gradient stop count
+	GradN                           [4]int32 // gradient stop count, stage
+	Mask                            [4]int32 // screen mask: offset in the overlay buffer (words; a byte per px), width, height, on
 	Grad                            [MaxGrad][4]float32
 }
 

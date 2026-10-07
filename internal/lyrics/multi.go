@@ -133,10 +133,11 @@ func textEngine(tc *config.TextConfig, w, h int) (*Engine, error) {
 // when there are no lyrics), then one entry per fixed text on screen (at most MaxStyles in all).
 func (m *Multi) Frame(t float64, feat *audio.FrameFeatures, lyr *config.LyricsConfig) ([]Item, []Style) {
 	var items []Item
-	styles := []Style{{}}
+	styles := []Style{{Text: -1}}
 	if lyr != nil && m.nLyr > 0 {
 		styles[0] = StyleFor(lyr, t, feat)
 		styles[0].Z = lyr.ZIndex
+		styles[0].Text = -1
 	}
 	for i, e := range m.subs {
 		its := e.Frame(t, feat)
@@ -152,9 +153,10 @@ func (m *Multi) Frame(t float64, feat *audio.FrameFeatures, lyr *config.LyricsCo
 			cfg := e.cfg
 			tc := m.texts[i-m.nLyr]
 			var dx, dy, sc float32 = 0, 0, 1
+			rot := tc.Rotation
 			if len(tc.Keys) > 0 {
 				// Animated text: style from its properties now; moved by the change of its
-				// position and scaled around it by the change of its size
+				// position, scaled and turned around it by the change of its size and rotation
 				k := config.ApplyKeys(tc, tc.Keys, t-tc.Start)
 				kc := k.LyricsConfig
 				kc.Position, kc.Mode = cfg.Position, cfg.Mode
@@ -164,16 +166,22 @@ func (m *Multi) Frame(t float64, feat *audio.FrameFeatures, lyr *config.LyricsCo
 				if tc.Size > 0 && k.Size > 0 {
 					sc = float32(k.Size / tc.Size)
 				}
+				rot = k.Rotation
 			}
 			st := StyleFor(cfg, t, feat)
 			st.Z = cfg.ZIndex
+			ax, ay := float32(tc.PositionX*float64(m.w)), float32(tc.PositionY*float64(m.h))
+			r := rot * math.Pi / 180
+			st.Text, st.AnchorX, st.AnchorY, st.Rotation = i-m.nLyr, ax+dx, ay+dy, float32(r)
 			styles = append(styles, st)
-			if dx != 0 || dy != 0 || sc != 1 {
-				ax, ay := float32(tc.PositionX*float64(m.w)), float32(tc.PositionY*float64(m.h))
+			if dx != 0 || dy != 0 || sc != 1 || rot != 0 {
+				rc, rs := float32(math.Cos(r)), float32(math.Sin(r))
 				for j := range its {
-					its[j].CX = ax + dx + (its[j].CX-ax)*sc
-					its[j].CY = ay + dy + (its[j].CY-ay)*sc
+					ox, oy := (its[j].CX-ax)*sc, (its[j].CY-ay)*sc
+					its[j].CX = ax + dx + ox*rc - oy*rs
+					its[j].CY = ay + dy + ox*rs + oy*rc
 					its[j].Scale *= sc
+					its[j].Rot = float32(r)
 				}
 			}
 		}
@@ -187,6 +195,42 @@ func (m *Multi) Frame(t float64, feat *audio.FrameFeatures, lyr *config.LyricsCo
 		items = items[:maxItems]
 	}
 	return items, styles
+}
+
+// TextBox is where a fixed text is on screen: its anchor (px), its rotation (rad) and the box of
+// its letters around the anchor, before the rotation (px)
+type TextBox struct {
+	Text           int     `json:"i"`
+	AX             float32 `json:"ax"`
+	AY             float32 `json:"ay"`
+	Rot            float32 `json:"rot"`
+	X0, Y0, X1, Y1 float32
+}
+
+// Boxes are the fixed texts on screen in a frame (from Frame's items and styles)
+func Boxes(items []Item, styles []Style) []TextBox {
+	var bs []TextBox
+	at := map[int]int{}
+	for _, it := range items {
+		st := &styles[it.Style]
+		if st.Text < 0 {
+			continue
+		}
+		c, s := math.Cos(float64(st.Rotation)), math.Sin(float64(st.Rotation))
+		ox, oy := float64(it.CX-st.AnchorX), float64(it.CY-st.AnchorY)
+		lx, ly := float32(ox*c+oy*s), float32(-ox*s+oy*c)
+		hw, hh := (it.AW/2-it.Pad)*it.Scale, (it.AH/2-it.Pad)*it.Scale
+		k, ok := at[it.Style]
+		if !ok {
+			k = len(bs)
+			at[it.Style] = k
+			bs = append(bs, TextBox{st.Text, st.AnchorX, st.AnchorY, st.Rotation, lx - hw, ly - hh, lx + hw, ly + hh})
+			continue
+		}
+		b := &bs[k]
+		b.X0, b.Y0, b.X1, b.Y1 = min(b.X0, lx-hw), min(b.Y0, ly-hh), max(b.X1, lx+hw), max(b.Y1, ly+hh)
+	}
+	return bs
 }
 
 // DrawCPU composites the texts onto the image (CPU render)

@@ -154,6 +154,74 @@ export function ClipHandles({ clip, time, meta, k, ox = 0, oy = 0, toFrame, hs =
   </div>`;
 }
 
+// The X-Texts entry of a fixed text (its index in proj.texts)
+export const textBoxOf = (texts, i) => (texts || []).find((b) => b.i === i);
+
+// Handles of the selected fixed text (as ClipHandles): drag inside to move it, a corner to change
+// its size, the round handle to rotate it; it scales and turns around its position (the dot).
+// box: its X-Texts entry (anchor ax, ay and rot as drawn, box X0..Y1 of the letters around the
+// anchor before the rotation, frame px).
+export function TextHandles({ text, box, time, meta, k, ox = 0, oy = 0, toFrame, hs = 1, onChange }) {
+  const [drag, setDrag] = useState(null);
+  const W = meta.width, H = meta.height;
+  const own = { position_x: clipValue(text, 'position_x', time), position_y: clipValue(text, 'position_y', time),
+    size: clipValue(text, 'size', time), rotation: clipValue(text, 'rotation', time) || 0 };
+  const v = { ...own, ...(drag || {}) };
+  const ax = box.ax + (v.position_x - own.position_x) * W, ay = box.ay + (v.position_y - own.position_y) * H;
+  const sc = own.size ? v.size / own.size : 1;
+  const rot = box.rot + ((v.rotation - own.rotation) * Math.PI) / 180;
+  const m = 6; // frame px around the letters
+  const lx = ((box.X0 + box.X1) / 2) * sc, ly = ((box.Y0 + box.Y1) / 2) * sc;
+  const cs = Math.cos(rot), sn = Math.sin(rot);
+  const cxF = ax + lx * cs - ly * sn, cyF = ay + lx * sn + ly * cs;
+  const w = ((box.X1 - box.X0) * sc + 2 * m) * k, h = ((box.Y1 - box.Y0) * sc + 2 * m) * k;
+  const cx = ox + cxF * k, cy = oy + cyF * k;
+  const start = (e, mode) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* not an active pointer */ }
+    const v0 = { ...v };
+    const a = { x: ax, y: ay }; // the anchor, frame px
+    const p0 = toFrame(e.clientX, e.clientY);
+    const d0 = Math.hypot(p0.x - a.x, p0.y - a.y) || 1;
+    const a0 = Math.atan2(p0.y - a.y, p0.x - a.x);
+    let cur = {};
+    const mv = (ev) => {
+      const p = toFrame(ev.clientX, ev.clientY);
+      if (mode === 'move') cur = { position_x: +(v0.position_x + (p.x - p0.x) / W).toFixed(4), position_y: +(v0.position_y + (p.y - p0.y) / H).toFixed(4) };
+      else if (mode === 'scale') cur = { size: +Math.max(1, v0.size * Math.hypot(p.x - a.x, p.y - a.y) / d0).toFixed(1) };
+      else {
+        let r = v0.rotation + ((Math.atan2(p.y - a.y, p.x - a.x) - a0) * 180) / Math.PI;
+        r += Math.round((v0.rotation - r) / 360) * 360;
+        if (ev.shiftKey) r = Math.round(r / 15) * 15;
+        cur = { rotation: +r.toFixed(2) };
+      }
+      setDrag(cur);
+    };
+    const up = () => {
+      removeEventListener('pointermove', mv); removeEventListener('pointerup', up);
+      setDrag(null);
+      if (Object.keys(cur).length) onChange(cur);
+    };
+    addEventListener('pointermove', mv); addEventListener('pointerup', up);
+  };
+  const hpx = 10 * hs;
+  const corner = (sx, sy) => html`<div class="ch-corner" style=${{ left: (sx * w) / 2 + w / 2 - hpx / 2 + 'px', top: (sy * h) / 2 + h / 2 - hpx / 2 + 'px',
+      width: hpx + 'px', height: hpx + 'px' }}
+    onPointerDown=${(e) => start(e, 'scale')} title=${t('Drag to change the size')}></div>`;
+  const dot = 8 * hs;
+  return html`<div class=${'clipbox textbox' + (drag ? ' drag' : '')} style=${{ left: cx - w / 2 + 'px', top: cy - h / 2 + 'px', width: w + 'px', height: h + 'px',
+      transform: `rotate(${(rot * 180) / Math.PI}deg)`, borderWidth: hs + 'px' }}>
+    <div class="ch-body" onPointerDown=${(e) => start(e, 'move')} title=${t('Drag to move')}></div>
+    ${corner(-1, -1)}${corner(1, -1)}${corner(-1, 1)}${corner(1, 1)}
+    <div class="ch-rot" style=${{ top: -26 * hs + 'px', width: 12 * hs + 'px', height: 12 * hs + 'px', marginLeft: -6 * hs + 'px' }}
+      onPointerDown=${(e) => start(e, 'rotate')} title=${t('Drag to rotate (Shift: steps of 15°)')}></div>
+  </div>
+  <div class="tb-anchor" style=${{ left: ox + ax * k - dot / 2 + 'px', top: oy + ay * k - dot / 2 + 'px', width: dot + 'px', height: dot + 'px' }}
+    title=${t('Its position: it scales and turns around it')}></div>`;
+}
+
 // Inspector of a layer: its name, its clips (tabs), the selected clip's times and settings
 export function LayerInspector({ proj, sel, setSel, update, time, meta, ctx }) {
   const li = (proj.layers || []).findIndex((l) => l.id === sel.id);
@@ -200,7 +268,7 @@ export function LayerInspector({ proj, sel, setSel, update, time, meta, ctx }) {
       ${c ? html`<${Form} fields=${CLIP_FIELDS} value=${c} ctx=${ctx} kf=${kf}
           onChange=${(nc) => editLayer((l) => { l.clips[j] = { ...nc, start: l.clips[j].start, end: l.clips[j].end }; })} />`
         : html`<p class="faint" style="font-size:12px">${t('No clips yet. Add one at the cursor, or double-click the layer\'s track on the timeline.')}</p>`}
-      ${c && html`<${MaskSection} clip=${c} j=${j} kf=${kf} selMask=${ctx.selMask} setSelMask=${ctx.setSelMask} ctx=${ctx}
+      ${c && html`<${MaskSection} clip=${c} kf=${kf} selMask=${ctx.selMask} setSelMask=${ctx.setSelMask} ctx=${ctx}
         openEditor=${ctx.openEditor} editClip=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}
       <div class="section"><div class="sh">${t('Layer')}</div><div class="sb">
         <p class="faint" style="margin:2px 0 8px;font-size:12px">${t('Layers higher in the list are drawn in front. Drag them in the left panel to change the order.')}</p>

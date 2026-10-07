@@ -190,7 +190,7 @@ function Section({ title, children, defOpen = true }) {
 function Field({ f, v, set, ctx, isFirst, kf, path, dia }) {
   switch (f.type) {
     case 'num': case 'int':
-      return html`<${Row} f=${f} dia=${dia}><${Num} f=${f} v=${v} set=${set} /></${Row}>`;
+      return html`<${Row} f=${f} dia=${dia}><${Num} f=${f} v=${v ?? f.def} set=${set} /></${Row}>`;
     case 'optnum':
       return html`<${Row} f=${f} dia=${dia}><${Num} f=${f} v=${v} set=${set} optional=${true} /></${Row}>`;
     case 'bool':

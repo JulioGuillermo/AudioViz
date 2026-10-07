@@ -133,3 +133,26 @@ texts:
 		t.Fatalf("text keys not saved:\n%s", b)
 	}
 }
+
+// Mask shapes morph between keys with the easing; a node's type is not interpolated
+func TestShapeKeys(t *testing.T) {
+	pts := func(ps ...any) []any { return []any{map[string]any{"points": ps}} }
+	a := pts([]any{0.0, 0.0}, []any{1.0, 0.0, 1}, []any{0.0, 1.0, 2, -0.1, 0.0, 0.1, 0.0})
+	b := pts([]any{1.0, 1.0}, []any{0.0, 1.0}, []any{1.0, 0.0, 3, -0.3, 0.0, 0.3, 0.2})
+	l := []Key{{T: 0, V: a, Ease: "ease_in_out"}, {T: 2, V: b}}
+	got := ValueAt(l, 0.5).([]any)[0].(map[string]any)["points"].([]any)
+	k := Ease("ease_in_out", 0.25)
+	n0 := got[0].([]any)
+	if math.Abs(n0[0].(float64)-k) > 1e-9 || math.Abs(n0[1].(float64)-k) > 1e-9 {
+		t.Fatalf("smooth node: %v, want %v", n0, k)
+	}
+	if n1 := got[1].([]any); len(n1) != 3 || n1[2] != 1 { // corner until halfway
+		t.Fatalf("corner node: %v", n1)
+	}
+	if n2 := got[2].([]any); n2[2] != 2 || math.Abs(n2[3].(float64)-(-0.1-0.2*k)) > 1e-9 {
+		t.Fatalf("handles node: %v", n2)
+	}
+	if n1 := ValueAt(l, 1.5).([]any)[0].(map[string]any)["points"].([]any)[1].([]any); len(n1) != 2 {
+		t.Fatalf("after halfway the node is smooth: %v", n1)
+	}
+}

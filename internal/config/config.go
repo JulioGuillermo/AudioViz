@@ -253,6 +253,8 @@ type LyricsConfig struct {
 	Glow          TextGlowConfig `yaml:"glow"`
 	Shadow        ShadowConfig   `yaml:"shadow"`
 	React         TextReact      `yaml:"react"`
+	// Masks: where on screen the text is seen (coordinates 0..1 of the frame; see MaskConfig)
+	Masks []MaskConfig `yaml:"masks,omitempty"`
 }
 
 // TextConfig: a fixed text (title, credits...) shown from Start to End at a chosen position.
@@ -264,9 +266,10 @@ type TextConfig struct {
 	Start        float64 `yaml:"start"` // s: starts entering
 	End          float64 `yaml:"end"`   // s: has fully left
 	Label        string  `yaml:"label,omitempty"`
+	Rotation     float64 `yaml:"rotation,omitempty"` // degrees clockwise, around its position
 	LyricsConfig `yaml:",inline"`
 	// Keyframes (times from Start): colors, glow, position_x / position_y (the text moves),
-	// size (it scales around its position)...
+	// size (it scales around its position), rotation...
 	Keys Keys `yaml:"keys,omitempty"`
 }
 

@@ -8,7 +8,20 @@ import { clipValue, clipSize, useNatural, newLayerId, shownGeom } from './layers
 
 // Masks of a clip (config.MaskConfig): vector (closed smooth shapes, 0..1 of the clip's image)
 // or raster (a painted PNG). They move, scale and turn with the clip. The editor draws them:
-// shape (freehand), nodes, brush, eraser.
+// shape (freehand), nodes, brush, eraser. Fixed texts and the lyrics have masks too, on the screen
+// (0..1 of the frame): their owner is anything with { masks, keys, start }.
+
+// A lyrics segment as a mask owner (its masks are in its config, its keys beside it) and the way
+// to change it (inside an update)
+export const segMaskOwner = (s) => ({ masks: (s.cfg && s.cfg.masks) || [], keys: s.keys || {}, start: s.at });
+export function editSegMasks(s, fn) {
+  const o = segMaskOwner(s);
+  fn(o);
+  if (o.masks.length || s.cfg.masks) s.cfg.masks = o.masks;
+  if (Object.keys(o.keys).length || s.keys) s.keys = o.keys;
+}
+// The whole frame as the geometry of screen masks
+export const frameGeom = (meta) => ({ cx: meta.width / 2, cy: meta.height / 2, w: meta.width, h: meta.height, rot: 0, fx: 1, fy: 1 });
 
 export const MASK_FIELDS = [
   { key: 'mode', label: 'Clip seen', type: 'enum', def: 'inside', anim: false,
@@ -16,6 +29,8 @@ export const MASK_FIELDS = [
   { key: 'feather', label: 'Soft edge (px)', type: 'num', min: 0, max: 200, step: 1 },
   { key: 'opacity', label: 'Strength', type: 'num', min: 0, max: 1, step: 0.01 },
 ];
+
+export const TEXT_MASK_FIELDS = [{ ...MASK_FIELDS[0], label: 'Text seen' }, ...MASK_FIELDS.slice(1)];
 
 // The shapes of mask k at time tt (its keys, or its still shapes)
 export function maskShapes(c, k, tt) {
@@ -167,7 +182,7 @@ export function simplify(pts, tol) {
 }
 
 // The masks part of the clip inspector
-export function MaskSection({ clip, j, kf, selMask, setSelMask, editClip, ctx, openEditor }) {
+export function MaskSection({ clip, kf, selMask, setSelMask, editClip, ctx, openEditor, screen = false }) {
   const masks = clip.masks || [];
   const add = (kind) => {
     editClip((c) => { c.masks = [...(c.masks || []), { id: newLayerId(), kind, mode: 'inside', feather: 0, opacity: 1, shapes: [], path: '' }]; });
@@ -175,7 +190,9 @@ export function MaskSection({ clip, j, kf, selMask, setSelMask, editClip, ctx, o
     openEditor(kind === 'raster' ? 'brush' : 'shape');
   };
   return html`<div class="section"><div class="sh">${t('Masks')}</div><div class="sb">
-    ${masks.length === 0 && html`<p class="faint" style="margin:2px 0 8px;font-size:12px">${t('A mask limits where the clip is seen. Draw it in the editor: a shape by hand (then its nodes), or paint it with the brush.')}</p>`}
+    ${masks.length === 0 && html`<p class="faint" style="margin:2px 0 8px;font-size:12px">${t(screen
+      ? 'A mask limits where on the screen the text is seen (it stays still while the text moves). Draw it in the editor: a shape by hand (then its nodes), or paint it with the brush.'
+      : 'A mask limits where the clip is seen. Draw it in the editor: a shape by hand (then its nodes), or paint it with the brush.')}</p>`}
     ${masks.map((m, k) => html`<div class=${'maskcard' + (selMask === k ? ' on' : '')} key=${m.id || k} onClick=${() => setSelMask(k)}>
       <div class="mh">
         <${Icon} name=${m.kind === 'raster' ? 'brush' : 'pen-tool'} size=${14} />
@@ -203,7 +220,7 @@ export function MaskSection({ clip, j, kf, selMask, setSelMask, editClip, ctx, o
           }); setSelMask(null); }}><${Icon} name="trash-2" size=${13} /></button>
       </div>
       ${selMask === k && html`<div class="mb">
-        <${Form} fields=${MASK_FIELDS} value=${m} ctx=${ctx} kf=${kf} prefix=${'masks.' + k}
+        <${Form} fields=${screen ? TEXT_MASK_FIELDS : MASK_FIELDS} value=${m} ctx=${ctx} kf=${kf} prefix=${'masks.' + k}
           onChange=${(nm) => editClip((c) => { c.masks[k] = nm; })} />
         ${m.kind !== 'raster' && kf && html`<div class="fld kfable"><label for="kf-none">
           <span class="kfbtn${kf.keys['masks.' + k + '.shapes'] ? ' anim' : ''}"><button class=${'kfd' + (kf.keys['masks.' + k + '.shapes'] && kf.keys['masks.' + k + '.shapes'].some((x) => Math.abs(x.t - kf.u) < 0.002) ? ' on' : '')}
@@ -220,8 +237,9 @@ export function MaskSection({ clip, j, kf, selMask, setSelMask, editClip, ctx, o
 
 // Editor overlay for the masks of the selected clip: shows them and does the mask tools.
 // tool: shape | nodes | brush | eraser; brush: { size, hardness, opacity, pSize, pOpacity }
-export function MaskOverlay({ clip, k, time, meta, tool, brush, toFrame, z, editMask, onPainted, geo }) {
-  const nat = useNatural(clip.path);
+export function MaskOverlay({ clip, k, time, meta, tool, brush, toFrame, z, editMask, onPainted, geo, screen = false }) {
+  const natC = useNatural(screen ? null : clip.path);
+  const nat = screen ? { w: meta.width, h: meta.height } : natC;
   const [live, setLive] = useState(null); // freehand points being drawn, or nodes being dragged
   const paint = useRef(null); // raster: { canvas, ctx } at the mask's size
   const [paintVer, setPaintVer] = useState(0);
@@ -245,7 +263,7 @@ export function MaskOverlay({ clip, k, time, meta, tool, brush, toFrame, z, edit
   }, [m && m.id, m && m.kind, nat && nat.w]);
   if (!nat || !m) return null;
   // where the clip is shown in this frame (its background effects and pulse included)
-  const g = shownGeom(clip, nat, meta, time, geo);
+  const g = screen ? frameGeom(meta) : shownGeom(clip, nat, meta, time, geo);
   const shapes = m.kind === 'raster' ? [] : (live && live.shapes) || maskShapes(clip, k, time);
   const toF = (p) => toFramePt(g, p[0], p[1]);
   const map = (u, v) => toFramePt(g, u, v);

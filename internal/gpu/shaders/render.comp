@@ -424,6 +424,21 @@ vec3 textGradient(int s, float t) {
     return P.ts[s].grad[n - 1].rgb;
 }
 
+// A mask in lay (m: offset in words, one byte per px, width, height) at a point in its px
+// (bilinear, 0 outside): the overlay clips' masks and the texts' screen masks
+float maskByte(ivec4 m, int x, int y) {
+    if (x < 0 || y < 0 || x >= m.y || y >= m.z) return 0.0;
+    int idx = y * m.y + x;
+    return float((lay[m.x + (idx >> 2)] >> ((idx & 3) * 8)) & 255u) / 255.0;
+}
+float maskBilinear(ivec4 m, vec2 q) {
+    q -= 0.5;
+    ivec2 i0 = ivec2(floor(q));
+    vec2 f = q - vec2(i0);
+    return mix(mix(maskByte(m, i0.x, i0.y), maskByte(m, i0.x + 1, i0.y), f.x),
+               mix(maskByte(m, i0.x, i0.y + 1), maskByte(m, i0.x + 1, i0.y + 1), f.x), f.y);
+}
+
 // Composites the texts over col at point p. ch = -1, 0, 1: channel pass for chromatic
 // aberration (each item's point is shifted by ch times its style's chroma).
 // Texts of one stage among the overlay clips (stage < 0: all)
@@ -440,17 +455,24 @@ vec3 drawText(vec3 col, vec2 p0, float ch, int stage) {
         vec4 r = P.tA[i];
         vec4 b = P.tB[i];
         float sc = b.z;
-        vec2 local = (p - b.xy) / sc;          // atlas px relative to the word center
+        float rc = cos(P.tC[i].w), rs = sin(P.tC[i].w);
+        mat2 unrot = mat2(rc, -rs, rs, rc);    // turns screen offsets back by the item's rotation
+        vec2 local = unrot * (p - b.xy) / sc;  // atlas px relative to the word center
         vec2 hs = r.zw * 0.5;
         if (abs(local.x) > hs.x || abs(local.y) > hs.y) continue;
         vec2 a = r.xy + hs + local;
         float pad = P.tC[i].y;
         float alpha = b.w;
+        ivec4 tm = P.ts[s].mask;
+        if (tm.w != 0) {
+            alpha *= maskBilinear(tm, p0 * vec2(tm.yz) / vec2(W, H));
+            if (alpha <= 0.0) continue;
+        }
 
         // Shadow (blurred)
         vec4 sh = P.ts[s].shadow;
         if (sh.z > 0.0) {
-            float ds = sdfAt(a - sh.xy / sc, r) * sc - ow;
+            float ds = sdfAt(a - unrot * sh.xy / sc, r) * sc - ow;
             float blur = max(sh.w, 0.75);
             float sa = (1.0 - smoothstep(-blur, blur, ds)) * sh.z * alpha;
             col = mix(col, P.ts[s].shadowC.rgb, sa);
@@ -522,20 +544,10 @@ vec4 layerSample(int i, vec2 q) {
     return acc / tw;
 }
 
-// The clip's mask at a position of its image (one byte per mask px; bilinear)
-float maskByte(int i, int x, int y) {
-    ivec4 m = P.layers[i].mask;
-    if (x < 0 || y < 0 || x >= m.y || y >= m.z) return 0.0;
-    int idx = y * m.y + x;
-    return float((lay[m.x + (idx >> 2)] >> ((idx & 3) * 8)) & 255u) / 255.0;
-}
+// The clip's mask at a position of its image (bilinear; see maskBilinear)
 float maskAt(int i, vec2 u) {
     ivec4 m = P.layers[i].mask;
-    vec2 q = u * vec2(m.yz) / vec2(P.layers[i].info.yz) - 0.5;
-    ivec2 i0 = ivec2(floor(q));
-    vec2 f = q - vec2(i0);
-    return mix(mix(maskByte(i, i0.x, i0.y), maskByte(i, i0.x + 1, i0.y), f.x),
-               mix(maskByte(i, i0.x, i0.y + 1), maskByte(i, i0.x + 1, i0.y + 1), f.x), f.y);
+    return maskBilinear(m, u * vec2(m.yz) / vec2(P.layers[i].info.yz));
 }
 
 // The clip's background effects: glitch bands, ripple, zoom, shake
@@ -709,7 +721,9 @@ void buildTileLists(vec2 lo, vec2 hi) {
     for (int i = int(li); i < nt; i += 64) {
         int s = int(P.tC[i].z);
         float extra = abs(P.ts[s].info.w) + max(abs(P.ts[s].shadow.x), abs(P.ts[s].shadow.y)) + 2.0;
-        vec2 hs = P.tA[i].zw * 0.5 * P.tB[i].z + extra;
+        vec2 hw = P.tA[i].zw * 0.5 * P.tB[i].z;
+        float rc = abs(cos(P.tC[i].w)), rs = abs(sin(P.tC[i].w));
+        vec2 hs = vec2(hw.x * rc + hw.y * rs, hw.x * rs + hw.y * rc) + extra;
         vec2 c = P.tB[i].xy;
         if (c.x + hs.x >= lo.x && c.x - hs.x <= hi.x && c.y + hs.y >= lo.y && c.y - hs.y <= hi.y) {
             int k = atomicAdd(sTextN, 1);

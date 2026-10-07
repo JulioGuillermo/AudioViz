@@ -63,7 +63,10 @@ with its tool.
 - The handles and the mask outlines follow the clip as it is shown, with the background effects
   it follows (zoom, shake) and its audio pulse.
 - **Shape over time**: key the shape (its diamond), move the cursor and edit the nodes: the shape
-  morphs between keys (the keys need the same number of points; otherwise it switches).
+  morphs between keys with the key's curve (right-click its diamond on the timeline: ease in / out,
+  spring...). The keys need the same number of points (otherwise it switches); a node that changes
+  type (e.g. smooth → corner) moves all the way and changes type halfway, and its handles move
+  when it has them in both keys.
 
 ```yaml
         masks:

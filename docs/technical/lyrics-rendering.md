@@ -285,8 +285,16 @@ Then, in order:
 | Param | Content |
 |---|---|
 | `textInfo` | nItems (≤ 96), atlas width (2048), any-chroma flag (some style with chroma > 0.3 px) |
-| `ts[8]` (`TStyle`) | style table: `info` (outline width, glow radius, glow intensity, chroma px or 0), `color`, `upcoming`, `outline`, `glowC`, `shadow` (dx, dy, opacity, blur), `shadowC`, `gradN`, `grad[8]` (rgb + offset) |
-| `tA[i]` / `tB[i]` / `tC[i]` | atlas x, y, w, h / screen centre x, y, scale, alpha / fill, pad, **style index** |
+| `ts[8]` (`TStyle`) | style table: `info` (outline width, glow radius, glow intensity, chroma px or 0), `color`, `upcoming`, `outline`, `glowC`, `shadow` (dx, dy, opacity, blur), `shadowC`, `gradN` (stops, stage), `mask` (screen mask: offset in `LAYERS`, w, h, on), `grad[8]` (rgb + offset) |
+| `tA[i]` / `tB[i]` / `tC[i]` | atlas x, y, w, h / screen centre x, y, scale, alpha / fill, pad, **style index**, rotation (rad) |
+
+Rotation: `local = R(−rot)·(p − centre)/scale` (the shadow offset, in screen px, is turned the
+same way, so the shadow keeps falling down); the tile culling uses the rotated box's extents.
+Screen masks (`LyricsConfig.Masks`, so texts and lyrics segments): the session makes one
+frame-sized mask per style (`maskFor(masks, W, H)`, up to `effects.MaskSize`) when it builds the
+frame (`FrameState.TextItems/TextStyles`, computed once per frame and shared by the GPU, the CPU
+and the studio), packed in `LAYERS` after the clips' images; the word's alpha is multiplied by it
+at the pixel (`maskBilinear` / `lyrics.maskAt`). `LayerPixels` reserves room for them.
 
 The atlas (binding 5) is a `uint[]`; `atlasByte(x, y)` extracts byte `idx & 3` of word `idx >> 2`,
 `idx = y·atlasW + x`. It is uploaded only when `Session.LyrVer` changes (per slot).
@@ -393,3 +401,10 @@ has words on screen, up to `MaxStyles = 8` (a 9th simultaneous text is not drawn
 share the 96-items-per-frame and 48-words-per-tile limits with the lyrics.
 
 Rebuild key (`Session.Update`): `W×H | yaml(lyrics track, texts) | mtime(lyrics file)`.
+
+Animated texts: `ApplyKeys(text, keys, t − start)`; the change of `position_x/y` moves the items,
+the change of `size` scales them and `rotation` (also without keys) turns them, all around the
+anchor; each item carries the rotation (`Item.Rot` → `tC.w`). The text's style records its index,
+anchor and rotation (`Style.Text/AnchorX/AnchorY/Rotation`); `lyrics.Boxes` turns that into the
+studio's `X-Texts` header (per text: anchor, rotation and the box of its letters around the
+anchor before the rotation) for the handles.

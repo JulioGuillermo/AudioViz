@@ -99,6 +99,10 @@ All of them include a fade. `animation` is a shortcut to set the same one for bo
 | `glow.enabled`, `glow.color`, `glow.radius`, `glow.intensity` | true, text color, 12, 0.6 | Halo |
 | `shadow.enabled`, `color`, `offset_x`, `offset_y`, `opacity`, `blur` | true, black, 3, 4, 0.6, 4 | Blurred drop shadow |
 
+## Masks
+`masks:` limits where on the screen the lyrics are seen (per segment; drawn in the studio's editor).
+Same as the masks of the [texts](../texts.md#masks).
+
 ## Audio reactivity (`react`)
 | Field | Default | Description |
 |---|---|---|

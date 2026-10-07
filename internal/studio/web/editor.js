@@ -4,7 +4,7 @@ import { fmtTime } from './util.js';
 import { Icon } from './icons.js';
 import { t } from './i18n.js';
 import { useFrameStream } from './frames.js';
-import { ClipHandles, geoOf } from './layers.js';
+import { ClipHandles, TextHandles, textBoxOf, geoOf } from './layers.js';
 import { MaskOverlay } from './masks.js';
 import { EASES, EaseIcon, keyTimes, editKeysAt } from './keys.js';
 import { openMenu } from './menu.js';
@@ -37,7 +37,7 @@ const rot = (x, y, deg) => {
 };
 
 export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selClip, onClip, inspector, onClose, marks = null, onKeys,
-  tool: tool0 = 'select', selMask = null, editMask, onPainted, onNeedMask, selId, selClipIdx }) {
+  tool: tool0 = 'select', selMask = null, editMask, onPainted, onNeedMask, selId, selClipIdx, selText, selTextIdx, onText, maskOwner = null }) {
   const time = useStore(timeStore);
   const W = meta.width, H = meta.height;
   const viewRef = useRef();
@@ -57,8 +57,8 @@ export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selCli
   });
   const setToolRef = useRef(setTool);
   setToolRef.current = setTool;
-  const selClipRef = useRef(selClip);
-  selClipRef.current = selClip;
+  const maskRef = useRef(maskOwner); // what the mask tools work on (a clip, a text, a lyrics segment)
+  maskRef.current = maskOwner;
   const setBrush = (k, v) => setBrushState((b) => {
     const n = { ...b, [k]: v };
     try { localStorage.setItem('audioviz.brush', JSON.stringify(n)); } catch (e) { /* ignore */ }
@@ -175,7 +175,7 @@ export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selCli
       if (e.key === '0') { fit(); return; }
       if (e.key === '1') { setZoom(1 / dpr); return; }
       const tl = TOOLS.find((x) => x.key === e.key.toLowerCase());
-      if (tl && !(tl.mask && !selClipRef.current)) { setToolRef.current(tl.id); e.stopPropagation(); }
+      if (tl && !(tl.mask && !maskRef.current)) { setToolRef.current(tl.id); e.stopPropagation(); }
     };
     addEventListener('keydown', k, true);
     return () => removeEventListener('keydown', k, true);
@@ -196,7 +196,7 @@ export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selCli
         <button class=${'btn sm' + (brush.pOpacity ? ' on' : '')} onClick=${() => setBrush('pOpacity', !brush.pOpacity)}>${t('opacity')}</button>
       </div>`}
       ${(tool === 'shape' || tool === 'nodes') && html`<div class="ed-opts faint">${t(tool === 'shape'
-        ? 'Draw a closed shape over the clip: the clip is seen inside it (or outside, in the mask settings). Several shapes add up.'
+        ? (maskOwner && maskOwner.screen ? 'Draw a closed shape on the screen: the text is seen inside it (or outside, in the mask settings). Several shapes add up.' : 'Draw a closed shape over the clip: the clip is seen inside it (or outside, in the mask settings). Several shapes add up.')
         : 'Click a node (Shift: several), drag to move · right-click a node or the line: menu (add a node, delete a segment, close, join) · double-click the line: a node there · Del: delete · C: node type · J: join two ends')}</div>`}
       <span class="spacer"></span>
       <div class="btngroup">
@@ -214,16 +214,19 @@ export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selCli
     <div class="ed-main">
       <div class="ed-tools">
         ${TOOLS.map((tl) => tl.sep ? html`<div class="ed-sep"></div>` : html`<button class=${'btn icon' + (tool === tl.id ? ' on' : '')}
-          title=${t(tl.label)} disabled=${tl.mask && !selClip} onClick=${() => setTool(tl.id)}>
+          title=${t(tl.label)} disabled=${tl.mask && !maskOwner} onClick=${() => setTool(tl.id)}>
           <${Icon} name=${tl.icon} size=${17} /></button>`)}
       </div>
       <div class="ed-view" ref=${viewRef} style=${{ cursor }} onPointerDown=${onPointerDown} onPointerMove=${onPointerMove}
           onPointerUp=${onPointerUp} onPointerCancel=${onPointerUp} onWheel=${onWheel}>
         ${v && html`<div class="ed-world" style=${world}>
           <canvas ref=${canvas} width=${Math.round(W / scale)} height=${Math.round(H / scale)}></canvas>
+          ${selText && tool === 'select' && textBoxOf(info.texts, selTextIdx) && html`<${TextHandles} text=${selText} box=${textBoxOf(info.texts, selTextIdx)}
+            time=${time} meta=${meta} k=${1} hs=${1 / v.z} toFrame=${toFrame} onChange=${onText} />`}
           ${showClip && tool === 'select' && html`<${ClipHandles} clip=${selClip} time=${time} meta=${meta} k=${1} hs=${1 / v.z}
             toFrame=${toFrame} onChange=${onClip} geo=${geoOf(info.layers, selId, selClipIdx)} />`}
-          ${showClip && selMask != null && selClip.masks && selClip.masks[selMask] && html`<${MaskOverlay} clip=${selClip} k=${selMask}
+          ${maskOwner && (maskOwner.screen || showClip) && selMask != null && maskOwner.obj.masks && maskOwner.obj.masks[selMask] && html`<${MaskOverlay}
+            clip=${maskOwner.obj} k=${selMask} screen=${maskOwner.screen}
             time=${time} meta=${meta} tool=${tool} brush=${brush} toFrame=${toFrame} z=${v.z} editMask=${editMask} onPainted=${onPainted}
             geo=${geoOf(info.layers, selId, selClipIdx)} />`}
         </div>`}

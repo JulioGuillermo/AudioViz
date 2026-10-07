@@ -7,8 +7,9 @@ import { useEffect, useRef, useState } from './vendor/preact-htm.js';
 export function useFrameStream(canvas, { meta, time, scale, rev, playing }) {
   // inflight: requests in progress; lat: average latency (ms); shownF: last drawn frame
   const st = useRef({ inflight: 0, lat: 40, shownKey: null, shownF: -1, shownSeq: 0, seq: 0, lastReq: '', lastT: 0 });
-  const [info, setInfo] = useState({ ms: 0, fps: 0, layers: [] });
+  const [info, setInfo] = useState({ ms: 0, fps: 0, layers: [], texts: [] });
   const geo = useRef([]); // where the overlay clips are in the frame on screen (X-Layers)
+  const tgeo = useRef([]); // and the fixed texts (X-Texts)
   const fpsWin = useRef([]);
 
   const draw = (bmp) => {
@@ -28,19 +29,20 @@ export function useFrameStream(canvas, { meta, time, scale, rev, playing }) {
     fetch(`/api/frame?f=${f}&scale=${scale}`)
       .then((r) => {
         if (!r.ok) throw new Error(r.statusText);
-        const xl = r.headers.get('X-Layers');
-        return r.blob().then((b) => createImageBitmap(b)).then((bmp) => ({ bmp, xl }));
+        const xl = r.headers.get('X-Layers'), xt = r.headers.get('X-Texts');
+        return r.blob().then((b) => createImageBitmap(b)).then((bmp) => ({ bmp, xl, xt }));
       })
-      .then(({ bmp, xl }) => {
+      .then(({ bmp, xl, xt }) => {
         s.lat = s.lat * 0.8 + (performance.now() - t0) * 0.2;
         // Only draw if it is newer than what is on screen
         if (seq > s.shownSeq) {
           draw(bmp); s.shownSeq = seq; s.shownF = f; s.shownKey = key;
           try { geo.current = xl ? JSON.parse(xl) : []; } catch (e) { geo.current = []; }
+          try { tgeo.current = xt ? JSON.parse(xt) : []; } catch (e) { tgeo.current = []; }
         }
         const now = performance.now();
         fpsWin.current = [...fpsWin.current.filter((x) => now - x < 1000), now];
-        setInfo({ ms: Math.round(s.lat), fps: fpsWin.current.length, layers: geo.current });
+        setInfo({ ms: Math.round(s.lat), fps: fpsWin.current.length, layers: geo.current, texts: tgeo.current });
       })
       .catch(() => {})
       .finally(() => { s.inflight--; });

@@ -135,7 +135,13 @@ func lerpAny(a, b any, k float64) (any, bool) {
 	switch x := a.(type) {
 	case []any:
 		y, ok := b.([]any)
-		if !ok || len(x) != len(y) {
+		if !ok {
+			return nil, false
+		}
+		if v, ok := lerpNode(x, y, k); ok {
+			return v, true
+		}
+		if len(x) != len(y) {
 			return nil, false
 		}
 		out := make([]any, len(x))
@@ -167,6 +173,46 @@ func lerpAny(a, b any, k float64) (any, bool) {
 		return out, true
 	}
 	return nil, false
+}
+
+// lerpNode interpolates two nodes of a mask shape ([x, y], [x, y, type] or [x, y, type, inX, inY,
+// outX, outY], see effects.NodeHandles): the position always moves; the type is not a quantity, it
+// changes halfway; the handles move when both nodes have them, else they come with the type.
+// ok = false when a or b are not lists of numbers of a node's length.
+func lerpNode(a, b []any, k float64) ([]any, bool) {
+	node := func(l []any) bool {
+		if len(l) != 2 && len(l) != 3 && len(l) != 7 {
+			return false
+		}
+		for _, v := range l {
+			if _, ok := toFloat(v); !ok {
+				return false
+			}
+		}
+		return true
+	}
+	if !node(a) || !node(b) || (len(a) == 2 && len(b) == 2) {
+		return nil, false
+	}
+	near := a
+	if k >= 0.5 {
+		near = b
+	}
+	out := make([]any, len(near))
+	copy(out, near)
+	n := 2
+	if len(a) == 7 && len(b) == 7 {
+		n = 7
+	}
+	for i := 0; i < n; i++ {
+		if i == 2 {
+			continue // the type
+		}
+		fa, _ := toFloat(a[i])
+		fb, _ := toFloat(b[i])
+		out[i] = fa + (fb-fa)*k
+	}
+	return out, true
 }
 
 func toFloat(v any) (float64, bool) {

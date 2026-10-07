@@ -245,7 +245,8 @@ export const TEXT_FIELDS = [
     if (f.key === 'size') return { ...f, anim: true };
     if (f.key === 'align') return { ...f, showIf: undefined, help: 'Left / right: the text starts / ends at Position X' };
     return f;
-  }),
+  }).flatMap((f) => (f.key === 'size' ? [f, { key: 'rotation', label: 'Rotation (°)', type: 'num', min: -360, max: 360, step: 1, def: 0, anim: true,
+    help: 'Clockwise, around its position' }] : [f])),
 ];
 
 // Overlay layers: the clip inspector (config.ClipConfig). Every number and color can have keys.

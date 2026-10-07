@@ -279,6 +279,9 @@ type FrameState struct {
 	Parts []*particles.ParticleSystem
 	Lyr   *lyrics.Multi
 	LyrSt config.LyricsConfig
+	// The texts on screen (lyrics and fixed texts) and their styles, with their masks made
+	TextItems  []lyrics.Item
+	TextStyles []lyrics.Style
 
 	// Overlay clips on screen, bottom to top, and where the fixed elements go among them: stage
 	// k = right above the k-th of them (0 = above the background; len(Layers) = above all)
@@ -396,6 +399,16 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 	if s.lyr != nil {
 		pl, cl, kl := config.Blend(tl.Lyrics, t)
 		fs.Lyr, fs.LyrSt = s.lyr, config.Lerp(pl, cl, kl)
+		fs.TextItems, fs.TextStyles = s.lyr.Frame(t, fs.Feat, &fs.LyrSt)
+		for i := range fs.TextStyles {
+			st := &fs.TextStyles[i]
+			if len(st.Masks) > 0 {
+				st.Mask, st.MaskVer = s.maskFor(st.Masks, s.W, s.H)
+				if st.Mask != nil {
+					st.MaskSX, st.MaskSY = float64(st.Mask.Rect.Dx())/float64(s.W), float64(st.Mask.Rect.Dy())/float64(s.H)
+				}
+			}
+		}
 	}
 
 	// Overlay layers, and the place of the visualizer, particles and lyrics among them

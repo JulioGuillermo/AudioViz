@@ -13,6 +13,7 @@ import (
 	"audioviz/internal/audio"
 	"audioviz/internal/config"
 	"audioviz/internal/effects"
+	"audioviz/internal/gpu"
 	"audioviz/internal/video"
 )
 
@@ -251,7 +252,29 @@ func (s *Session) LayerPixels() int {
 		cur += e.d
 		best = max(best, cur)
 	}
-	return best
+	return best + s.textMaskWords()
+}
+
+// textMaskWords: room for the screen masks of the lyrics and the fixed texts (one frame-sized
+// mask, up to effects.MaskSize, per text that has masks; the lyrics count once)
+func (s *Session) textMaskWords() int {
+	n := 0
+	for _, sg := range s.Cfg.Timeline.Lyrics {
+		if len(sg.Cfg.Masks) > 0 {
+			n = 1
+			break
+		}
+	}
+	for i := range s.Cfg.Texts {
+		if len(s.Cfg.Texts[i].Masks) > 0 {
+			n++
+		}
+	}
+	if n == 0 {
+		return 0
+	}
+	mw, mh := effects.MaskSize(s.W, s.H)
+	return min(n, gpu.MaxTextStyles) * ((mw*mh + 3) / 4)
 }
 
 // maskFor: the combined mask of a clip whose image is w×h, computed again only when the masks

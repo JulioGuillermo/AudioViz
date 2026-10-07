@@ -24,6 +24,18 @@ type Style struct {
 	ShadowDX, ShadowDY, ShadowOp, Blur float64
 	ShadowC                            [4]float64
 	Grad                               []GradStop
+	// Fixed texts: which one (index in config.Texts; -1 = the lyrics), its anchor on screen (its
+	// position after the keys, px) and rotation (rad): the studio's handles (see Multi.Boxes)
+	Text     int
+	AnchorX  float32
+	AnchorY  float32
+	Rotation float32
+	// Screen mask (config.LyricsConfig.Masks): the config's, and the image the engine makes of
+	// it (frame-sized up to effects.MaskSize; nil = seen everywhere)
+	Masks          []config.MaskConfig
+	Mask           *image.Alpha
+	MaskVer        string
+	MaskSX, MaskSY float64 // mask px per frame px
 }
 
 func rgba(hex string, def [4]float64) [4]float64 {
@@ -54,6 +66,7 @@ func StyleFor(cfg *config.LyricsConfig, t float64, feat *audio.FrameFeatures) St
 	}
 	white := [4]float64{1, 1, 1, 1}
 	st := Style{
+		Masks:    cfg.Masks,
 		OutlineW: cfg.OutlineWidth,
 		Color:    rgba(cfg.Color, white),
 		Upcoming: rgba(cfg.UpcomingColor, [4]float64{1, 1, 1, 0.4}),
@@ -166,6 +179,21 @@ func chromaOf(st *Style) float64 {
 	return 0
 }
 
+// maskAt: the alpha of m at a point in its px (bilinear, 0 outside), as maskAt in render.comp
+func maskAt(m *image.Alpha, x, y float64) float64 {
+	x, y = x-0.5, y-0.5
+	mw, mh := m.Rect.Dx(), m.Rect.Dy()
+	x0, y0 := int(math.Floor(x)), int(math.Floor(y))
+	fx, fy := x-float64(x0), y-float64(y0)
+	at := func(xx, yy int) float64 {
+		if xx < 0 || yy < 0 || xx >= mw || yy >= mh {
+			return 0
+		}
+		return float64(m.Pix[yy*m.Stride+xx]) / 255
+	}
+	return (at(x0, y0)*(1-fx)+at(x0+1, y0)*fx)*(1-fy) + (at(x0, y0+1)*(1-fx)+at(x0+1, y0+1)*fx)*fy
+}
+
 // textAt replicates the shader's drawText. ch = -1, 0, 1: channel pass for chromatic aberration
 // (each item's point is shifted by ch times its style's chroma).
 func (e *Engine) textAt(col [3]float64, px0, py float64, ch float64, items []Item, styles []Style) [3]float64 {
@@ -176,7 +204,13 @@ func (e *Engine) textAt(col [3]float64, px0, py float64, ch float64, items []Ite
 		gr := math.Max(st.GlowR, 0.5)
 		px := px0 + ch*chromaOf(st)
 		sc := float64(it.Scale)
-		lx, ly := (px-float64(it.CX))/sc, (py-float64(it.CY))/sc
+		dx, dy := px-float64(it.CX), py-float64(it.CY)
+		rc, rs := 1.0, 0.0
+		if it.Rot != 0 {
+			rc, rs = math.Cos(float64(it.Rot)), math.Sin(float64(it.Rot))
+		}
+		unrot := func(x, y float64) (float64, float64) { return x*rc + y*rs, -x*rs + y*rc }
+		lx, ly := unrot(dx/sc, dy/sc)
 		hw, hh := float64(it.AW)/2, float64(it.AH)/2
 		if math.Abs(lx) > hw || math.Abs(ly) > hh {
 			continue
@@ -184,8 +218,14 @@ func (e *Engine) textAt(col [3]float64, px0, py float64, ch float64, items []Ite
 		ax, ay := float64(it.AX)+hw+lx, float64(it.AY)+hh+ly
 		pad := float64(it.Pad)
 		alpha := float64(it.Alpha)
+		if st.Mask != nil {
+			if alpha *= maskAt(st.Mask, px0*st.MaskSX, py*st.MaskSY); alpha <= 0 {
+				continue
+			}
+		}
 		if st.ShadowOp > 0 {
-			ds := e.sdfAt(ax-st.ShadowDX/sc, ay-st.ShadowDY/sc, it)*sc - ow
+			sx, sy := unrot(st.ShadowDX/sc, st.ShadowDY/sc)
+			ds := e.sdfAt(ax-sx, ay-sy, it)*sc - ow
 			blur := math.Max(st.Blur, 0.75)
 			sa := (1 - smoothstep(-blur, blur, ds)) * st.ShadowOp * alpha
 			col = mix3(col, [3]float64{st.ShadowC[0], st.ShadowC[1], st.ShadowC[2]}, sa)
@@ -224,6 +264,10 @@ func (e *Engine) DrawCPU(img *image.RGBA, items []Item, styles []Style) {
 		st := &styles[it.Style]
 		anyChroma = anyChroma || chromaOf(st) > 0
 		hw, hh := float64(it.AW)*float64(it.Scale)/2, float64(it.AH)*float64(it.Scale)/2
+		if it.Rot != 0 {
+			c, s := math.Abs(math.Cos(float64(it.Rot))), math.Abs(math.Sin(float64(it.Rot)))
+			hw, hh = hw*c+hh*s, hw*s+hh*c
+		}
 		ex := chromaOf(st) + math.Abs(st.ShadowDX) + 2
 		ey := math.Abs(st.ShadowDY) + 2
 		x0, x1 = math.Min(x0, float64(it.CX)-hw-ex), math.Max(x1, float64(it.CX)+hw+ex)

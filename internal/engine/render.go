@@ -201,6 +201,27 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) {
 		}
 		n++
 	}
+	// The texts' screen masks after the clips (each style with a mask: its offset in TStyles)
+	type tmask struct {
+		si  int
+		img *image.Alpha
+	}
+	var tms []tmask
+	for si := 0; si < min(len(fs.TextStyles), gpu.MaxTextStyles); si++ {
+		st := &fs.TextStyles[si]
+		p.TStyles[si].Mask = [4]int32{}
+		if st.Mask == nil {
+			continue
+		}
+		words := (len(st.Mask.Pix) + 3) / 4
+		if off+words > g.LayerWords {
+			break
+		}
+		p.TStyles[si].Mask = [4]int32{int32(off), int32(st.Mask.Rect.Dx()), int32(st.Mask.Rect.Dy()), 1}
+		off += words
+		vers = append(vers, "t"+st.MaskVer)
+		tms = append(tms, tmask{si, st.Mask})
+	}
 	if !slices.Equal(vers, r.layerVer[slot]) {
 		off = 0
 		for i := 0; i < n; i++ {
@@ -211,6 +232,10 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) {
 				copy(buf[off*4:], m.Pix)
 				off += (len(m.Pix) + 3) / 4
 			}
+		}
+		for _, tm := range tms {
+			copy(buf[off*4:], tm.img.Pix)
+			off += (len(tm.img.Pix) + 3) / 4
 		}
 		r.layerVer[slot] = vers
 	}
@@ -582,11 +607,7 @@ func (s *Session) cpuFrame(fs *FrameState) *image.RGBA {
 	effects.ApplyColorAndContrast(frame, fx.bright, fx.contrast, fs.BG.Darken, fs.BG.Opacity, fs.BG.Vignette)
 
 	// Overlay clips in their order; the particles, the visualizer and the texts go at their stage
-	var items []lyrics.Item
-	var styles []lyrics.Style
-	if fs.Lyr != nil {
-		items, styles = fs.Lyr.Frame(fs.T, fs.Feat, &fs.LyrSt)
-	}
+	items, styles := fs.TextItems, fs.TextStyles
 	dc := gg.NewContextForRGBA(frame)
 	for st := 0; st <= len(fs.Layers); st++ {
 		if st > 0 {
@@ -848,13 +869,13 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 	p.TextInfo = [4]int32{}
 	p.ZIdx[2] = 0 // stages with texts (mask)
 	if fs.Lyr != nil {
-		items, styles := fs.Lyr.Frame(fs.T, fs.Feat, &fs.LyrSt)
+		items, styles := fs.TextItems, fs.TextStyles
 		n := min(len(items), gpu.MaxTextItems)
 		for i := 0; i < n; i++ {
 			it := items[i]
 			p.TItemA[i] = [4]float32{it.AX, it.AY, it.AW, it.AH}
 			p.TItemB[i] = [4]float32{it.CX, it.CY, it.Scale, it.Alpha}
-			p.TItemC[i] = [4]float32{it.Fill, it.Pad, float32(it.Style)}
+			p.TItemC[i] = [4]float32{it.Fill, it.Pad, float32(it.Style), it.Rot}
 		}
 		f4 := func(c [4]float64) [4]float32 {
 			return [4]float32{float32(c[0]), float32(c[1]), float32(c[2]), float32(c[3])}

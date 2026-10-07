@@ -54,10 +54,45 @@ export function valueAt(l, u) {
   if (i >= l.length - 1) return l[l.length - 1].v;
   const a = l[i], b = l[i + 1];
   const k = b.t > a.t ? ease(a.ease, (u - a.t) / (b.t - a.t)) : 0;
-  if (typeof a.v === 'number' && typeof b.v === 'number') return a.v + (b.v - a.v) * k;
-  const ca = parseHex(a.v), cb = parseHex(b.v);
-  if (ca && cb) return formatHex(ca.map((x, j) => x + (cb[j] - x) * k), a.v.length === 9 || b.v.length === 9);
-  return k >= 1 ? b.v : a.v;
+  const v = lerpAny(a.v, b.v, k);
+  return v === undefined ? (k >= 1 ? b.v : a.v) : v;
+}
+
+// Interpolates two values like config.lerpAny: numbers, colors, and lists / objects of them
+// element by element (a mask's shapes morph); undefined when they cannot be mixed
+function lerpAny(a, b, k) {
+  if (typeof a === 'number' && typeof b === 'number') return a + (b - a) * k;
+  if (typeof a === 'string' && typeof b === 'string') {
+    const ca = parseHex(a), cb = parseHex(b);
+    return ca && cb ? formatHex(ca.map((x, j) => x + (cb[j] - x) * k), a.length === 9 || b.length === 9) : undefined;
+  }
+  if (Array.isArray(a) && Array.isArray(b)) {
+    const n = lerpNode(a, b, k);
+    if (n) return n;
+    if (a.length !== b.length) return undefined;
+    const out = [];
+    for (let i = 0; i < a.length; i++) { const v = lerpAny(a[i], b[i], k); if (v === undefined) return undefined; out.push(v); }
+    return out;
+  }
+  if (a && b && typeof a === 'object' && typeof b === 'object') {
+    const ka = Object.keys(a);
+    if (ka.length !== Object.keys(b).length) return undefined;
+    const out = {};
+    for (const key of ka) { if (!(key in b)) return undefined; const v = lerpAny(a[key], b[key], k); if (v === undefined) return undefined; out[key] = v; }
+    return out;
+  }
+  return undefined;
+}
+
+// Two nodes of a mask shape (as config.lerpNode): the position moves, the type changes halfway,
+// the handles move when both have them
+function lerpNode(a, b, k) {
+  const node = (l) => [2, 3, 7].includes(l.length) && l.every((x) => typeof x === 'number');
+  if (!node(a) || !node(b) || (a.length === 2 && b.length === 2)) return null;
+  const out = [...(k >= 0.5 ? b : a)];
+  const n = a.length === 7 && b.length === 7 ? 7 : 2;
+  for (let i = 0; i < n; i++) if (i !== 2) out[i] = a[i] + (b[i] - a[i]) * k;
+  return out;
 }
 
 const sortKeys = (l) => l.sort((a, b) => a.t - b.t);
