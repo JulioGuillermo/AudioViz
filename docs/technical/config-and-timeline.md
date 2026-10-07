@@ -198,6 +198,30 @@ Each consumer decides *what* to blend; `Lerp` is only one of the strategies.
 | `particles` | Own logic in `stepParticle`: `Active` picks the segment; a new particle system is created per segment, older ones are set `Draining` and their alpha goes `1 − k` during a fade (stay 1 on a cut until their particles die) |
 | `lyrics` | `Lerp` of the style. Layout is fixed per line: `lyrics.NewMulti` assigns each line to `Active(segs, line.Start)`; path and offset always come from segment 0 |
 
+### Keyframes (`keys.go`)
+
+`Seg.Keys` (`Keys = map[path][]Key`, `Key{T, V any, Ease}`) and `TextConfig.Keys`. Path = YAML keys
+joined by dots, list indices as numbers. Parsed from a `keys:` header field of each timeline entry
+(stripped from the body like `at` / `label` / `transition`); the first segment's label and keys
+go in an entry `at: 0` that only has them (written by `trackNodes` when needed, read by the
+"segment at 0 replaces the base" rule). Lists are sorted on load (`Keys.Sort`; also in
+`segsFromJSON` and `lyrics.NewMulti` for texts).
+
+- `ValueAt(list, u)`: holds before the first / after the last key; between keys `Ease(a.Ease, k)`
+  (linear, step = hold, ease_in k³, ease_out, ease_in_out cubic, back = easeInOutBack with
+  c = 1.70158·1.525, spring = 1 − e^(−6k)·cos(4.5πk), exactly 1 at k = 1); numbers and hex colors (same
+  `parseHex` / `formatHex` as `Lerp`) are interpolated, anything else switches at the next key.
+- `ApplyKeys(cfg, keys, u)` returns a shallow copy with each path set (`setPath` via reflection,
+  field lookup by YAML tag with inlined structs, cached per type); lists and pointers on a path are
+  copied first, so the segment's config is never modified. Unknown paths are ignored.
+- `Seg.CfgAt(t)` = `ApplyKeys(&Cfg, Keys, t - At)` (or `&Cfg` without keys). `Blend` returns
+  `CfgAt` of both segments, so every caller of `Blend` gets animated values and a fade mixes two
+  animated configs. Other users: `motionAt` (background motion), `stepParticle` (calls
+  `ParticleSystem.SetConfig`, which updates the layers' settings but keeps their particle count),
+  `lyrics.Multi.Frame` (fixed texts: style from the keyed config; `position_x/y` and `size`
+  changes move and scale the laid-out items around the text's anchor).
+- The studio mirrors `ValueAt` in `web/keys.js` (display only; the render always uses Go).
+
 ## 3. Interpolation (`lerp.go`)
 
 ```go

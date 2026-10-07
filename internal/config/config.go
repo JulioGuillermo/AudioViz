@@ -255,6 +255,9 @@ type TextConfig struct {
 	End          float64 `yaml:"end"`   // s: has fully left
 	Label        string  `yaml:"label,omitempty"`
 	LyricsConfig `yaml:",inline"`
+	// Keyframes (times from Start): colors, glow, position_x / position_y (the text moves),
+	// size (it scales around its position)...
+	Keys Keys `yaml:"keys,omitempty"`
 }
 
 // DefaultText is a new text: white, centered, fading in and out

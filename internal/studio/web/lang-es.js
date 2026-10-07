@@ -341,4 +341,19 @@ export const ES = {
   'Show its track on the timeline': 'Mostrar su pista en la línea de tiempo',
   'Hide its track on the timeline (it keeps rendering)': 'Ocultar su pista en la línea de tiempo (se sigue renderizando)',
   'Always at the top of the timeline': 'Siempre arriba en la línea de tiempo',
+  // Keyframes
+  'Remove the key at the cursor': 'Quitar la clave del cursor',
+  'Add a key at the cursor': 'Añadir una clave en el cursor',
+  'Animate: first key at the cursor (then change the value at other instants)': 'Animar: primera clave en el cursor (luego cambia el valor en otros instantes)',
+  'drag to move · right-click: curve, delete': 'arrastra para mover · clic derecho: curva, borrar',
+  'Curve to the next key': 'Curva hasta la siguiente clave', 'Linear': 'Lineal', 'Hold (step)': 'Mantener (escalón)',
+  'Anticipation and overshoot': 'Anticipación y rebote', 'Spring': 'Muelle', 'Ease in': 'Suave al salir', 'Ease out': 'Suave al llegar', 'Ease in-out': 'Suave al salir y al llegar',
+  'Delete these keys': 'Borrar estas claves', 'Delete the key': 'Borrar la clave',
+  // Context menus
+  'Split here ({t})': 'Dividir aquí ({t})', 'Rename…': 'Renombrar…', 'Copy settings': 'Copiar ajustes', 'Paste settings': 'Pegar ajustes',
+  'Delete segment': 'Eliminar tramo', 'Duplicate': 'Duplicar', 'New text here ({t})': 'Nuevo texto aquí ({t})', 'Go there': 'Ir aquí',
+  'Move the cursor here ({t})': 'Mover el cursor aquí ({t})', 'Marker here': 'Marca aquí',
+  'Hide its track on the timeline': 'Ocultar su pista en la línea de tiempo',
+  'New text at the cursor ({t})': 'Nuevo texto en el cursor ({t})', 'New segment at the cursor ({t})': 'Nuevo tramo en el cursor ({t})',
+  'Fold': 'Plegar', 'Unfold': 'Desplegar', 'Click: go · double-click: rename · right-click: menu': 'Clic: ir · doble clic: renombrar · clic derecho: menú',
 };

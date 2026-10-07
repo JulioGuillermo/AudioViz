@@ -20,15 +20,17 @@ const MaxStyles = 8
 type Multi struct {
 	Atlas Atlas
 	subs  []*Engine
-	offs  []int // vertical offset of each sub-atlas within the combined atlas
-	nLyr  int   // subs[:nLyr] are lyrics segments, subs[nLyr:] fixed texts
+	offs  []int                // vertical offset of each sub-atlas within the combined atlas
+	nLyr  int                  // subs[:nLyr] are lyrics segments, subs[nLyr:] fixed texts
+	texts []*config.TextConfig // the fixed text of each subs[nLyr+i] (its keyframes)
 	draw  *Engine
+	w, h  int
 }
 
 // NewMulti builds the lyrics (path and offset of the first segment; skipped when lyrics are off
 // or have no file) and the fixed texts. Returns nil when there is nothing to draw.
 func NewMulti(segs []config.Seg[config.LyricsConfig], texts []config.TextConfig, w, h int) (*Multi, error) {
-	m := &Multi{}
+	m := &Multi{w: w, h: h}
 	var engines []*Engine
 	anyOn := false
 	for _, s := range segs {
@@ -58,12 +60,14 @@ func NewMulti(segs []config.Seg[config.LyricsConfig], texts []config.TextConfig,
 	}
 	m.nLyr = len(engines)
 	for i := range texts {
+		texts[i].Keys.Sort()
 		e, err := textEngine(&texts[i], w, h)
 		if err != nil {
 			return nil, err
 		}
 		if e != nil {
 			engines = append(engines, e)
+			m.texts = append(m.texts, &texts[i])
 		}
 	}
 	if len(engines) == 0 {
@@ -144,7 +148,31 @@ func (m *Multi) Frame(t float64, feat *audio.FrameFeatures, lyr *config.LyricsCo
 				continue // too many texts at once: the extra ones are not drawn
 			}
 			si = len(styles)
-			styles = append(styles, StyleFor(e.cfg, t, feat))
+			cfg := e.cfg
+			tc := m.texts[i-m.nLyr]
+			var dx, dy, sc float32 = 0, 0, 1
+			if len(tc.Keys) > 0 {
+				// Animated text: style from its properties now; moved by the change of its
+				// position and scaled around it by the change of its size
+				k := config.ApplyKeys(tc, tc.Keys, t-tc.Start)
+				kc := k.LyricsConfig
+				kc.Position, kc.Mode = cfg.Position, cfg.Mode
+				cfg = &kc
+				dx = float32((k.PositionX - tc.PositionX) * float64(m.w))
+				dy = float32((k.PositionY - tc.PositionY) * float64(m.h))
+				if tc.Size > 0 && k.Size > 0 {
+					sc = float32(k.Size / tc.Size)
+				}
+			}
+			styles = append(styles, StyleFor(cfg, t, feat))
+			if dx != 0 || dy != 0 || sc != 1 {
+				ax, ay := float32(tc.PositionX*float64(m.w)), float32(tc.PositionY*float64(m.h))
+				for j := range its {
+					its[j].CX = ax + dx + (its[j].CX-ax)*sc
+					its[j].CY = ay + dy + (its[j].CY-ay)*sc
+					its[j].Scale *= sc
+				}
+			}
 		}
 		for _, it := range its {
 			it.AY += float32(m.offs[i])

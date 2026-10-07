@@ -238,7 +238,7 @@ func (s *Session) motionAt(i int, t float64) effects.Layer {
 		}
 	}
 	span := math.Max(end-sg.At, 1e-3)
-	return effects.MotionAt(sg.Cfg.Motion, (t-sg.At)/span, t-sg.At, s.W, s.H, i)
+	return effects.MotionAt(sg.CfgAt(t).Motion, (t-sg.At)/span, t-sg.At, s.W, s.H, i)
 }
 
 // FrameState is everything needed to draw a frame, already resolved on the timeline
@@ -557,6 +557,9 @@ func (s *Session) stepParticle(i int, feat *audio.FrameFeatures, fresh bool) {
 			if !sg.Transition.Animated() {
 				e.ps.Alpha = 1
 			}
+		}
+		if len(segs[e.seg].Keys) > 0 {
+			e.ps.SetConfig(segs[e.seg].CfgAt(t)) // animated properties
 		}
 		e.ps.Update(feat, 1/float64(s.FPS))
 		if e.seg == cur || (e.ps.Alive() && e.ps.Alpha > 0) {

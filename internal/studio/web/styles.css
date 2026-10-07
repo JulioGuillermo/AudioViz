@@ -12,6 +12,7 @@
   --text-2: #a2a6ae;
   --text-3: #6c717b;
   --accent: #ee6a2c;
+  --key: #ffc846;
   --accent-hi: #ff7c3f;
   --accent-soft: rgba(238, 106, 44, 0.14);
   --accent-line: rgba(238, 106, 44, 0.55);
@@ -164,7 +165,7 @@ input[type=color]::-moz-color-swatch { border: 0; border-radius: 3px; }
 .segtab.on { border-color: var(--accent-line); background: var(--accent-soft); color: var(--text); }
 .segtab.on .mono { color: var(--text-2); }
 .insp-b { padding: 4px 14px 40px; }
-.fld { display: grid; grid-template-columns: 118px 1fr; align-items: center; column-gap: 10px; min-height: 34px; padding: 3px 0; }
+.fld { display: grid; grid-template-columns: 130px 1fr; align-items: center; column-gap: 10px; min-height: 34px; padding: 3px 0; }
 .fld > label { color: var(--text-2); font-size: 12.5px; }
 .fld .ctl { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .fld .help { grid-column: 2; font-size: 11.5px; color: var(--text-3); line-height: 1.35; margin: 2px 0 2px; }
@@ -454,3 +455,34 @@ a.btn { text-decoration: none; }
 /* Ruler and audio stay at the top while the tracks scroll */
 .tl-scroll .sticky { position: sticky; z-index: 3; background: #121418; }
 .tl-names .sticky { position: sticky; z-index: 3; background: var(--surface); }
+
+/* Keyframes: diamond next to an animatable property (inspector) and on the timeline */
+.fld.kfable label { position: relative; padding-left: 26px; } /* diamond + 5 px before the text */
+.fld label .kfbtn { position: absolute; left: 4px; top: 50%; transform: translateY(-50%); display: flex; }
+.kfbtn button { border: 0; background: none; padding: 0; cursor: pointer; color: var(--text-3); }
+.kfbtn .kfd { width: 9px; height: 9px; margin: 0 2px; transform: rotate(45deg); border: 1.5px solid var(--text-3); border-radius: 1px; opacity: .45; }
+.fld:hover .kfbtn .kfd { opacity: 1; }
+.kfbtn.anim .kfd { border-color: var(--key); opacity: 1; }
+.kfbtn .kfd.on { background: var(--key); border-color: var(--key); opacity: 1; }
+.kfbtn .kfd:hover { border-color: var(--text); }
+.kfbtn.focus .kfd { box-shadow: 0 0 0 2px rgba(255, 200, 70, .3); }
+.lane .kf { position: absolute; width: 9px; height: 9px; margin: -5px 0 0 -5px; transform: rotate(45deg); background: var(--key);
+  border: 1px solid rgba(0, 0, 0, .55); border-radius: 1px; z-index: 3; cursor: ew-resize; opacity: .7; }
+.lane .kf.sel { opacity: 1; }
+.lane .kf.hold { border-radius: 0; background: #e0b040; }
+.lane .kf:hover { opacity: 1; box-shadow: 0 0 0 2px rgba(255, 200, 70, .35); }
+.ctxmenu { position: fixed; z-index: 80; min-width: 190px; max-height: calc(100vh - 12px); overflow-y: auto; padding: 4px; background: var(--surface-2); border: 1px solid var(--border-2);
+  border-radius: var(--r); box-shadow: 0 8px 24px rgba(0, 0, 0, .45); display: flex; flex-direction: column; }
+.ctxmenu .ctxh { font-size: 11px; color: var(--text-3); padding: 4px 8px 3px; }
+.ctxmenu button { display: flex; align-items: center; gap: 8px; text-align: left; white-space: nowrap; border: 0; background: none; color: var(--text-2);
+  padding: 5px 8px; border-radius: 4px; cursor: pointer; font: inherit; }
+.ctxmenu button:hover { background: var(--surface-3); color: var(--text); }
+.ctxmenu button.on { color: var(--text); box-shadow: inset 2px 0 0 var(--key); }
+.ctxmenu button.danger:hover { color: #ff8080; }
+.ctxmenu button:disabled { opacity: .4; cursor: default; background: none; color: var(--text-2); }
+.ctxmenu .mi { width: 18px; height: 18px; display: grid; place-items: center; flex: none; color: var(--text-3); }
+.ctxmenu button:hover:not(:disabled) .mi { color: var(--text); }
+.ctxmenu .ml { flex: 1; }
+.ctxmenu .mk { font-size: 11px; color: var(--text-3); }
+.ease-ic { display: block; }
+.ctxmenu .sep { height: 1px; background: var(--border); margin: 4px 2px; }

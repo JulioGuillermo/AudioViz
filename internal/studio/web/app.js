@@ -4,6 +4,8 @@ import { api, clone, fmtTime, parseTime, b64u8, basename, debounce } from './uti
 import { Form, Select, Edit } from './fields.js';
 import { Icon } from './icons.js';
 import { Timeline, segSummary } from './timeline.js';
+import { keyApi, valueAt, setIn, KEY_EPS } from './keys.js';
+import { ContextMenu, openMenu } from './menu.js';
 import { ImagesDialog } from './images.js';
 import { FilePicker, NewProject, ExportDialog, GenLyricsDialog, LyricsTextDialog, LYRIC_LANGS, STEP_LABEL, ProjectsDialog, PackageDialog, ExportsDialog, WorkspaceGrid, uploadPackage } from './dialogs.js';
 import { createStore, useStore, useThrottledStore } from './store.js';
@@ -327,7 +329,9 @@ function TextsInspector({ proj, sel, setSel, update, time, meta, ctx }) {
           <span class="faint" style="font-size:11.5px">${t('{s} s', { s: (x.end - x.start).toFixed(2) })}</span></div></div>
         <div class="card-note">${t('Drag on the preview to place it. In and out animations happen inside this time.')}</div>
       </div>
-      <${Form} fields=${TEXT_FIELDS} value=${x} onChange=${set} ctx=${ctx} />`}
+      <${Form} fields=${TEXT_FIELDS} value=${x} onChange=${set} ctx=${ctx} kf=${keyApi({ keys: x.keys, u: time - x.start, max: x.end - x.start,
+        focus: ctx.kfFocus, setFocus: ctx.setKfFocus, seek: (u) => ctx.seek(x.start + u),
+        edit: (fn) => update((p) => { const tx = p.texts[i]; fn(tx, tx); }) })} />`}
     </div>
   </div>`;
 }
@@ -338,6 +342,9 @@ function TrackInspector({ proj, track, segIdx, time, meta, update, setSel, ctx, 
   const i = Math.min(segIdx, segs.length - 1);
   const seg = segs[i];
   const setSeg = (ns) => update((p) => { p.tracks[track][i] = ns; });
+  const end = i + 1 < segs.length ? segs[i + 1].at : meta.duration;
+  const kf = keyApi({ keys: seg.keys, u: time - seg.at, max: end - seg.at, focus: ctx.kfFocus, setFocus: ctx.setKfFocus,
+    seek: (u) => ctx.seek(seg.at + u), edit: (fn) => update((p) => { const s = p.tracks[track][i]; fn(s, s.cfg); }) });
   return html`<div>
     <div class="insp-h">
       <div class="insp-title"><${Icon} name=${def.icon} size=${16} cls="muted" />${t(def.label)}${def.group !== def.label && html`<span class="sub">${t(def.group)}</span>`}</div>
@@ -354,7 +361,7 @@ function TrackInspector({ proj, track, segIdx, time, meta, update, setSel, ctx, 
     </div>
     <div class="insp-b">
       <${SegHeader} segs=${segs} i=${i} set=${setSeg} meta=${meta} track=${track} ctx=${ctx} />
-      <${Form} fields=${def.fields} value=${seg.cfg} onChange=${(cfg) => setSeg({ ...seg, cfg })} ctx=${ctx} isFirst=${i === 0} />
+      <${Form} fields=${def.fields} value=${seg.cfg} onChange=${(cfg) => setSeg({ ...seg, cfg })} ctx=${ctx} isFirst=${i === 0} kf=${kf} />
       ${track === 'background' && html`<div class="section"><div class="sh">${t('Generate an image')}</div><div class="sb">
         <p class="faint" style="margin:2px 0 8px;font-size:12px">${t('Create a background from a description, or edit an image, with AI on your GPU.')}</p>
         <button class="btn" onClick=${onImages}><${Icon} name="wand-sparkles" size=${15} /> ${t('Generate an image…')}</button></div></div>`}
@@ -484,6 +491,9 @@ function App() {
   const [sel, setSel] = useState({ kind: 'track', track: 'visualizer', seg: 0 });
   const [lineSel, setLineSel] = useState([]);
   const [wordEdit, setWordEdit] = useState(false); // word blocks of the selected line on the timeline
+  // Keyframes: the property whose keys the timeline shows alone (set by its diamond), per selection
+  const [kfFocus, setKfFocus] = useState(null);
+  useEffect(() => setKfFocus(null), [sel.kind, sel.track, sel.seg, sel.i]);
   const [playing, setPlaying] = useState(false);
   const [scale, setScale] = useState(2);
   const [rev, setRev] = useState(0);
@@ -740,6 +750,7 @@ function App() {
   // --- actions
   const ctx = {
     seek,
+    kfFocus, setKfFocus,
     dialog: setDlg,
     pickFile: (kind, cb, start) => setPick({ kind, cb, start }),
     openProject: async (p) => { try { await api('POST', '/api/project/open', { path: p }); await loadAll(); } catch (e) { showErr(e); } },
@@ -823,16 +834,119 @@ function App() {
     setProj(p);
   };
 
-  const onMarker = (op, i) => {
+  const onMarker = (op, i, at) => {
     if (op === 'add') {
       const label = prompt(t('Marker name (e.g. Chorus):'), t('Marker'));
       if (label === null) return;
-      update((p) => { p.markers.push({ at: +timeStore.get().toFixed(3), label }); p.markers.sort((a, b) => a.at - b.at); });
+      update((p) => { p.markers.push({ at: +(at ?? timeStore.get()).toFixed(3), label }); p.markers.sort((a, b) => a.at - b.at); });
     } else if (op === 'rename') {
       const label = prompt(t('New name:'), projRef.current.markers[i].label);
       if (label !== null) update((p) => { p.markers[i].label = label; });
     } else if (op === 'delete') {
       if (confirm(t('Delete the marker “{m}”?', { m: projRef.current.markers[i].label }))) update((p) => { p.markers.splice(i, 1); });
+    } else if (op === 'remove') update((p) => { p.markers.splice(i, 1); }); // from its menu: no question (undo exists)
+  };
+
+  // Splits segment i of a track at time tt: the new segment starts there with the same settings.
+  // Its keyframes are shared out so the animation goes on without a jump: each animated property
+  // gets a key with its value at the split on both sides.
+  const splitSeg = (track, i, tt) => {
+    update((p) => {
+      const segs = p.tracks[track], s = segs[i];
+      const u = +(tt - s.at).toFixed(3);
+      const ns = { at: +tt.toFixed(3), label: '', transition: { mode: 'cut', duration: 1 }, cfg: clone(s.cfg) };
+      if (s.keys) {
+        const left = {}, right = {};
+        for (const path in s.keys) {
+          const l = s.keys[path], v = valueAt(l, u);
+          const prev = l.filter((k) => k.t < u - KEY_EPS).pop();
+          left[path] = [...l.filter((k) => k.t < u - KEY_EPS), { t: u, v }];
+          right[path] = [{ t: 0, v, ease: prev && prev.ease }, ...l.filter((k) => k.t > u + KEY_EPS).map((k) => ({ ...k, t: +(k.t - u).toFixed(3) }))];
+          setIn(ns.cfg, path, v);
+        }
+        s.keys = left;
+        ns.keys = right;
+      }
+      segs.splice(i + 1, 0, ns);
+    });
+    setSel({ kind: 'track', track, seg: i + 1 });
+  };
+  // Copied segment settings (and keyframes), pasted onto another segment of the same track
+  const segClip = useRef(null);
+
+  // Right-click menus (menu.js) of the timeline and the track list
+  const onContext = (e, c) => {
+    const p = projRef.current;
+    const def = trackById[c.track || c.id];
+    if (c.kind === 'seg') {
+      const segs = p.tracks[c.track], s = segs[c.seg];
+      const end = c.seg + 1 < segs.length ? segs[c.seg + 1].at : meta.duration;
+      setSel({ kind: 'track', track: c.track, seg: c.seg });
+      const clip = segClip.current;
+      openMenu(e, [
+        { header: t(def.label) + ' · ' + (s.label || t('Segment {n}', { n: c.seg + 1 })) },
+        { label: t('Split here ({t})', { t: fmtTime(c.at) }), icon: 'scissors', disabled: c.at - s.at < 0.05 || end - c.at < 0.05,
+          onClick: () => splitSeg(c.track, c.seg, c.at) },
+        { label: t('Rename…'), icon: 'pencil', onClick: () => {
+          const label = prompt(t('New name:'), s.label || '');
+          if (label !== null) update((q) => { q.tracks[c.track][c.seg].label = label; });
+        } },
+        '-',
+        { label: t('Copy settings'), icon: 'copy', onClick: () => { segClip.current = { track: c.track, cfg: clone(s.cfg), keys: s.keys && clone(s.keys) }; } },
+        { label: t('Paste settings'), icon: 'clipboard', disabled: !clip || clip.track !== c.track, onClick: () => update((q) => {
+          const d = q.tracks[c.track][c.seg];
+          d.cfg = clone(clip.cfg);
+          if (clip.keys) d.keys = clone(clip.keys); else delete d.keys;
+        }) },
+        '-',
+        { label: t('Delete segment'), icon: 'trash-2', danger: true, disabled: c.seg === 0, onClick: () => {
+          update((q) => { q.tracks[c.track].splice(c.seg, 1); });
+          setSel({ kind: 'track', track: c.track, seg: c.seg - 1 });
+        } },
+      ]);
+    } else if (c.kind === 'text') {
+      const x = p.texts[c.i];
+      ctx.selectText(c.i);
+      openMenu(e, [
+        { header: t('Text') + ' · ' + (x.label || (x.text || '').split('\n')[0].slice(0, 24)) },
+        { label: t('Duplicate'), icon: 'copy', onClick: () => {
+          update((q) => { q.texts.splice(c.i + 1, 0, clone(q.texts[c.i])); });
+          setSel({ kind: 'text', i: c.i + 1 });
+        } },
+        { label: t('Delete'), icon: 'trash-2', danger: true, onClick: () => {
+          update((q) => { q.texts.splice(c.i, 1); });
+          setSel({ kind: 'text', i: Math.min(c.i, p.texts.length - 2) });
+        } },
+      ]);
+    } else if (c.kind === 'texts') {
+      openMenu(e, [{ label: t('New text here ({t})', { t: fmtTime(c.at) }), icon: 'plus', onClick: () => ctx.addText(c.at) }]);
+    } else if (c.kind === 'marker') {
+      const m = p.markers[c.i];
+      openMenu(e, [
+        { header: m.label },
+        { label: t('Go there'), icon: 'flag', onClick: () => seek(m.at) },
+        { label: t('Rename…'), icon: 'pencil', onClick: () => onMarker('rename', c.i) },
+        { label: t('Delete'), icon: 'trash-2', danger: true, onClick: () => onMarker('remove', c.i) },
+      ]);
+    } else if (c.kind === 'time') {
+      openMenu(e, [
+        { label: t('Move the cursor here ({t})', { t: fmtTime(c.at) }), icon: 'crosshair', onClick: () => seek(c.at) },
+        { label: t('Marker here'), icon: 'flag', onClick: () => onMarker('add', null, c.at) },
+      ]);
+    } else if (c.kind === 'entry') {
+      // An entry of the track list (track id or "texts")
+      const off = (p.view && p.view.hidden || []).includes(c.id);
+      openMenu(e, [
+        { header: c.id === 'texts' ? t('Titles and texts') : t(def.label) },
+        { label: t(off ? 'Show its track on the timeline' : 'Hide its track on the timeline'), icon: off ? 'eye' : 'eye-off',
+          onClick: () => toggleView('hidden', c.id) },
+        c.id === 'texts'
+          ? { label: t('New text at the cursor ({t})', { t: fmtTime(timeStore.get()) }), icon: 'plus', onClick: () => ctx.addText(timeStore.get()) }
+          : { label: t('New segment at the cursor ({t})', { t: fmtTime(timeStore.get()) }), icon: 'plus', onClick: () => ctx.addSeg(c.id, timeStore.get()) },
+      ]);
+    } else if (c.kind === 'zone') {
+      const folded = (p.view && p.view.collapsed || []).includes(c.id);
+      openMenu(e, [{ label: t(folded ? 'Unfold' : 'Fold'), icon: folded ? 'chevron-down' : 'chevron-right', onClick: () => toggleView('collapsed', c.id) }]);
     }
   };
 
@@ -956,7 +1070,7 @@ function App() {
         onPick=${pick.cb} onClose=${() => setPick(null)} />`}
     ${toast && html`<div class="toast" onClick=${() => setToast('')}><${Icon} name="triangle-alert" size=${16} />${toast}</div>`}`;
 
-  if (!proj || !meta) return html`<${Welcome} st=${st} ctx=${ctx} />${dialogs}`;
+  if (!proj || !meta) return html`<${Welcome} st=${st} ctx=${ctx} />${dialogs}<${ContextMenu} />`;
 
   const view = { hidden: [], collapsed: [], ...(proj.view || {}) };
   // Entries of each zone in the track list (track ids, "texts")
@@ -975,12 +1089,12 @@ function App() {
     const c = segs[cur].cfg;
     const on = tr.id === 'background' ? !!c.path : c.enabled !== false;
     return html`<div class=${'trk' + (sel.kind === 'track' && sel.track === tr.id ? ' on' : '') + (on ? '' : ' off') + (view.hidden.includes(tr.id) ? ' hid' : '')}
-        title=${segSummary(tr.id, c)} onClick=${() => selTrack(tr.id, null)}>
+        title=${segSummary(tr.id, c)} onClick=${() => selTrack(tr.id, null)} onContextMenu=${(e) => onContext(e, { kind: 'entry', id: tr.id })}>
       <${Icon} name=${tr.icon} size=${15} /><span class="lbl">${t(tr.label)}</span>
       ${segs.length > 1 && html`<span class="badge" title=${t('Number of segments')}>${segs.length}</span>`}${eye(tr.id)}</div>`;
   };
   const textsEntry = () => html`<div class=${'trk' + (sel.kind === 'text' ? ' on' : '') + (view.hidden.includes('texts') ? ' hid' : '')}
-      onClick=${() => ctx.selectText((proj.texts || []).length ? 0 : -1)}>
+      onClick=${() => ctx.selectText((proj.texts || []).length ? 0 : -1)} onContextMenu=${(e) => onContext(e, { kind: 'entry', id: 'texts' })}>
     <${Icon} name="type" size=${15} /><span class="lbl">${t('Titles and texts')}</span>
     ${(proj.texts || []).length > 0 && html`<span class="badge">${proj.texts.length}</span>`}${eye('texts')}</div>`;
   const selTrack = (track, seg) => {
@@ -1051,7 +1165,7 @@ function App() {
         const folded = view.collapsed.includes(z.id);
         const ids = zoneIds[z.id];
         const nHidden = ids.filter((id) => view.hidden.includes(id)).length;
-        return html`<div class=${'zone-h z-' + z.id} onClick=${() => toggleView('collapsed', z.id)}
+        return html`<div class=${'zone-h z-' + z.id} onClick=${() => toggleView('collapsed', z.id)} onContextMenu=${(e) => onContext(e, { kind: 'zone', id: z.id })}
             title=${t(folded ? 'Click to unfold' : 'Click to fold')}>
           <${Icon} name=${folded ? 'chevron-right' : 'chevron-down'} size=${13} />${t(z.label)}
           ${nHidden > 0 && html`<span class="n">${t(nHidden === 1 ? '1 hidden' : '{n} hidden', { n: nHidden })}</span>`}</div>
@@ -1102,10 +1216,16 @@ function App() {
       texts=${proj.texts || []} onSelectText=${(i) => ctx.selectText(i)} onMoveText=${onMoveText} onAddText=${(tt) => ctx.addText(tt)}
       sel=${sel} lineSel=${lineSel} wordEdit=${wordEdit} height=${tlH} setHeight=${setTlH}
       onSeek=${seek} onSelect=${selTrack} onMoveSeg=${onMoveSeg} onAddSeg=${ctx.addSeg} onMarker=${onMarker}
-      view=${view} onToggleZone=${(z) => toggleView('collapsed', z)}
+      view=${view} onToggleZone=${(z) => toggleView('collapsed', z)} kfFocus=${kfFocus} onContext=${onContext}
+      onKeys=${(target, fn) => update((p) => {
+        const h = target.text != null ? p.texts[target.text] : p.tracks[target.track][target.seg];
+        const ks = fn(h.keys || {});
+        if (Object.keys(ks).length) h.keys = ks; else delete h.keys;
+      })}
       onSelectLine=${selectLine} onLyrics=${(lines) => editLyrics((all) => { all.splice(0, all.length, ...lines); }, false)}
       onLyricsCommit=${() => { lyrSaveRef.current(); record(); }} />
     ${dialogs}
+    <${ContextMenu} />
     ${dragging && html`<div class="dropzone"><div><${Icon} name="upload" size=${28} />
       <div style="margin-top:10px;font-size:15px;font-weight:600">${t('Drop to add to the project')}</div>
       <div class="faint" style="margin-top:4px">${t('Audio, background image or video, lyrics (.lrc/.srt/.txt) or font')}</div></div></div>`}

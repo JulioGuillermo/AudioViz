@@ -107,6 +107,26 @@ style options. See [texts.md](texts.md).
 animations…). Each line uses the layout of the segment in which it starts being sung, so it doesn't
 move around mid-phrase.
 
+## Keyframes
+
+Inside a segment (or a text), a property can change over time. Next to each number, color or switch
+of the inspector there is a **diamond**:
+
+- **Click it** to animate the property: it puts a key at the cursor with the current value. Move the
+  cursor and change the value: a new key is created there (or the key there is updated). The
+  inspector always shows the value at the cursor.
+- The diamond is **filled** when there is a key at the cursor (click: remove it), **outlined** when the
+  property is animated but not at this instant (click: add a key). Removing the last key leaves the
+  property still with that value.
+- On the timeline, the keys of the segment appear as diamonds on its track (only those of the
+  property you clicked last, while that segment is selected). **Drag** them to move them (they snap
+  like segments; Alt = free), **click** to go there, **right-click** to choose the curve to the next
+  key (linear, hold, ease in / out / in-out, anticipation and overshoot, spring) or delete them.
+- Keys belong to their segment: they move with it, and their times count from its start.
+
+Not everything can be animated: the lyrics layout (size, position, spacing, animations), the number of
+bars or of particles are built once; their diamonds do not appear.
+
 ## Markers
 The **⚑ Marker** button or the **M** key at the cursor. Click a marker to jump to it, double-click to
 rename it, right-click to delete it. They serve as references for placing segments.
@@ -161,6 +181,20 @@ Videos go to the project's **`exports/`** folder by default (`exports/<project>-
 can type another path. **Exports** (top bar) lists the videos of `exports/` with a thumbnail,
 duration, size and date: click one to **play** it in the browser, **download** it or **delete** it.
 (The audio of the MP4 is FLAC: Chrome and Firefox play it; the download always works.)
+
+## Right-click menus
+The browser's own menu is replaced by the studio's (it stays only in text boxes, to copy and paste).
+The menus never go off the screen.
+
+| Where | Options |
+|---|---|
+| A segment on the timeline | **Split here** (the new segment starts at that point with the same settings; its keyframes are shared out so the animation goes on from the same value), rename, copy / paste settings (onto a segment of the same track), delete |
+| A keyframe | Curve to the next key (each one drawn), delete |
+| A text block / the Texts lane | Duplicate, delete / new text there |
+| A marker | Go there, rename, delete |
+| The ruler or the waveform | Move the cursor there, marker there |
+| An entry of the track list or its name on the timeline | Show / hide its track, new segment (or text) at the cursor |
+| A zone header | Fold / unfold |
 
 ## Layout
 The dividers between the left panel, the preview, the inspector and the timeline can be dragged

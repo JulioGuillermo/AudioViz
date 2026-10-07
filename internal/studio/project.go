@@ -25,6 +25,7 @@ type SegJSON struct {
 	Label      string         `json:"label"`
 	Transition TransJSON      `json:"transition"`
 	Cfg        map[string]any `json:"cfg"`
+	Keys       config.Keys    `json:"keys,omitempty"` // keyframes: property path → keys (times from At)
 }
 
 type MarkerJSON struct {
@@ -91,7 +92,7 @@ func fromMap(m map[string]any, dst any) error {
 func segsToJSON[T any](segs []config.Seg[T]) []SegJSON {
 	out := make([]SegJSON, len(segs))
 	for i, s := range segs {
-		out[i] = SegJSON{At: s.At, Label: s.Label, Transition: TransJSON{s.Transition.Mode, s.Transition.Duration, s.Transition.Direction, s.Transition.Burn, s.Transition.Fluid}, Cfg: toMap(s.Cfg)}
+		out[i] = SegJSON{At: s.At, Label: s.Label, Transition: TransJSON{s.Transition.Mode, s.Transition.Duration, s.Transition.Direction, s.Transition.Burn, s.Transition.Fluid}, Cfg: toMap(s.Cfg), Keys: s.Keys}
 	}
 	return out
 }
@@ -119,7 +120,8 @@ func segsFromJSON[T any](name string, in []SegJSON, def T, fix func(*T)) ([]conf
 		if !slices.Contains(config.TransitionModes, mode) {
 			mode = "cut"
 		}
-		out = append(out, config.Seg[T]{At: at, Label: s.Label, Cfg: cfg,
+		s.Keys.Sort()
+		out = append(out, config.Seg[T]{At: at, Label: s.Label, Cfg: cfg, Keys: s.Keys,
 			Transition: config.Transition{Mode: mode, Duration: s.Transition.Duration, Direction: s.Transition.Direction, Burn: s.Transition.Burn, Fluid: s.Transition.Fluid}})
 	}
 	// Sort by time (the first one always at 0)

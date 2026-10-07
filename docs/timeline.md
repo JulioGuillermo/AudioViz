@@ -46,3 +46,33 @@ visual transitions (slide, wipe, circle, glitch...): see [background/transitions
 the other tracks use `cut` or `fade`.
 
 Video backgrounds start from their beginning when their segment starts, and loop if `loop_video: true`.
+
+## Keyframes
+
+Inside a segment, any number or color (and switches) can change over time with **keys**. Each key
+has `t` (seconds from the start of its segment, so they move with it), `v` (the value) and
+optionally `ease`, the curve towards the next key: `linear` (default), `step` (holds until the next
+key), `ease_in` (starts softly), `ease_out` (arrives softly), `ease_in_out`, `back` (anticipation
+and overshoot: it first moves a little the other way, goes past the target and comes back) and
+`spring` (goes past the target and settles on it bouncing, like a spring). With `back` and
+`spring` the value goes beyond the two keys for a moment. Before the first key
+and after the last one the value stays. Paths use the YAML keys with dots, and list positions as
+numbers:
+
+```yaml
+timeline:
+  visualizer:
+    - at: 0                      # keys of the first segment (the top-level block) go in an entry at 0
+      keys:
+        radius: [{ t: 0, v: 200 }, { t: 8, v: 320, ease: ease_in_out }, { t: 16, v: 200 }]
+        glow.intensity: [{ t: 0, v: 0.4 }, { t: 4, v: 1.5 }]
+        gradient.1.color: [{ t: 0, v: "#ff0040" }, { t: 30, v: "#00e0ff" }]
+  particles:
+    - at: 60
+      keys:
+        layers.0.speed: [{ t: 0, v: 1 }, { t: 10, v: 4 }]
+```
+
+During a segment transition each side keeps its own animation and both are mixed. What is built
+once is not animated: the lyrics layout (size, position, spacing, animations), the number of bars
+and of particles. Fixed texts can also move and scale: see [texts.md](texts.md).

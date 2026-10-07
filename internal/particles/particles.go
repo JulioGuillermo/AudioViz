@@ -86,6 +86,32 @@ func newSystem(cfg *config.ParticlesConfig, width, height int, empty bool, seed 
 	return ps
 }
 
+// SetConfig updates the layers' settings (keyframes) without touching their particles. The
+// particle count and the layer list stay as they were when the system was created.
+func (ps *ParticleSystem) SetConfig(cfg *config.ParticlesConfig) {
+	layers := cfg.Layers
+	if len(layers) == 0 {
+		layers = []config.ParticleLayer{cfg.ParticleLayer}
+	}
+	for i, l := range ps.layers {
+		if i >= len(layers) {
+			break
+		}
+		lc := layers[i]
+		lc.Count = l.cfg.Count
+		l.cfg = lc
+		l.col = parseColor(lc.Color)
+		l.hasEnd = lc.ColorEnd != ""
+		if l.hasEnd {
+			l.col2 = parseColor(lc.ColorEnd)
+		}
+		l.minDensity = 1
+		if lc.MinDensity != nil {
+			l.minDensity = math.Max(0, math.Min(1, *lc.MinDensity))
+		}
+	}
+}
+
 func (ps *ParticleSystem) respawn(l *layer, p *Particle, randomLife bool) {
 	c := &l.cfg
 	minSize := c.MinSize

@@ -4,6 +4,8 @@ import { fmtTime, basename, clone } from './util.js';
 import { Icon } from './icons.js';
 import { t } from './i18n.js';
 import { useStore } from './store.js';
+import { EASES, EaseIcon, keyTimes, editKeysAt } from './keys.js';
+import { openMenu } from './menu.js';
 
 const H = { ruler: 26, audio: 74, lyrics: 30, track: 28, textRow: 24, zone: 22 };
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -146,7 +148,8 @@ function Playhead({ timeStore, pps, scroller, follow }) {
 
 export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, sel, lineSel, onSeek, onSelect, onMoveSeg,
   onAddSeg, onSelectLine, onLyrics, onLyricsCommit, onMarker, height, setHeight, wordEdit,
-  texts = [], onSelectText, onMoveText, onAddText, view = { hidden: [], collapsed: [] }, onToggleZone }) {
+  texts = [], onSelectText, onMoveText, onAddText, view = { hidden: [], collapsed: [] }, onToggleZone,
+  kfFocus = null, onKeys, onContext }) {
   const scroller = useRef();
   const namesRef = useRef();
   const [pps, setPps] = useState(null); // pixels per second
@@ -381,11 +384,40 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
   // zone with a header (click: fold / unfold) and the lanes of its entries that are not hidden.
   // The names column and the lanes are built from the same list so they always line up.
   const hidden = new Set(view.hidden || []), folded = new Set(view.collapsed || []);
+
+  // --- keyframes: a diamond per instant with keys (of every property, or only of the focused
+  // one in the selected segment / text). Drag: move them (snaps; within the segment); click: go
+  // there; right-click: easing towards the next key, or delete.
+  const keyDrag = (e, target, keys, k, base, end) => {
+    e.stopPropagation();
+    if (e.button !== 0) return;
+    const orig = keys;
+    drag(e, (dt, ev) => {
+      const nt = Math.max(0, Math.min(end - base, snap(base + k.t + dt, ev) - base));
+      onKeys(target, () => editKeysAt(orig, k.t, k.paths, { to: nt }));
+    }, (moved) => { if (!moved) onSeek(base + k.t); });
+  };
+  const keyMarks = (keys, base, end, target, isSel, top) => keyTimes(keys, isSel ? kfFocus : null).map((k) => html`<div
+      class=${'kf' + (isSel ? ' sel' : '') + (k.ease === 'step' ? ' hold' : '')} key=${'k' + k.t}
+      style=${{ left: (base + k.t) * effPps + 'px', top: top == null ? '50%' : top + 'px' }}
+      title=${fmtTime(base + k.t) + ' · ' + k.paths.join(', ') + ' — ' + t('drag to move · right-click: curve, delete')}
+      onMouseDown=${(e) => keyDrag(e, target, keys, k, base, end)} onDblClick=${(e) => e.stopPropagation()}
+      onContextMenu=${(e) => keyMenu(e, target, keys, k)}></div>`);
+  // Right-click on a key: the curve towards the next key (each drawn), or delete
+  const keyMenu = (e, target, keys, k) => openMenu(e, [
+    { header: t('Curve to the next key') },
+    ...EASES.map(([id, label]) => ({ label: t(label), icon: html`<${EaseIcon} name=${id} />`, checked: k.ease === id,
+      onClick: () => onKeys(target, (ks) => editKeysAt(ks, k.t, k.paths, { ease: id })) })),
+    '-',
+    { label: t(k.paths.length > 1 ? 'Delete these keys' : 'Delete the key'), icon: 'trash-2', danger: true,
+      onClick: () => onKeys(target, (ks) => editKeysAt(ks, k.t, k.paths, { remove: true })) },
+  ]);
   const trackRow = (tr) => {
     const segs = proj.tracks[tr.id] || [];
     const on = sel.kind === 'track' && sel.track === tr.id;
     return {
       key: tr.id, h: H.track, on, sel: on, onName: () => onSelect(tr.id, null),
+      onNameCtx: (e) => onContext(e, { kind: 'entry', id: tr.id }),
       name: html`<${Icon} name=${tr.icon} size=${14} /> ${t(tr.label)}`,
       onDown: seekDrag, onDbl: (e) => onAddSeg(tr.id, snap(xToT(e.clientX), e)),
       lane: segs.map((s, i) => {
@@ -396,11 +428,12 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
         return html`<div class=${'seg' + (son ? ' on' : '') + (enabled ? '' : ' off')}
             style=${{ left: s.at * effPps + 'px', width: Math.max(3, (end - s.at) * effPps - 1) + 'px' }}
             title=${(s.label ? s.label + ' · ' : '') + fmtTime(s.at) + ' → ' + fmtTime(end)}
-            onMouseDown=${(e) => segDrag(e, tr.id, i)} onDblClick=${(e) => e.stopPropagation()}>
+            onMouseDown=${(e) => segDrag(e, tr.id, i)} onDblClick=${(e) => e.stopPropagation()}
+            onContextMenu=${(e) => onContext(e, { kind: 'seg', track: tr.id, seg: i, at: snap(xToT(e.clientX), e) })}>
           ${fade > 0 && html`<div class="fade" style=${{ width: fade + 'px' }}></div>`}
           ${i > 0 && html`<div class="grip"></div>`}
           <span class="t">${s.label ? html`<b>${s.label}</b> · ` : ''}${segSummary(tr.id, s.cfg)}</span>
-        </div>`;
+        </div>${s.keys && keyMarks(s.keys, s.at, end, { track: tr.id, seg: i }, on && sel.seg === i)}`;
       }),
     };
   };
@@ -425,17 +458,20 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
     onName: () => onSelectText(texts.length ? 0 : -1), title: t('Double-click the lane: new text at that point'),
     name: html`<${Icon} name="type" size=${14} /> ${t('Texts')}`,
     onDown: seekDrag, onDbl: (e) => onAddText(snap(xToT(e.clientX), e)),
+    onCtx: (e) => onContext(e, { kind: 'texts', at: snap(xToT(e.clientX), e) }),
+    onNameCtx: (e) => onContext(e, { kind: 'entry', id: 'texts' }),
     lane: texts.map((x, i) => {
       const on = sel.kind === 'text' && sel.i === i;
       return html`<div class=${'seg txt' + (on ? ' on' : '') + (x.enabled === false ? ' off' : '')} key=${'tx' + i}
           style=${{ left: x.start * effPps + 'px', width: Math.max(4, (x.end - x.start) * effPps - 1) + 'px',
             top: 3 + textRows.rowOf[i] * H.textRow + 'px', '--rowh': H.textRow + 'px' }}
           title=${(x.text || '').replace(/\n/g, ' / ') + ' · ' + fmtTime(x.start) + ' → ' + fmtTime(x.end)}
-          onMouseDown=${(e) => textDrag(e, i)} onDblClick=${(e) => e.stopPropagation()}>
+          onMouseDown=${(e) => textDrag(e, i)} onDblClick=${(e) => e.stopPropagation()}
+          onContextMenu=${(e) => onContext(e, { kind: 'text', i })}>
         <div class="grip" onMouseDown=${(e) => textDrag(e, i, 'start')}></div>
         <span class="t">${x.label ? html`<b>${x.label}</b> · ` : ''}${(x.text || '').replace(/\n/g, ' / ')}</span>
         <div class="grip end" onMouseDown=${(e) => textDrag(e, i, 'end')}></div>
-      </div>`;
+      </div>${x.keys && keyMarks(x.keys, x.start, x.end, { text: i }, on, 3 + textRows.rowOf[i] * H.textRow + H.textRow / 2)}`;
     }),
   };
   const byId = Object.fromEntries(TRACKS.map((tr) => [tr.id, tr]));
@@ -451,9 +487,11 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
   };
   const zoneEntries = { main: ['background', 'lyrics', 'texts'], layers: [], effects: TRACKS.filter((tr) => zoneOf(tr.id) === 'effects').map((tr) => tr.id) };
   const rows = [
-    { key: 'ruler', h: H.ruler, cls: 'ruler sticky', top: 0, name: '', onDown: rulerDrag, laneTitle: t('Drag to scroll the timeline · click to move the cursor'),
+    { key: 'ruler', h: H.ruler, cls: 'ruler sticky', top: 0, name: '', onDown: rulerDrag,
+      onCtx: (e) => onContext(e, { kind: 'time', at: snap(xToT(e.clientX), e) }), laneTitle: t('Drag to scroll the timeline · click to move the cursor'),
       lane: html`<${Ruler} pps=${effPps} duration=${duration} scroller=${scroller} />` },
     { key: 'audio', h: H.audio, cls: 'sticky', top: H.ruler + 'px', on: sel.kind === 'audio', onDown: seekDrag,
+      onCtx: (e) => onContext(e, { kind: 'time', at: snap(xToT(e.clientX), e) }),
       name: html`<${Icon} name="audio-waveform" size=${14} /> ${t('Audio')}`,
       lane: html`<${AudioLane} ana=${ana} pps=${effPps} scroller=${scroller} />` },
   ];
@@ -461,6 +499,7 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
     const nHidden = zoneEntries[z.id].filter((id) => hidden.has(id)).length;
     const isFolded = folded.has(z.id);
     rows.push({ key: 'zone-' + z.id, h: H.zone, cls: 'zh z-' + z.id, onName: () => onToggleZone(z.id),
+      onNameCtx: (e) => onContext(e, { kind: 'zone', id: z.id }),
       title: t(isFolded ? 'Click to unfold' : 'Click to fold'),
       name: html`<${Icon} name=${isFolded ? 'chevron-right' : 'chevron-down'} size=${13} />${t(z.label)}
         ${nHidden > 0 && html`<span class="n">${t(nHidden === 1 ? '1 hidden' : '{n} hidden', { n: nHidden })}</span>`}`,
@@ -490,17 +529,17 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
     <div class="tl-body">
       <div class="tl-names" ref=${namesRef}>
         ${rows.map((r) => html`<div key=${r.key} class=${'nm ' + (r.cls || '') + (r.on ? ' on' : '')} style=${{ '--h': r.h + 'px', top: r.top }}
-            onClick=${r.onName} title=${r.title || ''}>${r.name}</div>`)}
+            onClick=${r.onName} onContextMenu=${r.onNameCtx} title=${r.title || ''}>${r.name}</div>`)}
       </div>
       <div class="tl-scroll" ref=${scroller} onWheel=${wheel} onScroll=${onScroll}>
         <div class="tl-inner" style=${{ width: width + 'px' }}>
           ${rows.map((r) => html`<div key=${r.key} class=${'lane ' + (r.cls || '') + (r.sel ? ' sel' : '')} style=${{ '--h': r.h + 'px', top: r.top }}
-              onMouseDown=${r.onDown} onDblClick=${r.onDbl} title=${r.laneTitle || null}>${r.lane}</div>`)}
+              onMouseDown=${r.onDown} onDblClick=${r.onDbl} onContextMenu=${r.onCtx} title=${r.laneTitle || null}>${r.lane}</div>`)}
           ${proj.markers.map((m, i) => html`<div class="marker" style=${{ left: m.at * effPps + 'px' }}>
-            <b title=${t('Click: go · double-click: rename · right-click: delete')}
+            <b title=${t('Click: go · double-click: rename · right-click: menu')}
               onMouseDown=${(e) => { e.stopPropagation(); if (e.button === 0) onSeek(m.at); }}
               onDblClick=${() => onMarker('rename', i)}
-              onContextMenu=${(e) => { e.preventDefault(); onMarker('delete', i); }}><${Icon} name="flag" size=${11} /> ${m.label}</b>
+              onContextMenu=${(e) => onContext(e, { kind: 'marker', i })}><${Icon} name="flag" size=${11} /> ${m.label}</b>
           </div>`)}
           <${Playhead} timeStore=${timeStore} pps=${effPps} scroller=${scroller} follow=${playing} />
         </div>

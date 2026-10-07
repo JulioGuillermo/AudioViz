@@ -93,6 +93,7 @@ type Seg[T any] struct {
 	Label      string
 	Transition Transition
 	Cfg        T
+	Keys       Keys // keyframes of its properties (times from At); see keys.go
 }
 
 // Marker is a named mark on the timeline (song sections)
@@ -127,12 +128,12 @@ func Active[T any](segs []Seg[T], t float64) int {
 // Blend returns (previous, current, k): k = 1 outside a transition; during a fade, k goes from 0 to 1
 func Blend[T any](segs []Seg[T], t float64) (prev, cur *T, k float64) {
 	i := Active(segs, t)
-	cur = &segs[i].Cfg
+	cur = segs[i].CfgAt(t)
 	prev, k = cur, 1
 	if i > 0 {
 		s := segs[i]
 		if s.Transition.Animated() && t < s.At+s.Transition.Duration {
-			prev = &segs[i-1].Cfg
+			prev = segs[i-1].CfgAt(t)
 			k = (t - s.At) / s.Transition.Duration
 		}
 	}
@@ -155,6 +156,7 @@ func buildTrack[T any](base T, nodes []yaml.Node, fix func(*T)) ([]Seg[T], error
 		At         *float64    `yaml:"at"`
 		Label      string      `yaml:"label"`
 		Transition *Transition `yaml:"transition"`
+		Keys       Keys        `yaml:"keys"`
 	}
 	var parsed []struct {
 		h    head
@@ -183,7 +185,7 @@ func buildTrack[T any](base T, nodes []yaml.Node, fix func(*T)) ([]Seg[T], error
 			var kept []*yaml.Node
 			for i := 0; i+1 < len(body.Content); i += 2 {
 				switch body.Content[i].Value {
-				case "at", "label", "transition":
+				case "at", "label", "transition", "keys":
 					continue
 				}
 				kept = append(kept, body.Content[i], body.Content[i+1])
@@ -201,10 +203,11 @@ func buildTrack[T any](base T, nodes []yaml.Node, fix func(*T)) ([]Seg[T], error
 				tr.Mode = "fade"
 			}
 		}
-		seg := Seg[T]{At: *p.h.At, Label: p.h.Label, Transition: tr, Cfg: cfg}
+		p.h.Keys.Sort()
+		seg := Seg[T]{At: *p.h.At, Label: p.h.Label, Transition: tr, Cfg: cfg, Keys: p.h.Keys}
 		if seg.At <= 0 {
-			// A segment at 0 replaces the base
-			segs[0].Cfg, segs[0].Label = cfg, p.h.Label
+			// A segment at 0 replaces the base (or only gives it a name or keyframes)
+			segs[0].Cfg, segs[0].Label, segs[0].Keys = cfg, p.h.Label, p.h.Keys
 			continue
 		}
 		segs = append(segs, seg)
@@ -313,12 +316,32 @@ func segNode[T any](s Seg[T]) (*yaml.Node, error) {
 		add("label", s.Label)
 	}
 	add("transition", s.Transition)
+	if len(s.Keys) > 0 {
+		add("keys", s.Keys)
+	}
 	n.Content = append(n.Content, body.Content...)
 	return n, nil
 }
 
 func trackNodes[T any](segs []Seg[T]) ([]*yaml.Node, error) {
 	var out []*yaml.Node
+	// The first segment is the top-level block; its name and keyframes go in an entry at 0
+	if s := segs[0]; s.Label != "" || len(s.Keys) > 0 {
+		n := &yaml.Node{Kind: yaml.MappingNode}
+		add := func(k string, v any) {
+			var vn yaml.Node
+			_ = vn.Encode(v)
+			n.Content = append(n.Content, &yaml.Node{Kind: yaml.ScalarNode, Value: k}, &vn)
+		}
+		add("at", 0)
+		if s.Label != "" {
+			add("label", s.Label)
+		}
+		if len(s.Keys) > 0 {
+			add("keys", s.Keys)
+		}
+		out = append(out, n)
+	}
 	for _, s := range segs[1:] {
 		n, err := segNode(s)
 		if err != nil {

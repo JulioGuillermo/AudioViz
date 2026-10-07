@@ -15,6 +15,24 @@ gradient, outline, glow, shadow, in/out animations and audio reaction), but you 
   point), or use *Position X / Y*.
 - **Delete**: *Delete* in the inspector or the **Del** key.
 
+## Animating a text
+
+Its colors, outline, glow, shadow and audio reaction, and also its **position** (`position_x`,
+`position_y`) and **size** (it scales around its position) can change over time with keyframes,
+from the diamond next to each property in the inspector (see [studio.md](studio.md#keyframes)). In
+the YAML, `keys:` with times from the text's `start`:
+
+```yaml
+texts:
+  - text: "HELLO"
+    start: 2
+    end: 8
+    keys:
+      position_x: [{ t: 0, v: 0.2, ease: ease_in_out }, { t: 4, v: 0.8 }]
+      size: [{ t: 0, v: 60 }, { t: 4, v: 200 }]
+      color: [{ t: 0, v: "#ff3030" }, { t: 4, v: "#30ff80" }]
+```
+
 ## In the YAML
 
 ```yaml

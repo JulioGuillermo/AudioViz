@@ -771,6 +771,38 @@ All accesses are wrapped in `try/catch` (private mode or blocked storage falls b
 Nothing else is persisted in the browser; the project, lyrics and timeline zoom state are either
 on the server or reset on reload (zoom fits the song again).
 
+## Keyframes (`keys.js`)
+
+- `SegJSON.keys` / `text.keys`: `{path: [{t, v, ease?}]}`, times from the segment / text start.
+- `keyApi({keys, u, edit, seek, focus, setFocus, max})` builds the per-target API used by `Form`
+  (`kf` prop, with `prefix` for groups and particle layers): `setKey(path, v)` (value changed while
+  animated → key at the cursor), `toggle(path, cur)` (diamond), `jump`. `edit(fn)` runs inside
+  `update` with the object holding `keys` and the config holding the static values (removing the
+  last key writes its value there with `setIn`).
+- `Form` shows `valueAt(keys, u)` (rounded to the field's step) for animated fields; `animatable(f)`
+  = num / int / optnum / color / bool unless `anim: false` (`schema.js` `STILL`: built-once fields;
+  texts re-enable position and size).
+- Timeline: `keyTimes` merges the keys of a segment / text by instant (or only `kfFocus`, the path
+  of the last clicked diamond, for the selected one); diamonds are absolutely positioned
+  siblings of the blocks. Drag recomputes from the keys at drag start (`editKeysAt(orig, t, paths,
+  {to})`, a key landing on another of the same property replaces it) so passing over keys does not
+  eat them; right-click opens `.ctxmenu` (`{ease}` / `{remove}`). App `onKeys(target, fn)` with
+  target `{track, seg}` or `{text}`.
+
+## Context menus (`menu.js`)
+
+`openMenu(e, items)` (items `{label, icon, onClick, danger, disabled, checked, hint}`, `'-'`,
+`{header}`; `icon` = an Icon name or any node, e.g. `EaseIcon`) sets a store; `<ContextMenu>` is
+mounted once (also on the welcome screen). It blocks the native `contextmenu` on everything but
+editable text fields, closes on outside mousedown / wheel / resize / blur / Esc, and is placed in
+a layout effect: flipped up / left when there is no room, then clamped 6 px inside the window
+(rendered hidden until placed). App `onContext(e, {kind, ...})` builds the menus: `seg` (split
+via `splitSeg`: keys left of the cut + a key with the value at the cut; right side a key at 0
+with that value (and the previous key's easing) + the later keys shifted; the static value at
+the cut goes into the new segment's cfg), `text`, `texts`, `marker`, `time`, `entry`, `zone`.
+Key menus are built in timeline.js (`keyMenu`). `EaseIcon` (keys.js) draws a curve by sampling
+`ease()` itself.
+
 ## Undo / redo
 
 `app.js` keeps `hist = {past, future, cur, at}` with snapshots `{proj, lyr}` (the immutable objects

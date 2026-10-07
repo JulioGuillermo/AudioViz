@@ -207,6 +207,19 @@ export const OUTPUT_FIELDS = [
 
 export const trackById = Object.fromEntries(TRACKS.map((t) => [t.id, t]));
 
+// Keyframes (keys.js): numbers, colors and switches can be animated, except the ones that set
+// up something built once (the lyrics layout, the number of bars or particles...)
+const STILL = {
+  background: ['loop_video'],
+  visualizer: ['bars'],
+  particles: ['enabled', 'count'],
+  lyrics: ['enabled', 'offset', 'size', 'uppercase', 'margin', 'position_x', 'position_y', 'max_width', 'line_spacing',
+    'word_spacing', 'word_pop', 'in_duration', 'out_duration', 'slide_distance'],
+};
+const markStill = (fields, keys) => fields.map((f) => (keys.includes(f.key) ? { ...f, anim: false }
+  : f.fields ? { ...f, fields: markStill(f.fields, keys) } : f));
+for (const tr of TRACKS) if (STILL[tr.id]) tr.fields = markStill(tr.fields, STILL[tr.id]);
+
 // Transitions between segments. The background has visual transitions; other tracks blend.
 export const TRANSITIONS = [['cut', 'Cut'], ['fade', 'Fade'], ['dissolve', 'Dissolve'], ['dip_black', 'Dip to black'],
   ['flash', 'Flash (white)'], ['wipe', 'Wipe'], ['slide', 'Slide'], ['push', 'Push'], ['zoom_in', 'Zoom in'],
@@ -218,10 +231,12 @@ export const DIRECTIONS = [['left', 'Left'], ['right', 'Right'], ['up', 'Up'], [
 // Fixed texts (titles): the lyrics style options, positioned by hand
 const TEXT_SKIP = new Set(['enabled', 'path', 'offset', 'position', 'margin', 'mode', 'word_pop', 'upcoming_color']);
 export const TEXT_FIELDS = [
-  { key: 'enabled', label: 'Visible', type: 'bool' },
+  { key: 'enabled', label: 'Visible', type: 'bool', anim: false },
   { key: 'text', label: 'Text', type: 'textarea', help: 'Enter = new row' },
   ...trackById.lyrics.fields.filter((f) => !TEXT_SKIP.has(f.key)).map((f) => {
-    if (f.key === 'position_x' || f.key === 'position_y') return { ...f, showIf: undefined, help: f.key === 'position_x' ? 'Or drag the text on the preview' : undefined };
+    // A fixed text can move and scale over time (keyframes)
+    if (f.key === 'position_x' || f.key === 'position_y') return { ...f, anim: true, showIf: undefined, help: f.key === 'position_x' ? 'Or drag the text on the preview' : undefined };
+    if (f.key === 'size') return { ...f, anim: true };
     if (f.key === 'align') return { ...f, showIf: undefined, help: 'Left / right: the text starts / ends at Position X' };
     return f;
   }),

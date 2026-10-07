@@ -2,15 +2,45 @@ import { html, useState, Component } from './vendor/preact-htm.js';
 import { basename, splitHex, joinHex, gradientCSS, clone } from './util.js';
 import { Icon } from './icons.js';
 import { t } from './i18n.js';
+import { animatable, valueAt, keyIndexAt } from './keys.js';
 
-// Generic form built from the schema. value = config object; onChange(newObject)
-export function Form({ fields, value, onChange, ctx, isFirst = true }) {
+// Generic form built from the schema. value = config object; onChange(newObject).
+// kf (optional, see keys.js keyApi): keyframes of the edited segment / text; prefix: path of
+// `value` inside it (groups and layers).
+export function Form({ fields, value, onChange, ctx, isFirst = true, kf = null, prefix = '' }) {
   const set = (key, v) => onChange({ ...value, [key]: v });
   return html`${fields.map((f) => {
     if (f.showIf && !f.showIf(value)) return null;
     if (f.firstOnly && !isFirst) return null;
-    return html`<${Field} key=${f.key} f=${f} v=${value[f.key]} set=${(v) => set(f.key, v)} ctx=${ctx} isFirst=${isFirst} />`;
+    const path = prefix ? prefix + '.' + f.key : f.key;
+    // dia: the keyframe diamond; 'gap' = a form with keyframes, field not animatable (aligned label)
+    let v = value[f.key], setV = (x) => set(f.key, x), dia = kf ? 'gap' : null;
+    if (kf && animatable(f)) {
+      // Animated: shows the value at the cursor; a change sets a key at the cursor
+      const l = kf.keys[path];
+      if (l && l.length) {
+        v = valueAt(l, kf.u);
+        // shown with the precision of the field (the render uses the exact value)
+        if (typeof v === 'number') v = f.type === 'int' ? Math.round(v) : +v.toFixed(Math.max(0, -Math.floor(Math.log10(f.step || 0.01))));
+        setV = (x) => kf.setKey(path, x);
+      }
+      dia = html`<${KeyButton} kf=${kf} path=${path} list=${l} cur=${v} />`;
+    }
+    return html`<${Field} key=${f.key} f=${f} v=${v} set=${setV} ctx=${ctx} isFirst=${isFirst} kf=${kf} path=${path} dia=${dia} />`;
   })}`;
+}
+
+// Keyframe diamond of a property: empty = still, outline = animated, filled = key at the
+// cursor. Click: add / remove the key at the cursor (the timeline shows the property's keys:
+// click one to go there).
+function KeyButton({ kf, path, list, cur }) {
+  const animated = !!(list && list.length);
+  const here = animated && keyIndexAt(list, kf.u) >= 0;
+  const focus = kf.focus === path;
+  return html`<span class=${'kfbtn' + (animated ? ' anim' : '') + (focus ? ' focus' : '')}>
+    <button class=${'kfd' + (here ? ' on' : '')} onClick=${() => kf.toggle(path, cur)}
+      title=${t(here ? 'Remove the key at the cursor' : animated ? 'Add a key at the cursor' : 'Animate: first key at the cursor (then change the value at other instants)')}></button>
+  </span>`;
 }
 
 // Text / number box that keeps what you are typing while it has focus: the app re-renders
@@ -27,9 +57,10 @@ export function Edit({ tag = 'input', value, onKeyDown, ...rest }) {
     }} />`;
 }
 
-function Row({ f, children }) {
-  return html`<div class="fld">
-    <label title=${f.help ? t(f.help) : ''}>${t(f.label)}</label>
+function Row({ f, children, dia }) {
+  const btn = dia && dia !== 'gap';
+  return html`<div class=${'fld' + (dia ? ' kfable' : '')}>
+    <label title=${f.help ? t(f.help) : ''} for=${btn ? 'kf-none' : undefined}>${btn && dia}${t(f.label)}</label>
     <div class="ctl">${children}</div>
     ${f.help && html`<div class="help">${t(f.help)}</div>`}
   </div>`;
@@ -123,7 +154,7 @@ function Gradient({ v, set }) {
 const BAND_LABEL = { bass: 'bass', mid: 'mids', treble: 'treble', overall: 'volume', transient: 'transients', beat: 'beats' };
 const TYPE_LABEL = { rising_sparks: 'Sparks', radial_burst: 'Burst', ambient_dust: 'Dust' };
 
-function Layers({ f, v, set, ctx }) {
+function Layers({ f, v, set, ctx, kf, path }) {
   const layers = v || [];
   const [open, setOpen] = useState(0);
   const upd = (i, lv) => { const l = clone(layers); l[i] = lv; set(l); };
@@ -138,7 +169,7 @@ function Layers({ f, v, set, ctx }) {
         <button class="btn sm icon ghost" title=${t('Duplicate layer')} onClick=${(e) => { e.stopPropagation(); const n = clone(layers); n.splice(i + 1, 0, clone(l)); set(n); }}><${Icon} name="copy" size=${14} /></button>
         <button class="btn sm icon ghost danger" title=${t('Delete layer')} disabled=${layers.length < 2} onClick=${(e) => { e.stopPropagation(); set(layers.filter((_, j) => j !== i)); }}><${Icon} name="trash-2" size=${14} /></button>
       </div>
-      ${open === i && html`<div class="lb"><${Form} fields=${f.fields} value=${l} onChange=${(lv) => upd(i, lv)} ctx=${ctx} /></div>`}
+      ${open === i && html`<div class="lb"><${Form} fields=${f.fields} value=${l} onChange=${(lv) => upd(i, lv)} ctx=${ctx} kf=${kf} prefix=${path + '.' + i} /></div>`}
     </div>`)}
     <button class="btn sm" style="margin-top:4px" onClick=${() => { set([...layers, clone(layers[layers.length - 1] || {})]); setOpen(layers.length); }}>
       <${Icon} name="plus" size=${14} /> ${t('Layer')}</button>
@@ -153,38 +184,38 @@ function Section({ title, children, defOpen = true }) {
   </div>`;
 }
 
-function Field({ f, v, set, ctx, isFirst }) {
+function Field({ f, v, set, ctx, isFirst, kf, path, dia }) {
   switch (f.type) {
     case 'num': case 'int':
-      return html`<${Row} f=${f}><${Num} f=${f} v=${v} set=${set} /></${Row}>`;
+      return html`<${Row} f=${f} dia=${dia}><${Num} f=${f} v=${v} set=${set} /></${Row}>`;
     case 'optnum':
-      return html`<${Row} f=${f}><${Num} f=${f} v=${v} set=${set} optional=${true} /></${Row}>`;
+      return html`<${Row} f=${f} dia=${dia}><${Num} f=${f} v=${v} set=${set} optional=${true} /></${Row}>`;
     case 'bool':
-      return html`<${Row} f=${f}><${Switch} checked=${v} onChange=${set} /></${Row}>`;
+      return html`<${Row} f=${f} dia=${dia}><${Switch} checked=${v} onChange=${set} /></${Row}>`;
     case 'enum': {
       const numeric = typeof f.options[0][0] === 'number';
       const cur = v === undefined || v === null || (v === '' && f.def !== undefined) ? f.def : v;
-      return html`<${Row} f=${f}><${Select} value=${cur} options=${f.options} onChange=${(x) => set(numeric ? +x : x)} /></${Row}>`;
+      return html`<${Row} f=${f} dia=${dia}><${Select} value=${cur} options=${f.options} onChange=${(x) => set(numeric ? +x : x)} /></${Row}>`;
     }
     case 'color':
-      return html`<${Row} f=${f}><${Color} f=${f} v=${v} set=${set} /></${Row}>`;
+      return html`<${Row} f=${f} dia=${dia}><${Color} f=${f} v=${v} set=${set} /></${Row}>`;
     case 'gradient':
-      return html`<${Row} f=${f}><${Gradient} v=${v} set=${set} /></${Row}>`;
+      return html`<${Row} f=${f} dia=${dia}><${Gradient} v=${v} set=${set} /></${Row}>`;
     case 'text':
-      return html`<${Row} f=${f}><${Edit} type="text" class="grow" value=${v ?? ''} onChange=${(e) => set(e.target.value)} /></${Row}>`;
+      return html`<${Row} f=${f} dia=${dia}><${Edit} type="text" class="grow" value=${v ?? ''} onChange=${(e) => set(e.target.value)} /></${Row}>`;
     case 'textarea':
-      return html`<${Row} f=${f}><${Edit} tag="textarea" class="grow" rows="3" value=${v ?? ''} onChange=${(e) => set(e.target.value)} /></${Row}>`;
+      return html`<${Row} f=${f} dia=${dia}><${Edit} tag="textarea" class="grow" rows="3" value=${v ?? ''} onChange=${(e) => set(e.target.value)} /></${Row}>`;
     case 'file':
-      return html`<${Row} f=${f}><div class="filectl">
+      return html`<${Row} f=${f} dia=${dia}><div class="filectl">
         <div class="fn" title=${v || ''}><${Icon} name=${FILE_ICON[f.kind] || 'file'} size=${14} cls="faint" />
           <span>${v ? basename(v) : html`<span class="faint">${t('None')}</span>`}</span></div>
         <button class="btn icon" title=${t('Choose file')} onClick=${() => ctx.pickFile(f.kind, set, v)}><${Icon} name="folder-open" size=${15} /></button>
         ${v && html`<button class="btn icon ghost danger" title=${t('Remove')} onClick=${() => set('')}><${Icon} name="x" size=${15} /></button>`}
       </div></${Row}>`;
     case 'group':
-      return html`<${Section} title=${t(f.label)}><${Form} fields=${f.fields} value=${v || {}} onChange=${set} ctx=${ctx} isFirst=${isFirst} /></${Section}>`;
+      return html`<${Section} title=${t(f.label)}><${Form} fields=${f.fields} value=${v || {}} onChange=${set} ctx=${ctx} isFirst=${isFirst} kf=${kf} prefix=${path} /></${Section}>`;
     case 'layers':
-      return html`<${Section} title=${t(f.label)}><${Layers} f=${f} v=${v} set=${set} ctx=${ctx} /></${Section}>`;
+      return html`<${Section} title=${t(f.label)}><${Layers} f=${f} v=${v} set=${set} ctx=${ctx} kf=${kf} path=${path} /></${Section}>`;
   }
   return null;
 }
