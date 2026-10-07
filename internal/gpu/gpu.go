@@ -111,6 +111,31 @@ type Params struct {
 	// width and height; piece half width and height, progress, debug
 	FluidI, FluidN [4]int32
 	FluidF         [4]float32
+
+	// Overlay layers (see drawLayer in render.comp): count; stages of the particles, the
+	// visualizer, and a mask of the stages with texts (each text style says its own stage in
+	// GradN[1]); the background's flash (contrast factor, brightness) for clips that follow it
+	LayerN  [4]int32
+	ZIdx    [4]int32
+	FxFlash [4]float32
+	Layers  [MaxLayers]LayerP
+}
+
+// MaxLayers: overlay clips drawn at once
+const MaxLayers = 16
+
+// LayerP mirrors 'LayerP' in render.comp: one overlay clip
+type LayerP struct {
+	Info   [4]int32   // image offset (pixels), width, height, flags (blend 0-3, key 4, glitch 5-6: 1 background's / 2 own, own count 8-11)
+	Xf     [4]float32 // center x, y (px), screen px per image px x, y (negative = flipped)
+	Xf2    [4]float32 // rotation (rad), opacity, blur (px), hue (rad)
+	Adj    [4]float32 // brightness, contrast, saturation, -
+	Key    [4]float32 // key color r, g, b, tolerance
+	Key2   [4]float32 // softness, -, -, -
+	Warp0  [4]float32 // zoom, ripple amplitude, frequency, phase
+	Warp1  [4]float32 // shake x, y, chromatic shift, mode
+	Warp2  [4]float32 // flash contrast factor, brightness
+	Glitch [8][4]float32
 }
 
 // TextStyle mirrors 'TStyle' in render.comp: one entry of the per-frame text style table
@@ -131,6 +156,7 @@ type Renderer struct {
 	Slots      int
 	DeviceName string
 	FluidWords int // capacity of the fluid data buffer (32-bit words)
+	LayerWords int // capacity of the overlay images buffer (pixels)
 	spirv      unsafe.Pointer
 	spirvFluid unsafe.Pointer
 }
@@ -156,13 +182,13 @@ func align(v, a int) int { return (v + a - 1) / a * a }
 
 // New creates the renderer. deviceIndex -1 = automatic. fluidWords: size of the fluid
 // transition data (effects.FluidBufWords).
-func New(width, height, slots, deviceIndex int, textSize, fluidWords int) (*Renderer, error) {
+func New(width, height, slots, deviceIndex int, textSize, fluidWords, layerWords int) (*Renderer, error) {
 	type res struct {
 		g   *Renderer
 		err error
 	}
 	r, ok := withTimeout(func() res {
-		g, err := newRenderer(width, height, slots, deviceIndex, textSize, fluidWords)
+		g, err := newRenderer(width, height, slots, deviceIndex, textSize, fluidWords, layerWords)
 		return res{g, err}
 	})
 	if !ok {
@@ -171,9 +197,9 @@ func New(width, height, slots, deviceIndex int, textSize, fluidWords int) (*Rend
 	return r.g, r.err
 }
 
-func newRenderer(width, height, slots, deviceIndex int, textSize, fluidWords int) (*Renderer, error) {
+func newRenderer(width, height, slots, deviceIndex int, textSize, fluidWords, layerWords int) (*Renderer, error) {
 	g := &Renderer{Width: width, Height: height, PadW: align(width, 16), PadH: align(height, 16), Slots: slots,
-		FluidWords: fluidWords}
+		FluidWords: fluidWords, LayerWords: max(layerWords, 4)}
 	g.spirv = C.CBytes(renderSPV)
 	g.spirvFluid = C.CBytes(fluidSPV)
 	cfg := C.vkr_config{
@@ -183,6 +209,7 @@ func newRenderer(width, height, slots, deviceIndex int, textSize, fluidWords int
 		params_size: C.size_t(unsafe.Sizeof(Params{})),
 		text_size:   C.size_t(textSize),
 		fluid_size:  C.size_t(fluidWords * 4),
+		layers_size: C.size_t(g.LayerWords * 4),
 		spirv:       (*C.uint32_t)(g.spirv), spirv_size: C.size_t(len(renderSPV)),
 		spirv_fluid: (*C.uint32_t)(g.spirvFluid), spirv_fluid_size: C.size_t(len(fluidSPV)),
 	}
@@ -229,6 +256,11 @@ func (g *Renderer) RGBA(slot int) []byte { return g.bytes(slot, C.VKR_BUF_RGBA, 
 func (g *Renderer) FluidData(slot int) ([]uint32, []float32) {
 	p := C.vkr_map(g.r, C.int(slot), C.VKR_BUF_FLUID)
 	return unsafe.Slice((*uint32)(p), g.FluidWords), unsafe.Slice((*float32)(p), g.FluidWords)
+}
+
+// LayerData returns the slot's overlay images buffer (LayerWords pixels, RGBA8)
+func (g *Renderer) LayerData(slot int) []byte {
+	return unsafe.Slice((*byte)(C.vkr_map(g.r, C.int(slot), C.VKR_BUF_LAYERS)), g.LayerWords*4)
 }
 
 // Submit launches the slot's frame; fluid runs the fluid pass first (FluidData and Params.Fluid* filled)

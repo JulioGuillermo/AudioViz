@@ -35,12 +35,14 @@ type Session struct {
 	feats    map[anaKey][]audio.FrameFeatures
 	baseKey  anaKey
 	media    map[string]video.BackgroundReader
-	lyr      *lyrics.Multi
-	lyrKey   string
-	LyrVer   int // changes every time the lyrics atlas is rebuilt
-	sim      particleSim
-	fluids   map[string]*effects.Fluid // simulated fluid transitions (see fluidFor)
-	silent   []audio.FrameFeatures     // when the project has no audio yet
+	// layerMedia: the files of the overlay clips (layers.go)
+	layerMedia map[string]*layerMedia
+	lyr        *lyrics.Multi
+	lyrKey     string
+	LyrVer     int // changes every time the lyrics atlas is rebuilt
+	sim        particleSim
+	fluids     map[string]*effects.Fluid // simulated fluid transitions (see fluidFor)
+	silent     []audio.FrameFeatures     // when the project has no audio yet
 }
 
 type anaKey struct {
@@ -57,7 +59,8 @@ func Open(cfg *config.ProjectConfig, logf func(string, ...any)) (*Session, error
 	if logf == nil {
 		logf = func(string, ...any) {}
 	}
-	s := &Session{Logf: logf, feats: map[anaKey][]audio.FrameFeatures{}, media: map[string]video.BackgroundReader{}}
+	s := &Session{Logf: logf, feats: map[anaKey][]audio.FrameFeatures{}, media: map[string]video.BackgroundReader{},
+		layerMedia: map[string]*layerMedia{}}
 	if err := s.Update(cfg); err != nil {
 		s.Close()
 		return nil, err
@@ -71,6 +74,14 @@ func (s *Session) Close() {
 	for k, r := range s.media {
 		r.Close()
 		delete(s.media, k)
+	}
+	s.closeLayerMedia()
+}
+
+func (s *Session) closeLayerMedia() {
+	for k, m := range s.layerMedia {
+		m.r.Close()
+		delete(s.layerMedia, k)
 	}
 }
 
@@ -98,6 +109,7 @@ func (s *Session) Update(cfg *config.ProjectConfig) error {
 			r.Close()
 			delete(s.media, k)
 		}
+		s.closeLayerMedia()
 	}
 	s.W, s.H = w, h
 	if cfg.Output.FPS <= 0 {
@@ -265,6 +277,26 @@ type FrameState struct {
 	Parts []*particles.ParticleSystem
 	Lyr   *lyrics.Multi
 	LyrSt config.LyricsConfig
+
+	// Overlay clips on screen, bottom to top, and where the fixed elements go among them: stage
+	// k = right above the k-th of them (0 = above the background; len(Layers) = above all)
+	Layers               []effects.LayerFrame
+	layerStack           []int // layer index + 1 of each clip (to resolve z_index)
+	ZParts, ZViz, ZLyric int
+}
+
+// Stage of a z_index among the frame's clips: above the clips whose layer is at or below z
+func (fs *FrameState) Stage(z *int) int {
+	if z == nil {
+		return len(fs.Layers)
+	}
+	n := 0
+	for _, li := range fs.layerStack {
+		if li <= *z {
+			n++
+		}
+	}
+	return n
 }
 
 func lerp(a, b, k float64) float64 { return a + (b-a)*k }
@@ -363,75 +395,108 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 		pl, cl, kl := config.Blend(tl.Lyrics, t)
 		fs.Lyr, fs.LyrSt = s.lyr, config.Lerp(pl, cl, kl)
 	}
+
+	// Overlay layers, and the place of the visualizer, particles and lyrics among them
+	if len(cfg.Layers) > 0 {
+		if fs.Layers, fs.layerStack, err = s.layersAt(t, idx, fs.Feat, fs.FX, fs.GlitchAmount); err != nil {
+			return nil, err
+		}
+	}
+	fs.ZViz = fs.Stage(fs.Viz.ZIndex)
+	fs.ZParts = fs.Stage(tl.Particles[config.Active(tl.Particles, t)].CfgAt(t).ZIndex)
+	fs.ZLyric = fs.Stage(fs.LyrSt.ZIndex)
 	return fs, nil
 }
 
 // ---------------------------------------------------------------- background effects
 
-type fxPart struct {
-	zoom, shakeX, shakeY, shakeZoom float64
-	rippleAmp, rippleFreq, rTim     float64
-	chroma                          float64
-	chromaMode                      int
-	glitch                          bool
-	glitchAmt                       float64
-	bright, contrast                float64
+// One function per background effect, from one config block: shared by the background (its
+// two segments in a fade) and the overlay layers' own effects
+func zoomOf(c *config.BassZoomConfig, feat *audio.FrameFeatures) float64 {
+	if !c.Enabled {
+		return 1
+	}
+	v := 1 + (c.MaxZoom-1)*feat.Band(c.ReactTo, "bass")*c.Sensitivity
+	if feat.BeatPulse > 0 {
+		v += (c.MaxZoom - 1) * feat.BeatPulse * 0.5
+	}
+	return v
+}
+
+// shakeOf: displacement x, y and the zoom that hides the edges
+func shakeOf(c *config.ShakeConfig, t float64, feat *audio.FrameFeatures, minDim float64) (float64, float64, float64) {
+	if !c.Enabled || c.Amplitude <= 0 {
+		return 0, 0, 1
+	}
+	sp := c.Speed
+	if sp <= 0 {
+		sp = 1
+	}
+	tt := t * sp
+	amp := c.Amplitude * feat.Band(c.ReactTo, "bass")
+	return amp * (0.6*math.Sin(tt*7.3) + 0.4*math.Sin(tt*13.1+1.7)),
+		amp * (0.6*math.Sin(tt*8.9+0.5) + 0.4*math.Sin(tt*11.7+2.3)),
+		1 + 2*c.Amplitude/minDim
+}
+
+// rippleOf: amplitude, frequency and phase
+func rippleOf(c *config.RippleConfig, idx int, feat *audio.FrameFeatures) (float64, float64, float64) {
+	if !c.Enabled {
+		return 0, c.Frequency, 0
+	}
+	return c.Amplitude * (0.3 + feat.Band(c.ReactTo, "mid")*0.7), c.Frequency, float64(idx) * 0.05 * c.Speed
+}
+
+// chromaOf: shift (px) and mode (0 none, 1 horizontal, 2 radial)
+func chromaOf(c *config.ChromaticAberrationConfig, feat *audio.FrameFeatures) (float64, int) {
+	if !c.Enabled {
+		return 0, 0
+	}
+	m := 1
+	if c.Mode == "radial" {
+		m = 2
+	}
+	return c.MaxShift * feat.Band(c.ReactTo, "bass"), m
+}
+
+func glitchOn(c *config.GlitchConfig, feat *audio.FrameFeatures) bool {
+	if !c.Enabled {
+		return false
+	}
+	if c.ReactTo == "" {
+		return feat.SpectralFlux > c.Threshold || feat.IsBeat
+	}
+	return feat.Band(c.ReactTo, "") > c.Threshold
+}
+
+// flashOf: brightness and contrast boosts
+func flashOf(c *config.ColorFlashConfig, feat *audio.FrameFeatures) (float64, float64) {
+	if !c.Enabled {
+		return 0, 0
+	}
+	v := feat.Band(c.ReactTo, "bass")
+	return c.BrightnessBoost * v, c.ContrastBoost * v
 }
 
 func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures) (frameFX, float64) {
 	tl := &s.Cfg.Timeline
 	minDim := math.Max(math.Min(float64(s.W), float64(s.H)), 64)
 	var fx frameFX
-	fx.zoom = 1
-
-	// Zoom
 	{
 		a, b, k := config.Blend(tl.BassZoom, t)
-		z := func(c *config.BassZoomConfig) float64 {
-			if !c.Enabled {
-				return 1
-			}
-			v := 1 + (c.MaxZoom-1)*feat.Band(c.ReactTo, "bass")*c.Sensitivity
-			if feat.BeatPulse > 0 {
-				v += (c.MaxZoom - 1) * feat.BeatPulse * 0.5
-			}
-			return v
-		}
-		fx.zoom = lerp(z(a), z(b), k)
+		fx.zoom = lerp(zoomOf(a, feat), zoomOf(b, feat), k)
 	}
-	// Shake
 	{
 		a, b, k := config.Blend(tl.Shake, t)
-		sh := func(c *config.ShakeConfig) (float64, float64, float64) {
-			if !c.Enabled || c.Amplitude <= 0 {
-				return 0, 0, 1
-			}
-			sp := c.Speed
-			if sp <= 0 {
-				sp = 1
-			}
-			tt := t * sp
-			amp := c.Amplitude * feat.Band(c.ReactTo, "bass")
-			return amp * (0.6*math.Sin(tt*7.3) + 0.4*math.Sin(tt*13.1+1.7)),
-				amp * (0.6*math.Sin(tt*8.9+0.5) + 0.4*math.Sin(tt*11.7+2.3)),
-				1 + 2*c.Amplitude/minDim
-		}
-		ax, ay, az := sh(a)
-		bx, by, bz := sh(b)
+		ax, ay, az := shakeOf(a, t, feat, minDim)
+		bx, by, bz := shakeOf(b, t, feat, minDim)
 		fx.shakeX, fx.shakeY = lerp(ax, bx, k), lerp(ay, by, k)
 		fx.zoom *= lerp(az, bz, k)
 	}
-	// Ripple
 	{
 		a, b, k := config.Blend(tl.Ripple, t)
-		r := func(c *config.RippleConfig) (float64, float64, float64) {
-			if !c.Enabled {
-				return 0, c.Frequency, 0
-			}
-			return c.Amplitude * (0.3 + feat.Band(c.ReactTo, "mid")*0.7), c.Frequency, float64(idx) * 0.05 * c.Speed
-		}
-		aa, af, at := r(a)
-		ba, bf, bt := r(b)
+		aa, af, at := rippleOf(a, idx, feat)
+		ba, bf, bt := rippleOf(b, idx, feat)
 		fx.rippleAmp, fx.rippleFreq, fx.rTim = lerp(aa, ba, k), lerp(af, bf, k), lerp(at, bt, k)
 		if !a.Enabled {
 			fx.rippleFreq, fx.rTim = bf, bt
@@ -439,59 +504,30 @@ func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures) (fram
 			fx.rippleFreq, fx.rTim = af, at
 		}
 	}
-	// Chromatic aberration
 	{
 		a, b, k := config.Blend(tl.Chromatic, t)
-		ch := func(c *config.ChromaticAberrationConfig) (float64, int) {
-			if !c.Enabled {
-				return 0, 0
-			}
-			m := 1
-			if c.Mode == "radial" {
-				m = 2
-			}
-			return c.MaxShift * feat.Band(c.ReactTo, "bass"), m
-		}
-		as, am := ch(a)
-		bs, bm := ch(b)
+		as, am := chromaOf(a, feat)
+		bs, bm := chromaOf(b, feat)
 		fx.chromaShift = lerp(as, bs, k)
 		fx.chromaMode = bm
 		if bm == 0 || (k < 0.5 && am != 0) {
 			fx.chromaMode = am
 		}
 	}
-	// Glitch
 	glitchAmt := 0.0
 	{
 		a, b, k := config.Blend(tl.Glitch, t)
-		on := func(c *config.GlitchConfig) bool {
-			if !c.Enabled {
-				return false
-			}
-			if c.ReactTo == "" {
-				return feat.SpectralFlux > c.Threshold || feat.IsBeat
-			}
-			return feat.Band(c.ReactTo, "") > c.Threshold
-		}
 		c := a
 		if k >= 0.5 {
 			c = b
 		}
-		fx.glitch = on(c)
+		fx.glitch = glitchOn(c, feat)
 		glitchAmt = c.Intensity
 	}
-	// Color flash
 	{
 		a, b, k := config.Blend(tl.ColorFlash, t)
-		fl := func(c *config.ColorFlashConfig) (float64, float64) {
-			if !c.Enabled {
-				return 0, 0
-			}
-			v := feat.Band(c.ReactTo, "bass")
-			return c.BrightnessBoost * v, c.ContrastBoost * v
-		}
-		ab, ac := fl(a)
-		bb, bc := fl(b)
+		ab, ac := flashOf(a, feat)
+		bb, bc := flashOf(b, feat)
 		fx.bright, fx.contrast = lerp(ab, bb, k), lerp(ac, bc, k)
 	}
 	return fx, glitchAmt
@@ -584,7 +620,8 @@ func (s *Session) Fork() (*Session, error) {
 		return nil, err
 	}
 	ns := &Session{Logf: s.Logf, feats: map[anaKey][]audio.FrameFeatures{}, media: map[string]video.BackgroundReader{},
-		Audio: s.Audio, audioKey: s.audioKey, W: s.W, H: s.H, FPS: s.FPS}
+		layerMedia: map[string]*layerMedia{},
+		Audio:      s.Audio, audioKey: s.audioKey, W: s.W, H: s.H, FPS: s.FPS}
 	for k, v := range s.feats {
 		ns.feats[k] = v
 	}

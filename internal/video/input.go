@@ -63,10 +63,15 @@ func ProbeMedia(filePath string) (*ProbeResult, error) {
 	return &ProbeResult{IsAnimated: format == "gif", Width: cfg.Width / 2 * 2, Height: cfg.Height / 2 * 2}, nil
 }
 
-// fit scales src to (w, h) according to the cover/contain/stretch mode
+// fit scales src to (w, h) according to the cover/contain/stretch mode, over black
 func fit(src image.Image, w, h int, mode string) *image.RGBA {
+	return fitOn(src, w, h, mode, image.Black)
+}
+
+// fitOn is fit over a given backdrop (image.Transparent keeps the transparency)
+func fitOn(src image.Image, w, h int, mode string, backdrop image.Image) *image.RGBA {
 	out := image.NewRGBA(image.Rect(0, 0, w, h))
-	draw.Draw(out, out.Bounds(), image.Black, image.Point{}, draw.Src)
+	draw.Draw(out, out.Bounds(), backdrop, image.Point{}, draw.Src)
 	ow, oh := src.Bounds().Dx(), src.Bounds().Dy()
 	dst := out.Bounds()
 	if mode != "stretch" {
@@ -136,7 +141,7 @@ func NewBackgroundReader(filePath string, w, h int, fitMode string, loop bool) (
 			return nil, err
 		}
 		if len(g.Image) > 1 {
-			return newGIFReader(g, w, h, fitMode, loop), nil
+			return newGIFReader(g, w, h, fitMode, loop, image.Black), nil
 		}
 	}
 	f.Seek(0, 0)
@@ -147,14 +152,14 @@ func NewBackgroundReader(filePath string, w, h int, fitMode string, loop bool) (
 	return &staticReader{frame: fit(img, w, h, fitMode)}, nil
 }
 
-func newGIFReader(g *gif.GIF, w, h int, fitMode string, loop bool) *gifReader {
+func newGIFReader(g *gif.GIF, w, h int, fitMode string, loop bool, backdrop image.Image) *gifReader {
 	canvas := image.NewRGBA(image.Rect(0, 0, g.Config.Width, g.Config.Height))
 	r := &gifReader{loop: loop}
 	for i, fr := range g.Image {
 		prev := image.NewRGBA(canvas.Bounds())
 		copy(prev.Pix, canvas.Pix)
 		draw.Draw(canvas, fr.Bounds(), fr, fr.Bounds().Min, draw.Over)
-		r.frames = append(r.frames, fit(canvas, w, h, fitMode))
+		r.frames = append(r.frames, fitOn(canvas, w, h, fitMode, backdrop))
 		d := 0.1
 		if i < len(g.Delay) && g.Delay[i] > 1 {
 			d = float64(g.Delay[i]) / 100
@@ -171,4 +176,41 @@ func newGIFReader(g *gif.GIF, w, h int, fitMode string, loop bool) *gifReader {
 		}
 	}
 	return r
+}
+
+// NewLayerReader loads an overlay file (image, GIF or video) at its own size, but no larger than
+// maxW×maxH (aspect ratio kept), with its transparency (videos are opaque). Videos and GIFs start
+// at t = 0; loop repeats them.
+func NewLayerReader(filePath string, maxW, maxH int, loop bool) (BackgroundReader, error) {
+	pr, err := ProbeMedia(filePath)
+	if err != nil {
+		return nil, err
+	}
+	w, h := max(pr.Width, 2), max(pr.Height, 2)
+	if s := min(1, float64(maxW)/float64(w), float64(maxH)/float64(h)); s < 1 {
+		w, h = max(2, int(float64(w)*s+0.5)), max(2, int(float64(h)*s+0.5))
+	}
+	if pr.IsVideo {
+		return newVideoReader(filePath, w, h, "stretch", loop)
+	}
+	f, err := os.Open(filePath)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	if pr.IsAnimated {
+		g, err := gif.DecodeAll(f)
+		if err != nil {
+			return nil, err
+		}
+		if len(g.Image) > 1 {
+			return newGIFReader(g, w, h, "stretch", loop, image.Transparent), nil
+		}
+		f.Seek(0, 0)
+	}
+	img, _, err := image.Decode(f)
+	if err != nil {
+		return nil, fmt.Errorf("error decoding image '%s': %w", filePath, err)
+	}
+	return &staticReader{frame: fitOn(img, w, h, "stretch", image.Transparent)}, nil
 }

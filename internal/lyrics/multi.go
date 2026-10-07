@@ -136,6 +136,7 @@ func (m *Multi) Frame(t float64, feat *audio.FrameFeatures, lyr *config.LyricsCo
 	styles := []Style{{}}
 	if lyr != nil && m.nLyr > 0 {
 		styles[0] = StyleFor(lyr, t, feat)
+		styles[0].Z = lyr.ZIndex
 	}
 	for i, e := range m.subs {
 		its := e.Frame(t, feat)
@@ -164,7 +165,9 @@ func (m *Multi) Frame(t float64, feat *audio.FrameFeatures, lyr *config.LyricsCo
 					sc = float32(k.Size / tc.Size)
 				}
 			}
-			styles = append(styles, StyleFor(cfg, t, feat))
+			st := StyleFor(cfg, t, feat)
+			st.Z = cfg.ZIndex
+			styles = append(styles, st)
 			if dx != 0 || dy != 0 || sc != 1 {
 				ax, ay := float32(tc.PositionX*float64(m.w)), float32(tc.PositionY*float64(m.h))
 				for j := range its {

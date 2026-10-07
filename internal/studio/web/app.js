@@ -6,6 +6,7 @@ import { Icon } from './icons.js';
 import { Timeline, segSummary } from './timeline.js';
 import { keyApi, valueAt, setIn, KEY_EPS } from './keys.js';
 import { ContextMenu, openMenu } from './menu.js';
+import { LayerInspector, ClipHandles, frontFirst, layerName, newLayerId, setClipProps, duplicateClip } from './layers.js';
 import { ImagesDialog } from './images.js';
 import { FilePicker, NewProject, ExportDialog, GenLyricsDialog, LyricsTextDialog, LYRIC_LANGS, STEP_LABEL, ProjectsDialog, PackageDialog, ExportsDialog, WorkspaceGrid, uploadPackage } from './dialogs.js';
 import { createStore, useStore, useThrottledStore } from './store.js';
@@ -14,7 +15,7 @@ import { createScrubber } from './scrub.js';
 
 // ------------------------------------------------------------------ preview
 
-function Preview({ meta, timeStore, scale, rev, playing, pin, onPin, points, onPoints }) {
+function Preview({ meta, timeStore, scale, rev, playing, pin, onPin, points, onPoints, clip, onClip }) {
   const time = useStore(timeStore);
   const canvas = useRef();
   const stage = useRef();
@@ -157,6 +158,8 @@ function Preview({ meta, timeStore, scale, rev, playing, pin, onPin, points, onP
       style=${{ width: box ? box.w + 'px' : '', height: box ? box.h + 'px' : '', cursor: pin || points ? 'crosshair' : '' }} onMouseDown=${pinDown}
       title=${points ? t('Click to add an ignition point, drag one to move it, Shift+click to remove it') : pin ? t('Drag to place the selected text') : ''}></canvas>
     ${pinStyle && html`<div class=${'pin' + (dragPin ? ' drag' : '')} style=${pinStyle}></div>`}
+    ${clip && canvas.current && stage.current && html`<${ClipHandles} clip=${clip} time=${time} meta=${meta}
+      cr=${canvas.current.getBoundingClientRect()} sr=${stage.current.getBoundingClientRect()} onChange=${onClip} />`}
     ${ptsStyle.map((st, j) => html`<div class="pin fire" style=${st}><span>${j + 1}</span></div>`)}
     <div class="hud">${meta.width}×${meta.height} · 1/${scale} · ${info.ms} ms${playing ? ' · ' + info.fps + ' fps' : ''}</div>
   </div>`;
@@ -493,7 +496,8 @@ function App() {
   const [wordEdit, setWordEdit] = useState(false); // word blocks of the selected line on the timeline
   // Keyframes: the property whose keys the timeline shows alone (set by its diamond), per selection
   const [kfFocus, setKfFocus] = useState(null);
-  useEffect(() => setKfFocus(null), [sel.kind, sel.track, sel.seg, sel.i]);
+  const [layerDrag, setLayerDrag] = useState(null); // reordering layers: { from, to }
+  useEffect(() => setKfFocus(null), [sel.kind, sel.track, sel.seg, sel.i, sel.id, sel.clip]);
   const [playing, setPlaying] = useState(false);
   const [scale, setScale] = useState(2);
   const [rev, setRev] = useState(0);
@@ -750,6 +754,8 @@ function App() {
   // --- actions
   const ctx = {
     seek,
+    // z_index choices: each layer bottom to top as [z, name]
+    get layerChoices() { return (projRef.current.layers || []).map((l, i) => [i + 1, l.name || t('Layer {n}', { n: i + 1 })]); },
     kfFocus, setKfFocus,
     dialog: setDlg,
     pickFile: (kind, cb, start) => setPick({ kind, cb, start }),
@@ -777,6 +783,27 @@ function App() {
       update((p) => { p.tracks[track].splice(i + 1, 0, ns); });
       setSel({ kind: 'track', track, seg: i + 1 });
     },
+    // Overlay layers: a new clip asks for its file; it lasts 10 s (or up to the end)
+    addClip: (id, tt) => setPick({ kind: 'bg', cb: (path) => {
+      const st = Math.max(0, Math.min(meta.duration - 0.5, +tt.toFixed(3)));
+      let j = 0;
+      update((p) => {
+        const l = p.layers.find((x) => x.id === id);
+        l.clips.push({ ...clone(p.clipDefaults || {}), path, start: st, end: +Math.min(meta.duration, st + 10).toFixed(3) });
+        l.clips.sort((a, b) => a.start - b.start);
+        j = l.clips.findIndex((c) => c.path === path && c.start === st);
+      });
+      setSel({ kind: 'layer', id, clip: Math.max(0, j) });
+    } }),
+    // A new layer goes in front of the others, with a first clip at the cursor
+    addLayer: (tt) => setPick({ kind: 'bg', cb: (path) => {
+      const id = newLayerId();
+      const st = Math.max(0, Math.min(meta.duration - 0.5, +tt.toFixed(3)));
+      update((p) => {
+        p.layers = [...(p.layers || []), { id, name: '', clips: [{ ...clone(p.clipDefaults || {}), path, start: st, end: +Math.min(meta.duration, st + 10).toFixed(3) }] }];
+      });
+      setSel({ kind: 'layer', id, clip: 0 });
+    } }),
     // Fixed texts: a new one copies the style of the selected text (or the defaults)
     addText: (tt) => {
       const cur = projRef.current;
@@ -792,6 +819,17 @@ function App() {
       // Show it: jump into its time range if the cursor is outside
       if (x) { const now = timeStore.get(); if (now < x.start || now > x.end) seek(x.start + Math.min(1, (x.end - x.start) / 2)); }
     },
+  };
+  // Moving a clip on the timeline (live while dragging, committed at the end)
+  const onMoveClip = (id, j, s, e, commit) => {
+    if (commit) { update((p) => { p.layers.find((l) => l.id === id).clips.sort((a, b) => a.start - b.start); }); return; }
+    histBase();
+    const p = clone(projRef.current);
+    const c = p.layers.find((l) => l.id === id).clips[j];
+    c.start = +s.toFixed(3);
+    c.end = +e.toFixed(3);
+    projRef.current = p;
+    setProj(p);
   };
   const onMoveText = (i, s, e, commit) => {
     if (commit) { update(() => {}); return; }
@@ -944,6 +982,28 @@ function App() {
           ? { label: t('New text at the cursor ({t})', { t: fmtTime(timeStore.get()) }), icon: 'plus', onClick: () => ctx.addText(timeStore.get()) }
           : { label: t('New segment at the cursor ({t})', { t: fmtTime(timeStore.get()) }), icon: 'plus', onClick: () => ctx.addSeg(c.id, timeStore.get()) },
       ]);
+    } else if (c.kind === 'layer' || c.kind === 'clip' || c.kind === 'layerlane') {
+      const li = p.layers.findIndex((l) => l.id === c.id), l = p.layers[li];
+      const ff = frontFirst(p).findIndex((x) => x.l.id === c.id);
+      const hidden = (p.view && p.view.hidden || []).includes('layer:' + c.id);
+      const items = [{ header: layerName(l, li) + (c.kind === 'clip' ? ' · ' + (l.clips[c.clip].label || basename(l.clips[c.clip].path)) : '') }];
+      if (c.kind === 'clip') {
+        selectLayer(c.id, c.clip);
+        items.push(
+          { label: t('Duplicate'), icon: 'copy', onClick: () => { let nj = 0; update((q) => { nj = duplicateClip(q.layers.find((x) => x.id === c.id), c.clip); }); setSel({ kind: 'layer', id: c.id, clip: nj }); } },
+          { label: t('Delete clip'), icon: 'trash-2', danger: true, onClick: () => { update((q) => { q.layers.find((x) => x.id === c.id).clips.splice(c.clip, 1); }); setSel({ kind: 'layer', id: c.id, clip: Math.max(0, c.clip - 1) }); } },
+          '-');
+      }
+      const at = c.at ?? timeStore.get();
+      items.push(
+        { label: t('New clip at {t}', { t: fmtTime(at) }), icon: 'plus', onClick: () => ctx.addClip(c.id, at) },
+        { label: t('Rename…'), icon: 'pencil', onClick: () => { const n = prompt(t('New name:'), l.name || ''); if (n !== null) update((q) => { q.layers.find((x) => x.id === c.id).name = n; }); } },
+        { label: t('Bring forward'), icon: 'arrow-up', disabled: ff === 0, onClick: () => moveLayer(ff, ff - 1) },
+        { label: t('Send backward'), icon: 'chevron-down', disabled: ff === p.layers.length - 1, onClick: () => moveLayer(ff, ff + 1) },
+        { label: t(hidden ? 'Show its track on the timeline' : 'Hide its track on the timeline'), icon: hidden ? 'eye' : 'eye-off', onClick: () => toggleView('hidden', 'layer:' + c.id) },
+        '-',
+        { label: t('Delete layer'), icon: 'trash-2', danger: true, onClick: () => { if (confirm(t('Delete the layer “{n}” and its clips?', { n: layerName(l, li) }))) { update((q) => { q.layers = q.layers.filter((x) => x.id !== c.id); }); setSel({ kind: 'output' }); } } });
+      openMenu(e, items);
     } else if (c.kind === 'zone') {
       const folded = (p.view && p.view.collapsed || []).includes(c.id);
       openMenu(e, [{ label: t(folded ? 'Unfold' : 'Fold'), icon: folded ? 'chevron-down' : 'chevron-right', onClick: () => toggleView('collapsed', c.id) }]);
@@ -1035,6 +1095,9 @@ function App() {
       else if (e.key === 'Delete' && sel.kind === 'track' && sel.seg > 0) {
         update((p) => { p.tracks[sel.track].splice(sel.seg, 1); });
         setSel({ ...sel, seg: sel.seg - 1 });
+      } else if (e.key === 'Delete' && sel.kind === 'layer') {
+        update((p) => { const l = p.layers.find((x) => x.id === sel.id); if (l && l.clips[sel.clip]) l.clips.splice(sel.clip, 1); });
+        setSel({ ...sel, clip: Math.max(0, sel.clip - 1) });
       } else if (e.key === 'Delete' && sel.kind === 'text' && projRef.current.texts[sel.i]) {
         update((p) => { p.texts.splice(sel.i, 1); });
         setSel({ kind: 'text', i: Math.min(sel.i, projRef.current.texts.length - 1) });
@@ -1074,7 +1137,8 @@ function App() {
 
   const view = { hidden: [], collapsed: [], ...(proj.view || {}) };
   // Entries of each zone in the track list (track ids, "texts")
-  const zoneIds = { main: ['background', 'lyrics', 'texts'], layers: [],
+  const layersFF = frontFirst(proj);
+  const zoneIds = { main: ['background', 'lyrics', 'texts'], layers: layersFF.map(({ l }) => 'layer:' + l.id),
     effects: TRACKS.filter((tr) => zoneOf(tr.id) === 'effects').map((tr) => tr.id) };
   // Eye: shows / hides the entry's track on the timeline (the effect keeps rendering)
   const eye = (id) => {
@@ -1106,6 +1170,42 @@ function App() {
   const jobRunning = job && job.status === 'running';
   const saveText = { saving: t('Saving…'), saved: t('Saved {t}', { t: save.at }), error: t('Save error') }[save.kind] || '';
 
+  const layerById_ = (id) => (proj.layers || []).find((l) => l.id === id);
+  // Selecting a layer: its clip under the cursor (or the first one)
+  const selectLayer = (id, clip) => {
+    const l = layerById_(id);
+    if (clip == null) { clip = Math.max(0, l.clips.findIndex((c) => time >= c.start && time < c.end)); }
+    setSel({ kind: 'layer', id, clip });
+    setLineSel([]);
+  };
+  // Reordering layers in the left panel: drag an entry up / down (k: position front first)
+  const layerReorder = (e, k) => {
+    if (e.button !== 0 || e.target.closest('.eye')) return;
+    const y0 = e.clientY;
+    const els = [...e.currentTarget.parentElement.querySelectorAll('.lyrent')];
+    let to = k, moved = false;
+    const mv = (ev) => {
+      if (!moved && Math.abs(ev.clientY - y0) < 4) return;
+      moved = true;
+      to = els.findIndex((el) => ev.clientY < el.getBoundingClientRect().bottom);
+      if (to < 0) to = els.length - 1;
+      setLayerDrag({ from: k, to });
+    };
+    const up = () => {
+      removeEventListener('mousemove', mv); removeEventListener('mouseup', up);
+      setLayerDrag(null);
+      if (moved && to !== k) moveLayer(k, to);
+    };
+    addEventListener('mousemove', mv); addEventListener('mouseup', up);
+  };
+  // from / to: positions front first
+  const moveLayer = (from, to) => update((p) => {
+    const ff = [...p.layers].reverse();
+    const [m] = ff.splice(from, 1);
+    ff.splice(to, 0, m);
+    p.layers = ff.reverse();
+  });
+  const selClip = sel.kind === 'layer' && layerById_(sel.id) ? layerById_(sel.id).clips[sel.clip] : null;
   const selText = sel.kind === 'text' ? (proj.texts || [])[sel.i] : null;
   // Burn transition with chosen points: they are placed on the preview
   const selBg = sel.kind === 'track' && sel.track === 'background' ? proj.tracks.background[sel.seg] : null;
@@ -1116,6 +1216,7 @@ function App() {
   else if (sel.kind === 'output') inspector = html`<div><div class="insp-h"><div class="insp-title"><${Icon} name="monitor" size=${16} cls="muted" />${t('Output')}<span class="sub">${t('Project')}</span></div></div><div class="insp-b">
       <${Form} fields=${OUTPUT_FIELDS} value=${proj.output} onChange=${(v) => update((p) => { p.output = v; })} ctx=${ctx} />
       <p class="faint" style="font-size:12px">${t('Current resolution')}: ${meta.width}×${meta.height} · ${meta.fps} fps · ${fmtTime(meta.duration)}</p></div></div>`;
+  else if (sel.kind === 'layer' && layerById_(sel.id)) inspector = html`<${LayerInspector} proj=${proj} sel=${sel} setSel=${setSel} update=${update} time=${time} meta=${meta} ctx=${ctx} />`;
   else if (sel.kind === 'text') inspector = html`<${TextsInspector} proj=${proj} sel=${sel} setSel=${setSel} update=${update} time=${time} meta=${meta} ctx=${ctx} />`;
   else if (sel.kind === 'line') inspector = html`<${LineEditor} lyr=${lyr} lines=${lineSel} time=${time} seek=${seek} saveState=${lyrSave}
       onChange=${(fn) => editLyrics(fn)} onResync=${resync} resyncing=${resyncing} lyricLang=${lyricLang} setLyricLang=${setLyricLang} wordEdit=${wordEdit} setWordEdit=${setWordEdit}
@@ -1173,8 +1274,17 @@ function App() {
           ${z.id === 'main' && html`<div class=${'trk' + (sel.kind === 'audio' ? ' on' : '')} onClick=${() => setSel({ kind: 'audio' })}
               title=${(proj.audio.path || t('No audio')) + ' · ' + t('Always at the top of the timeline')}>
             <${Icon} name="music" size=${15} /><span class="lbl">${t('Audio')}</span>${!proj.audio.path && html`<span class="badge">${t('empty')}</span>`}</div>`}
-          ${ids.map((id) => id === 'texts' ? textsEntry() : trackEntry(trackById[id]))}
-          ${z.id === 'layers' && html`<div class="zone-empty">${t('Overlay layers and emitters will go here')}</div>`}
+          ${z.id !== 'layers' && ids.map((id) => id === 'texts' ? textsEntry() : trackEntry(trackById[id]))}
+          ${z.id === 'layers' && layersFF.map(({ l, i }, k) => html`<div key=${l.id}
+              class=${'trk lyrent' + (sel.kind === 'layer' && sel.id === l.id ? ' on' : '') + (view.hidden.includes('layer:' + l.id) ? ' hid' : '') + (layerDrag && layerDrag.from === k ? ' dragging' : '')}
+              onMouseDown=${(e) => layerReorder(e, k)} onClick=${() => selectLayer(l.id)} onContextMenu=${(e) => onContext(e, { kind: 'layer', id: l.id })}
+              title=${t('Drag to change the order (higher = in front)')}>
+            ${layerDrag && layerDrag.to === k && layerDrag.to < layerDrag.from && html`<i class="dropline top"></i>`}
+            <${Icon} name="layers" size=${15} /><span class="lbl">${layerName(l, i)}</span>
+            ${l.clips.length > 0 && html`<span class="badge" title=${t('Clips')}>${l.clips.length}</span>`}${eye('layer:' + l.id)}
+            ${layerDrag && layerDrag.to === k && layerDrag.to > layerDrag.from && html`<i class="dropline bottom"></i>`}</div>`)}
+          ${z.id === 'layers' && html`<button class="btn sm ghost addlayer" onClick=${() => ctx.addLayer(time)}
+            title=${t('New layer in front of the others: choose its first file (image, GIF or video)')}><${Icon} name="plus" size=${14} /> ${t('Layer')}</button>`}
         </div>`}`;
       })}
     </div>
@@ -1185,7 +1295,9 @@ function App() {
           pin=${selText ? { x: selText.position_x, y: selText.position_y } : null}
           points=${burnSel ? (burnSel.points || []).map((q) => ({ x: q[0], y: q[1] })) : null}
           onPoints=${(pts) => update((p) => { const tr = p.tracks.background[sel.seg].transition; tr.burn = { ...(tr.burn || {}), points: pts.map((q) => [q.x, q.y]) }; })}
-          onPin=${(x, y) => update((p) => { const tx = p.texts[sel.i]; if (tx) { tx.position_x = x; tx.position_y = y; } })} />
+          onPin=${(x, y) => update((p) => { const tx = p.texts[sel.i]; if (tx) { tx.position_x = x; tx.position_y = y; } })}
+          clip=${selClip && selClip.path && time >= selClip.start && time < selClip.end ? selClip : null}
+          onClip=${(props) => update((p) => { const c = p.layers.find((l) => l.id === sel.id).clips[sel.clip]; setClipProps(c, props, timeStore.get()); })} />
         ${!hideSetup && (!proj.audio.path || !proj.tracks.background[0].cfg.path) && html`<${Setup} proj=${proj} ctx=${ctx} onHide=${() => setHideSetup(true)} />`}
       </div>
       <div class="transport">
@@ -1217,8 +1329,10 @@ function App() {
       sel=${sel} lineSel=${lineSel} wordEdit=${wordEdit} height=${tlH} setHeight=${setTlH}
       onSeek=${seek} onSelect=${selTrack} onMoveSeg=${onMoveSeg} onAddSeg=${ctx.addSeg} onMarker=${onMarker}
       view=${view} onToggleZone=${(z) => toggleView('collapsed', z)} kfFocus=${kfFocus} onContext=${onContext}
+      layers=${layersFF} onSelectLayer=${selectLayer} onMoveClip=${onMoveClip} onAddClip=${(id, tt) => ctx.addClip(id, tt)} onAddLayer=${(tt) => ctx.addLayer(tt)}
       onKeys=${(target, fn) => update((p) => {
-        const h = target.text != null ? p.texts[target.text] : p.tracks[target.track][target.seg];
+        const h = target.layer != null ? p.layers.find((l) => l.id === target.layer).clips[target.clip]
+          : target.text != null ? p.texts[target.text] : p.tracks[target.track][target.seg];
         const ks = fn(h.keys || {});
         if (Object.keys(ks).length) h.keys = ks; else delete h.keys;
       })}

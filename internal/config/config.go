@@ -18,6 +18,7 @@ type ProjectConfig struct {
 	Particles         ParticlesConfig         `yaml:"particles"`
 	Lyrics            LyricsConfig            `yaml:"lyrics"`
 	Texts             []TextConfig            `yaml:"texts,omitempty"`
+	Layers            []LayerConfig           `yaml:"layers,omitempty"` // overlay layers (layers.go)
 	Output            OutputConfig            `yaml:"output"`
 	// How the studio shows the project (no effect on the video)
 	Studio StudioView `yaml:"studio,omitempty"`
@@ -126,7 +127,10 @@ type ColorFlashConfig struct {
 }
 
 type VisualizerConfig struct {
-	Enabled         bool    `yaml:"enabled"`
+	Enabled bool `yaml:"enabled"`
+	// Drawing order among the overlay layers: k = right above layer k (0 = above the
+	// background); unset = above all of them
+	ZIndex          *int    `yaml:"z_index,omitempty"`
 	Type            string  `yaml:"type"`             // "circular", "horizontal", "vertical", "oscilloscope"
 	StereoSymmetric bool    `yaml:"stereo_symmetric"` // true: L on the left, R on the right
 	Bars            int     `yaml:"bars"`             // Bars per channel (e.g. 48 or 64)
@@ -175,6 +179,9 @@ type GlowConfig struct {
 
 type ParticlesConfig struct {
 	Enabled bool `yaml:"enabled"`
+	// Drawing order among the overlay layers: k = right above layer k (0 = above the
+	// background); unset = above all of them
+	ZIndex *int `yaml:"z_index,omitempty"`
 	// Layers: each with its own type, color and band. If empty, a single layer with the fields below is used.
 	Layers []ParticleLayer `yaml:"layers"`
 
@@ -206,9 +213,12 @@ type ParticleLayer struct {
 
 // LyricsConfig: synced lyrics (.srt / .lrc / LRC with per-word timing) drawn animated
 type LyricsConfig struct {
-	Enabled bool    `yaml:"enabled"`
-	Path    string  `yaml:"path"`
-	Offset  float64 `yaml:"offset"` // seconds added to all timestamps (+ = later)
+	Enabled bool `yaml:"enabled"`
+	// Drawing order among the overlay layers: k = right above layer k (0 = above the
+	// background); unset = above all of them
+	ZIndex *int    `yaml:"z_index,omitempty"`
+	Path   string  `yaml:"path"`
+	Offset float64 `yaml:"offset"` // seconds added to all timestamps (+ = later)
 
 	Font      string  `yaml:"font"`      // .ttf/.otf; empty = built-in font (Go Bold)
 	Size      float64 `yaml:"size"`      // size in px
@@ -524,6 +534,11 @@ func (c *ProjectConfig) mapPaths(fn func(string) string) {
 	}
 	for i := range c.Texts {
 		c.Texts[i].Font = fn(c.Texts[i].Font)
+	}
+	for i := range c.Layers {
+		for j := range c.Layers[i].Clips {
+			c.Layers[i].Clips[j].Path = fn(c.Layers[i].Clips[j].Path)
+		}
 	}
 }
 

@@ -12,6 +12,9 @@ export function Form({ fields, value, onChange, ctx, isFirst = true, kf = null, 
   return html`${fields.map((f) => {
     if (f.showIf && !f.showIf(value)) return null;
     if (f.firstOnly && !isFirst) return null;
+    // A section only groups fields of this same object under a title
+    if (f.type === 'section') return html`<${Section} key=${f.key} title=${t(f.label)}><${Form} fields=${f.fields} value=${value}
+      onChange=${onChange} ctx=${ctx} isFirst=${isFirst} kf=${kf} prefix=${prefix} /></${Section}>`;
     const path = prefix ? prefix + '.' + f.key : f.key;
     // dia: the keyframe diamond; 'gap' = a form with keyframes, field not animatable (aligned label)
     let v = value[f.key], setV = (x) => set(f.key, x), dia = kf ? 'gap' : null;
@@ -205,6 +208,13 @@ function Field({ f, v, set, ctx, isFirst, kf, path, dia }) {
       return html`<${Row} f=${f} dia=${dia}><${Edit} type="text" class="grow" value=${v ?? ''} onChange=${(e) => set(e.target.value)} /></${Row}>`;
     case 'textarea':
       return html`<${Row} f=${f} dia=${dia}><${Edit} tag="textarea" class="grow" rows="3" value=${v ?? ''} onChange=${(e) => set(e.target.value)} /></${Row}>`;
+    case 'zindex': {
+      // Above all the layers (unset), above the background (0), or above a layer (its index + 1)
+      const opts = [['', t('Above all the layers')], [0, t('Above the background, under the layers')],
+        ...(ctx.layerChoices || []).map(([z, name]) => [z, t('Above “{n}”', { n: name })])];
+      return html`<${Row} f=${f} dia=${dia}><${Select} value=${v ?? ''} options=${opts} translate=${false}
+        onChange=${(x) => set(x === '' ? null : +x)} /></${Row}>`;
+    }
     case 'file':
       return html`<${Row} f=${f} dia=${dia}><div class="filectl">
         <div class="fn" title=${v || ''}><${Icon} name=${FILE_ICON[f.kind] || 'file'} size=${14} cls="faint" />

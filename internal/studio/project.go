@@ -38,13 +38,22 @@ type ViewJSON struct {
 	Collapsed []string `json:"collapsed"`
 }
 
+type LayerJSON struct {
+	ID    string           `json:"id"`
+	Name  string           `json:"name"`
+	Clips []map[string]any `json:"clips"` // config.ClipConfig, YAML keys
+}
+
 type ProjectJSON struct {
 	Audio   map[string]any       `json:"audio"`
 	Output  map[string]any       `json:"output"`
 	Tracks  map[string][]SegJSON `json:"tracks"`
 	Markers []MarkerJSON         `json:"markers"`
-	Texts   []map[string]any     `json:"texts"` // fixed texts (config.TextConfig, YAML keys)
-	View    ViewJSON             `json:"view"`  // studio view: hidden tracks, folded zones
+	Texts   []map[string]any     `json:"texts"`  // fixed texts (config.TextConfig, YAML keys)
+	View    ViewJSON             `json:"view"`   // studio view: hidden tracks, folded zones
+	Layers  []LayerJSON          `json:"layers"` // overlay layers, bottom to top (config.LayerConfig)
+	// Values of a new clip (read-only for the UI)
+	ClipDefaults map[string]any `json:"clipDefaults,omitempty"`
 	// Values of a new text (read-only for the UI; ignored when the project comes back)
 	TextDefaults map[string]any `json:"textDefaults,omitempty"`
 }
@@ -160,6 +169,15 @@ func ProjectToJSON(c *config.ProjectConfig) *ProjectJSON {
 	}
 	p.View = ViewJSON{Hidden: append([]string{}, c.Studio.Hidden...), Collapsed: append([]string{}, c.Studio.Collapsed...)}
 	p.TextDefaults = toMap(config.DefaultText())
+	p.ClipDefaults = toMap(config.DefaultClip())
+	p.Layers = []LayerJSON{}
+	for _, l := range c.Layers {
+		lj := LayerJSON{ID: l.ID, Name: l.Name, Clips: []map[string]any{}}
+		for _, cl := range l.Clips {
+			lj.Clips = append(lj.Clips, toMap(cl))
+		}
+		p.Layers = append(p.Layers, lj)
+	}
 	p.Texts = []map[string]any{}
 	for _, t := range c.Texts {
 		p.Texts = append(p.Texts, toMap(t))
@@ -225,6 +243,18 @@ func ProjectFromJSON(p *ProjectJSON, dir string) (*config.ProjectConfig, error) 
 			return nil, fmt.Errorf("text %d: %w", i+1, err)
 		}
 		c.Texts = append(c.Texts, t)
+	}
+	for i, lj := range p.Layers {
+		l := config.LayerConfig{ID: lj.ID, Name: lj.Name}
+		for j, m := range lj.Clips {
+			var cl config.ClipConfig
+			if err := fromMap(m, &cl); err != nil {
+				return nil, fmt.Errorf("layer %d, clip %d: %w", i+1, j+1, err)
+			}
+			l.Clips = append(l.Clips, cl)
+		}
+		l.SortClips()
+		c.Layers = append(c.Layers, l)
 	}
 	if err := c.SyncFromTimeline(); err != nil {
 		return nil, err

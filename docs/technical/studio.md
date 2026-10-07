@@ -789,6 +789,19 @@ on the server or reset on reload (zoom fits the song again).
   eat them; right-click opens `.ctxmenu` (`{ease}` / `{remove}`). App `onKeys(target, fn)` with
   target `{track, seg}` or `{text}`.
 
+## Overlay layers (`layers.js`)
+
+`proj.layers` (bottom to top, `{id, name, clips}`; `clipDefaults` from the server for new clips).
+The UI shows them front first (`frontFirst`): left panel entries (`.lyrent`, mouse drag →
+`moveLayer(from, to)` in front-first positions, drop line), timeline lanes (`layerRow`: clip blocks
+dragged like texts via `onMoveClip`, keys with target `{layer, clip}`), hidden key `layer:<id>`.
+Selection `{kind: 'layer', id, clip}`. `LayerInspector`: layer name, clip tabs, times, `Form(CLIP_FIELDS)`
+with keyframes (the `section` field type groups fields of the same object). `ClipHandles` over the
+preview: the clip's box from its natural size (`useNatural`: an `<img>` / `<video>` of
+`/api/media`), fit and scale (`clipSize`, as the engine), dragged locally and written on release
+with `setClipProps` (a key at the cursor for animated properties). `z_index` fields (`zindex` type)
+list the layers through `ctx.layerChoices`.
+
 ## Context menus (`menu.js`)
 
 `openMenu(e, items)` (items `{label, icon, onClick, danger, disabled, checked, hint}`, `'-'`,

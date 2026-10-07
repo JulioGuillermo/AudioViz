@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"audioviz/internal/effects"
 	"audioviz/internal/encode"
 	"audioviz/internal/gpu"
+	"audioviz/internal/lyrics"
 	"audioviz/internal/mux"
 	"audioviz/internal/visualizer"
 
@@ -63,6 +65,18 @@ type Renderer struct {
 	verB    []string
 	lyrVer  []int
 	textCap int
+	// layerVer: per slot, the overlay images in its buffer (their Ver, in order)
+	layerVer [][]string
+}
+
+// layerCap: room for the overlay images, with margin so that adding clips while editing does
+// not recreate the renderer every time (0 when the project has no layers)
+func layerCap(s *Session) int {
+	need := s.LayerPixels()
+	if need == 0 {
+		return 0
+	}
+	return max(need+need/2, 2*s.W*s.H)
 }
 
 // NewRenderer creates the render backend ("auto", "gpu" or "cpu") for the session's resolution
@@ -74,7 +88,7 @@ func NewRenderer(s *Session, mode string, slots int) (*Renderer, error) {
 		if s.lyr != nil {
 			textCap = max(textCap, len(s.lyr.Atlas.Pix)*2)
 		}
-		g, err := gpu.New(s.W, s.H, slots, s.Cfg.Output.GPUDevice, textCap, effects.FluidBufWords(s.W, s.H))
+		g, err := gpu.New(s.W, s.H, slots, s.Cfg.Output.GPUDevice, textCap, effects.FluidBufWords(s.W, s.H), layerCap(s))
 		if err != nil {
 			if mode == "gpu" {
 				return nil, fmt.Errorf("Vulkan GPU not available: %w", err)
@@ -83,6 +97,7 @@ func NewRenderer(s *Session, mode string, slots int) (*Renderer, error) {
 		} else {
 			r.G, r.textCap = g, textCap
 			r.verA, r.verB, r.lyrVer = make([]string, slots), make([]string, slots), make([]int, slots)
+			r.layerVer = make([][]string, slots)
 			s.Logf("🖥️  GPU rendering (Vulkan): %s", g.DeviceName)
 		}
 	}
@@ -101,7 +116,7 @@ func (r *Renderer) Fits() bool {
 	if r.s.lyr != nil {
 		need = len(r.s.lyr.Atlas.Pix)
 	}
-	return r.G.Width == r.s.W && r.G.Height == r.s.H && need <= r.textCap
+	return r.G.Width == r.s.W && r.G.Height == r.s.H && need <= r.textCap && r.s.LayerPixels() <= r.G.LayerWords
 }
 
 func (r *Renderer) Close() {
@@ -129,7 +144,67 @@ func (r *Renderer) submit(slot int, fs *FrameState, writeRGBA bool) error {
 	p := g.Params(slot)
 	r.s.fillParams(p, fs, g.PadW, g.PadH, writeRGBA)
 	fluid := r.fluidData(slot, p, fs.Trans.Fluid)
+	r.layerData(slot, p, fs)
 	return g.Submit(slot, fluid)
+}
+
+// layerData uploads the images of the overlay clips (only when they changed for this slot) and
+// fills their parameters. Clips that do not fit in the buffer are left out.
+func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) {
+	g := r.G
+	n := 0
+	buf := g.LayerData(slot)
+	var vers []string
+	off := 0
+	for i := range fs.Layers {
+		l := &fs.Layers[i]
+		px := l.Img.Bounds().Dx() * l.Img.Bounds().Dy()
+		if n == gpu.MaxLayers || off+px > g.LayerWords {
+			break
+		}
+		vers = append(vers, l.Ver)
+		lp := &p.Layers[n]
+		flags := int32(l.Blend & 15)
+		if l.Key {
+			flags |= 1 << 4
+		}
+		w := &l.W
+		if w.GlitchBG {
+			flags |= 1 << 5
+		} else if len(w.Glitch) > 0 {
+			flags |= 2<<5 | int32(min(len(w.Glitch), 8))<<8
+			for j, gs := range w.Glitch {
+				if j == 8 {
+					break
+				}
+				lp.Glitch[j] = [4]float32{float32(gs.Y0), float32(gs.Y1), float32(gs.ShiftX)}
+			}
+		}
+		lp.Info = [4]int32{int32(off), int32(l.Img.Bounds().Dx()), int32(l.Img.Bounds().Dy()), flags}
+		lp.Xf = [4]float32{float32(l.CX), float32(l.CY), float32(l.SX), float32(l.SY)}
+		lp.Xf2 = [4]float32{float32(l.Rot), float32(l.Opacity), float32(l.Blur), float32(l.Hue)}
+		lp.Adj = [4]float32{float32(l.Brightness), float32(l.Contrast), float32(l.Saturate)}
+		lp.Key = [4]float32{float32(l.KeyColor[0]), float32(l.KeyColor[1]), float32(l.KeyColor[2]), float32(l.KeyTol)}
+		lp.Key2 = [4]float32{float32(l.KeySoft)}
+		lp.Warp0 = [4]float32{float32(w.Zoom), float32(w.RippleAmp), float32(w.RippleFreq), float32(w.RippleTm)}
+		lp.Warp1 = [4]float32{float32(w.ShakeX), float32(w.ShakeY), float32(w.Chroma), float32(w.ChromaMode)}
+		lp.Warp2 = [4]float32{float32(w.FlashCF), float32(w.FlashBright)}
+		off += px
+		n++
+	}
+	if !slices.Equal(vers, r.layerVer[slot]) {
+		off = 0
+		for i := 0; i < n; i++ {
+			pix := fs.Layers[i].Img.Pix
+			copy(buf[off*4:], pix)
+			off += len(pix) / 4
+		}
+		r.layerVer[slot] = vers
+	}
+	// Stages beyond the clips drawn (n) go on top: render.comp clamps them to n
+	p.LayerN = [4]int32{int32(n)}
+	p.ZIdx[0], p.ZIdx[1] = int32(fs.ZParts), int32(fs.ZViz)
+	p.FxFlash = [4]float32{float32(contrastFactor(fs.FX.contrast)), float32(fs.FX.bright)}
 }
 
 // fluidData uploads the fluid / liquid frame (particles, bins, coarse level) for the fluid pass;
@@ -448,6 +523,25 @@ func Execute(cfg *config.ProjectConfig, opts RenderOptions) error {
 
 // ---------------------------------------------------------------- CPU
 
+// drawVizCPU draws the visualizer onto the frame (faded with VizAlpha)
+func (s *Session) drawVizCPU(frame *image.RGBA, dc *gg.Context, fs *FrameState) {
+	viz, err := visualizer.NewVisualizer(&fs.Viz, s.W, s.H)
+	if err != nil || fs.VizAlpha <= 0 {
+		return
+	}
+	if fs.VizAlpha >= 0.999 {
+		viz.Draw(dc, fs.VizFeat)
+		return
+	}
+	layer := image.NewRGBA(frame.Bounds())
+	copy(layer.Pix, frame.Pix)
+	viz.Draw(gg.NewContextForRGBA(layer), fs.VizFeat)
+	a := fs.VizAlpha
+	for i := range frame.Pix {
+		frame.Pix[i] = uint8(float64(frame.Pix[i])*(1-a) + float64(layer.Pix[i])*a + 0.5)
+	}
+}
+
 func (s *Session) cpuFrame(fs *FrameState) *image.RGBA {
 	frame := image.NewRGBA(image.Rect(0, 0, s.W, s.H))
 	if fs.Trans.Mode == 0 && fs.LayerA == effects.Identity {
@@ -474,26 +568,34 @@ func (s *Session) cpuFrame(fs *FrameState) *image.RGBA {
 	}
 	effects.ApplyColorAndContrast(frame, fx.bright, fx.contrast, fs.BG.Darken, fs.BG.Opacity, fs.BG.Vignette)
 
-	dc := gg.NewContextForRGBA(frame)
-	for _, ps := range fs.Parts {
-		ps.Draw(dc)
+	// Overlay clips in their order; the particles, the visualizer and the texts go at their stage
+	var items []lyrics.Item
+	var styles []lyrics.Style
+	if fs.Lyr != nil {
+		items, styles = fs.Lyr.Frame(fs.T, fs.Feat, &fs.LyrSt)
 	}
-	if viz, err := visualizer.NewVisualizer(&fs.Viz, s.W, s.H); err == nil && fs.VizAlpha > 0 {
-		if fs.VizAlpha >= 0.999 {
-			viz.Draw(dc, fs.VizFeat)
-		} else {
-			layer := image.NewRGBA(frame.Bounds())
-			copy(layer.Pix, frame.Pix)
-			viz.Draw(gg.NewContextForRGBA(layer), fs.VizFeat)
-			a := fs.VizAlpha
-			for i := range frame.Pix {
-				frame.Pix[i] = uint8(float64(frame.Pix[i])*(1-a) + float64(layer.Pix[i])*a + 0.5)
+	dc := gg.NewContextForRGBA(frame)
+	for st := 0; st <= len(fs.Layers); st++ {
+		if st > 0 {
+			effects.DrawLayer(frame, &fs.Layers[st-1])
+		}
+		if fs.ZParts == st {
+			for _, ps := range fs.Parts {
+				ps.Draw(dc)
 			}
 		}
-	}
-	if fs.Lyr != nil {
-		items, styles := fs.Lyr.Frame(fs.T, fs.Feat, &fs.LyrSt)
-		fs.Lyr.DrawCPU(frame, items, styles)
+		if fs.ZViz == st {
+			s.drawVizCPU(frame, dc, fs)
+		}
+		var its []lyrics.Item
+		for _, it := range items {
+			if fs.Stage(styles[it.Style].Z) == st {
+				its = append(its, it)
+			}
+		}
+		if len(its) > 0 {
+			fs.Lyr.DrawCPU(frame, its, styles)
+		}
 	}
 	return frame
 }
@@ -731,6 +833,7 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 
 	// Lyrics
 	p.TextInfo = [4]int32{}
+	p.ZIdx[2] = 0 // stages with texts (mask)
 	if fs.Lyr != nil {
 		items, styles := fs.Lyr.Frame(fs.T, fs.Feat, &fs.LyrSt)
 		n := min(len(items), gpu.MaxTextItems)
@@ -758,7 +861,10 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 				g := st.Grad[i]
 				ts.Grad[i] = [4]float32{float32(g.C[0]), float32(g.C[1]), float32(g.C[2]), float32(g.Off)}
 			}
-			ts.GradN = [4]int32{int32(ng)}
+			// GradN[1]: the stage among the overlay clips of this lyrics / text style
+			stg := min(fs.Stage(st.Z), gpu.MaxLayers)
+			ts.GradN = [4]int32{int32(ng), int32(stg)}
+			p.ZIdx[2] |= 1 << stg
 			ts.Info = [4]float32{float32(st.OutlineW), float32(st.GlowR), float32(st.GlowI), float32(ch)}
 			ts.Color, ts.Upcoming, ts.Outline, ts.GlowC = f4(st.Color), f4(st.Upcoming), f4(st.Outline), f4(st.GlowC)
 			ts.Shadow = [4]float32{float32(st.ShadowDX), float32(st.ShadowDY), float32(st.ShadowOp), float32(st.Blur)}

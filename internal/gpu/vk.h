@@ -19,7 +19,8 @@ enum {
     VKR_BUF_BG2 = 6,
     VKR_BUF_FLUID = 7, // fluid transition data (particles, bins, coarse level)
     VKR_BUF_FIMG = 8,  // fluid pass output, read by the main pass
-    VKR_NUM_BUFS = 9,
+    VKR_BUF_LAYERS = 9, // images of the overlay clips on screen (RGBA8, premultiplied)
+    VKR_NUM_BUFS = 10,
 };
 
 typedef struct {
@@ -30,6 +31,7 @@ typedef struct {
     size_t params_size;
     size_t text_size;    // text atlas size in bytes (SDF)
     size_t fluid_size;   // fluid data in bytes
+    size_t layers_size;  // overlay images in bytes
     const uint32_t *spirv;
     size_t spirv_size;
     const uint32_t *spirv_fluid; // fluid pass (same descriptor layout)

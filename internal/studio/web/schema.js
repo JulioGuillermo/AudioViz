@@ -207,6 +207,12 @@ export const OUTPUT_FIELDS = [
 
 export const trackById = Object.fromEntries(TRACKS.map((t) => [t.id, t]));
 
+// Drawing order among the overlay layers (config z_index): for the visualizer, the particles,
+// the lyrics and the texts
+const ZFIELD = { key: 'z_index', label: 'Drawing order', type: 'zindex', anim: false,
+  help: 'Where it is drawn among the overlay layers' };
+for (const id of ['visualizer', 'particles', 'lyrics']) trackById[id].fields.splice(1, 0, ZFIELD);
+
 // Keyframes (keys.js): numbers, colors and switches can be animated, except the ones that set
 // up something built once (the lyrics layout, the number of bars or particles...)
 const STILL = {
@@ -240,4 +246,56 @@ export const TEXT_FIELDS = [
     if (f.key === 'align') return { ...f, showIf: undefined, help: 'Left / right: the text starts / ends at Position X' };
     return f;
   }),
+];
+
+// Overlay layers: the clip inspector (config.ClipConfig). Every number and color can have keys.
+const EFFECT_MODES = [['inherit', 'Like the background'], ['own', 'Own'], ['off', 'Off']];
+const layerEffect = (key, label) => ({ key, label, type: 'group', fields: [
+  { key: 'mode', label: 'Mode', type: 'enum', def: 'inherit', options: EFFECT_MODES, anim: false },
+  { key: 'own', label: 'Own settings', type: 'group', showIf: (c) => c.mode === 'own',
+    fields: trackById[key].fields },
+] });
+export const BLENDS = [['normal', 'Normal'], ['add', 'Add (light)'], ['multiply', 'Multiply (darken)'], ['screen', 'Screen'],
+  ['overlay', 'Overlay'], ['lighten', 'Lighten'], ['darken', 'Darken']];
+export const CLIP_FIELDS = [
+  { key: 'path', label: 'File', type: 'file', kind: 'bg', help: 'Image (PNG / WebP with transparency), GIF or video' },
+  { key: 'fit', label: 'Base size', type: 'enum', def: 'contain', anim: false, options: [['contain', 'Inside the frame'],
+    ['cover', 'Covering the frame'], ['stretch', 'Exactly the frame'], ['none', 'Its own pixels']] },
+  { key: 'x', label: 'Position X', type: 'num', min: -0.5, max: 1.5, step: 0.001, help: 'Or drag it on the preview' },
+  { key: 'y', label: 'Position Y', type: 'num', min: -0.5, max: 1.5, step: 0.001 },
+  { key: 'scale', label: 'Scale', type: 'num', min: 0.01, max: 4, step: 0.005, help: 'Or drag a corner on the preview' },
+  { key: 'rotation', label: 'Rotation (°)', type: 'num', min: -360, max: 360, step: 0.5, help: 'Or drag the round handle on the preview' },
+  { key: 'flip_x', label: 'Flip horizontally', type: 'bool' },
+  { key: 'flip_y', label: 'Flip vertically', type: 'bool' },
+  { key: 'opacity', label: 'Opacity', type: 'num', min: 0, max: 1, step: 0.01 },
+  { key: 'fade_in', label: 'Fade in (s)', type: 'num', min: 0, max: 10, step: 0.05, anim: false },
+  { key: 'fade_out', label: 'Fade out (s)', type: 'num', min: 0, max: 10, step: 0.05, anim: false },
+  { key: 'blend', label: 'Blend', type: 'enum', def: 'normal', options: BLENDS },
+  { key: 'filters', label: 'Filters', type: 'section', fields: [
+    { key: 'brightness', label: 'Brightness', type: 'num', min: -1, max: 1, step: 0.01 },
+    { key: 'contrast', label: 'Contrast', type: 'num', min: -1, max: 1, step: 0.01 },
+    { key: 'saturation', label: 'Saturation', type: 'num', min: -1, max: 1, step: 0.01, help: '-1 = black and white' },
+    { key: 'hue', label: 'Hue (°)', type: 'num', min: -180, max: 180, step: 1 },
+    { key: 'blur', label: 'Blur (px)', type: 'num', min: 0, max: 40, step: 0.5 },
+  ] },
+  { key: 'chroma', label: 'Chroma key (green screen)', type: 'group', fields: [
+    { key: 'enabled', label: 'Enabled', type: 'bool' },
+    { key: 'color', label: 'Key color', type: 'color' },
+    { key: 'tolerance', label: 'Tolerance', type: 'num', min: 0, max: 1, step: 0.01 },
+    { key: 'softness', label: 'Soft edge', type: 'num', min: 0, max: 1, step: 0.01 },
+  ] },
+  { key: 'react', label: 'Audio reaction', type: 'group', fields: [
+    react('bass'),
+    { key: 'opacity', label: 'Opacity pulse', type: 'num', min: 0, max: 1, step: 0.01, help: '1 = only visible when the band sounds' },
+    { key: 'scale', label: 'Scale pulse', type: 'num', min: 0, max: 1, step: 0.01 },
+  ] },
+  { key: 'video', label: 'Video / GIF', type: 'group', fields: [
+    { key: 'trim', label: 'Start at (s)', type: 'num', min: 0, max: 600, step: 0.05, anim: false, help: 'Seconds of the file skipped' },
+    { key: 'speed', label: 'Speed', type: 'num', min: 0.1, max: 4, step: 0.05, anim: false },
+    { key: 'loop', label: 'Loop', type: 'bool', anim: false },
+  ] },
+  { key: 'effects', label: 'Background effects on this clip', type: 'group', fields: [
+    layerEffect('bass_zoom', 'Zoom'), layerEffect('shake', 'Camera shake'), layerEffect('chromatic_aberration', 'Chromatic aberration'),
+    layerEffect('ripple', 'Ripple'), layerEffect('glitch', 'Glitch'), layerEffect('color_flash', 'Color flash'),
+  ] },
 ];

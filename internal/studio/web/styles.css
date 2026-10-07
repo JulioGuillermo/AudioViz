@@ -486,3 +486,19 @@ a.btn { text-decoration: none; }
 .ctxmenu .mk { font-size: 11px; color: var(--text-3); }
 .ease-ic { display: block; }
 .ctxmenu .sep { height: 1px; background: var(--border); margin: 4px 2px; }
+
+/* Overlay layers: entries (drag to reorder), clips, handles on the preview */
+.trk.lyrent { cursor: grab; }
+.trk.lyrent.dragging { opacity: .5; }
+.trk .dropline { position: absolute; left: 4px; right: 4px; height: 2px; background: rgb(var(--zc)); border-radius: 1px; pointer-events: none; }
+.trk .dropline.top { top: -1px; }
+.trk .dropline.bottom { bottom: -1px; }
+.addlayer { margin: 4px 0 2px 6px; }
+.seg.clip { background: rgba(var(--zc, 176, 120, 255), .16); border-color: rgba(176, 120, 255, .45); }
+.seg.clip.on { background: #2a2333; border-color: var(--accent); }
+.clipbox { position: absolute; border: 1px dashed rgba(255, 255, 255, .85); box-shadow: 0 0 0 1px rgba(0, 0, 0, .55); pointer-events: none; z-index: 3; }
+.clipbox.drag { border-style: solid; }
+.clipbox .ch-body { position: absolute; inset: 0; cursor: move; pointer-events: auto; }
+.clipbox .ch-corner { position: absolute; width: 10px; height: 10px; background: #fff; border: 1px solid rgba(0, 0, 0, .6); border-radius: 2px; cursor: nwse-resize; pointer-events: auto; }
+.clipbox .ch-rot { position: absolute; left: 50%; top: -26px; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; background: var(--accent); border: 1px solid rgba(0, 0, 0, .6); cursor: grab; pointer-events: auto; }
+.clipbox .ch-rot::after { content: ''; position: absolute; left: 5px; top: 12px; width: 1px; height: 14px; background: rgba(255, 255, 255, .7); }

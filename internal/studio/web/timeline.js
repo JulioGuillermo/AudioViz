@@ -149,7 +149,7 @@ function Playhead({ timeStore, pps, scroller, follow }) {
 export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, sel, lineSel, onSeek, onSelect, onMoveSeg,
   onAddSeg, onSelectLine, onLyrics, onLyricsCommit, onMarker, height, setHeight, wordEdit,
   texts = [], onSelectText, onMoveText, onAddText, view = { hidden: [], collapsed: [] }, onToggleZone,
-  kfFocus = null, onKeys, onContext }) {
+  kfFocus = null, onKeys, onContext, layers = [], onSelectLayer, onMoveClip, onAddClip, onAddLayer }) {
   const scroller = useRef();
   const namesRef = useRef();
   const [pps, setPps] = useState(null); // pixels per second
@@ -474,6 +474,49 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
       </div>${x.keys && keyMarks(x.keys, x.start, x.end, { text: i }, on, 3 + textRows.rowOf[i] * H.textRow + H.textRow / 2)}`;
     }),
   };
+  // --- overlay layers: one lane per layer (front first), its clips as blocks: drag to move,
+  // edges change start / end
+  const clipDrag = (e, id, j, edge) => {
+    e.stopPropagation();
+    onSelectLayer(id, j);
+    if (e.button !== 0) return;
+    const c = layers.find((x) => x.l.id === id).l.clips[j];
+    const s0 = c.start, e0 = c.end;
+    drag(e, (dt, ev) => {
+      let st = s0, en = e0;
+      if (edge === 'start') st = Math.max(0, Math.min(e0 - 0.1, snap(s0 + dt, ev)));
+      else if (edge === 'end') en = Math.min(duration, Math.max(s0 + 0.1, snap(e0 + dt, ev)));
+      else {
+        st = Math.max(0, Math.min(duration - (e0 - s0), snap(s0 + dt, ev)));
+        en = st + (e0 - s0);
+      }
+      onMoveClip(id, j, st, en, false);
+    }, (moved) => moved && onMoveClip(id, j, null, null, true));
+  };
+  const layerRow = ({ l, i }) => {
+    const on = sel.kind === 'layer' && sel.id === l.id;
+    return {
+      key: 'layer-' + l.id, h: H.track, on, sel: on,
+      name: html`<${Icon} name="layers" size=${14} /> ${l.name || t('Layer {n}', { n: i + 1 })}`,
+      onName: () => onSelectLayer(l.id), onNameCtx: (e) => onContext(e, { kind: 'layer', id: l.id }),
+      title: t('Double-click the lane: new clip at that point'),
+      onDown: seekDrag, onDbl: (e) => onAddClip(l.id, snap(xToT(e.clientX), e)),
+      onCtx: (e) => onContext(e, { kind: 'layerlane', id: l.id, at: snap(xToT(e.clientX), e) }),
+      lane: l.clips.map((c, j) => {
+        const son = on && sel.clip === j;
+        const name = c.label || (c.path || '').split(/[\\/]/).pop() || t('Clip {n}', { n: j + 1 });
+        return html`<div class=${'seg clip' + (son ? ' on' : '')} key=${'c' + j}
+            style=${{ left: c.start * effPps + 'px', width: Math.max(4, (c.end - c.start) * effPps - 1) + 'px' }}
+            title=${name + ' · ' + fmtTime(c.start) + ' → ' + fmtTime(c.end)}
+            onMouseDown=${(e) => clipDrag(e, l.id, j)} onDblClick=${(e) => e.stopPropagation()}
+            onContextMenu=${(e) => onContext(e, { kind: 'clip', id: l.id, clip: j, at: snap(xToT(e.clientX), e) })}>
+          <div class="grip" onMouseDown=${(e) => clipDrag(e, l.id, j, 'start')}></div>
+          <span class="t">${name}</span>
+          <div class="grip end" onMouseDown=${(e) => clipDrag(e, l.id, j, 'end')}></div>
+        </div>${c.keys && keyMarks(c.keys, c.start, c.end, { layer: l.id, clip: j }, son)}`;
+      }),
+    };
+  };
   const byId = Object.fromEntries(TRACKS.map((tr) => [tr.id, tr]));
   const zoneLanes = {
     main: [
@@ -482,10 +525,12 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
       !hidden.has('lyrics') && trackRow(byId.lyrics),
       !hidden.has('texts') && textsRow,
     ],
-    layers: [{ key: 'layers-empty', h: H.track, cls: 'empty', name: '', lane: t('Overlay layers and emitters will go here') }],
+    layers: layers.length ? layers.filter(({ l }) => !hidden.has('layer:' + l.id)).map(layerRow)
+      : [{ key: 'layers-empty', h: H.track, cls: 'empty', name: '', onDbl: (e) => onAddLayer(snap(xToT(e.clientX), e)),
+        lane: t('No layers yet: “+ Layer” in the left panel (or double-click here) adds one with an image, GIF or video') }],
     effects: TRACKS.filter((tr) => zoneOf(tr.id) === 'effects' && !hidden.has(tr.id)).map(trackRow),
   };
-  const zoneEntries = { main: ['background', 'lyrics', 'texts'], layers: [], effects: TRACKS.filter((tr) => zoneOf(tr.id) === 'effects').map((tr) => tr.id) };
+  const zoneEntries = { main: ['background', 'lyrics', 'texts'], layers: layers.map(({ l }) => 'layer:' + l.id), effects: TRACKS.filter((tr) => zoneOf(tr.id) === 'effects').map((tr) => tr.id) };
   const rows = [
     { key: 'ruler', h: H.ruler, cls: 'ruler sticky', top: 0, name: '', onDown: rulerDrag,
       onCtx: (e) => onContext(e, { kind: 'time', at: snap(xToT(e.clientX), e) }), laneTitle: t('Drag to scroll the timeline · click to move the cursor'),

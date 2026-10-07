@@ -18,6 +18,7 @@ type GradStop struct {
 
 // Style holds the lyrics colors and parameters for a given frame (audio reaction already applied)
 type Style struct {
+	Z                                  *int // z_index of the lyrics / text among the overlay layers (nil = above all)
 	OutlineW, GlowR, GlowI, Chroma     float64
 	Color, Upcoming, Outline, GlowC    [4]float64
 	ShadowDX, ShadowDY, ShadowOp, Blur float64

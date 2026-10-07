@@ -7,7 +7,8 @@ and lossless FLAC audio inside an MP4.
 ## Getting started
 - **[AudioViz Studio](studio.md)**: graphical interface with preview and timeline (`audioviz studio`)
 - **[Generating images](images.md)**: backgrounds from a prompt, or editing images, with AI inside the binary (Z-Image, FLUX.2 klein, Qwen Image)
-- [Timeline in the YAML](timeline.md): change effects, background, visualizer or lyrics in each section
+- [Timeline in the YAML](timeline.md): change effects, background, visualizer or lyrics in each section; keyframes
+- **[Overlay layers](layers.md)**: images, GIFs and videos over the background, with blend modes, chroma key, filters and their own effects
 - [Command line](cli.md) — rendering, previews, single frames, GPU selection
 - [Building](build.md)
 - **[Technical documentation](technical/README.md)**: how everything works inside — architecture, GPU renderer, audio analysis, lyrics generation and alignment, studio internals, build, portability

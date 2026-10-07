@@ -12,6 +12,8 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 // Output of the fluid pass (fluid.comp), image 2 for texel()
 layout(std430, set = 0, binding = 8) readonly buffer FluidImg { uint fimg[]; };
+// Images of the overlay clips (premultiplied RGBA8), at P.layers[i].info.x
+layout(std430, set = 0, binding = 9) readonly buffer Layers { uint lay[]; };
 #define FLUID_IMG_READ
 #include "common.glsl"
 
@@ -424,11 +426,13 @@ vec3 textGradient(int s, float t) {
 
 // Composites the texts over col at point p. ch = -1, 0, 1: channel pass for chromatic
 // aberration (each item's point is shifted by ch times its style's chroma).
-vec3 drawText(vec3 col, vec2 p0, float ch) {
+// Texts of one stage among the overlay clips (stage < 0: all)
+vec3 drawText(vec3 col, vec2 p0, float ch, int stage) {
     int n = min(sTextN, TILE_TEXT);
     for (int ti = 0; ti < n; ti++) {
         int i = sText[ti];
         int s = int(P.tC[i].z);
+        if (stage >= 0 && min(P.ts[s].gradN.y, P.layerN.x) != stage) continue;
         vec4 inf = P.ts[s].info;
         float ow = inf.x;
         float gr = max(inf.y, 0.5);
@@ -475,11 +479,127 @@ vec3 drawText(vec3 col, vec2 p0, float ch) {
     return col;
 }
 
-vec3 shade(vec2 q) {
-    vec2 p = q + 0.5;
-    vec3 col = background(q);
+// ---- Overlay clips (same math as internal/effects/layers.go)
 
-    // Particles (soft glow + core), only those in this tile
+vec4 layerTexel(int i, ivec2 c) {
+    ivec4 inf = P.layers[i].info;
+    if (c.x < 0 || c.y < 0 || c.x >= inf.y || c.y >= inf.z) return vec4(0.0);
+    return unpackUnorm4x8(lay[inf.x + c.y * inf.y + c.x]);
+}
+
+vec4 layerBilinear(int i, vec2 u) {
+    u -= 0.5;
+    ivec2 i0 = ivec2(floor(u));
+    vec2 f = u - vec2(i0);
+    return mix(mix(layerTexel(i, i0), layerTexel(i, i0 + ivec2(1, 0)), f.x),
+               mix(layerTexel(i, i0 + ivec2(0, 1)), layerTexel(i, i0 + ivec2(1, 1)), f.x), f.y);
+}
+
+// Screen point (pixel center) → position in the clip's image
+vec2 layerUV(int i, vec2 s) {
+    LayerP L = P.layers[i];
+    vec2 d = s - L.xf.xy;
+    float r = L.xf2.x;
+    if (r != 0.0) {
+        float cs = cos(-r), sn = sin(-r);
+        d = vec2(d.x * cs - d.y * sn, d.x * sn + d.y * cs);
+    }
+    return d / L.xf.zw + vec2(L.info.yz) * 0.5;
+}
+
+vec4 layerSample(int i, vec2 q) {
+    float b = P.layers[i].xf2.z;
+    if (b <= 0.5) return layerBilinear(i, layerUV(i, q + 0.5));
+    vec4 acc = vec4(0.0);
+    float tw = 0.0;
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            float w = 1.0 / float(1 + x * x + y * y);
+            acc += layerBilinear(i, layerUV(i, q + 0.5 + vec2(x, y) * b)) * w;
+            tw += w;
+        }
+    }
+    return acc / tw;
+}
+
+// The clip's background effects: glitch bands, ripple, zoom, shake
+vec2 layerWarp(int i, vec2 q) {
+    LayerP L = P.layers[i];
+    int gm = (L.info.w >> 5) & 3;
+    if (gm == 1) {
+        for (int g = 0; g < P.flags.w; g++) {
+            vec4 s = P.glitch[g];
+            if (q.y >= s.x && q.y < s.y) { float nx = q.x - s.z; if (nx >= 0.0 && nx < float(W)) q.x = nx; }
+        }
+    } else if (gm == 2) {
+        int ng = (L.info.w >> 8) & 15;
+        for (int g = 0; g < ng; g++) {
+            vec4 s = L.glitch[g];
+            if (q.y >= s.x && q.y < s.y) { float nx = q.x - s.z; if (nx >= 0.0 && nx < float(W)) q.x = nx; }
+        }
+    }
+    if (L.warp0.y > 0.2) {
+        float ph = q.y * L.warp0.z + L.warp0.w;
+        q += vec2(sin(ph), cos(ph)) * L.warp0.y;
+        q = clamp(q, vec2(0.0), vec2(float(W - 1), float(H - 1)));
+    }
+    vec2 c = vec2(float(W), float(H)) * 0.5;
+    if (L.warp0.x > 1.001) q = c + (q - c) / L.warp0.x;
+    return q - L.warp1.xy;
+}
+
+vec3 hueRotate(vec3 c, float a) {
+    float cs = cos(a), sn = sin(a);
+    const float k = 1.0 / 3.0;
+    float s3 = sqrt(k);
+    float r0 = cs + (1.0 - cs) * k, r1 = k * (1.0 - cs) - s3 * sn, r2 = k * (1.0 - cs) + s3 * sn;
+    return vec3(dot(c, vec3(r0, r1, r2)), dot(c, vec3(r2, r0, r1)), dot(c, vec3(r1, r2, r0)));
+}
+
+vec3 blendColor(int m, vec3 d, vec3 s) {
+    if (m == 1) return min(d + s, 1.0);
+    if (m == 2) return d * s;
+    if (m == 3) return 1.0 - (1.0 - d) * (1.0 - s);
+    if (m == 4) return mix(2.0 * d * s, 1.0 - 2.0 * (1.0 - d) * (1.0 - s), step(0.5, d));
+    if (m == 5) return max(d, s);
+    if (m == 6) return min(d, s);
+    return s;
+}
+
+vec3 drawLayer(vec3 col, int i, vec2 q) {
+    LayerP L = P.layers[i];
+    vec4 s = layerSample(i, layerWarp(i, q));
+    float shift = L.warp1.z;
+    int cm = int(L.warp1.w);
+    if (cm != 0 && shift > 0.5) {
+        vec2 off;
+        if (cm == 2) {
+            vec2 c = vec2(float(W), float(H)) * 0.5;
+            off = (q - c) / length(c) * shift;
+        } else {
+            off = vec2(-round(shift), 0.0);
+        }
+        if (inside(q + off)) s.r = layerSample(i, layerWarp(i, q + off)).r;
+        if (inside(q - off)) s.b = layerSample(i, layerWarp(i, q - off)).b;
+    }
+    if (s.a <= 1e-4) return col;
+    vec3 c = s.rgb / s.a;
+    float key = 1.0;
+    if ((L.info.w & 16) != 0) key = smoothstep(L.key.w, L.key.w + L.key2.x + 1e-4, distance(c, L.key.rgb));
+    c = (c - 0.5) * (1.0 + L.adj.y) + 0.5 + L.adj.x;
+    if (L.adj.z != 0.0) {
+        float g = dot(c, vec3(0.2126, 0.7152, 0.0722));
+        c = g + (c - g) * (1.0 + L.adj.z);
+    }
+    if (L.xf2.w != 0.0) c = hueRotate(c, L.xf2.w);
+    c = L.warp2.x * (c - 0.5) + 0.5 + L.warp2.y;
+    float a = clamp(s.a * key * L.xf2.y, 0.0, 1.0);
+    return mix(col, blendColor(L.info.w & 15, col, clamp(c, 0.0, 1.0)), a);
+}
+
+// Fixed elements of the frame
+
+vec3 drawParticles(vec3 col, vec2 p) {
     int np = min(sPartN, TILE_PARTS);
     for (int pi = 0; pi < np; pi++) {
         int i = sPart[pi];
@@ -492,36 +612,56 @@ vec3 shade(vec2 q) {
         }
         if (dist < pt.z + 1.0) col = over(col, pc, clamp(pt.z - dist + 0.5, 0.0, 1.0) * pt.w);
     }
+    return col;
+}
 
+vec3 drawViz(vec3 col, vec2 p) {
     int vt = P.flags.x;
-    if (vt != 0) {
-        gA = 0.0; cA = 0.0; gC = vec3(0.0); cC = vec3(0.0);
-        if (vt == 1) {
-            if (P.flags3.w != 0) {
-                // Base ring of the circular visualizer
-                float rd = abs(length(p - P.viz0.xy) - (P.viz0.z - 2.0)) - 1.0;
-                col = over(col, gradientAt(0.5), clamp(0.5 - rd, 0.0, 1.0) * P.viz1.w * P.bgMix.y);
-            }
-            circularBars(p);
-        } else if (vt == 2) {
-            horizontalBars(p);
-        } else if (vt == 3) {
-            verticalBars(p);
-        } else if (vt == 4) {
-            waveLines(p);
+    if (vt == 0) return col;
+    gA = 0.0; cA = 0.0; gC = vec3(0.0); cC = vec3(0.0);
+    if (vt == 1) {
+        if (P.flags3.w != 0) {
+            // Base ring of the circular visualizer
+            float rd = abs(length(p - P.viz0.xy) - (P.viz0.z - 2.0)) - 1.0;
+            col = over(col, gradientAt(0.5), clamp(0.5 - rd, 0.0, 1.0) * P.viz1.w * P.bgMix.y);
         }
-        col = over(col, gC, gA);
-        col = over(col, cC, cA);
+        circularBars(p);
+    } else if (vt == 2) {
+        horizontalBars(p);
+    } else if (vt == 3) {
+        verticalBars(p);
+    } else if (vt == 4) {
+        waveLines(p);
     }
+    col = over(col, gC, gA);
+    return over(col, cC, cA);
+}
 
-    if (P.textInfo.x > 0) {
-        if (P.textInfo.z != 0) {
-            // Text chromatic aberration: each channel composited with an offset
-            vec3 base = col;
-            col = vec3(drawText(base, p, -1.0).r, drawText(base, p, 0.0).g, drawText(base, p, 1.0).b);
-        } else {
-            col = drawText(col, p, 0.0);
-        }
+vec3 drawTexts(vec3 col, vec2 p, int stage) {
+    if (P.textInfo.x <= 0) return col;
+    if (P.textInfo.z != 0) {
+        // Text chromatic aberration: each channel composited with an offset
+        vec3 base = col;
+        return vec3(drawText(base, p, -1.0, stage).r, drawText(base, p, 0.0, stage).g, drawText(base, p, 1.0, stage).b);
+    }
+    return drawText(col, p, 0.0, stage);
+}
+
+// The frame at q: background, then each overlay clip; the particles, the visualizer and the
+// texts at their stage among them (z-index)
+vec3 shade(vec2 q) {
+    vec2 p = q + 0.5;
+    vec3 col = background(q);
+    int nl = P.layerN.x;
+    int zp = min(P.zIdx.x, nl), zv = min(P.zIdx.y, nl);
+    int tmask = P.zIdx.z;
+    for (int st = 0; st <= nl; st++) {
+        if (st > 0) col = drawLayer(col, st - 1, q);
+        if (zp == st) col = drawParticles(col, p);
+        if (zv == st) col = drawViz(col, p);
+        // texts of this stage (those set beyond the clips drawn go with the last stage)
+        bool txt = ((tmask >> st) & 1) != 0 || (st == nl && (tmask >> (nl + 1)) != 0);
+        if (txt) col = drawTexts(col, p, st);
     }
     return col;
 }

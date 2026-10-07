@@ -303,6 +303,39 @@ across `runtime.NumCPU()` goroutines by rows (`parallelFor`). Differences from t
 small: ripple is nearest-neighbour, glitch is applied *after* chroma (on the GPU chroma samples the
 glitched coordinate), glitch is skipped if intensity ≤ 0.05, and contrast centres on 128 instead of 127.5.
 
+### Overlay layers (`config/layers.go`, `engine/layers.go`, `effects/layers.go`)
+
+`ProjectConfig.Layers` (bottom to top) of `ClipConfig` (start/end, fit, x/y/scale/rotation, flips,
+opacity and fades, blend, filters, chroma key, audio reaction, video trim/speed/loop, per-effect
+mode inherit/own/off with own settings, keys). `Session.layersAt` (in `Prepare`, after the
+background effects) resolves the clips visible at t into `effects.LayerFrame`s: the image from a
+`video.NewLayerReader` (file at its own size, capped to what covers the frame, transparent;
+premultiplied RGBA; one reader per clip in `layerMedia`), placement in screen px (center, px per
+image px with flips as negative scales, rotation), opacity × reaction × fades, filters, key, and the
+`Warp` it follows: the background's values (inherit), its own computed with the same per-effect
+functions as the background (`zoomOf`, `shakeOf`, `rippleOf`, `chromaOf`, `glitchOn`, `flashOf`;
+own glitch: up to 8 bands) or none. `FrameState.Stage(z)` turns a `z_index` into a stage among the
+clips on screen (number of visible clips whose layer index + 1 ≤ z; nil = all of them).
+
+Drawing, the same on both backends: background, then for stage s = 0..n: clip s (s > 0), then the
+particles / visualizer / texts whose stage is s. A clip pixel: warp the screen point (glitch bands,
+ripple, zoom, shake), inverse transform to the image (rotation, scale), bilinear (transparent
+outside; blur = 3×3 taps at ±blur px), chromatic aberration by re-sampling R / B at offset points,
+unpremultiply, key alpha = smoothstep(tol, tol + soft, |rgb − key|), brightness / contrast /
+saturation / hue (rotation about the gray axis), flash (contrast factor, brightness), blend mode,
+`mix(frame, blended, alpha·key·opacity)`.
+
+GPU: binding 9 `LAYERS` (RGBA8 pixels; size = `layerCap`: 1.5 × the most pixels of clips on
+screen at once (`Session.LayerPixels`, an event sweep over the clips), at least 2·W·H; the renderer
+is recreated by `Fits` when it no longer fits); `Renderer.layerData` packs the images of the frame's
+clips and re-uploads them only when their `Ver` list changed for that slot; `Params.Layers[16]`
+(`LayerP`: info (offset, size, flags: blend, key, glitch source / count), transform, look, key,
+warp, own glitch bands), `LayerN`, `ZIdx` (particles stage, visualizer stage, mask of stages with
+texts), `FxFlash`. Each text style carries its stage in `ts[s].gradN.y`; `drawText` skips items of
+other stages. Stages beyond the clips drawn are clamped to the last one in the shader. CPU:
+`cpuFrame` loops the stages calling `effects.DrawLayer` (per pixel, parallel rows), particles,
+`drawVizCPU` and `Multi.DrawCPU` with the items of that stage.
+
 ## 4. Visualizers
 
 Bar heights are computed on the CPU (`fillParams`): `h = min_height + mag·(max_height − min_height)`

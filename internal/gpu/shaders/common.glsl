@@ -9,6 +9,21 @@ const int MAX_PARTS = 1024;
 const int MAX_TEXT = 96;
 const int MAX_TSTYLE = 8;
 
+// One overlay clip (gpu.LayerP); its image is in the Layers buffer (render.comp)
+const int MAX_LAYERS = 16;
+struct LayerP {
+    ivec4 info;    // image offset (pixels), width, height, flags (blend 0-3, key 4, glitch 5-6: 1 background's / 2 own, own count 8-11)
+    vec4 xf;       // center x, y (px), screen px per image px x, y (negative = flipped)
+    vec4 xf2;      // rotation (rad), opacity, blur (px), hue (rad)
+    vec4 adj;      // brightness, contrast, saturation, -
+    vec4 key;      // key color rgb, tolerance
+    vec4 key2;     // softness
+    vec4 warp0;    // zoom, ripple amplitude, frequency, phase
+    vec4 warp1;    // shake x, y, chromatic shift, mode (0 none, 1 horizontal, 2 radial)
+    vec4 warp2;    // flash contrast factor, brightness
+    vec4 glitch[8];
+};
+
 // One entry of the per-frame text style table (lyrics = 0, fixed texts after)
 struct TStyle {
     vec4 info;        // outlineW, glowRadius, glowIntensity, chromaPx (0 = none)
@@ -65,6 +80,12 @@ layout(std430, set = 0, binding = 0) readonly buffer Params {
     ivec4 fluidI;
     ivec4 fluidN;              // bins across, bins down, coarse width, coarse height
     vec4 fluidF;               // piece half width, half height, progress k, debug (gaps magenta)
+    // Overlay layers: count; stages of the particles, the visualizer, mask of the stages with
+    // texts (each style's stage in ts[s].gradN.y); background flash (contrast factor, brightness)
+    ivec4 layerN;
+    ivec4 zIdx;
+    vec4 fxFlash;
+    LayerP layers[MAX_LAYERS];
 } P;
 
 layout(std430, set = 0, binding = 1) readonly buffer BG { uint bg[]; };

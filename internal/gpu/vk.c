@@ -421,6 +421,7 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
     sizes[VKR_BUF_BG2] = sizes[VKR_BUF_BG];
     sizes[VKR_BUF_FLUID] = cfg->fluid_size < 16 ? 16 : (cfg->fluid_size + 3) / 4 * 4;
     sizes[VKR_BUF_FIMG] = sizes[VKR_BUF_BG];
+    sizes[VKR_BUF_LAYERS] = cfg->layers_size < 16 ? 16 : (cfg->layers_size + 3) / 4 * 4;
     VkMemoryPropertyFlags prefs[VKR_NUM_BUFS] = {
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -431,6 +432,7 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
     };
 
     uint32_t gx = (uint32_t)((cfg->pad_w / 4 + 7) / 8);
