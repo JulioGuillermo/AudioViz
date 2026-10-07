@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
+	"image/png"
 	"io"
 	"io/fs"
 	"math"
@@ -103,6 +104,7 @@ func Run(opt Options, ready func(url string)) error {
 	mux.HandleFunc("GET /api/frame", s.hFrame)
 	mux.HandleFunc("GET /api/fs", s.hFS)
 	mux.HandleFunc("POST /api/upload", s.hUpload)
+	mux.HandleFunc("PUT /api/mask", s.hPutMask)
 	mux.HandleFunc("GET /api/media", s.hMedia)
 	mux.HandleFunc("GET /api/thumb", s.hThumb)
 	mux.HandleFunc("GET /api/workspace", s.hWorkspace)
@@ -535,6 +537,26 @@ func (s *Server) hFrame(w http.ResponseWriter, r *http.Request) {
 	var buf bytes.Buffer
 	_ = jpeg.Encode(&buf, img, &jpeg.Options{Quality: 80})
 	w.Header().Set("Content-Type", "image/jpeg")
+	// Where each overlay clip really is in this frame (with the background effects it follows and
+	// its audio pulse): the editor draws the handles and masks over it
+	if len(fs.Layers) > 0 {
+		type geom struct {
+			ID             string  `json:"id"`
+			Clip           int     `json:"clip"`
+			CX, CY, SX, SY float64 // frame px; screen px per image px
+			Rot            float64 `json:"rot"`
+			TW, TH         int     // image size
+			Zoom, ShX, ShY float64 // the warp: screen = c + (frame + shake - c)·zoom
+		}
+		var gs []geom
+		for _, l := range fs.Layers {
+			gs = append(gs, geom{l.LayerID, l.Clip, l.CX, l.CY, l.SX, l.SY, l.Rot, l.Img.Bounds().Dx(), l.Img.Bounds().Dy(),
+				l.W.Zoom, l.W.ShakeX, l.W.ShakeY})
+		}
+		if b, err := json.Marshal(gs); err == nil {
+			w.Header().Set("X-Layers", string(b))
+		}
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Render-Ms", strconv.FormatInt(renderMs, 10))
 	w.Header().Set("X-Total-Ms", strconv.FormatInt(time.Since(t0).Milliseconds(), 10))
@@ -659,6 +681,47 @@ func (s *Server) hUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	defer f.Close()
 	if _, err := io.Copy(f, file); err != nil {
+		fail(w, 500, err)
+		return
+	}
+	writeJSON(w, map[string]any{"path": dst})
+}
+
+// hPutMask saves a painted mask (the PNG in the body) as <project>/masks/<name>.png
+func (s *Server) hPutMask(w http.ResponseWriter, r *http.Request) {
+	s.mu.Lock()
+	proj := s.projPath
+	s.mu.Unlock()
+	if proj == "" {
+		fail(w, 400, errors.New("open or create a project first"))
+		return
+	}
+	name := r.URL.Query().Get("name")
+	if name == "" || len(name) > 64 || strings.Trim(name, "abcdefghijklmnopqrstuvwxyz0123456789-_") != "" {
+		fail(w, 400, errors.New("invalid mask name"))
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 64<<20))
+	if err != nil {
+		fail(w, 400, err)
+		return
+	}
+	if _, err := png.DecodeConfig(bytes.NewReader(body)); err != nil {
+		fail(w, 400, fmt.Errorf("not a PNG: %w", err))
+		return
+	}
+	dir := filepath.Join(filepath.Dir(proj), "masks")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		fail(w, 500, err)
+		return
+	}
+	dst := filepath.Join(dir, name+".png")
+	tmp := dst + ".tmp"
+	if err := os.WriteFile(tmp, body, 0644); err != nil {
+		fail(w, 500, err)
+		return
+	}
+	if err := os.Rename(tmp, dst); err != nil {
 		fail(w, 500, err)
 		return
 	}

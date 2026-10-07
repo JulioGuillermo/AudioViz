@@ -33,6 +33,52 @@ file from its start to its end).
 Every number and color can have **keyframes** (the diamond next to it): a logo that flies in with a
 spring, a layer that fades and turns… see [studio.md](studio.md#keyframes).
 
+## Masks
+A mask limits where a clip is seen; it belongs to the clip (moves, scales and turns with it). In
+the clip inspector, *Masks*: **Shape mask** or **Painted mask** opens the [editor](studio.md#editor)
+with its tool.
+
+- **Shape** (S): draw a closed shape by hand over the clip (pen, mouse or finger); it is smoothed and
+  simplified, and always closed. Several shapes add up.
+- **Nodes** (N): click a node to select it (**Shift+click** adds more), drag to move the selected
+  ones; **Del** (or Alt+click) removes them; **C** changes the type of the selected node.
+  - **Right-click the line**: *add a node here* (exactly on the curve: the shape does not change),
+    *delete this segment* (a closed shape opens there; an open one splits in two), *close the
+    shape*, *delete shape*. Double-clicking the line also adds a node.
+  - **Right-click a node**: its type, delete the node(s), close the shape, delete shape; with the two
+    ends selected, **join** (**J**): the two ends of one open shape close it; ends of two open shapes
+    join them into one.
+  - An **open** shape (orange, dotted) is a line, not an area: it does not mask until it is closed. Node types: **smooth** (automatic curve,
+  circle), **corner** (a sharp point, square), **symmetric handles** (diamond: drag a handle and the
+  other mirrors it), **aligned handles** (hexagon: always in line, so no point, but each keeps its
+  own length) and **free handles** (triangle: each handle on its own). **C** goes through them in
+  that order. Turning a node into
+  handles starts from the curve as it is.
+- **Brush** (B) / **eraser** (E): paint the mask; size, hardness and opacity in the bar above, and
+  the pen's **pressure** can set the size and / or the opacity. Saved as a PNG in the project's
+  `masks/` folder.
+- Each mask: *only inside* or *only outside*, **soft edge** (px), **strength**, on / off. The
+  *inside* masks of a clip add up (it is seen in their union: a shape plus painted areas), the
+  *outside* ones cut holes.
+- The handles and the mask outlines follow the clip as it is shown, with the background effects
+  it follows (zoom, shake) and its audio pulse.
+- **Shape over time**: key the shape (its diamond), move the cursor and edit the nodes: the shape
+  morphs between keys (the keys need the same number of points; otherwise it switches).
+
+```yaml
+        masks:
+          - kind: vector                  # or raster
+            mode: inside                  # outside: hidden inside the shape
+            feather: 20
+            shapes:
+              - points: [[0.5, 0.05], [0.95, 0.5, 1], [0.5, 0.95, 2, -0.2, 0, 0.2, 0], [0.05, 0.5]]
+                open: false               # true: a line (does not mask)
+                # 0..1 of the clip's image: [x, y] smooth · [x, y, 1] corner ·
+                # [x, y, 2 | 4 | 3, in x, in y, out x, out y] symmetric / aligned / free handles (offsets)
+          - kind: raster
+            path: masks/abc123.png        # white / opaque = inside
+```
+
 ## Visualizer, particles, lyrics and texts among the layers
 Each of them has a **Drawing order**: above all the layers (default), above the background but under
 the layers, or right above a given layer. For example, the spectrum above a smoke layer but under a

@@ -325,6 +325,17 @@ unpremultiply, key alpha = smoothstep(tol, tol + soft, |rgb − key|), brightnes
 saturation / hue (rotation about the gray axis), flash (contrast factor, brightness), blend mode,
 `mix(frame, blended, alpha·key·opacity)`.
 
+Masks (`ClipConfig.Masks`, `effects/masks.go`): combined per clip into one alpha image in the
+clip's image space (`MaskSize`: the image's size up to 1024 on its long side) — vector shapes
+(closed Catmull-Rom curves through the 0..1 points, as cubic Béziers) rasterized with
+`x/image/vector`, painted PNGs scaled, feather = three box blurs, inside / outside, strength,
+multiplied; cached by the session (`maskFor`, key = YAML of the masks after their keys + painted
+files' mtimes, 64 entries). Applied to the sample at the clip's image position (premultiplied, so
+color and alpha together): CPU `LayerFrame.maskAt`, GPU `maskAt` (one byte per mask pixel packed
+after the clip's image in `LAYERS`, `LayerP.mask` = offset, size, on). Keys can animate
+`masks.<k>.shapes` (lists of the same shape are interpolated element by element: `lerpAny`; set
+through YAML into the field by `setLeaf`).
+
 GPU: binding 9 `LAYERS` (RGBA8 pixels; size = `layerCap`: 1.5 × the most pixels of clips on
 screen at once (`Session.LayerPixels`, an event sweep over the clips), at least 2·W·H; the renderer
 is recreated by `Fits` when it no longer fits); `Renderer.layerData` packs the images of the frame's

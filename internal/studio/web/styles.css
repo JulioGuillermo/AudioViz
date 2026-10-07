@@ -502,3 +502,56 @@ a.btn { text-decoration: none; }
 .clipbox .ch-corner { position: absolute; width: 10px; height: 10px; background: #fff; border: 1px solid rgba(0, 0, 0, .6); border-radius: 2px; cursor: nwse-resize; pointer-events: auto; }
 .clipbox .ch-rot { position: absolute; left: 50%; top: -26px; width: 12px; height: 12px; margin-left: -6px; border-radius: 50%; background: var(--accent); border: 1px solid rgba(0, 0, 0, .6); cursor: grab; pointer-events: auto; }
 .clipbox .ch-rot::after { content: ''; position: absolute; left: 5px; top: 12px; width: 1px; height: 14px; background: rgba(255, 255, 255, .7); }
+
+/* Editor: the preview over the whole window */
+.editor { position: fixed; inset: 0; z-index: 60; display: flex; flex-direction: column; background: #0b0c0e; }
+.ed-top { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 12px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.ed-title { display: flex; align-items: center; gap: 7px; font-weight: 600; }
+.ed-zoom { min-width: 48px; text-align: center; font-size: 12px; color: var(--text-2); }
+.ed-main { flex: 1; display: flex; min-height: 0; }
+.ed-tools { width: 48px; flex: none; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0; border-right: 1px solid var(--border); background: var(--surface); }
+.ed-tools .btn.icon { width: 36px; height: 36px; }
+.ed-view { position: relative; flex: 1; overflow: hidden; touch-action: none; user-select: none;
+  background: repeating-conic-gradient(#121418 0% 25%, #0e1013 0% 50%) 0 0 / 24px 24px; }
+.ed-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; box-shadow: 0 0 0 1px rgba(255, 255, 255, .08), 0 10px 40px rgba(0, 0, 0, .6); }
+.ed-world canvas { display: block; width: 100%; height: 100%; image-rendering: auto; }
+.ed-world .clipbox { box-shadow: none; }
+.ed-status { position: absolute; left: 10px; bottom: 8px; font-size: 11px; color: var(--text-2); background: rgba(0, 0, 0, .55); padding: 3px 8px; border-radius: 4px; pointer-events: none; }
+.ed-panel { width: var(--right-w, 340px); flex: none; overflow-y: auto; border-left: 1px solid var(--border); background: var(--surface); }
+.ed-bottom { display: flex; align-items: center; gap: 12px; height: 52px; padding: 0 14px; border-top: 1px solid var(--border); background: var(--surface); }
+.ed-bar { position: relative; flex: 1; height: 26px; background: var(--bg); border: 1px solid var(--border-2); border-radius: var(--r); cursor: pointer; touch-action: none; }
+.ed-range { position: absolute; top: 3px; bottom: 3px; background: var(--accent-soft); border: 1px solid var(--accent-line); border-radius: 3px; }
+.ed-key { position: absolute; top: 50%; width: 9px; height: 9px; margin: -5px 0 0 -5px; transform: rotate(45deg); background: var(--key);
+  border: 1px solid rgba(0, 0, 0, .55); border-radius: 1px; cursor: ew-resize; z-index: 2; }
+.ed-key:hover { box-shadow: 0 0 0 2px rgba(255, 200, 70, .35); }
+.ed-key.hold { border-radius: 0; background: #e0b040; }
+.ed-head { pointer-events: none; }
+.ed-head { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--accent); }
+
+/* Masks: inspector cards, editor overlay and tool options */
+.maskcard { border: 1px solid var(--border); border-radius: var(--r); margin: 6px 0; background: var(--bg); }
+.maskcard.on { border-color: var(--accent-line); }
+.maskcard .mh { display: flex; align-items: center; gap: 6px; padding: 6px 8px; cursor: pointer; font-size: 12.5px; }
+.maskcard .mh .lbl { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.maskcard .mb { padding: 0 10px 6px; border-top: 1px solid var(--border); }
+.maskov { position: absolute; inset: 0; pointer-events: none; }
+.maskov.active { pointer-events: auto; touch-action: none; }
+.masksvg { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.masksvg .mask-fill { fill: rgba(255, 60, 90, .16); }
+.masksvg .mask-line { fill: none; stroke: #ff5577; stroke-dasharray: 6 4; }
+.masksvg .mask-hit { fill: none; stroke: transparent; cursor: copy; pointer-events: stroke; }
+.masksvg .mask-hit:hover { stroke: rgba(255, 210, 74, .35); }
+.masksvg .mask-line.open { stroke: #ffb347; stroke-dasharray: 2 3; }
+.masksvg .mask-node.end { stroke: #ffb347; }
+.masksvg .mask-node { fill: #fff; stroke: #ff3d6a; pointer-events: auto; cursor: move; }
+.masksvg .mask-draw { fill: none; stroke: #ffd24a; }
+.maskpaint { position: absolute; transform-origin: 50% 50%; pointer-events: none; }
+.brushcur { position: absolute; border: 1px solid rgba(255, 255, 255, .9); border-radius: 50%; box-shadow: 0 0 0 1px rgba(0, 0, 0, .6); pointer-events: none; }
+.ed-sep { width: 26px; height: 1px; background: var(--border); margin: 4px 0; }
+.ed-opts { display: flex; align-items: center; gap: 10px; font-size: 12px; margin-left: 12px; }
+.ed-opts label { display: flex; align-items: center; gap: 6px; color: var(--text-2); }
+.ed-opts input[type=range] { width: 90px; }
+.masksvg .mask-other { fill: none; stroke: rgba(255, 120, 150, .55); stroke-dasharray: 3 4; }
+.masksvg .mask-node.on { fill: #ffd24a; stroke: #000; }
+.masksvg .mask-hline { stroke: rgba(255, 210, 74, .85); }
+.masksvg .mask-handle { fill: #ffd24a; stroke: #000; pointer-events: auto; cursor: move; }

@@ -63,8 +63,31 @@ type ClipConfig struct {
 	React      LayerReact   `yaml:"react"`
 	Video      ClipVideo    `yaml:"video"`
 	Effects    LayerEffects `yaml:"effects"`
+	// Masks: where the clip is seen (all of them apply)
+	Masks []MaskConfig `yaml:"masks,omitempty"`
 	// Keyframes (times from Start): any of the numbers and colors above, e.g. x, scale, opacity
 	Keys Keys `yaml:"keys,omitempty"`
+}
+
+// MaskConfig limits where a clip is seen. It belongs to the clip (moves, scales and turns with
+// it): its coordinates are 0..1 of the clip's image.
+type MaskConfig struct {
+	ID      string      `yaml:"id,omitempty"`
+	Kind    string      `yaml:"kind"`             // vector (shapes) or raster (a painted PNG)
+	Mode    string      `yaml:"mode"`             // inside: the clip is only seen inside; outside: hidden inside
+	Feather float64     `yaml:"feather"`          // soft edge, px of the clip's image
+	Opacity float64     `yaml:"opacity"`          // strength 0..1
+	Off     bool        `yaml:"off,omitempty"`    // turned off
+	Shapes  []MaskShape `yaml:"shapes,omitempty"` // vector: closed shapes (their union)
+	Path    string      `yaml:"path,omitempty"`   // raster: PNG, white / opaque = inside
+	Name    string      `yaml:"name,omitempty"`
+}
+
+// MaskShape is a shape through its points ([x, y] a smooth node, [x, y, 1] a corner, see
+// effects.NodeHandles). Open: a line with two ends, not an area (it does not mask until closed).
+type MaskShape struct {
+	Points [][]float64 `yaml:"points"`
+	Open   bool        `yaml:"open,omitempty"`
 }
 
 // ChromaKey makes a color (green screen) transparent
@@ -167,5 +190,16 @@ func (l *LayerConfig) ClipAt(t float64) *ClipConfig {
 			return c
 		}
 	}
+	return nil
+}
+
+// UnmarshalYAML fills the fields missing in the YAML: a vector mask, the clip seen inside, full strength
+func (m *MaskConfig) UnmarshalYAML(n *yaml.Node) error {
+	type plain MaskConfig
+	d := plain(MaskConfig{Kind: "vector", Mode: "inside", Opacity: 1})
+	if err := n.Decode(&d); err != nil {
+		return err
+	}
+	*m = MaskConfig(d)
 	return nil
 }

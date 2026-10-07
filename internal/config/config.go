@@ -537,7 +537,11 @@ func (c *ProjectConfig) mapPaths(fn func(string) string) {
 	}
 	for i := range c.Layers {
 		for j := range c.Layers[i].Clips {
-			c.Layers[i].Clips[j].Path = fn(c.Layers[i].Clips[j].Path)
+			cl := &c.Layers[i].Clips[j]
+			cl.Path = fn(cl.Path)
+			for k := range cl.Masks {
+				cl.Masks[k].Path = fn(cl.Masks[k].Path)
+			}
 		}
 	}
 }

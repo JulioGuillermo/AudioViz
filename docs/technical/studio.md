@@ -802,6 +802,35 @@ preview: the clip's box from its natural size (`useNatural`: an `<img>` / `<vide
 with `setClipProps` (a key at the cursor for animated properties). `z_index` fields (`zindex` type)
 list the layers through `ctx.layerChoices`.
 
+## Editor (`editor.js`, `frames.js`)
+
+`useFrameStream(canvas, {meta, time, scale, rev, playing})` (frames.js) is the frame requesting
+of the preview, shared with the editor. The editor is a fixed full-window layer: the frame (`.ed-world`,
+W×H frame px) under a CSS transform `translate(t) rotate(r) scale(z)` (origin 0,0), so
+screen = t + R(r)·z·frame and `toFrame` = R(−r)·(screen − t)/z; `anchor(f, lx, ly, z, r)` keeps a
+frame point under a view point (zoom at the pointer, rotation about the view center, pinch).
+Pointer events with capture (best effort): one pointer = the tool (middle button = pan), two
+touches = pinch (midpoint, distance and angle against the start). The frame scale requested is
+`floor(1 / (z·dpr))` clamped to 1..4. `ClipHandles` takes `k` / `ox, oy` / `toFrame` / `hs`, so the
+same handles work in the preview (k = canvas px per frame px) and in the editor (k = 1 inside the
+transformed frame, handle size 1/z). Keys in the capture phase: V H Z R tools, 0 fit, 1 actual
+pixels, Esc close (the app's own keys keep working).
+
+### Masks in the editor (`masks.js`)
+
+`MaskSection` (clip inspector): cards per mask, `Form(MASK_FIELDS)` with keys under `masks.<k>`,
+a diamond for `masks.<k>.shapes`, deleting a mask renumbers the keys of the later ones.
+`MaskOverlay` (inside the editor's frame): `clipGeom` (the clip's center, size from `useNatural` +
+fit + scale, rotation, flips at the cursor) with `toFramePt` / `toClipPt` between the clip's 0..1
+space and frame px; shapes drawn as SVG (`smoothPath`, the engine's Catmull-Rom). Tools: shape =
+freehand points → `simplify` (Ramer–Douglas–Peucker, 2.5 view px) → appended; nodes = drag /
+dblclick insert on the nearest segment / Alt+click remove; brush / eraser paint radial-gradient
+dabs (spacing 0.35 r, pressure → size / opacity) into an offscreen canvas at the mask's size
+(loaded from the PNG), shown as a red tint, uploaded at the end of each stroke with
+`PUT /api/mask?name=<mask id>` (→ `<project>/masks/<id>.png`) and the preview refreshed. App:
+`selMask`, `needMask(kind)` (picks or creates a mask of the tool's kind), `editMask(fn)` →
+`setMaskShapes` (a key at the cursor when the shape is animated).
+
 ## Context menus (`menu.js`)
 
 `openMenu(e, items)` (items `{label, icon, onClick, danger, disabled, checked, hint}`, `'-'`,

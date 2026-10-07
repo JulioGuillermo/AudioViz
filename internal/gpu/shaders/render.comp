@@ -522,6 +522,22 @@ vec4 layerSample(int i, vec2 q) {
     return acc / tw;
 }
 
+// The clip's mask at a position of its image (one byte per mask px; bilinear)
+float maskByte(int i, int x, int y) {
+    ivec4 m = P.layers[i].mask;
+    if (x < 0 || y < 0 || x >= m.y || y >= m.z) return 0.0;
+    int idx = y * m.y + x;
+    return float((lay[m.x + (idx >> 2)] >> ((idx & 3) * 8)) & 255u) / 255.0;
+}
+float maskAt(int i, vec2 u) {
+    ivec4 m = P.layers[i].mask;
+    vec2 q = u * vec2(m.yz) / vec2(P.layers[i].info.yz) - 0.5;
+    ivec2 i0 = ivec2(floor(q));
+    vec2 f = q - vec2(i0);
+    return mix(mix(maskByte(i, i0.x, i0.y), maskByte(i, i0.x + 1, i0.y), f.x),
+               mix(maskByte(i, i0.x, i0.y + 1), maskByte(i, i0.x + 1, i0.y + 1), f.x), f.y);
+}
+
 // The clip's background effects: glitch bands, ripple, zoom, shake
 vec2 layerWarp(int i, vec2 q) {
     LayerP L = P.layers[i];
@@ -568,7 +584,9 @@ vec3 blendColor(int m, vec3 d, vec3 s) {
 
 vec3 drawLayer(vec3 col, int i, vec2 q) {
     LayerP L = P.layers[i];
-    vec4 s = layerSample(i, layerWarp(i, q));
+    vec2 qw = layerWarp(i, q);
+    vec4 s = layerSample(i, qw);
+    if (L.mask.w != 0) s *= maskAt(i, layerUV(i, qw + 0.5));
     float shift = L.warp1.z;
     int cm = int(L.warp1.w);
     if (cm != 0 && shift > 0.5) {

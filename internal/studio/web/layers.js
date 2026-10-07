@@ -5,6 +5,7 @@ import { Form, Edit } from './fields.js';
 import { Icon } from './icons.js';
 import { t } from './i18n.js';
 import { keyApi, valueAt, keyIndexAt, KEY_EPS } from './keys.js';
+import { MaskSection } from './masks.js';
 
 // Overlay layers (config.LayerConfig): proj.layers is bottom to top (drawing order); the studio
 // shows them front first, as a stack of cards.
@@ -72,32 +73,60 @@ export function clipSize(c, nat, W, H, scale) {
   return { w: bw * scale, h: bh * scale };
 }
 
-// Handles of the selected clip over the preview: drag inside to move, a corner to scale, the
-// round handle to rotate. cr / sr: client rects of the canvas and of the stage.
-export function ClipHandles({ clip, time, meta, cr, sr, onChange }) {
+// Where a clip is shown in the frame (frame px): from the server's geometry of the frame on screen
+// (geo: the X-Layers entry of the clip, with the background effects it follows and its audio
+// pulse) or, without it, from its own values. { cx, cy, w, h, rot (rad), fx, fy } plus the warp
+// (zoom, shx, shy: screen = c + (frame + shake − c)·zoom) and k = shown size / own size.
+export function shownGeom(c, nat, meta, tt, geo) {
+  const W = meta.width, H = meta.height;
+  const own = clipSize(c, nat, W, H, clipValue(c, 'scale', tt));
+  const flips = { fx: c.flip_x ? -1 : 1, fy: c.flip_y ? -1 : 1 };
+  if (!geo) return { cx: clipValue(c, 'x', tt) * W, cy: clipValue(c, 'y', tt) * H, w: own.w, h: own.h,
+    rot: (clipValue(c, 'rotation', tt) * Math.PI) / 180, ...flips, zoom: 1, shx: 0, shy: 0, k: 1 };
+  const z = geo.Zoom || 1;
+  const w = geo.TW * Math.abs(geo.SX), h = geo.TH * Math.abs(geo.SY);
+  return { cx: W / 2 + (geo.CX + geo.ShX - W / 2) * z, cy: H / 2 + (geo.CY + geo.ShY - H / 2) * z, w: w * z, h: h * z,
+    rot: geo.rot, fx: Math.sign(geo.SX) || 1, fy: Math.sign(geo.SY) || 1, zoom: z, shx: geo.ShX, shy: geo.ShY, k: own.w ? (w / own.w) : 1 };
+}
+// The X-Layers entry of a clip
+export const geoOf = (layers, id, clip) => (layers || []).find((g) => g.id === id && g.clip === clip);
+
+// Handles of the selected clip over a view of the frame: drag inside to move, a corner to scale,
+// the round handle to rotate. k: view px per frame px; ox, oy: where the frame's origin is in the
+// parent; toFrame(clientX, clientY): a pointer position in frame px (any pan / zoom / rotation of
+// the view); hs: size of the handles (1 = normal; the editor compensates its zoom); geo: where the
+// clip is shown in the frame (see shownGeom).
+export function ClipHandles({ clip, time, meta, k, ox = 0, oy = 0, toFrame, hs = 1, geo, onChange }) {
   const nat = useNatural(clip.path);
   const [drag, setDrag] = useState(null); // live values while dragging
-  if (!nat || !cr) return null;
+  if (!nat) return null;
   const W = meta.width, H = meta.height;
-  const v = { x: clipValue(clip, 'x', time), y: clipValue(clip, 'y', time), scale: clipValue(clip, 'scale', time),
-    rotation: clipValue(clip, 'rotation', time), ...(drag || {}) };
-  const sz = clipSize(clip, nat, W, H, v.scale);
-  const k = cr.width / W; // screen px per frame px
-  const cx = cr.left - sr.left + v.x * cr.width, cy = cr.top - sr.top + v.y * cr.height;
-  const w = sz.w * k, h = sz.h * k;
+  const g0 = shownGeom(clip, nat, meta, time, geo);
+  const own = { x: clipValue(clip, 'x', time), y: clipValue(clip, 'y', time), scale: clipValue(clip, 'scale', time), rotation: clipValue(clip, 'rotation', time) };
+  const v = { ...own, ...(drag || {}) };
+  // shown = the server's geometry moved by the change of the own values while dragging
+  const cxF = g0.cx + (v.x - own.x) * W * g0.zoom, cyF = g0.cy + (v.y - own.y) * H * g0.zoom;
+  const sc = own.scale ? v.scale / own.scale : 1;
+  const cx = ox + cxF * k, cy = oy + cyF * k;
+  const w = g0.w * sc * k, h = g0.h * sc * k;
+  const rotDeg = (g0.rot * 180) / Math.PI + (v.rotation - own.rotation);
   const start = (e, mode) => {
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
+    const el = e.currentTarget;
+    try { el.setPointerCapture(e.pointerId); } catch (err) { /* not an active pointer */ }
     const v0 = { ...v };
-    const ccx = cr.left + v0.x * cr.width, ccy = cr.top + v0.y * cr.height; // center in client coords
-    const d0 = Math.hypot(e.clientX - ccx, e.clientY - ccy) || 1;
+    const c = { x: cxF, y: cyF }; // shown center in frame px
+    const p0 = toFrame(e.clientX, e.clientY);
+    const d0 = Math.hypot(p0.x - c.x, p0.y - c.y) || 1;
     let cur = {};
     const mv = (ev) => {
-      if (mode === 'move') cur = { x: +(v0.x + (ev.clientX - e.clientX) / cr.width).toFixed(4), y: +(v0.y + (ev.clientY - e.clientY) / cr.height).toFixed(4) };
-      else if (mode === 'scale') cur = { scale: +Math.max(0.01, v0.scale * Math.hypot(ev.clientX - ccx, ev.clientY - ccy) / d0).toFixed(4) };
+      const p = toFrame(ev.clientX, ev.clientY);
+      if (mode === 'move') cur = { x: +(v0.x + (p.x - p0.x) / (W * g0.zoom)).toFixed(4), y: +(v0.y + (p.y - p0.y) / (H * g0.zoom)).toFixed(4) };
+      else if (mode === 'scale') cur = { scale: +Math.max(0.01, v0.scale * Math.hypot(p.x - c.x, p.y - c.y) / d0).toFixed(4) };
       else {
-        let a = Math.atan2(ev.clientY - ccy, ev.clientX - ccx) * 180 / Math.PI + 90;
+        let a = Math.atan2(p.y - c.y, p.x - c.x) * 180 / Math.PI + 90 - ((g0.rot * 180) / Math.PI - own.rotation);
         // whole turns kept; Shift: steps of 15°
         a += Math.round((v0.rotation - a) / 360) * 360;
         if (ev.shiftKey) a = Math.round(a / 15) * 15;
@@ -106,19 +135,22 @@ export function ClipHandles({ clip, time, meta, cr, sr, onChange }) {
       setDrag(cur);
     };
     const up = () => {
-      removeEventListener('mousemove', mv); removeEventListener('mouseup', up);
+      removeEventListener('pointermove', mv); removeEventListener('pointerup', up);
       setDrag(null);
       if (Object.keys(cur).length) onChange(cur);
     };
-    addEventListener('mousemove', mv); addEventListener('mouseup', up);
+    addEventListener('pointermove', mv); addEventListener('pointerup', up);
   };
-  const corner = (sx, sy) => html`<div class="ch-corner" style=${{ left: (sx * w) / 2 + w / 2 - 5 + 'px', top: (sy * h) / 2 + h / 2 - 5 + 'px' }}
-    onMouseDown=${(e) => start(e, 'scale')} title=${t('Drag to scale')}></div>`;
+  const hpx = 10 * hs;
+  const corner = (sx, sy) => html`<div class="ch-corner" style=${{ left: (sx * w) / 2 + w / 2 - hpx / 2 + 'px', top: (sy * h) / 2 + h / 2 - hpx / 2 + 'px',
+      width: hpx + 'px', height: hpx + 'px' }}
+    onPointerDown=${(e) => start(e, 'scale')} title=${t('Drag to scale')}></div>`;
   return html`<div class=${'clipbox' + (drag ? ' drag' : '')} style=${{ left: cx - w / 2 + 'px', top: cy - h / 2 + 'px', width: w + 'px', height: h + 'px',
-      transform: `rotate(${v.rotation}deg)` }}>
-    <div class="ch-body" onMouseDown=${(e) => start(e, 'move')} title=${t('Drag to move')}></div>
+      transform: `rotate(${rotDeg}deg)`, borderWidth: hs + 'px' }}>
+    <div class="ch-body" onPointerDown=${(e) => start(e, 'move')} title=${t('Drag to move')}></div>
     ${corner(-1, -1)}${corner(1, -1)}${corner(-1, 1)}${corner(1, 1)}
-    <div class="ch-rot" onMouseDown=${(e) => start(e, 'rotate')} title=${t('Drag to rotate (Shift: steps of 15°)')}></div>
+    <div class="ch-rot" style=${{ top: -26 * hs + 'px', width: 12 * hs + 'px', height: 12 * hs + 'px', marginLeft: -6 * hs + 'px' }}
+      onPointerDown=${(e) => start(e, 'rotate')} title=${t('Drag to rotate (Shift: steps of 15°)')}></div>
   </div>`;
 }
 
@@ -168,6 +200,8 @@ export function LayerInspector({ proj, sel, setSel, update, time, meta, ctx }) {
       ${c ? html`<${Form} fields=${CLIP_FIELDS} value=${c} ctx=${ctx} kf=${kf}
           onChange=${(nc) => editLayer((l) => { l.clips[j] = { ...nc, start: l.clips[j].start, end: l.clips[j].end }; })} />`
         : html`<p class="faint" style="font-size:12px">${t('No clips yet. Add one at the cursor, or double-click the layer\'s track on the timeline.')}</p>`}
+      ${c && html`<${MaskSection} clip=${c} j=${j} kf=${kf} selMask=${ctx.selMask} setSelMask=${ctx.setSelMask} ctx=${ctx}
+        openEditor=${ctx.openEditor} editClip=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}
       <div class="section"><div class="sh">${t('Layer')}</div><div class="sb">
         <p class="faint" style="margin:2px 0 8px;font-size:12px">${t('Layers higher in the list are drawn in front. Drag them in the left panel to change the order.')}</p>
         <button class="btn sm ghost danger" onClick=${() => { if (confirm(t('Delete the layer “{n}” and its clips?', { n: layerName(layer, li) }))) {

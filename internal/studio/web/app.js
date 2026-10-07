@@ -5,8 +5,11 @@ import { Form, Select, Edit } from './fields.js';
 import { Icon } from './icons.js';
 import { Timeline, segSummary } from './timeline.js';
 import { keyApi, valueAt, setIn, KEY_EPS } from './keys.js';
+import { useFrameStream } from './frames.js';
+import { Editor } from './editor.js';
+import { maskShapes, setMaskShapes } from './masks.js';
 import { ContextMenu, openMenu } from './menu.js';
-import { LayerInspector, ClipHandles, frontFirst, layerName, newLayerId, setClipProps, duplicateClip } from './layers.js';
+import { LayerInspector, ClipHandles, geoOf, frontFirst, layerName, newLayerId, setClipProps, duplicateClip } from './layers.js';
 import { ImagesDialog } from './images.js';
 import { FilePicker, NewProject, ExportDialog, GenLyricsDialog, LyricsTextDialog, LYRIC_LANGS, STEP_LABEL, ProjectsDialog, PackageDialog, ExportsDialog, WorkspaceGrid, uploadPackage } from './dialogs.js';
 import { createStore, useStore, useThrottledStore } from './store.js';
@@ -15,7 +18,7 @@ import { createScrubber } from './scrub.js';
 
 // ------------------------------------------------------------------ preview
 
-function Preview({ meta, timeStore, scale, rev, playing, pin, onPin, points, onPoints, clip, onClip }) {
+function Preview({ meta, timeStore, scale, rev, playing, pin, onPin, points, onPoints, clip, clipRef, onClip }) {
   const time = useStore(timeStore);
   const canvas = useRef();
   const stage = useRef();
@@ -92,74 +95,21 @@ function Preview({ meta, timeStore, scale, rev, playing, pin, onPin, points, onP
     const cr = canvas.current.getBoundingClientRect(), sr = stage.current.getBoundingClientRect();
     pinStyle = { left: cr.left - sr.left + shownPin.x * cr.width + 'px', top: cr.top - sr.top + shownPin.y * cr.height + 'px' };
   }
-  // inflight: requests in progress; lat: average latency (ms); shownF: last drawn frame
-  const st = useRef({ inflight: 0, lat: 40, shownKey: null, shownF: -1, shownSeq: 0, seq: 0, lastReq: '', lastT: 0 });
-  const [info, setInfo] = useState({ ms: 0, fps: 0 });
-  const fpsWin = useRef([]);
-
-  const draw = (bmp) => {
-    const c = canvas.current;
-    if (!c) return;
-    if (c.width !== bmp.width || c.height !== bmp.height) { c.width = bmp.width; c.height = bmp.height; }
-    c.getContext('2d').drawImage(bmp, 0, 0);
-    bmp.close && bmp.close();
-  };
-
-  const request = (f, key) => {
-    const s = st.current;
-    const seq = ++s.seq;
-    s.inflight++;
-    s.lastReq = key;
-    const t0 = performance.now();
-    fetch(`/api/frame?f=${f}&scale=${scale}`)
-      .then((r) => { if (!r.ok) throw new Error(r.statusText); return r.blob(); })
-      .then((b) => createImageBitmap(b))
-      .then((bmp) => {
-        s.lat = s.lat * 0.8 + (performance.now() - t0) * 0.2;
-        // Only draw if it is newer than what is on screen
-        if (seq > s.shownSeq) { draw(bmp); s.shownSeq = seq; s.shownF = f; s.shownKey = key; }
-        const now = performance.now();
-        fpsWin.current = [...fpsWin.current.filter((x) => now - x < 1000), now];
-        setInfo({ ms: Math.round(s.lat), fps: fpsWin.current.length });
-      })
-      .catch(() => {})
-      .finally(() => { s.inflight--; });
-  };
-
-  useEffect(() => {
-    const s = st.current;
-    const fps = meta.fps;
-    // A jump (seeking while playing) restarts the frame sequence, otherwise a jump backwards
-    // would never be requested
-    if (time < s.lastT - 0.05 || time > s.lastT + 1.0) { s.shownF = -1; s.lastReq = ''; }
-    s.lastT = time;
-    if (playing) {
-      // Request ahead by the measured latency, with several requests in flight
-      const f = Math.min(meta.frames - 1, Math.round((time + s.lat / 1000) * fps));
-      const key = `${f}|${scale}|${rev}`;
-      if (s.inflight < 3 && key !== s.lastReq && f > s.shownF) request(f, key);
-      return;
-    }
-    const f = Math.min(meta.frames - 1, Math.max(0, Math.round(time * fps)));
-    const key = `${f}|${scale}|${rev}`;
-    if (key === s.shownKey) return;
-    if (s.inflight === 0) { request(f, key); return; }
-    // One in progress: retry when it finishes
-    const id = setInterval(() => {
-      if (st.current.inflight === 0) { clearInterval(id); if (st.current.shownKey !== key) request(f, key); }
-    }, 15);
-    return () => clearInterval(id);
-  }, [time, scale, rev, meta.frames, playing]);
-
-  useEffect(() => { if (!playing) st.current.shownF = -1; }, [playing]);
+  const info = useFrameStream(canvas, { meta, time, scale, rev, playing });
 
   return html`<div class="stage" ref=${stage}>
     <canvas ref=${canvas} width=${Math.round(meta.width / scale)} height=${Math.round(meta.height / scale)}
       style=${{ width: box ? box.w + 'px' : '', height: box ? box.h + 'px' : '', cursor: pin || points ? 'crosshair' : '' }} onMouseDown=${pinDown}
       title=${points ? t('Click to add an ignition point, drag one to move it, Shift+click to remove it') : pin ? t('Drag to place the selected text') : ''}></canvas>
     ${pinStyle && html`<div class=${'pin' + (dragPin ? ' drag' : '')} style=${pinStyle}></div>`}
-    ${clip && canvas.current && stage.current && html`<${ClipHandles} clip=${clip} time=${time} meta=${meta}
-      cr=${canvas.current.getBoundingClientRect()} sr=${stage.current.getBoundingClientRect()} onChange=${onClip} />`}
+    ${clip && canvas.current && stage.current && (() => {
+      // frame px → stage px: the canvas' place in the stage and its scale
+      const cr = canvas.current.getBoundingClientRect(), sr = stage.current.getBoundingClientRect();
+      const k = cr.width / meta.width;
+      return html`<${ClipHandles} clip=${clip} time=${time} meta=${meta} k=${k} ox=${cr.left - sr.left} oy=${cr.top - sr.top}
+        geo=${clipRef && geoOf(info.layers, clipRef.id, clipRef.clip)}
+        toFrame=${(cx, cy) => ({ x: (cx - cr.left) / k, y: (cy - cr.top) / k })} onChange=${onClip} />`;
+    })()}
     ${ptsStyle.map((st, j) => html`<div class="pin fire" style=${st}><span>${j + 1}</span></div>`)}
     <div class="hud">${meta.width}×${meta.height} · 1/${scale} · ${info.ms} ms${playing ? ' · ' + info.fps + ' fps' : ''}</div>
   </div>`;
@@ -497,6 +447,10 @@ function App() {
   // Keyframes: the property whose keys the timeline shows alone (set by its diamond), per selection
   const [kfFocus, setKfFocus] = useState(null);
   const [layerDrag, setLayerDrag] = useState(null); // reordering layers: { from, to }
+  const [editor, setEditor] = useState(false); // the full-screen editor
+  const [editorTool, setEditorTool] = useState('select');
+  const [selMask, setSelMask] = useState(null); // the mask of the selected clip being edited
+  useEffect(() => setSelMask(null), [sel.kind, sel.id, sel.clip]);
   useEffect(() => setKfFocus(null), [sel.kind, sel.track, sel.seg, sel.i, sel.id, sel.clip]);
   const [playing, setPlaying] = useState(false);
   const [scale, setScale] = useState(2);
@@ -754,6 +708,8 @@ function App() {
   // --- actions
   const ctx = {
     seek,
+    selMask, setSelMask,
+    openEditor: (tool) => { setEditorTool(tool || 'select'); setEditor(true); },
     // z_index choices: each layer bottom to top as [z, name]
     get layerChoices() { return (projRef.current.layers || []).map((l, i) => [i + 1, l.name || t('Layer {n}', { n: i + 1 })]); },
     kfFocus, setKfFocus,
@@ -1089,6 +1045,7 @@ function App() {
       else if (e.key === 'Home') seek(0);
       else if (e.key === 'End') seek(meta.duration);
       else if (e.key === 'm' || e.key === 'M') onMarker('add');
+      else if ((e.key === 'e' || e.key === 'E') && !editor) setEditor(true);
       else if (e.key === 's' || e.key === 'S') setScrub(!scrubRef.current);
       else if (e.key === 'Escape') setWordEdit(false);
       else if ((e.key === 'n' || e.key === 'N') && sel.kind === 'track') ctx.addSeg(sel.track, now);
@@ -1105,7 +1062,7 @@ function App() {
     };
     addEventListener('keydown', k);
     return () => removeEventListener('keydown', k);
-  }, [meta, sel, playing]);
+  }, [meta, sel, playing, editor]);
 
   if (!st) return html`<div class="welcome"><p class="muted">${t('Loading…')}</p></div>`;
 
@@ -1206,7 +1163,51 @@ function App() {
     p.layers = ff.reverse();
   });
   const selClip = sel.kind === 'layer' && layerById_(sel.id) ? layerById_(sel.id).clips[sel.clip] : null;
+  // A mask tool was picked: use the selected mask if it is of that kind, else the clip's first of
+  // that kind, else a new one
+  const needMask = (kind) => {
+    const c = selClip;
+    if (!c) return;
+    const ms = c.masks || [];
+    if (selMask != null && ms[selMask] && (ms[selMask].kind || 'vector') === kind) return;
+    const k = ms.findIndex((m) => (m.kind || 'vector') === kind);
+    if (k >= 0) { setSelMask(k); return; }
+    update((p) => { const cc = p.layers.find((l) => l.id === sel.id).clips[sel.clip];
+      cc.masks = [...(cc.masks || []), { id: newLayerId(), kind, mode: 'inside', feather: 0, opacity: 1, shapes: [], path: '' }]; });
+    setSelMask(ms.length);
+  };
+  // A stroke of the brush / eraser ended: the painted mask is saved as a PNG in the project
+  const onPainted = (blob) => {
+    const c = selClip, m = c && c.masks && c.masks[selMask];
+    if (!m) return;
+    fetch('/api/mask?name=' + encodeURIComponent(m.id || newLayerId()), { method: 'PUT', body: blob })
+      .then((r) => r.json()).then((r) => {
+        if (r.error) throw new Error(r.error);
+        update((p) => { const cc = p.layers.find((l) => l.id === sel.id).clips[sel.clip]; cc.masks[selMask].path = r.path; });
+        setRev((x) => x + 1);
+      }).catch(showErr);
+  };
   const selText = sel.kind === 'text' ? (proj.texts || [])[sel.i] : null;
+  // The selection's time range and keys, for the editor's small timeline
+  // The selection's time range and its keys (and how to change them), for the editor's small
+  // timeline: { start, end, keys, target } or null
+  const editorMarks = (() => {
+    let start, end, keys, target;
+    if (selClip) { ({ start, end, keys } = selClip); target = { layer: sel.id, clip: sel.clip }; }
+    else if (selText) { ({ start, end, keys } = selText); target = { text: sel.i }; }
+    else if (sel.kind === 'track') {
+      const segs = proj.tracks[sel.track], sg = segs[sel.seg];
+      if (sg) { start = sg.at; end = sel.seg + 1 < segs.length ? segs[sel.seg + 1].at : meta.duration; keys = sg.keys; target = { track: sel.track, seg: sel.seg }; }
+    }
+    return start == null ? null : { start, end, keys: keys || {}, target };
+  })();
+  // Changes the keys of a target (a segment, a text or a clip): fn(keys) → new keys
+  const onKeys = (target, fn) => update((p) => {
+    const h = target.layer != null ? p.layers.find((l) => l.id === target.layer).clips[target.clip]
+      : target.text != null ? p.texts[target.text] : p.tracks[target.track][target.seg];
+    const ks = fn(h.keys || {});
+    if (Object.keys(ks).length) h.keys = ks; else delete h.keys;
+  });
   // Burn transition with chosen points: they are placed on the preview
   const selBg = sel.kind === 'track' && sel.track === 'background' ? proj.tracks.background[sel.seg] : null;
   const burnSel = selBg && sel.seg > 0 && selBg.transition.mode === 'burn' && (selBg.transition.burn || {}).origins === 'points' ? selBg.transition.burn : null;
@@ -1297,6 +1298,7 @@ function App() {
           onPoints=${(pts) => update((p) => { const tr = p.tracks.background[sel.seg].transition; tr.burn = { ...(tr.burn || {}), points: pts.map((q) => [q.x, q.y]) }; })}
           onPin=${(x, y) => update((p) => { const tx = p.texts[sel.i]; if (tx) { tx.position_x = x; tx.position_y = y; } })}
           clip=${selClip && selClip.path && time >= selClip.start && time < selClip.end ? selClip : null}
+          clipRef=${sel.kind === 'layer' ? { id: sel.id, clip: sel.clip } : null}
           onClip=${(props) => update((p) => { const c = p.layers.find((l) => l.id === sel.id).clips[sel.clip]; setClipProps(c, props, timeStore.get()); })} />
         ${!hideSetup && (!proj.audio.path || !proj.tracks.background[0].cfg.path) && html`<${Setup} proj=${proj} ctx=${ctx} onHide=${() => setHideSetup(true)} />`}
       </div>
@@ -1314,6 +1316,8 @@ function App() {
         <${Clock} timeStore=${timeStore} meta=${meta} />
         <button class=${'btn icon' + (scrub ? ' on' : '')} title=${t(scrub ? 'Audio while scrubbing: on (S)' : 'Audio while scrubbing: off (S)')}
           onClick=${() => setScrub(!scrub)}><${Icon} name=${scrub ? 'volume-2' : 'volume-x'} size=${15} /></button>
+        <button class="btn sm" title=${t('Editor: the preview over the whole window, with zoom, rotation, pen and touch (E)')} onClick=${() => setEditor(true)}>
+          <${Icon} name="pen-tool" size=${14} /> ${t('Editor')}</button>
         <span class="spacer"></span>
         ${!meta.hasAudio && html`<button class="btn sm ghost notice" onClick=${() => ctx.pickFile('audio', ctx.setAudio)}><${Icon} name="triangle-alert" size=${14} />${t('No audio · choose…')}</button>`}
         <span class="faint" style="font-size:12px">${t('Preview')}</span>
@@ -1330,14 +1334,16 @@ function App() {
       onSeek=${seek} onSelect=${selTrack} onMoveSeg=${onMoveSeg} onAddSeg=${ctx.addSeg} onMarker=${onMarker}
       view=${view} onToggleZone=${(z) => toggleView('collapsed', z)} kfFocus=${kfFocus} onContext=${onContext}
       layers=${layersFF} onSelectLayer=${selectLayer} onMoveClip=${onMoveClip} onAddClip=${(id, tt) => ctx.addClip(id, tt)} onAddLayer=${(tt) => ctx.addLayer(tt)}
-      onKeys=${(target, fn) => update((p) => {
-        const h = target.layer != null ? p.layers.find((l) => l.id === target.layer).clips[target.clip]
-          : target.text != null ? p.texts[target.text] : p.tracks[target.track][target.seg];
-        const ks = fn(h.keys || {});
-        if (Object.keys(ks).length) h.keys = ks; else delete h.keys;
-      })}
+      onKeys=${onKeys}
       onSelectLine=${selectLine} onLyrics=${(lines) => editLyrics((all) => { all.splice(0, all.length, ...lines); }, false)}
       onLyricsCommit=${() => { lyrSaveRef.current(); record(); }} />
+    ${editor && html`<${Editor} meta=${meta} timeStore=${timeStore} playing=${playing} setPlaying=${setPlaying} seek=${seek} rev=${rev}
+      selClip=${selClip} inspector=${inspector} onClose=${() => { setEditor(false); setEditorTool('select'); }} marks=${editorMarks} onKeys=${onKeys}
+      tool=${editorTool} selMask=${selMask} onNeedMask=${needMask} selId=${sel.id} selClipIdx=${sel.clip}
+      editMask=${(fn) => update((p) => { const c = p.layers.find((l) => l.id === sel.id).clips[sel.clip]; const tt = timeStore.get();
+        setMaskShapes(c, selMask, tt, fn(maskShapes(c, selMask, tt))); })}
+      onPainted=${onPainted}
+      onClip=${(props) => update((p) => { const c = p.layers.find((l) => l.id === sel.id).clips[sel.clip]; setClipProps(c, props, timeStore.get()); })} />`}
     ${dialogs}
     <${ContextMenu} />
     ${dragging && html`<div class="dropzone"><div><${Icon} name="upload" size=${28} />

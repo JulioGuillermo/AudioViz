@@ -35,8 +35,10 @@ type Session struct {
 	feats    map[anaKey][]audio.FrameFeatures
 	baseKey  anaKey
 	media    map[string]video.BackgroundReader
-	// layerMedia: the files of the overlay clips (layers.go)
+	// layerMedia: the files of the overlay clips (layers.go); masks: their combined masks
 	layerMedia map[string]*layerMedia
+	masks      map[string]maskEntry
+	maskSeq    int
 	lyr        *lyrics.Multi
 	lyrKey     string
 	LyrVer     int // changes every time the lyrics atlas is rebuilt
@@ -60,7 +62,7 @@ func Open(cfg *config.ProjectConfig, logf func(string, ...any)) (*Session, error
 		logf = func(string, ...any) {}
 	}
 	s := &Session{Logf: logf, feats: map[anaKey][]audio.FrameFeatures{}, media: map[string]video.BackgroundReader{},
-		layerMedia: map[string]*layerMedia{}}
+		layerMedia: map[string]*layerMedia{}, masks: map[string]maskEntry{}}
 	if err := s.Update(cfg); err != nil {
 		s.Close()
 		return nil, err
@@ -620,8 +622,8 @@ func (s *Session) Fork() (*Session, error) {
 		return nil, err
 	}
 	ns := &Session{Logf: s.Logf, feats: map[anaKey][]audio.FrameFeatures{}, media: map[string]video.BackgroundReader{},
-		layerMedia: map[string]*layerMedia{},
-		Audio:      s.Audio, audioKey: s.audioKey, W: s.W, H: s.H, FPS: s.FPS}
+		layerMedia: map[string]*layerMedia{}, masks: map[string]maskEntry{},
+		Audio: s.Audio, audioKey: s.audioKey, W: s.W, H: s.H, FPS: s.FPS}
 	for k, v := range s.feats {
 		ns.feats[k] = v
 	}

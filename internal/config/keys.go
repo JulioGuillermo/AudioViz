@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Keyframes: any property of a segment (or of a fixed text) can change over time. Each animated
@@ -99,10 +101,8 @@ func ValueAt(l []Key, u float64) any {
 	if b.T > a.T {
 		k = Ease(a.Ease, (u-a.T)/(b.T-a.T))
 	}
-	if fa, ok := toFloat(a.V); ok {
-		if fb, ok := toFloat(b.V); ok {
-			return fa + (fb-fa)*k
-		}
+	if v, ok := lerpAny(a.V, b.V, k); ok {
+		return v
 	}
 	if sa, ok := a.V.(string); ok {
 		if sb, ok := b.V.(string); ok {
@@ -121,6 +121,52 @@ func ValueAt(l []Key, u float64) any {
 		return b.V
 	}
 	return a.V
+}
+
+// lerpAny interpolates numbers, and lists / maps of the same shape element by element (e.g.
+// the points of a mask's shapes); false when the two values cannot be mixed
+func lerpAny(a, b any, k float64) (any, bool) {
+	if fa, ok := toFloat(a); ok {
+		if fb, ok := toFloat(b); ok {
+			return fa + (fb-fa)*k, true
+		}
+		return nil, false
+	}
+	switch x := a.(type) {
+	case []any:
+		y, ok := b.([]any)
+		if !ok || len(x) != len(y) {
+			return nil, false
+		}
+		out := make([]any, len(x))
+		for i := range x {
+			v, ok := lerpAny(x[i], y[i], k)
+			if !ok {
+				return nil, false
+			}
+			out[i] = v
+		}
+		return out, true
+	case map[string]any:
+		y, ok := b.(map[string]any)
+		if !ok || len(x) != len(y) {
+			return nil, false
+		}
+		out := make(map[string]any, len(x))
+		for key, xv := range x {
+			yv, ok := y[key]
+			if !ok {
+				return nil, false
+			}
+			v, ok := lerpAny(xv, yv, k)
+			if !ok {
+				return nil, false
+			}
+			out[key] = v
+		}
+		return out, true
+	}
+	return nil, false
 }
 
 func toFloat(v any) (float64, bool) {
@@ -213,6 +259,14 @@ func setLeaf(v reflect.Value, val any) {
 	case reflect.Bool:
 		if b, ok := val.(bool); ok {
 			v.SetBool(b)
+		}
+	case reflect.Slice, reflect.Map, reflect.Struct:
+		// Lists and blocks (e.g. a mask's shapes): through YAML into the field's type
+		if b, err := yaml.Marshal(val); err == nil {
+			nv := reflect.New(v.Type())
+			if yaml.Unmarshal(b, nv.Interface()) == nil {
+				v.Set(nv.Elem())
+			}
 		}
 	}
 }

@@ -2,8 +2,13 @@ package engine
 
 import (
 	"fmt"
+	"image"
+	_ "image/png"
 	"math"
+	"os"
 	"sort"
+
+	"gopkg.in/yaml.v3"
 
 	"audioviz/internal/audio"
 	"audioviz/internal/config"
@@ -126,7 +131,11 @@ func (s *Session) layersAt(t float64, idx int, feat *audio.FrameFeatures, fx fra
 			} else {
 				lf.KeyColor = [3]float64{0, 1, 0}
 			}
+			lf.LayerID, lf.Clip = layer.ID, ci
 			lf.W = s.clipWarp(&c.Effects, bg, t, idx, li, feat, minDim)
+			if len(c.Masks) > 0 {
+				lf.Mask, lf.MaskVer = s.maskFor(c.Masks, int(tw), int(th))
+			}
 			out = append(out, lf)
 			stack = append(stack, li+1)
 		}
@@ -224,6 +233,10 @@ func (s *Session) LayerPixels() int {
 				continue
 			}
 			n := m.r.Width() * m.r.Height()
+			if len(c.Masks) > 0 {
+				mw, mh := effects.MaskSize(m.r.Width(), m.r.Height())
+				n += (mw*mh + 3) / 4 // its mask, one byte per px
+			}
 			evs = append(evs, ev{c.Start, n}, ev{c.End, -n})
 		}
 	}
@@ -239,4 +252,48 @@ func (s *Session) LayerPixels() int {
 		best = max(best, cur)
 	}
 	return best
+}
+
+// maskFor: the combined mask of a clip whose image is w×h, computed again only when the masks
+// (after their keys) or their painted files change
+func (s *Session) maskFor(masks []config.MaskConfig, w, h int) (*image.Alpha, string) {
+	b, _ := yaml.Marshal(masks)
+	key := fmt.Sprintf("%dx%d|%s", w, h, b)
+	for _, m := range masks {
+		if m.Kind == "raster" && m.Path != "" {
+			if st, err := os.Stat(m.Path); err == nil {
+				key += fmt.Sprintf("|%d", st.ModTime().UnixNano())
+			}
+		}
+	}
+	if e, ok := s.masks[key]; ok {
+		return e.img, e.ver
+	}
+	mw, mh := effects.MaskSize(w, h)
+	img := effects.MaskImage(masks, mw, mh, float64(mw)/float64(w), loadMaskFile)
+	if len(s.masks) >= 64 {
+		s.masks = map[string]maskEntry{}
+	}
+	s.maskSeq++
+	e := maskEntry{img, fmt.Sprintf("m%d", s.maskSeq)}
+	s.masks[key] = e
+	return e.img, e.ver
+}
+
+type maskEntry struct {
+	img *image.Alpha
+	ver string
+}
+
+func loadMaskFile(path string) image.Image {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+	img, _, err := image.Decode(f)
+	if err != nil {
+		return nil
+	}
+	return img
 }

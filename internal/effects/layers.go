@@ -39,6 +39,11 @@ type LayerFrame struct {
 	KeyColor                       [3]float64
 	KeyTol, KeySoft                float64
 	W                              Warp
+	LayerID                        string // the layer (config.LayerConfig.ID) and index of the clip it shows
+	Clip                           int
+	// Mask: where it is seen (the image's space, any size; nil = everywhere)
+	Mask    *image.Alpha
+	MaskVer string
 }
 
 // screenToImage: position in the clip's image (px, fractional) of the screen point p
@@ -127,6 +132,13 @@ func (w *Warp) warp(qx, qy float64, W, H int) (float64, float64) {
 func (l *LayerFrame) at(qx, qy float64, W, H int) [4]float64 {
 	wx, wy := l.W.warp(qx, qy, W, H)
 	s := l.sample(wx, wy)
+	if l.Mask != nil {
+		u, v := l.screenToImage(wx+0.5, wy+0.5)
+		m := l.maskAt(u, v)
+		for i := range s {
+			s[i] *= m
+		}
+	}
 	if l.W.ChromaMode != 0 && l.W.Chroma > 0.5 {
 		var ox, oy float64
 		if l.W.ChromaMode == 2 {

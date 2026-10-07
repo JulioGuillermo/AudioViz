@@ -182,6 +182,24 @@ can type another path. **Exports** (top bar) lists the videos of `exports/` with
 duration, size and date: click one to **play** it in the browser, **download** it or **delete** it.
 (The audio of the MP4 is FLAC: Chrome and Firefox play it; the download always works.)
 
+## Editor
+**✎ Editor** (transport bar) or **E** opens the preview over the whole window: tools on the left,
+the inspector on the right (it can be hidden), a small timeline below (the selection's range and
+keys are marked on it).
+
+- **Zoom**: the wheel (at the pointer), the zoom tool (click / Alt+click / drag), the buttons, **0** =
+  fit, **1** = actual pixels. The frame is requested at full quality when zoomed in.
+- **Pan**: the hand tool (**H**), the middle button, Shift+wheel, or two fingers.
+- **Rotate the view** (like turning the paper): the rotate tool (**R**, Shift = steps of 15°) or
+  two fingers; the ° button resets it.
+- **Touch**: two fingers pan, zoom and rotate at the same time.
+- **Pen**: the status line shows the pointer type, the pen's pressure and tilt.
+- The selection tool (**V**) has the same handles as the preview (move, scale, rotate a clip).
+- **Masks** of the selected clip ([layers.md](layers.md#masks)): shape (**S**), nodes (**N**), brush
+  (**B**) and eraser (**E**), with the brush's size, hardness, opacity and pressure options in the
+  top bar.
+- **Esc** closes it.
+
 ## Right-click menus
 The browser's own menu is replaced by the studio's (it stays only in text boxes, to copy and paste).
 The menus never go off the screen.

@@ -22,6 +22,7 @@ struct LayerP {
     vec4 warp1;    // shake x, y, chromatic shift, mode (0 none, 1 horizontal, 2 radial)
     vec4 warp2;    // flash contrast factor, brightness
     vec4 glitch[8];
+    ivec4 mask;    // offset (words; one byte per mask px), width, height, on
 };
 
 // One entry of the per-frame text style table (lyrics = 0, fixed texts after)

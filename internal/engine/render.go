@@ -159,10 +159,14 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) {
 	for i := range fs.Layers {
 		l := &fs.Layers[i]
 		px := l.Img.Bounds().Dx() * l.Img.Bounds().Dy()
-		if n == gpu.MaxLayers || off+px > g.LayerWords {
+		mwords := 0
+		if l.Mask != nil {
+			mwords = (len(l.Mask.Pix) + 3) / 4
+		}
+		if n == gpu.MaxLayers || off+px+mwords > g.LayerWords {
 			break
 		}
-		vers = append(vers, l.Ver)
+		vers = append(vers, l.Ver+"|"+l.MaskVer)
 		lp := &p.Layers[n]
 		flags := int32(l.Blend & 15)
 		if l.Key {
@@ -190,6 +194,11 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) {
 		lp.Warp1 = [4]float32{float32(w.ShakeX), float32(w.ShakeY), float32(w.Chroma), float32(w.ChromaMode)}
 		lp.Warp2 = [4]float32{float32(w.FlashCF), float32(w.FlashBright)}
 		off += px
+		lp.Mask = [4]int32{}
+		if l.Mask != nil {
+			lp.Mask = [4]int32{int32(off), int32(l.Mask.Rect.Dx()), int32(l.Mask.Rect.Dy()), 1}
+			off += mwords
+		}
 		n++
 	}
 	if !slices.Equal(vers, r.layerVer[slot]) {
@@ -198,6 +207,10 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) {
 			pix := fs.Layers[i].Img.Pix
 			copy(buf[off*4:], pix)
 			off += len(pix) / 4
+			if m := fs.Layers[i].Mask; m != nil {
+				copy(buf[off*4:], m.Pix)
+				off += (len(m.Pix) + 3) / 4
+			}
 		}
 		r.layerVer[slot] = vers
 	}

@@ -136,6 +136,7 @@ type LayerP struct {
 	Warp1  [4]float32 // shake x, y, chromatic shift, mode
 	Warp2  [4]float32 // flash contrast factor, brightness
 	Glitch [8][4]float32
+	Mask   [4]int32 // mask: offset (words; one byte per mask px), width, height, on
 }
 
 // TextStyle mirrors 'TStyle' in render.comp: one entry of the per-frame text style table
