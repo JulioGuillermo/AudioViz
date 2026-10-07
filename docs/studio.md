@@ -61,10 +61,15 @@ bass, aberration, glitch on beats, particles). Change whatever you like from eac
 | Area | What's there |
 |---|---|
 | Top | Project name, save status, job progress (export / generate lyrics / generate image), **Projects**, **Package**, **Exports**, **Images**, **Export** |
-| Left | Track list: Audio, Output, Background, each background effect, Visualizer, Particles and Lyrics. Struck through if they are off at the current instant |
+| Left | Track list: Output, then three foldable zones, each with its own color: **Main** (Audio, Image / video, Lyrics, Titles and texts), **Layers** (overlay layers and emitters, coming) and **Effects** (zoom, shake, chromatic aberration, ripple, glitch, color flash, spectrum, particles). Entries off at the current instant are dimmed |
 | Center | **Preview** and transport (play, frame by frame, preview quality) |
 | Right | **Inspector**: all the parameters of the selected segment |
-| Bottom | **Timeline**: ruler with markers, waveform with the bass/mid/treble curves, lyric lines and one track per effect |
+| Bottom | **Timeline**: ruler with markers and the waveform with the bass/mid/treble curves (both always at the top while the tracks scroll), then the same zones with their tracks |
+
+**Show / hide tracks**: the eye of each entry in the left panel hides its track from the timeline
+(only from the timeline: the effect keeps rendering; turn it off in the inspector for that). Click
+a zone header, in the left panel or on the timeline, to fold or unfold it. Both are saved in the
+project (`studio:` in `project.yaml`), so it opens as you left it; they are not undo steps.
 
 Everything is **saved automatically** to `project.yaml` (shown as "Saved hh:mm:ss"), which remains editable
 by hand and renderable with `audioviz project.yaml`.

@@ -28,6 +28,7 @@ User view: [../index.md](../index.md#yaml-structure) (sections), [../timeline.md
 | `lyrics` | `Lyrics LyricsConfig` | `lyrics` | [lyrics/](../lyrics/README.md) |
 | `output` | `Output OutputConfig` | — | [output.md](../output.md) |
 | `timeline` | `TimelineRaw yaml.Node` (raw, decoded later) | — | [timeline.md](../timeline.md) |
+| `studio` | `Studio StudioView` (`hidden`, `collapsed`: the studio's track view; no effect on the video, omitted when empty) | — | [studio.md](../studio.md) |
 
 Fields not in the YAML (`yaml:"-"`): `Timeline` (built from the blocks + `timeline:`),
 `Markers`, and `Dir` (project folder, base for relative paths).

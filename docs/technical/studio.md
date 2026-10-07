@@ -133,6 +133,8 @@ type ProjectJSON struct {
     Tracks  map[string][]SegJSON `json:"tracks"`  // background, bass_zoom, shake, chromatic_aberration,
                                                   // ripple, glitch, color_flash, visualizer, particles, lyrics
     Markers []MarkerJSON         `json:"markers"`
+    Texts   []map[string]any     `json:"texts"`
+    View    ViewJSON             `json:"view"`    // {hidden: [...], collapsed: [...]} ↔ YAML studio:
 }
 type SegJSON struct { At float64; Label string; Transition {Mode, Duration}; Cfg map[string]any }
 ```
@@ -400,8 +402,11 @@ App
 │   ├─ Form(AUDIO_FIELDS) | Form(OUTPUT_FIELDS)
 │   ├─ TrackInspector ─ segment tabs, SegHeader, Form(def.fields), "Generate lyrics" (lyrics track)
 │   └─ LineEditor (selected lyric line[s]) ─ shift / crosshair / Edit words / Resync / words table
-├─ Timeline ─ Ruler(ViewCanvas), AudioLane(ViewCanvas), lyric lines / word blocks,
-│             one lane per track with segment blocks, markers, Playhead (timeStore)
+├─ Timeline ─ rows: Ruler(ViewCanvas) and AudioLane(ViewCanvas) (sticky), then per zone
+│             (schema.js ZONES / zoneOf) a header and the lanes of its visible entries:
+│             main = background, lyric lines / word blocks, lyrics, texts; layers (empty);
+│             effects = the other tracks. Names column and lanes come from the same row list.
+│             Markers, Playhead (timeStore)
 └─ dialogs: NewProject, ExportDialog(JobView), GenLyricsDialog(GenSteps), FilePicker (own layer,
             above any dialog), toast, drop zone
 ```
@@ -743,6 +748,13 @@ silently drops its translation until the dictionary key is updated as well.
   inserted after it.
 - **Markers**: stored in the project (`markers`), sorted on add; click = seek, double-click =
   rename, right-click = delete (with `confirm`).
+- **Track view** (`proj.view`): `hidden` = entries whose lane is not on the timeline (track ids,
+  `texts`; `lyrics` hides both the lyric lines and the lyrics track), `collapsed` = folded zones
+  (`main`, `layers`, `effects`; folds the zone in the left panel and on the timeline). Changed
+  with `toggleView` → `update(fn, false)`: saved with the project but not recorded in the undo
+  history, and `applySnap` keeps the current view when undoing. Ruler and audio rows are
+  `position: sticky` in both columns (z-index 3, under the playhead, under markers, whose label is
+  sticky too).
 - **Model download notice** in the Generate dialog: shows ≈574 MB (Whisper) and/or ≈84 MB
   (Demucs, precise mode only) when `st.models` reports them missing.
 
