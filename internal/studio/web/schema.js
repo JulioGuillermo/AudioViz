@@ -303,3 +303,72 @@ export const CLIP_FIELDS = [
     layerEffect('ripple', 'Ripple'), layerEffect('glitch', 'Glitch'), layerEffect('color_flash', 'Color flash'),
   ] },
 ];
+
+// Emitter clips (config.EmitterConfig): the clip places the emitter, the emitter block says what
+// it throws. Every number and color can have keys.
+export const EMITTER_PRESETS = [['fire', 'Fire', 'flame'], ['sparks', 'Sparks', 'sparkles'], ['smoke', 'Smoke', 'cloud'],
+  ['dust', 'Dust', 'focus'], ['light', 'Lights (bokeh)', 'sun'], ['explosion', 'Explosion', 'zap'], ['snow', 'Snow', 'snowflake']];
+const EMIT_SHAPES = [['point', 'Point'], ['circle', 'Circle (filled)'], ['ring', 'Ring'], ['line', 'Line'], ['box', 'Rectangle']];
+const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', fields: [
+  { key: 'amount', label: 'Amount', type: 'section', fields: [
+    { key: 'rate', label: 'Per second', type: 'num', min: 0, max: 3000, step: 1 },
+    { key: 'burst', label: 'Burst at the start', type: 'int', min: 0, max: 20000, step: 1, help: 'Particles thrown at once when the clip starts' },
+    { key: 'max', label: 'Most alive at once', type: 'int', min: 10, max: 200000, step: 10, anim: false },
+  ] },
+  { key: 'origin', label: 'Where they are born', type: 'section', fields: [
+    { key: 'shape', label: 'Shape', type: 'enum', def: 'point', options: EMIT_SHAPES, anim: false },
+    { key: 'width', label: 'Width / diameter (px)', type: 'num', min: 0, max: 4000, step: 1, showIf: (c) => c.shape && c.shape !== 'point' },
+    { key: 'height', label: 'Height (px)', type: 'num', min: 0, max: 4000, step: 1, showIf: (c) => c.shape === 'box' },
+  ] },
+  { key: 'launch', label: 'How they leave', type: 'section', fields: [
+    { key: 'direction', label: 'Direction (°)', type: 'num', min: -180, max: 180, step: 1, help: '0 = up, 90 = right (plus the clip\'s rotation)' },
+    { key: 'spread', label: 'Spread (°)', type: 'num', min: 0, max: 360, step: 1, help: '360 = every way' },
+    { key: 'speed', label: 'Speed (px/s)', type: 'num', min: 0, max: 4000, step: 1 },
+    { key: 'speed_var', label: 'Speed variation', type: 'num', min: 0, max: 1, step: 0.01 },
+  ] },
+  { key: 'forces', label: 'Forces', type: 'section', fields: [
+    { key: 'gravity', label: 'Gravity (px/s²)', type: 'num', min: -3000, max: 3000, step: 1, help: 'Negative: they rise (fire, smoke)' },
+    { key: 'wind', label: 'Wind (px/s²)', type: 'num', min: -3000, max: 3000, step: 1, help: 'Positive: to the right' },
+    { key: 'drag', label: 'Drag', type: 'num', min: 0, max: 10, step: 0.05, help: 'How fast they slow down' },
+    { key: 'turbulence', label: 'Turbulence (px)', type: 'num', min: 0, max: 400, step: 1 },
+    { key: 'turb_freq', label: 'Turbulence speed (Hz)', type: 'num', min: 0, max: 8, step: 0.05 },
+  ] },
+  { key: 'lifesize', label: 'Life and size', type: 'section', fields: [
+    { key: 'life', label: 'Life (s)', type: 'num', min: 0.05, max: 30, step: 0.05 },
+    { key: 'life_var', label: 'Life variation', type: 'num', min: 0, max: 1, step: 0.01 },
+    { key: 'size', label: 'Size at birth (px)', type: 'num', min: 0.5, max: 600, step: 0.5 },
+    { key: 'size_end', label: 'Size at the end (px)', type: 'num', min: 0, max: 600, step: 0.5 },
+    { key: 'size_var', label: 'Size variation', type: 'num', min: 0, max: 1, step: 0.01 },
+  ] },
+  { key: 'look', label: 'Color and look', type: 'section', fields: [
+    { key: 'color_start', label: 'Color at birth', type: 'color' },
+    { key: 'color_mid', label: 'Color halfway', type: 'color' },
+    { key: 'color_end', label: 'Color at the end', type: 'color', help: 'The opacity of each color fades them over their life' },
+    { key: 'fade_in', label: 'Fade in (part of the life)', type: 'num', min: 0, max: 1, step: 0.01 },
+    { key: 'fade_out', label: 'Fade out (part of the life)', type: 'num', min: 0, max: 1, step: 0.01 },
+    { key: 'mode', label: 'They add up as', type: 'enum', def: 'add', anim: false,
+      options: [['add', 'Light (fire, sparks, glows)'], ['soft', 'Matter (smoke, dust, snow)']] },
+    { key: 'streak', label: 'Streak (s of motion)', type: 'num', min: 0, max: 0.3, step: 0.001, help: 'Stretched along their motion, like sparks' },
+    { key: 'softness', label: 'Soft edge', type: 'num', min: 0, max: 1, step: 0.01 },
+    { key: 'seed', label: 'Random seed', type: 'int', min: 0, max: 99999, step: 1, anim: false, help: 'Another number, another pattern' },
+  ] },
+  { key: 'react', label: 'Audio reaction', type: 'group', fields: [
+    react('bass'),
+    { key: 'rate', label: 'More particles', type: 'num', min: 0, max: 10, step: 0.05, help: '1 = twice as many at full band' },
+    { key: 'speed', label: 'Faster', type: 'num', min: 0, max: 4, step: 0.05 },
+    { key: 'size', label: 'Bigger', type: 'num', min: 0, max: 4, step: 0.05 },
+    { key: 'burst', label: 'Burst on each beat', type: 'int', min: 0, max: 5000, step: 1, help: 'Particles thrown at once on every beat' },
+  ] },
+] };
+export const EMITTER_CLIP_FIELDS = [
+  { key: 'x', label: 'Position X', type: 'num', min: -0.5, max: 1.5, step: 0.001, help: 'Or drag its point on the preview', showIf: (c) => !onPath(c) },
+  { key: 'y', label: 'Position Y', type: 'num', min: -0.5, max: 1.5, step: 0.001, showIf: (c) => !onPath(c) },
+  { key: 'rotation', label: 'Rotation (°)', type: 'num', min: -360, max: 360, step: 0.5, help: 'Turns its shape and its direction (or drag the arrow)' },
+  { key: 'scale', label: 'Scale', type: 'num', min: 0.01, max: 8, step: 0.01, help: 'Sizes, speeds and shape together' },
+  { key: 'opacity', label: 'Opacity', type: 'num', min: 0, max: 1, step: 0.01 },
+  { key: 'fade_in', label: 'Fade in (s)', type: 'num', min: 0, max: 10, step: 0.05, anim: false },
+  { key: 'fade_out', label: 'Fade out (s)', type: 'num', min: 0, max: 10, step: 0.05, anim: false },
+  { key: 'blend', label: 'Blend', type: 'enum', def: 'normal', options: BLENDS },
+  EMITTER_BLOCK,
+  ...CLIP_FIELDS.filter((f) => f.key === 'filters' || f.key === 'effects'),
+];

@@ -325,6 +325,27 @@ unpremultiply, key alpha = smoothstep(tol, tol + soft, |rgb − key|), brightnes
 saturation / hue (rotation about the gray axis), flash (contrast factor, brightness), blend mode,
 `mix(frame, blended, alpha·key·opacity)`.
 
+Particle emitters (`config.EmitterConfig`, `effects/emit.go`, `engine/emitters.go`,
+`shaders/emit.comp`): stateless. Per clip the session builds once a **table of births** (one entry
+per frame: cumulative count N, origin and rotation from the clip's keys / motion path, the music's
+speed and size factors; a burst adds a second entry at the same time; the rate is held under
+max / life). A frame takes the entries of the last `life·(1+var)` seconds; particle i is born when
+N passes i + 0.5 (binary search, linear between entries) and its state is a closed formula of its
+age: launch in the cone, exponential drag with constant acceleration (gravity, wind), two
+sine waves per axis with random phases for turbulence (zero at birth), size and a 3-stop color
+over the life, fades. Random numbers: a PCG hash of (seed, particle, k). Each particle is splatted
+(soft disc or a stroke along its velocity × streak) into a fixed-point accumulation (premultiplied
+rgb and alpha × 1024, `uint` atomic adds: the sum does not depend on order) of cells of Div×Div px
+(Div 2 / 4 for big soft particles), then resolved per pixel (bilinear between cells): *add* =
+light (alpha = max(sum α, max rgb)), *soft* = mean color with alpha 1 − e^(−Σα); premultiplied
+RGBA8 written as the clip's frame-sized image in `LAYERS`, composited by `drawLayer` like any
+clip. GPU: the emitter pass (`pipeEmit`, push constant = phase: clear / splat / resolve, 4096×64
+invocations each) before the main pass, in the command buffers with bit 1 of `passes`; buffers
+`EACC` (binding 10, 4 words per pixel per emitter, device-local) and `EDATA` (binding 11: count,
+W, H; per emitter a 128-word header and up to 4096 births of 8 words). CPU: `DrawEmitter`, the
+same math in float32. At most `MaxEmitters` = 4 at once (the renderer is sized by
+`Session.EmitterCount`).
+
 Motion paths (`config.Motion`, `effects.PathAt`): the path's Béziers (the masks' nodes, in frame
 px) sampled 24 times per segment with their cumulative length; progress × length gives the point
 (linear between samples) and the direction of that sample (`orient`). Clips: the centre instead of

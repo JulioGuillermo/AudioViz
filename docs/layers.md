@@ -106,6 +106,10 @@ segment, close it...) are the same as for the masks. *Draw again* replaces it.
       motion.progress: [{ t: 0, v: 0, ease: ease_in_out }, { t: 6, v: 1 }]
 ```
 
+## Particle emitters
+A layer can also be a **particle emitter** (fire, sparks, smoke...): *+ Layer* → *Particle emitter*. See
+[emitters.md](emitters.md).
+
 ## Visualizer, particles, lyrics and texts among the layers
 Each of them has a **Drawing order**: above all the layers (default), above the background but under
 the layers, or right above a given layer. For example, the spectrum above a smoke layer but under a

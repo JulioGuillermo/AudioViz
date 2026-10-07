@@ -1,5 +1,5 @@
 import { html } from './vendor/preact-htm.js';
-import { TRACKS, TEXT_FIELDS, CLIP_FIELDS } from './schema.js';
+import { TRACKS, TEXT_FIELDS, CLIP_FIELDS, EMITTER_CLIP_FIELDS } from './schema.js';
 import { t } from './i18n.js';
 import { EASES, EaseIcon, keyTimes, editKeysAt, KEY_EPS } from './keys.js';
 
@@ -29,7 +29,7 @@ export function keyLabel(path) {
   if (ps[0] === 'masks' && ps.length >= 3) parts = [t('Mask {n}', { n: +ps[1] + 1 }), t(MASK_PARTS[ps[2]] || ps[2])];
   else if (path === 'motion.progress') parts = [t('Progress along the path')];
   else {
-    for (const fs of [TEXT_FIELDS, CLIP_FIELDS, ...TRACKS.map((x) => x.fields)]) { const r = find(fs, ps); if (r) { parts = r.map((x) => t(x)); break; } }
+    for (const fs of [TEXT_FIELDS, CLIP_FIELDS, EMITTER_CLIP_FIELDS, ...TRACKS.map((x) => x.fields)]) { const r = find(fs, ps); if (r) { parts = r.map((x) => t(x)); break; } }
   }
   return parts ? parts.join(' · ') : path;
 }

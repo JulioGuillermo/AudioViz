@@ -10,6 +10,7 @@ import { useFrameStream } from './frames.js';
 import { Editor } from './editor.js';
 import { maskShapes, setMaskShapes, MaskSection, segMaskOwner, editSegMasks } from './masks.js';
 import { MotionSection, setPath } from './motion.js';
+import { isEmitterLayer, newEmitterClip, emitterMenuItems, EmitterHandles } from './emitters.js';
 import { ContextMenu, openMenu } from './menu.js';
 import { LayerInspector, ClipHandles, TextHandles, textBoxOf, geoOf, frontFirst, layerName, newLayerId, setClipProps, duplicateClip } from './layers.js';
 import { ImagesDialog } from './images.js';
@@ -20,7 +21,7 @@ import { createScrubber } from './scrub.js';
 
 // ------------------------------------------------------------------ preview
 
-function Preview({ meta, timeStore, scale, rev, playing, pin, onPin, points, onPoints, clip, clipRef, onClip, text, textIdx, onText }) {
+function Preview({ meta, timeStore, scale, rev, playing, pin, onPin, points, onPoints, clip, clipRef, onClip, text, textIdx, onText, emitter }) {
   const time = useStore(timeStore);
   const canvas = useRef();
   const stage = useRef();
@@ -111,7 +112,7 @@ function Preview({ meta, timeStore, scale, rev, playing, pin, onPin, points, onP
       // frame px → stage px: the canvas' place in the stage and its scale
       const cr = canvas.current.getBoundingClientRect(), sr = stage.current.getBoundingClientRect();
       const k = cr.width / meta.width;
-      return html`<${ClipHandles} clip=${clip} time=${time} meta=${meta} k=${k} ox=${cr.left - sr.left} oy=${cr.top - sr.top}
+      return html`<${emitter ? EmitterHandles : ClipHandles} clip=${clip} time=${time} meta=${meta} k=${k} ox=${cr.left - sr.left} oy=${cr.top - sr.top}
         geo=${clipRef && geoOf(info.layers, clipRef.id, clipRef.clip)}
         toFrame=${(cx, cy) => ({ x: (cx - cr.left) / k, y: (cy - cr.top) / k })} onChange=${onClip} />`;
     })()}
@@ -763,7 +764,40 @@ function App() {
       setSel({ kind: 'track', track, seg: i + 1 });
     },
     // Overlay layers: a new clip asks for its file; it lasts 10 s (or up to the end)
-    addClip: (id, tt) => setPick({ kind: 'bg', cb: (path) => {
+    emitterPresets: proj && proj.emitterPresets,
+    // A new emitter layer in front of the others, with a clip of that preset at the cursor
+    addEmitter: (tt, preset) => {
+      const id = newLayerId();
+      const st = Math.max(0, Math.min(meta.duration - 0.5, +tt.toFixed(3)));
+      const names = { fire: t('Fire'), sparks: t('Sparks'), smoke: t('Smoke'), dust: t('Dust'), light: t('Lights (bokeh)'), explosion: t('Explosion'), snow: t('Snow') };
+      update((p) => {
+        p.layers = [...(p.layers || []), { id, name: names[preset] || '', kind: 'emitter',
+          clips: [newEmitterClip(p, preset, st, Math.min(meta.duration - st, 10))] }];
+      });
+      setSel({ kind: 'layer', id, clip: 0 });
+    },
+    addClip: (id, tt) => {
+      const lay = (projRef.current.layers || []).find((x) => x.id === id);
+      if (isEmitterLayer(lay)) {
+        // an emitter clip like the layer's last one (or fire)
+        const st = Math.max(0, Math.min(meta.duration - 0.5, +tt.toFixed(3)));
+        let j = 0;
+        update((p) => {
+          const l = p.layers.find((x) => x.id === id);
+          const prev = l.clips[l.clips.length - 1];
+          const nc = prev ? { ...clone(prev), start: st, end: +Math.min(meta.duration, st + (prev.end - prev.start)).toFixed(3), keys: undefined }
+            : newEmitterClip(p, 'fire', st, Math.min(meta.duration - st, 10));
+          delete nc.keys;
+          l.clips.push(nc);
+          l.clips.sort((a, b) => a.start - b.start);
+          j = l.clips.indexOf(nc);
+        });
+        setSel({ kind: 'layer', id, clip: Math.max(0, j) });
+        return;
+      }
+      ctx.addMediaClip(id, tt);
+    },
+    addMediaClip: (id, tt) => setPick({ kind: 'bg', cb: (path) => {
       const st = Math.max(0, Math.min(meta.duration - 0.5, +tt.toFixed(3)));
       let j = 0;
       update((p) => {
@@ -1195,11 +1229,12 @@ function App() {
     p.layers = ff.reverse();
   });
   const selClip = sel.kind === 'layer' && layerById_(sel.id) ? layerById_(sel.id).clips[sel.clip] : null;
+  const selEmit = sel.kind === 'layer' && isEmitterLayer(layerById_(sel.id)); // the selected clip throws particles
   const selText = sel.kind === 'text' ? (proj.texts || [])[sel.i] : null;
   // What the mask tools work on: the selected clip (its image space), fixed text or lyrics segment
   // (the screen). { obj: { masks, keys, start }, screen, edit(fn(obj)) inside an update }
   const selLyrSeg = sel.kind === 'track' && sel.track === 'lyrics' ? proj.tracks.lyrics[sel.seg] : null;
-  const maskOwner = selClip ? { obj: selClip, screen: false, edit: (fn) => update((p) => fn(p.layers.find((l) => l.id === sel.id).clips[sel.clip])) }
+  const maskOwner = selClip ? { obj: selClip, screen: selEmit, edit: (fn) => update((p) => fn(p.layers.find((l) => l.id === sel.id).clips[sel.clip])) }
     : selText ? { obj: selText, screen: true, edit: (fn) => update((p) => fn(p.texts[sel.i])) }
     : selLyrSeg ? { obj: segMaskOwner(selLyrSeg), screen: true, edit: (fn) => update((p) => editSegMasks(p.tracks.lyrics[sel.seg], fn)) }
     : null;
@@ -1326,11 +1361,14 @@ function App() {
               onMouseDown=${(e) => layerReorder(e, k)} onClick=${() => selectLayer(l.id)} onContextMenu=${(e) => onContext(e, { kind: 'layer', id: l.id })}
               title=${t('Drag to change the order (higher = in front)')}>
             ${layerDrag && layerDrag.to === k && layerDrag.to < layerDrag.from && html`<i class="dropline top"></i>`}
-            <${Icon} name="layers" size=${15} /><span class="lbl">${layerName(l, i)}</span>
+            <${Icon} name=${isEmitterLayer(l) ? 'sparkles' : 'layers'} size=${15} /><span class="lbl">${layerName(l, i)}</span>
             ${l.clips.length > 0 && html`<span class="badge" title=${t('Clips')}>${l.clips.length}</span>`}${eye('layer:' + l.id)}
             ${layerDrag && layerDrag.to === k && layerDrag.to > layerDrag.from && html`<i class="dropline bottom"></i>`}</div>`)}
-          ${z.id === 'layers' && html`<button class="btn sm ghost addlayer" onClick=${() => ctx.addLayer(time)}
-            title=${t('New layer in front of the others: choose its first file (image, GIF or video)')}><${Icon} name="plus" size=${14} /> ${t('Layer')}</button>`}
+          ${z.id === 'layers' && html`<button class="btn sm ghost addlayer" onClick=${(e) => openMenu(e, [
+              { label: t('Image, GIF or video…'), icon: 'image', onClick: () => ctx.addLayer(time) },
+              '-', { header: t('Particle emitter') }, ...emitterMenuItems((k) => ctx.addEmitter(time, k)),
+            ])}
+            title=${t('New layer in front of the others: an image, GIF or video, or a particle emitter')}><${Icon} name="plus" size=${14} /> ${t('Layer')}</button>`}
         </div>`}`;
       })}
     </div>
@@ -1344,7 +1382,7 @@ function App() {
           onPin=${(x, y) => update((p) => { const tx = p.texts[sel.i]; if (tx) setClipProps(tx, { position_x: x, position_y: y }, timeStore.get()); })}
           text=${selText} textIdx=${selText ? sel.i : null}
           onText=${(props) => update((p) => { const tx = p.texts[sel.i]; if (tx) setClipProps(tx, props, timeStore.get()); })}
-          clip=${selClip && selClip.path && time >= selClip.start && time < selClip.end ? selClip : null}
+          clip=${selClip && (selClip.path || selEmit) && time >= selClip.start && time < selClip.end ? selClip : null} emitter=${selEmit}
           clipRef=${sel.kind === 'layer' ? { id: sel.id, clip: sel.clip } : null}
           onClip=${(props) => update((p) => { const c = p.layers.find((l) => l.id === sel.id).clips[sel.clip]; setClipProps(c, props, timeStore.get()); })} />
         ${!hideSetup && (!proj.audio.path || !proj.tracks.background[0].cfg.path) && html`<${Setup} proj=${proj} ctx=${ctx} onHide=${() => setHideSetup(true)} />`}
@@ -1385,7 +1423,7 @@ function App() {
       onSelectLine=${selectLine} onLyrics=${(lines) => editLyrics((all) => { all.splice(0, all.length, ...lines); }, false)}
       onLyricsCommit=${() => { lyrSaveRef.current(); record(); }} />
     ${editor && html`<${Editor} meta=${meta} timeStore=${timeStore} playing=${playing} setPlaying=${setPlaying} seek=${seek} rev=${rev}
-      selClip=${selClip} inspector=${inspector} onClose=${() => { setEditor(false); setEditorTool('select'); }} marks=${editorMarks} onKeys=${onKeys} kf=${{ focus: kfFocus, setFocus: setKfFocus, sel: kfSel, setSel: setKfSel }}
+      selClip=${selClip} selEmit=${selEmit} inspector=${inspector} onClose=${() => { setEditor(false); setEditorTool('select'); }} marks=${editorMarks} onKeys=${onKeys} kf=${{ focus: kfFocus, setFocus: setKfFocus, sel: kfSel, setSel: setKfSel }}
       tool=${editorTool} selMask=${selMask} onNeedMask=${needMask} selId=${sel.id} selClipIdx=${sel.clip}
       maskOwner=${maskOwner} pathOwner=${pathOwner} editPath=${(fn) => pathOwner && pathOwner.edit((o) => setPath(o, fn))} editMask=${(fn) => maskOwner && maskOwner.edit((o) => { const tt = timeStore.get();
         setMaskShapes(o, selMask, tt, fn(maskShapes(o, selMask, tt))); })}

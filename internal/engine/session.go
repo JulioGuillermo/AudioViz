@@ -38,6 +38,7 @@ type Session struct {
 	// layerMedia: the files of the overlay clips (layers.go); masks: their combined masks
 	layerMedia map[string]*layerMedia
 	masks      map[string]maskEntry
+	emitTabs   map[string]*emitTable // births of the emitter clips (emitters.go)
 	maskSeq    int
 	lyr        *lyrics.Multi
 	lyrKey     string
@@ -413,7 +414,7 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 
 	// Overlay layers, and the place of the visualizer, particles and lyrics among them
 	if len(cfg.Layers) > 0 {
-		if fs.Layers, fs.layerStack, err = s.layersAt(t, idx, fs.Feat, fs.FX, fs.GlitchAmount); err != nil {
+		if fs.Layers, fs.layerStack, err = s.layersAt(t, idx, base, fs.FX, fs.GlitchAmount); err != nil {
 			return nil, err
 		}
 	}

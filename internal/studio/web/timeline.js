@@ -5,6 +5,7 @@ import { Icon } from './icons.js';
 import { t } from './i18n.js';
 import { useStore } from './store.js';
 import { keyTimes } from './keys.js';
+import { isEmitterLayer, presetLabel } from './emitters.js';
 import { keyLabel, targetKey, isPicked, pickedTimes, pickKey, moveKeysAt, keyMenuItems, FocusChip } from './keymarks.js';
 import { openMenu } from './menu.js';
 
@@ -504,15 +505,15 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
     const on = sel.kind === 'layer' && sel.id === l.id;
     return {
       key: 'layer-' + l.id, h: H.track, on, sel: on,
-      name: html`<${Icon} name="layers" size=${14} /> ${l.name || t('Layer {n}', { n: i + 1 })}`,
+      name: html`<${Icon} name=${isEmitterLayer(l) ? 'sparkles' : 'layers'} size=${14} /> ${l.name || t('Layer {n}', { n: i + 1 })}`,
       onName: () => onSelectLayer(l.id), onNameCtx: (e) => onContext(e, { kind: 'layer', id: l.id }),
       title: t('Double-click the lane: new clip at that point'),
       onDown: seekDrag, onDbl: (e) => onAddClip(l.id, snap(xToT(e.clientX), e)),
       onCtx: (e) => onContext(e, { kind: 'layerlane', id: l.id, at: snap(xToT(e.clientX), e) }),
       lane: l.clips.map((c, j) => {
         const son = on && sel.clip === j;
-        const name = c.label || (c.path || '').split(/[\\/]/).pop() || t('Clip {n}', { n: j + 1 });
-        return html`<div class=${'seg clip' + (son ? ' on' : '')} key=${'c' + j}
+        const name = c.label || (isEmitterLayer(l) ? presetLabel(c.emitter && c.emitter.preset) : (c.path || '').split(/[\\/]/).pop()) || t('Clip {n}', { n: j + 1 });
+        return html`<div class=${'seg clip' + (son ? ' on' : '') + (isEmitterLayer(l) ? ' emit' : '')} key=${'c' + j}
             style=${{ left: c.start * effPps + 'px', width: Math.max(4, (c.end - c.start) * effPps - 1) + 'px' }}
             title=${name + ' · ' + fmtTime(c.start) + ' → ' + fmtTime(c.end)}
             onMouseDown=${(e) => clipDrag(e, l.id, j)} onDblClick=${(e) => e.stopPropagation()}

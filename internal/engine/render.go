@@ -88,7 +88,7 @@ func NewRenderer(s *Session, mode string, slots int) (*Renderer, error) {
 		if s.lyr != nil {
 			textCap = max(textCap, len(s.lyr.Atlas.Pix)*2)
 		}
-		g, err := gpu.New(s.W, s.H, slots, s.Cfg.Output.GPUDevice, textCap, effects.FluidBufWords(s.W, s.H), layerCap(s))
+		g, err := gpu.New(s.W, s.H, slots, s.Cfg.Output.GPUDevice, textCap, effects.FluidBufWords(s.W, s.H), layerCap(s), s.EmitterCount())
 		if err != nil {
 			if mode == "gpu" {
 				return nil, fmt.Errorf("Vulkan GPU not available: %w", err)
@@ -116,7 +116,7 @@ func (r *Renderer) Fits() bool {
 	if r.s.lyr != nil {
 		need = len(r.s.lyr.Atlas.Pix)
 	}
-	return r.G.Width == r.s.W && r.G.Height == r.s.H && need <= r.textCap && r.s.LayerPixels() <= r.G.LayerWords
+	return r.G.Width == r.s.W && r.G.Height == r.s.H && need <= r.textCap && r.s.LayerPixels() <= r.G.LayerWords && r.s.EmitterCount() <= r.G.Emitters
 }
 
 func (r *Renderer) Close() {
@@ -144,21 +144,34 @@ func (r *Renderer) submit(slot int, fs *FrameState, writeRGBA bool) error {
 	p := g.Params(slot)
 	r.s.fillParams(p, fs, g.PadW, g.PadH, writeRGBA)
 	fluid := r.fluidData(slot, p, fs.Trans.Fluid)
-	r.layerData(slot, p, fs)
-	return g.Submit(slot, fluid)
+	emit := r.layerData(slot, p, fs)
+	return g.Submit(slot, fluid, emit)
 }
 
 // layerData uploads the images of the overlay clips (only when they changed for this slot) and
-// fills their parameters. Clips that do not fit in the buffer are left out.
-func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) {
+// fills their parameters. Clips that do not fit in the buffer are left out. An emitter clip's
+// image is made by the emitter pass in its place (emitData); true if there is one.
+func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 	g := r.G
 	n := 0
 	buf := g.LayerData(slot)
 	var vers []string
 	off := 0
+	type emitAt struct {
+		e   *effects.EmitFrame
+		off int
+	}
+	var emits []emitAt
 	for i := range fs.Layers {
 		l := &fs.Layers[i]
-		px := l.Img.Bounds().Dx() * l.Img.Bounds().Dy()
+		iw, ih := r.s.W, r.s.H
+		if l.Img != nil {
+			iw, ih = l.Img.Bounds().Dx(), l.Img.Bounds().Dy()
+		}
+		if l.Emit != nil && len(emits) == g.Emitters {
+			break // no accumulation left for it
+		}
+		px := iw * ih
 		mwords := 0
 		if l.Mask != nil {
 			mwords = (len(l.Mask.Pix) + 3) / 4
@@ -184,7 +197,10 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) {
 				lp.Glitch[j] = [4]float32{float32(gs.Y0), float32(gs.Y1), float32(gs.ShiftX)}
 			}
 		}
-		lp.Info = [4]int32{int32(off), int32(l.Img.Bounds().Dx()), int32(l.Img.Bounds().Dy()), flags}
+		lp.Info = [4]int32{int32(off), int32(iw), int32(ih), flags}
+		if l.Emit != nil {
+			emits = append(emits, emitAt{l.Emit, off})
+		}
 		lp.Xf = [4]float32{float32(l.CX), float32(l.CY), float32(l.SX), float32(l.SY)}
 		lp.Xf2 = [4]float32{float32(l.Rot), float32(l.Opacity), float32(l.Blur), float32(l.Hue)}
 		lp.Adj = [4]float32{float32(l.Brightness), float32(l.Contrast), float32(l.Saturate)}
@@ -225,9 +241,13 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) {
 	if !slices.Equal(vers, r.layerVer[slot]) {
 		off = 0
 		for i := 0; i < n; i++ {
-			pix := fs.Layers[i].Img.Pix
-			copy(buf[off*4:], pix)
-			off += len(pix) / 4
+			l := &fs.Layers[i]
+			if l.Emit != nil {
+				off += r.s.W * r.s.H // drawn there by the emitter pass
+			} else {
+				copy(buf[off*4:], l.Img.Pix)
+				off += len(l.Img.Pix) / 4
+			}
 			if m := fs.Layers[i].Mask; m != nil {
 				copy(buf[off*4:], m.Pix)
 				off += (len(m.Pix) + 3) / 4
@@ -243,6 +263,54 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) {
 	p.LayerN = [4]int32{int32(n)}
 	p.ZIdx[0], p.ZIdx[1] = int32(fs.ZParts), int32(fs.ZViz)
 	p.FxFlash = [4]float32{float32(contrastFactor(fs.FX.contrast)), float32(fs.FX.bright)}
+	if g.Emitters == 0 {
+		return false
+	}
+	u, f := g.EmitData(slot)
+	u[0], u[1], u[2] = uint32(len(emits)), uint32(r.s.W), uint32(r.s.H)
+	base, bo := 0, 4+g.Emitters*gpu.EmitHeaderWords
+	for k, em := range emits {
+		e := em.e
+		h := 4 + k*gpu.EmitHeaderWords
+		bs := e.Births
+		if len(bs) > gpu.MaxEmitBirths {
+			bs = bs[len(bs)-gpu.MaxEmitBirths:]
+		}
+		i0 := e.I0
+		if len(bs) > 0 {
+			i0 = max(i0, int(math.Floor(bs[0].N-0.5)))
+		}
+		cnt := max(0, min(e.I1-i0, gpu.MaxEmitParticles-base))
+		P := &e.P
+		flags := uint32(0)
+		if P.Soft {
+			flags = 1
+		}
+		u[h], u[h+1], u[h+2], u[h+3] = uint32(base), uint32(i0), uint32(cnt), uint32(bo)
+		u[h+4], u[h+5], u[h+6], u[h+7] = uint32(len(bs)), uint32(em.off), uint32(P.Shape), flags
+		v := []float64{P.W, P.H, P.Dir, P.Spread, P.Speed, P.SpeedVar, P.Gravity, P.Wind, P.Drag, P.Turb, P.TurbFreq, P.Life,
+			P.LifeVar, P.Size, P.SizeEnd, P.SizeVar}
+		for j, x := range v {
+			f[h+8+j] = float32(x)
+		}
+		for c := 0; c < 3; c++ {
+			for j := 0; j < 4; j++ {
+				f[h+24+c*4+j] = float32(P.Col[c][j])
+			}
+		}
+		f[h+36], f[h+37], f[h+38], f[h+39] = float32(P.FadeIn), float32(P.FadeOut), float32(P.Streak), float32(P.Softness)
+		u[h+40] = P.Seed
+		u[h+42] = uint32(max(P.Div, 1))
+		f[h+41] = float32(e.T)
+		for j, b := range bs {
+			o := bo + j*gpu.EmitBirthWords
+			f[o], f[o+1], f[o+2], f[o+3] = float32(b.T), float32(b.N), float32(b.X), float32(b.Y)
+			f[o+4], f[o+5], f[o+6], f[o+7] = float32(b.Rot), float32(b.Speed), float32(b.Size), 0
+		}
+		bo += gpu.MaxEmitBirths * gpu.EmitBirthWords
+		base += cnt
+	}
+	return len(emits) > 0
 }
 
 // fluidData uploads the fluid / liquid frame (particles, bins, coarse level) for the fluid pass;
@@ -611,7 +679,11 @@ func (s *Session) cpuFrame(fs *FrameState) *image.RGBA {
 	dc := gg.NewContextForRGBA(frame)
 	for st := 0; st <= len(fs.Layers); st++ {
 		if st > 0 {
-			effects.DrawLayer(frame, &fs.Layers[st-1])
+			l := &fs.Layers[st-1]
+			if l.Emit != nil && l.Img == nil {
+				l.Img = effects.DrawEmitter(l.Emit, s.W, s.H)
+			}
+			effects.DrawLayer(frame, l)
 		}
 		if fs.ZParts == st {
 			for _, ps := range fs.Parts {

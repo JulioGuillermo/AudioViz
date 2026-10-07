@@ -44,6 +44,8 @@ type LayerFrame struct {
 	// Mask: where it is seen (the image's space, any size; nil = everywhere)
 	Mask    *image.Alpha
 	MaskVer string
+	// Particles (an emitter clip): Img is made from them (frame-sized, CX, CY at the center)
+	Emit *EmitFrame
 }
 
 // screenToImage: position in the clip's image (px, fractional) of the screen point p

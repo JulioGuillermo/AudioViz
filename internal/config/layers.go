@@ -29,6 +29,7 @@ import (
 type LayerConfig struct {
 	ID    string       `yaml:"id,omitempty"` // stable id (the studio's view of its track)
 	Name  string       `yaml:"name"`
+	Kind  string       `yaml:"kind,omitempty"` // "" = images / GIFs / videos; "emitter" = particles (see EmitterConfig)
 	Clips []ClipConfig `yaml:"clips"`
 }
 
@@ -67,6 +68,8 @@ type ClipConfig struct {
 	Masks []MaskConfig `yaml:"masks,omitempty"`
 	// Motion along a path (instead of x, y)
 	Motion Motion `yaml:"motion,omitempty"`
+	// Particles (clips of an emitter layer; Path is not used)
+	Emitter *EmitterConfig `yaml:"emitter,omitempty"`
 	// Keyframes (times from Start): any of the numbers and colors above, e.g. x, scale, opacity
 	Keys Keys `yaml:"keys,omitempty"`
 }

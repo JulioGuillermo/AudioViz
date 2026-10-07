@@ -565,3 +565,17 @@ a.btn { text-decoration: none; }
 .masksvg .mask-node.on { fill: #ffd24a; stroke: #000; }
 .masksvg .mask-hline { stroke: rgba(255, 210, 74, .85); }
 .masksvg .mask-handle { fill: #ffd24a; stroke: #000; pointer-events: auto; cursor: move; }
+
+/* Emitter handles: its point, its shape, its direction */
+.emitbox { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
+.emitbox .eb-svg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.emitbox .eb-arrow { stroke: #fff; filter: drop-shadow(0 0 1px rgba(0, 0, 0, .8)); }
+.emitbox .eb-cone { stroke: rgba(255, 255, 255, .45); stroke-dasharray: 4 3; }
+.emitbox .eb-shape { position: absolute; border: 1px dashed rgba(255, 200, 90, .9); box-shadow: 0 0 0 1px rgba(0, 0, 0, .35); }
+.emitbox .eb-shape.round { border-radius: 50%; }
+.emitbox .eb-shape.line { border-width: 1px 0 0 0; box-shadow: none; }
+.emitbox .eb-dot { position: absolute; border-radius: 50%; background: var(--accent); border: 2px solid #fff; cursor: move; pointer-events: auto; box-shadow: 0 0 0 1px rgba(0, 0, 0, .5); }
+.emitbox .eb-tip { position: absolute; border-radius: 50%; background: #fff; border: 1px solid rgba(0, 0, 0, .6); cursor: grab; pointer-events: auto; }
+.presets { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 8px; }
+.seg.clip.emit { background: rgba(255, 130, 50, .18); border-color: rgba(255, 140, 60, .5); }
+.seg.clip.emit.on { background: #33261c; border-color: var(--accent); }

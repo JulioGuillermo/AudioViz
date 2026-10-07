@@ -60,6 +60,21 @@ var renderSPV []byte
 //go:embed shaders/fluid.spv
 var fluidSPV []byte
 
+//go:embed shaders/emit.spv
+var emitSPV []byte
+
+// Emitter pass (emit.comp): the most particles drawn at once, and the layout of its data
+// buffer: a header (count, W, H), per emitter EmitHeaderWords words, then the births
+const (
+	MaxEmitParticles = C.VKR_EMIT_THREADS
+	EmitHeaderWords  = 128
+	EmitBirthWords   = 8
+	MaxEmitBirths    = 4096 // births per emitter (older ones are left out)
+)
+
+// EmitDataWords: size of the emitter data buffer for n emitters
+func EmitDataWords(n int) int { return 4 + n*(EmitHeaderWords+MaxEmitBirths*EmitBirthWords) }
+
 const (
 	MaxGrad   = 8
 	MaxGlitch = 64
@@ -159,8 +174,10 @@ type Renderer struct {
 	DeviceName string
 	FluidWords int // capacity of the fluid data buffer (32-bit words)
 	LayerWords int // capacity of the overlay images buffer (pixels)
+	Emitters   int // emitter accumulations (emitters drawn at once; 0 = no emitter pass)
 	spirv      unsafe.Pointer
 	spirvFluid unsafe.Pointer
+	spirvEmit  unsafe.Pointer
 }
 
 // ListDevices returns the list of visible Vulkan GPUs
@@ -184,13 +201,13 @@ func align(v, a int) int { return (v + a - 1) / a * a }
 
 // New creates the renderer. deviceIndex -1 = automatic. fluidWords: size of the fluid
 // transition data (effects.FluidBufWords).
-func New(width, height, slots, deviceIndex int, textSize, fluidWords, layerWords int) (*Renderer, error) {
+func New(width, height, slots, deviceIndex int, textSize, fluidWords, layerWords, emitters int) (*Renderer, error) {
 	type res struct {
 		g   *Renderer
 		err error
 	}
 	r, ok := withTimeout(func() res {
-		g, err := newRenderer(width, height, slots, deviceIndex, textSize, fluidWords, layerWords)
+		g, err := newRenderer(width, height, slots, deviceIndex, textSize, fluidWords, layerWords, emitters)
 		return res{g, err}
 	})
 	if !ok {
@@ -199,11 +216,16 @@ func New(width, height, slots, deviceIndex int, textSize, fluidWords, layerWords
 	return r.g, r.err
 }
 
-func newRenderer(width, height, slots, deviceIndex int, textSize, fluidWords, layerWords int) (*Renderer, error) {
+func newRenderer(width, height, slots, deviceIndex int, textSize, fluidWords, layerWords, emitters int) (*Renderer, error) {
 	g := &Renderer{Width: width, Height: height, PadW: align(width, 16), PadH: align(height, 16), Slots: slots,
-		FluidWords: fluidWords, LayerWords: max(layerWords, 4)}
+		FluidWords: fluidWords, LayerWords: max(layerWords, 4), Emitters: emitters}
 	g.spirv = C.CBytes(renderSPV)
 	g.spirvFluid = C.CBytes(fluidSPV)
+	g.spirvEmit = C.CBytes(emitSPV)
+	edata := 16
+	if emitters > 0 {
+		edata = EmitDataWords(emitters) * 4
+	}
 	cfg := C.vkr_config{
 		width: C.int(width), height: C.int(height),
 		pad_w: C.int(g.PadW), pad_h: C.int(g.PadH),
@@ -214,12 +236,15 @@ func newRenderer(width, height, slots, deviceIndex int, textSize, fluidWords, la
 		layers_size: C.size_t(g.LayerWords * 4),
 		spirv:       (*C.uint32_t)(g.spirv), spirv_size: C.size_t(len(renderSPV)),
 		spirv_fluid: (*C.uint32_t)(g.spirvFluid), spirv_fluid_size: C.size_t(len(fluidSPV)),
+		spirv_emit: (*C.uint32_t)(g.spirvEmit), spirv_emit_size: C.size_t(len(emitSPV)),
+		emitters: C.int(emitters), edata_size: C.size_t(edata),
 	}
 	errBuf := make([]byte, 512)
 	var r *C.vkr
 	if C.vkr_create(&r, &cfg, (*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf))) != 0 {
 		C.free(g.spirv)
 		C.free(g.spirvFluid)
+		C.free(g.spirvEmit)
 		return nil, fmt.Errorf("%s", C.GoString((*C.char)(unsafe.Pointer(&errBuf[0]))))
 	}
 	g.r = r
@@ -265,11 +290,25 @@ func (g *Renderer) LayerData(slot int) []byte {
 	return unsafe.Slice((*byte)(C.vkr_map(g.r, C.int(slot), C.VKR_BUF_LAYERS)), g.LayerWords*4)
 }
 
-// Submit launches the slot's frame; fluid runs the fluid pass first (FluidData and Params.Fluid* filled)
-func (g *Renderer) Submit(slot int, fluid bool) error {
+// EmitData returns the slot's emitter data buffer (see EmitDataWords), as words and as floats
+func (g *Renderer) EmitData(slot int) ([]uint32, []float32) {
+	n := 4
+	if g.Emitters > 0 {
+		n = EmitDataWords(g.Emitters)
+	}
+	p := C.vkr_map(g.r, C.int(slot), C.VKR_BUF_EDATA)
+	return unsafe.Slice((*uint32)(p), n), unsafe.Slice((*float32)(p), n)
+}
+
+// Submit launches the slot's frame; fluid runs the fluid pass first (FluidData and Params.Fluid*
+// filled), emit the emitter pass (EmitData filled)
+func (g *Renderer) Submit(slot int, fluid, emit bool) error {
 	f := C.int(0)
 	if fluid {
 		f = 1
+	}
+	if emit && g.Emitters > 0 {
+		f |= 2
 	}
 	if C.vkr_submit(g.r, C.int(slot), f) != 0 {
 		return fmt.Errorf("vkQueueSubmit failed")
@@ -296,5 +335,9 @@ func (g *Renderer) Close() {
 	if g.spirvFluid != nil {
 		C.free(g.spirvFluid)
 		g.spirvFluid = nil
+	}
+	if g.spirvEmit != nil {
+		C.free(g.spirvEmit)
+		g.spirvEmit = nil
 	}
 }

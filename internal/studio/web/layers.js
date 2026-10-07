@@ -1,5 +1,6 @@
 import { html, useEffect, useState } from './vendor/preact-htm.js';
-import { CLIP_FIELDS } from './schema.js';
+import { CLIP_FIELDS, EMITTER_CLIP_FIELDS } from './schema.js';
+import { isEmitterLayer, presetLabel, presetIcon, PresetPicker } from './emitters.js';
 import { fmtTime, parseTime, basename, clone } from './util.js';
 import { Form, Edit } from './fields.js';
 import { Icon } from './icons.js';
@@ -244,15 +245,17 @@ export function LayerInspector({ proj, sel, setSel, update, time, meta, ctx }) {
   const clampT = (v) => Math.max(0, Math.min(meta.duration, v));
   const kf = c && keyApi({ keys: c.keys, u: time - c.start, max: c.end - c.start, focus: ctx.kfFocus, setFocus: ctx.setKfFocus,
     seek: (u) => ctx.seek(c.start + u), edit: (fn) => editLayer((l) => { const cc = l.clips[j]; fn(cc, cc); }) });
+  const emit = isEmitterLayer(layer);
+  const clipName = (cl, k) => cl.label || (emit ? presetLabel(cl.emitter && cl.emitter.preset) : basename(cl.path)) || t('Clip {n}', { n: k + 1 });
   return html`<div>
     <div class="insp-h">
-      <div class="insp-title"><${Icon} name="layers" size=${16} cls="muted" />${layerName(layer, li)}<span class="sub">${t('Layer')}</span></div>
+      <div class="insp-title"><${Icon} name=${emit ? 'sparkles' : 'layers'} size=${16} cls="muted" />${layerName(layer, li)}<span class="sub">${t(emit ? 'Particle emitter' : 'Layer')}</span></div>
       ${layer.clips.length > 0 && html`<div class="segtabs">${layer.clips.map((cl, k) => html`<button class=${'segtab' + (k === j ? ' on' : '')}
           onClick=${() => { setSel({ kind: 'layer', id: sel.id, clip: k }); if (time < cl.start || time >= cl.end) ctx.seek(cl.start); }}>
-          <span class="mono">${fmtTime(cl.start, false)}</span><span class="nm">${cl.label || basename(cl.path) || t('Clip {n}', { n: k + 1 })}</span>
+          <span class="mono">${fmtTime(cl.start, false)}</span><span class="nm">${clipName(cl, k)}</span>
           <span class="sum mono">${fmtTime(cl.end - cl.start, false)}</span></button>`)}</div>`}
       <div class="row">
-        <button class="btn sm" onClick=${() => ctx.addClip(sel.id, time)} title=${t('New clip starting at the cursor: choose its file')}>
+        <button class="btn sm" onClick=${() => ctx.addClip(sel.id, time)} title=${t(emit ? 'New emitter clip starting at the cursor (like this one)' : 'New clip starting at the cursor: choose its file')}>
           <${Icon} name="plus" size=${14} /> ${t('Clip at {t}', { t: fmtTime(time) })}</button>
         <span class="spacer"></span>
         <button class="btn sm ghost danger" disabled=${!c} title=${t('Delete this clip')}
@@ -274,9 +277,15 @@ export function LayerInspector({ proj, sel, setSel, update, time, meta, ctx }) {
           <${Edit} type="text" class="mono" style="width:96px" value=${fmtTime(c.end)}
             onChange=${(e) => editLayer((l) => { const cc = l.clips[j]; cc.end = Math.max(cc.start + 0.1, clampT(parseTime(e.target.value))); })} />
           <span class="faint" style="font-size:11.5px">${t('{s} s', { s: (c.end - c.start).toFixed(2) })}</span></div></div>
-        <div class="card-note">${t('Drag it on the preview to move it; its corners scale it and the round handle rotates it.')}</div>`}
+        <div class="card-note">${t(emit ? 'Drag its point on the preview to move it, the tip of its arrow to turn it.'
+          : 'Drag it on the preview to move it; its corners scale it and the round handle rotates it.')}</div>`}
       </div>
-      ${c ? html`<${Form} fields=${CLIP_FIELDS} value=${c} ctx=${ctx} kf=${kf}
+      ${c && emit && html`<div class="section"><div class="sh">${t('Preset')}</div><div class="sb">
+        <${PresetPicker} clip=${c} onPick=${(k) => editLayer((l) => { const cc = l.clips[j];
+          cc.emitter = { ...JSON.parse(JSON.stringify((ctx.emitterPresets || {})[k] || {})), preset: k };
+          cc.blend = cc.emitter.mode === 'soft' ? 'normal' : 'add';
+          if (cc.keys) { for (const p in cc.keys) if (p.startsWith('emitter.')) delete cc.keys[p]; } })} /></div></div>`}
+      ${c ? html`<${Form} fields=${emit ? EMITTER_CLIP_FIELDS : CLIP_FIELDS} value=${c} ctx=${ctx} kf=${kf}
           onChange=${(nc) => editLayer((l) => { l.clips[j] = { ...nc, start: l.clips[j].start, end: l.clips[j].end }; })} />`
         : html`<p class="faint" style="font-size:12px">${t('No clips yet. Add one at the cursor, or double-click the layer\'s track on the timeline.')}</p>`}
       ${c && html`<${MotionSection} obj=${c} kf=${kf} ctx=${ctx} edit=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}

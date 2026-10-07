@@ -41,7 +41,8 @@ type ViewJSON struct {
 type LayerJSON struct {
 	ID    string           `json:"id"`
 	Name  string           `json:"name"`
-	Clips []map[string]any `json:"clips"` // config.ClipConfig, YAML keys
+	Kind  string           `json:"kind,omitempty"` // "" media, "emitter" particles
+	Clips []map[string]any `json:"clips"`          // config.ClipConfig, YAML keys
 }
 
 type ProjectJSON struct {
@@ -54,6 +55,8 @@ type ProjectJSON struct {
 	Layers  []LayerJSON          `json:"layers"` // overlay layers, bottom to top (config.LayerConfig)
 	// Values of a new clip (read-only for the UI)
 	ClipDefaults map[string]any `json:"clipDefaults,omitempty"`
+	// The emitter presets (read-only for the UI)
+	EmitterPresets map[string]map[string]any `json:"emitterPresets,omitempty"`
 	// Values of a new text (read-only for the UI; ignored when the project comes back)
 	TextDefaults map[string]any `json:"textDefaults,omitempty"`
 }
@@ -170,9 +173,14 @@ func ProjectToJSON(c *config.ProjectConfig) *ProjectJSON {
 	p.View = ViewJSON{Hidden: append([]string{}, c.Studio.Hidden...), Collapsed: append([]string{}, c.Studio.Collapsed...)}
 	p.TextDefaults = toMap(config.DefaultText())
 	p.ClipDefaults = toMap(config.DefaultClip())
+	p.EmitterPresets = map[string]map[string]any{}
+	for k, e := range config.EmitterPresets {
+		e.Preset = k
+		p.EmitterPresets[k] = toMap(e)
+	}
 	p.Layers = []LayerJSON{}
 	for _, l := range c.Layers {
-		lj := LayerJSON{ID: l.ID, Name: l.Name, Clips: []map[string]any{}}
+		lj := LayerJSON{ID: l.ID, Name: l.Name, Kind: l.Kind, Clips: []map[string]any{}}
 		for _, cl := range l.Clips {
 			lj.Clips = append(lj.Clips, toMap(cl))
 		}
@@ -245,7 +253,7 @@ func ProjectFromJSON(p *ProjectJSON, dir string) (*config.ProjectConfig, error) 
 		c.Texts = append(c.Texts, t)
 	}
 	for i, lj := range p.Layers {
-		l := config.LayerConfig{ID: lj.ID, Name: lj.Name}
+		l := config.LayerConfig{ID: lj.ID, Name: lj.Name, Kind: lj.Kind}
 		for j, m := range lj.Clips {
 			var cl config.ClipConfig
 			if err := fromMap(m, &cl); err != nil {

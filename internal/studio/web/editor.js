@@ -6,6 +6,7 @@ import { t } from './i18n.js';
 import { useFrameStream } from './frames.js';
 import { ClipHandles, TextHandles, textBoxOf, geoOf } from './layers.js';
 import { MaskOverlay } from './masks.js';
+import { EmitterHandles } from './emitters.js';
 import { keyTimes } from './keys.js';
 import { keyLabel, targetKey, isPicked, pickedTimes, pickKey, moveKeysAt, keyMenuItems, FocusChip } from './keymarks.js';
 import { openMenu } from './menu.js';
@@ -39,7 +40,7 @@ const rot = (x, y, deg) => {
   return { x: x * c - y * s, y: x * s + y * c };
 };
 
-export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selClip, onClip, inspector, onClose, marks = null, onKeys, kf = {},
+export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selClip, selEmit = false, onClip, inspector, onClose, marks = null, onKeys, kf = {},
   tool: tool0 = 'select', selMask = null, editMask, onPainted, onNeedMask, selId, selClipIdx, selText, selTextIdx, onText, maskOwner = null, pathOwner = null, editPath }) {
   const time = useStore(timeStore);
   const W = meta.width, H = meta.height;
@@ -190,7 +191,7 @@ export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selCli
 
   const cursor = { hand: 'grab', zoom: 'zoom-in', rotate: 'alias' }[tool] || 'default';
   const world = v && { width: W + 'px', height: H + 'px', transform: `translate(${v.tx}px, ${v.ty}px) rotate(${v.r}deg) scale(${v.z})` };
-  const showClip = selClip && selClip.path && time >= selClip.start && time < selClip.end;
+  const showClip = selClip && (selClip.path || selEmit) && time >= selClip.start && time < selClip.end;
   return html`<div class="editor">
     <div class="ed-top">
       <span class="ed-title"><${Icon} name="pen-tool" size=${15} /> ${t('Editor')}</span>
@@ -234,7 +235,7 @@ export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selCli
           <canvas ref=${canvas} width=${Math.round(W / scale)} height=${Math.round(H / scale)}></canvas>
           ${selText && tool === 'select' && textBoxOf(info.texts, selTextIdx) && html`<${TextHandles} text=${selText} box=${textBoxOf(info.texts, selTextIdx)}
             time=${time} meta=${meta} k=${1} hs=${1 / v.z} toFrame=${toFrame} onChange=${onText} />`}
-          ${showClip && tool === 'select' && html`<${ClipHandles} clip=${selClip} time=${time} meta=${meta} k=${1} hs=${1 / v.z}
+          ${showClip && tool === 'select' && html`<${selEmit ? EmitterHandles : ClipHandles} clip=${selClip} time=${time} meta=${meta} k=${1} hs=${1 / v.z}
             toFrame=${toFrame} onChange=${onClip} geo=${geoOf(info.layers, selId, selClipIdx)} />`}
           ${tool === 'path' && pathOwner && html`<${MaskOverlay} clip=${pathOwner.obj} k=${0} pathShape=${(pathOwner.obj.motion && pathOwner.obj.motion.path) || null}
             time=${time} meta=${meta} tool=${curPath && !pathDraw ? 'nodes' : 'shape'} brush=${brush} toFrame=${toFrame} z=${v.z}

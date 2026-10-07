@@ -547,11 +547,21 @@ func (s *Server) hFrame(w http.ResponseWriter, r *http.Request) {
 			Rot            float64 `json:"rot"`
 			TW, TH         int     // image size
 			Zoom, ShX, ShY float64 // the warp: screen = c + (frame + shake - c)·zoom
+			// an emitter: where it is now (px) and its rotation (rad)
+			OX, OY, ORot float64 `json:",omitempty"`
 		}
 		var gs []geom
 		for _, l := range fs.Layers {
-			gs = append(gs, geom{l.LayerID, l.Clip, l.CX, l.CY, l.SX, l.SY, l.Rot, l.Img.Bounds().Dx(), l.Img.Bounds().Dy(),
-				l.W.Zoom, l.W.ShakeX, l.W.ShakeY})
+			tw, th := int(l.CX*2), int(l.CY*2) // an emitter: the frame
+			if l.Img != nil {
+				tw, th = l.Img.Bounds().Dx(), l.Img.Bounds().Dy()
+			}
+			g := geom{l.LayerID, l.Clip, l.CX, l.CY, l.SX, l.SY, l.Rot, tw, th, l.W.Zoom, l.W.ShakeX, l.W.ShakeY, 0, 0, 0}
+			if e := l.Emit; e != nil && len(e.Births) > 0 {
+				b := e.Births[len(e.Births)-1]
+				g.OX, g.OY, g.ORot = b.X, b.Y, b.Rot
+			}
+			gs = append(gs, g)
 		}
 		if b, err := json.Marshal(gs); err == nil {
 			w.Header().Set("X-Layers", string(b))

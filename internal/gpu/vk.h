@@ -20,7 +20,9 @@ enum {
     VKR_BUF_FLUID = 7, // fluid transition data (particles, bins, coarse level)
     VKR_BUF_FIMG = 8,  // fluid pass output, read by the main pass
     VKR_BUF_LAYERS = 9, // images of the overlay clips on screen (RGBA8, premultiplied)
-    VKR_NUM_BUFS = 10,
+    VKR_BUF_EACC = 10,  // emitter pass: fixed-point accumulation (4 words per pixel per emitter)
+    VKR_BUF_EDATA = 11, // emitter pass: emitters and their births
+    VKR_NUM_BUFS = 12,
 };
 
 typedef struct {
@@ -36,14 +38,21 @@ typedef struct {
     size_t spirv_size;
     const uint32_t *spirv_fluid; // fluid pass (same descriptor layout)
     size_t spirv_fluid_size;
+    const uint32_t *spirv_emit; // emitter pass (same descriptor layout, push constant: phase)
+    size_t spirv_emit_size;
+    int emitters;       // frame-sized accumulations of the emitter pass (0 = none)
+    size_t edata_size;  // emitter data in bytes
 } vkr_config;
 
 int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen);
 void vkr_destroy(vkr *r);
 const char *vkr_device_name(vkr *r);
 void *vkr_map(vkr *r, int slot, int which);
-// fluid != 0: run the fluid pass first (a fluid / liquid transition is on screen)
-int vkr_submit(vkr *r, int slot, int fluid);
+// passes: bit 0 = run the fluid pass first (a fluid / liquid transition is on screen), bit 1 =
+// the emitter pass (particle emitters on screen)
+int vkr_submit(vkr *r, int slot, int passes);
+// Invocations of each emitter pass phase (4096 groups of 64): the most particles at once
+#define VKR_EMIT_THREADS (4096 * 64)
 int vkr_wait(vkr *r, int slot);
 int vkr_list_devices(char *out, int len);
 

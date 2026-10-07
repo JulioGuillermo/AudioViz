@@ -58,7 +58,9 @@ func contrastFactor(contrast float64) float64 {
 
 // layersAt resolves the overlay clips visible at t, bottom to top, and the stack position of each
 // (its layer's index + 1), to place the visualizer, particles and texts among them
-func (s *Session) layersAt(t float64, idx int, feat *audio.FrameFeatures, fx frameFX, glitchAmt float64) ([]effects.LayerFrame, []int, error) {
+func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx frameFX, glitchAmt float64) ([]effects.LayerFrame, []int, error) {
+	feat := &feats[idx]
+	nEmit := 0
 	var out []effects.LayerFrame
 	var stack []int
 	W, H := float64(s.W), float64(s.H)
@@ -74,15 +76,42 @@ func (s *Session) layersAt(t float64, idx int, feat *audio.FrameFeatures, fx fra
 		layer := &s.Cfg.Layers[li]
 		for ci := range layer.Clips {
 			c0 := &layer.Clips[ci]
-			if t < c0.Start || t >= c0.End || c0.Path == "" {
+			emit := layer.IsEmitter()
+			if t < c0.Start || t >= c0.End || (c0.Path == "" && !emit) {
 				continue
 			}
-			if len(out) == MaxLayers {
+			if len(out) == MaxLayers || (emit && nEmit == MaxEmitters) {
 				break
 			}
 			c := c0
 			if len(c0.Keys) > 0 {
 				c = config.ApplyKeys(c0, c0.Keys, t-c0.Start)
+			}
+			if emit {
+				// particles: a frame-sized image (made by the GPU pass or DrawEmitter) shown as is
+				ef := s.emitFrame(li, ci, c0, c, idx, feats)
+				if ef == nil {
+					continue
+				}
+				nEmit++
+				op := c.Opacity
+				if c.FadeIn > 0 {
+					op *= math.Min(1, (t-c.Start)/c.FadeIn)
+				}
+				if c.FadeOut > 0 {
+					op *= math.Min(1, (c.End-t)/c.FadeOut)
+				}
+				lf := effects.LayerFrame{Emit: ef, Ver: "emit", CX: W / 2, CY: H / 2, SX: 1, SY: 1,
+					Opacity: math.Max(0, math.Min(1, op)), Blend: c.BlendIndex(),
+					Brightness: c.Brightness, Contrast: c.Contrast, Saturate: c.Saturation, Hue: c.Hue * math.Pi / 180, Blur: c.Blur}
+				lf.LayerID, lf.Clip = layer.ID, ci
+				lf.W = s.clipWarp(&c.Effects, bg, t, idx, li, feat, minDim)
+				if len(c.Masks) > 0 {
+					lf.Mask, lf.MaskVer = s.maskFor(c.Masks, s.W, s.H)
+				}
+				out = append(out, lf)
+				stack = append(stack, li+1)
+				continue
 			}
 			m, err := s.layerMediaFor(li, ci, c0)
 			if err != nil {
@@ -234,7 +263,14 @@ func (s *Session) LayerPixels() int {
 	for li := range s.Cfg.Layers {
 		for ci := range s.Cfg.Layers[li].Clips {
 			c := &s.Cfg.Layers[li].Clips[ci]
-			if c.Path == "" || c.End <= c.Start {
+			if c.End <= c.Start {
+				continue
+			}
+			if s.Cfg.Layers[li].IsEmitter() {
+				// its image (and mask) are frame-sized; at most MaxEmitters at once (counted as always on)
+				continue
+			}
+			if c.Path == "" {
 				continue
 			}
 			m, err := s.layerMediaFor(li, ci, c)
@@ -260,7 +296,39 @@ func (s *Session) LayerPixels() int {
 		cur += e.d
 		best = max(best, cur)
 	}
-	return best + s.textMaskWords()
+	return best + s.textMaskWords() + s.emitterWords()
+}
+
+// emitterWords: room for the images of the emitters (one frame each, and its mask)
+func (s *Session) emitterWords() int {
+	n, masks := 0, 0
+	for li := range s.Cfg.Layers {
+		if !s.Cfg.Layers[li].IsEmitter() {
+			continue
+		}
+		for _, c := range s.Cfg.Layers[li].Clips {
+			if c.End > c.Start {
+				n++
+				if len(c.Masks) > 0 {
+					masks++
+				}
+			}
+		}
+	}
+	n, masks = min(n, MaxEmitters), min(masks, MaxEmitters)
+	mw, mh := effects.MaskSize(s.W, s.H)
+	return n*s.W*s.H + masks*((mw*mh+3)/4)
+}
+
+// EmitterCount: emitter clips that can be on screen at once (the GPU's accumulation buffers)
+func (s *Session) EmitterCount() int {
+	n := 0
+	for li := range s.Cfg.Layers {
+		if s.Cfg.Layers[li].IsEmitter() {
+			n += len(s.Cfg.Layers[li].Clips)
+		}
+	}
+	return min(n, MaxEmitters)
 }
 
 // textMaskWords: room for the screen masks of the lyrics and the fixed texts (one frame-sized

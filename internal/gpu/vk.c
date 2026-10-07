@@ -117,7 +117,7 @@ typedef struct {
 typedef struct {
     vbuf b[VKR_NUM_BUFS];
     VkDescriptorSet ds;
-    VkCommandBuffer cmd, cmdFluid; // main pass; fluid pass + main pass
+    VkCommandBuffer cmds[4]; // by passes (bit 0 fluid, bit 1 emitters), then the main pass
     VkFence fence;
     int pending;
 } slot_t;
@@ -131,7 +131,7 @@ struct vkr {
     VkPhysicalDeviceMemoryProperties memprops;
     VkDescriptorSetLayout dsl;
     VkPipelineLayout layout;
-    VkPipeline pipe, pipeFluid;
+    VkPipeline pipe, pipeFluid, pipeEmit;
     VkDescriptorPool dpool;
     VkCommandPool cpool;
     int nslots;
@@ -380,12 +380,15 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
     VkPipelineLayoutCreateInfo pli = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
     pli.setLayoutCount = 1;
     pli.pSetLayouts = &r->dsl;
+    VkPushConstantRange pcr = {VK_SHADER_STAGE_COMPUTE_BIT, 0, 16};
+    pli.pushConstantRangeCount = 1;
+    pli.pPushConstantRanges = &pcr;
     if (p_vkCreatePipelineLayout(r->dev, &pli, NULL, &r->layout) != VK_SUCCESS) FAIL("pipeline layout");
-    // Main pass and fluid pass: two pipelines on the same descriptor layout
-    for (int k = 0; k < 2; k++) {
+    // Main pass, fluid pass and emitter pass: pipelines on the same descriptor layout
+    for (int k = 0; k < 3; k++) {
         VkShaderModuleCreateInfo smi = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-        smi.codeSize = k == 0 ? cfg->spirv_size : cfg->spirv_fluid_size;
-        smi.pCode = k == 0 ? cfg->spirv : cfg->spirv_fluid;
+        smi.codeSize = k == 0 ? cfg->spirv_size : k == 1 ? cfg->spirv_fluid_size : cfg->spirv_emit_size;
+        smi.pCode = k == 0 ? cfg->spirv : k == 1 ? cfg->spirv_fluid : cfg->spirv_emit;
         VkShaderModule sm;
         if (p_vkCreateShaderModule(r->dev, &smi, NULL, &sm) != VK_SUCCESS) FAIL("invalid shader");
         VkComputePipelineCreateInfo cpi = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
@@ -395,7 +398,7 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
         cpi.stage.pName = "main";
         cpi.layout = r->layout;
         VkResult pres =
-            p_vkCreateComputePipelines(r->dev, VK_NULL_HANDLE, 1, &cpi, NULL, k == 0 ? &r->pipe : &r->pipeFluid);
+            p_vkCreateComputePipelines(r->dev, VK_NULL_HANDLE, 1, &cpi, NULL, k == 0 ? &r->pipe : k == 1 ? &r->pipeFluid : &r->pipeEmit);
         p_vkDestroyShaderModule(r->dev, sm, NULL);
         if (pres != VK_SUCCESS) FAIL("vkCreateComputePipelines failed (%d)", pres);
     }
@@ -422,6 +425,8 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
     sizes[VKR_BUF_FLUID] = cfg->fluid_size < 16 ? 16 : (cfg->fluid_size + 3) / 4 * 4;
     sizes[VKR_BUF_FIMG] = sizes[VKR_BUF_BG];
     sizes[VKR_BUF_LAYERS] = cfg->layers_size < 16 ? 16 : (cfg->layers_size + 3) / 4 * 4;
+    sizes[VKR_BUF_EACC] = cfg->emitters > 0 ? (VkDeviceSize)cfg->emitters * cfg->width * cfg->height * 16 : 16;
+    sizes[VKR_BUF_EDATA] = cfg->edata_size < 16 ? 16 : (cfg->edata_size + 3) / 4 * 4;
     VkMemoryPropertyFlags prefs[VKR_NUM_BUFS] = {
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -430,6 +435,8 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
         VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -461,26 +468,37 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
         }
         p_vkUpdateDescriptorSets(r->dev, VKR_NUM_BUFS, wr, 0, NULL);
 
-        // Pre-recorded command buffers (each slot's buffers are fixed): the main pass alone, and
-        // the fluid pass (one invocation per pixel) followed by the main pass
+        // Pre-recorded command buffers (each slot's buffers are fixed), one per set of passes:
+        // the fluid pass (one invocation per pixel) and / or the emitter pass (clear, splat,
+        // resolve), then the main pass
         VkCommandBufferAllocateInfo cai = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
         cai.commandPool = r->cpool;
         cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         cai.commandBufferCount = 1;
-        for (int k = 0; k < 2; k++) {
+        VkMemoryBarrier fb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+        fb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+        fb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+        for (int k = 0; k < 4; k++) {
             VkCommandBuffer cmd;
             if (p_vkAllocateCommandBuffers(r->dev, &cai, &cmd) != VK_SUCCESS) FAIL("command buffer");
             VkCommandBufferBeginInfo cbi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
             p_vkBeginCommandBuffer(cmd, &cbi);
             p_vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, r->layout, 0, 1, &sl->ds, 0, NULL);
-            if (k == 1) {
+            if (k & 1) {
                 p_vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, r->pipeFluid);
                 p_vkCmdDispatch(cmd, (uint32_t)((cfg->width + 7) / 8), (uint32_t)((cfg->height + 7) / 8), 1);
-                VkMemoryBarrier fb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-                fb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-                fb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
                 p_vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                                        0, 1, &fb, 0, NULL, 0, NULL);
+            }
+            if ((k & 2) && cfg->emitters > 0) {
+                p_vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, r->pipeEmit);
+                for (int phase = 0; phase < 3; phase++) {
+                    int32_t push[4] = {phase, 0, 0, 0};
+                    p_vkCmdPushConstants(cmd, r->layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 16, push);
+                    p_vkCmdDispatch(cmd, VKR_EMIT_THREADS / 64, 1, 1);
+                    p_vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                           0, 1, &fb, 0, NULL, 0, NULL);
+                }
             }
             p_vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, r->pipe);
             p_vkCmdDispatch(cmd, gx, gy, 1);
@@ -490,10 +508,7 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
             p_vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb,
                                    0, NULL, 0, NULL);
             if (p_vkEndCommandBuffer(cmd) != VK_SUCCESS) FAIL("command recording");
-            if (k == 0)
-                sl->cmd = cmd;
-            else
-                sl->cmdFluid = cmd;
+            sl->cmds[k] = cmd;
         }
 
         VkFenceCreateInfo fci = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
@@ -508,11 +523,11 @@ const char *vkr_device_name(vkr *r) { return r->name; }
 
 void *vkr_map(vkr *r, int slot, int which) { return r->slots[slot].b[which].map; }
 
-int vkr_submit(vkr *r, int slot, int fluid) {
+int vkr_submit(vkr *r, int slot, int passes) {
     slot_t *sl = &r->slots[slot];
     VkSubmitInfo si = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
     si.commandBufferCount = 1;
-    si.pCommandBuffers = fluid ? &sl->cmdFluid : &sl->cmd;
+    si.pCommandBuffers = &sl->cmds[passes & 3];
     if (p_vkQueueSubmit(r->queue, 1, &si, sl->fence) != VK_SUCCESS) return -1;
     sl->pending = 1;
     return 0;
@@ -552,6 +567,7 @@ void vkr_destroy(vkr *r) {
         if (r->dpool) p_vkDestroyDescriptorPool(r->dev, r->dpool, NULL);
         if (r->pipe) p_vkDestroyPipeline(r->dev, r->pipe, NULL);
         if (r->pipeFluid) p_vkDestroyPipeline(r->dev, r->pipeFluid, NULL);
+        if (r->pipeEmit) p_vkDestroyPipeline(r->dev, r->pipeEmit, NULL);
         if (r->layout) p_vkDestroyPipelineLayout(r->dev, r->layout, NULL);
         if (r->dsl) p_vkDestroyDescriptorSetLayout(r->dev, r->dsl, NULL);
         p_vkDestroyDevice(r->dev, NULL);

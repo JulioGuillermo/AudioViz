@@ -18,7 +18,7 @@ fi
 cd "$ROOT"
 # Shaders (the .spv are in git, so building without glslc works): recompiled when the shader
 # or the shared common.glsl changed
-for sh in render fluid fluidsim; do
+for sh in render fluid fluidsim emit; do
   src=internal/gpu/shaders/$sh.comp spv=internal/gpu/shaders/$sh.spv
   if command -v glslc >/dev/null && { [ $src -nt $spv ] || [ internal/gpu/shaders/common.glsl -nt $spv ]; }; then
     glslc -O --target-env=vulkan1.1 $src -o $spv

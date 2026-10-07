@@ -1,0 +1,221 @@
+#version 450
+// Emitter pass (particle emitters, see internal/effects/emit.go: same math, in float32):
+//   phase 0: clear the accumulations
+//   phase 1: one invocation per particle: its state from its birth and age, splatted into its
+//            emitter's accumulation with integer atomic adds (the sum does not depend on order)
+//   phase 2: one invocation per pixel and emitter: the sums → premultiplied RGBA8, written as the
+//            emitter clip's image in the overlay buffer, which render.comp then composites
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(push_constant) uniform Push { int phase; } pc;
+
+layout(std430, set = 0, binding = 9) writeonly buffer Layers { uint lay[]; };
+layout(std430, set = 0, binding = 10) buffer Acc { uint acc[]; };
+layout(std430, set = 0, binding = 11) readonly buffer EData { uint ed[]; };
+
+const int ESTRIDE = 128; // words per emitter header
+const float FIXED = 1024.0;
+
+float edf(int i) { return uintBitsToFloat(ed[i]); }
+ivec4 edi4(int i) { return ivec4(ed[i], ed[i + 1], ed[i + 2], ed[i + 3]); }
+vec4 edf4(int i) { return vec4(edf(i), edf(i + 1), edf(i + 2), edf(i + 3)); }
+
+uint pcg(uint v) {
+    uint s = v * 747796405u + 2891336453u;
+    uint w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+    return (w >> 22u) ^ w;
+}
+float rnd(uint seed, int i, uint j) { return float(pcg(seed ^ pcg(uint(i) * 16u + j))) * (1.0 / 4294967296.0); }
+
+int W, H, NE;
+
+// Emitter e's header: word offset
+int eh(int e) { return 4 + e * ESTRIDE; }
+
+// Every phase runs THREADS invocations (4096 groups of 64); phases 0 and 2 loop over their items
+const uint THREADS = 4096u * 64u;
+
+void clearPhase() {
+    uint n = uint(NE * W * H * 4);
+    for (uint k = gl_GlobalInvocationID.x; k < n; k += THREADS) acc[k] = 0u;
+}
+
+void splatPhase() {
+    int j = int(gl_GlobalInvocationID.x);
+    int e = -1, i = 0;
+    for (int k = 0; k < NE; k++) {
+        ivec4 v0 = edi4(eh(k));
+        if (j >= v0.x && j < v0.x + v0.z) { e = k; i = v0.y + (j - v0.x); break; }
+    }
+    if (e < 0) return;
+    int h = eh(e);
+    ivec4 v0 = edi4(h), v1 = edi4(h + 4);
+    vec4 shp = edf4(h + 8), sp = edf4(h + 12), ph = edf4(h + 16), lf = edf4(h + 20);
+    vec4 c0 = edf4(h + 24), c1 = edf4(h + 28), c2 = edf4(h + 32), fd = edf4(h + 36);
+    uint seed = ed[h + 40];
+    float T = edf(h + 41);
+    int dv = int(ed[h + 42]);
+    int GW = (W + dv - 1) / dv, GH = (H + dv - 1) / dv;
+
+    // birth: the first table entry whose count reaches i + 0.5
+    int bo = v0.w, nb = v1.x;
+    float x = float(i) + 0.5;
+    if (nb < 2 || x <= edf(bo + 1) || x > edf(bo + (nb - 1) * 8 + 1)) return;
+    int lo = 0, hi = nb - 1;
+    while (lo < hi) {
+        int m = (lo + hi) / 2;
+        if (edf(bo + m * 8 + 1) >= x) hi = m; else lo = m + 1;
+    }
+    int ia = bo + (lo - 1) * 8, ib = bo + lo * 8;
+    float d = edf(ib + 1) - edf(ia + 1);
+    float f = d > 0.0 ? (x - edf(ia + 1)) / d : 0.0;
+    float bT = edf(ia) + (edf(ib) - edf(ia)) * f;
+    float bX = edf(ia + 2) + (edf(ib + 2) - edf(ia + 2)) * f;
+    float bY = edf(ia + 3) + (edf(ib + 3) - edf(ia + 3)) * f;
+    float bR = edf(ia + 4) + (edf(ib + 4) - edf(ia + 4)) * f;
+    float bS = edf(ia + 5) + (edf(ib + 5) - edf(ia + 5)) * f;
+    float bZ = edf(ia + 6) + (edf(ib + 6) - edf(ia + 6)) * f;
+
+    float life = ph.w * (1.0 + lf.x * (2.0 * rnd(seed, i, 0u) - 1.0));
+    if (life < 0.05) life = 0.05;
+    float age = T - bT;
+    if (age < 0.0 || age >= life) return;
+    float u = age / life;
+    float rc = cos(bR), rs = sin(bR);
+    float ox = 0.0, oy = 0.0;
+    int shape = v1.z;
+    if (shape == 1 || shape == 2) {
+        float rad = shp.x * 0.5;
+        if (shape == 1) rad *= sqrt(rnd(seed, i, 1u));
+        float a = 6.2831855 * rnd(seed, i, 2u);
+        ox = rad * cos(a); oy = rad * sin(a);
+    } else if (shape == 3) {
+        ox = (rnd(seed, i, 1u) - 0.5) * shp.x;
+    } else if (shape == 4) {
+        ox = (rnd(seed, i, 1u) - 0.5) * shp.x; oy = (rnd(seed, i, 2u) - 0.5) * shp.y;
+    }
+    float x0 = bX + ox * rc - oy * rs, y0 = bY + ox * rs + oy * rc;
+    float a = shp.z + bR + (rnd(seed, i, 3u) - 0.5) * shp.w;
+    float spd = sp.x * (1.0 + sp.y * (2.0 * rnd(seed, i, 4u) - 1.0)) * bS;
+    vec2 v0l = vec2(spd * sin(a), -spd * cos(a));
+    vec2 acc2 = vec2(sp.w, sp.z); // wind, gravity
+    float k = ph.x;
+    vec2 dp, vel;
+    if (k > 1e-3) {
+        float ek = exp(-k * age);
+        float g = (1.0 - ek) / k;
+        dp = v0l * g + acc2 * (age - g) / k;
+        vel = v0l * ek + acc2 * g;
+    } else {
+        dp = v0l * age + 0.5 * acc2 * age * age;
+        vel = v0l + acc2 * age;
+    }
+    if (ph.y > 0.0) {
+        float wv = 6.2831855 * ph.z;
+        vec2 wav;
+        for (int ax = 0; ax < 2; ax++) {
+            uint jj = ax == 0 ? 5u : 7u;
+            float p1 = 6.2831855 * rnd(seed, i, jj), p2 = 6.2831855 * rnd(seed, i, jj + 1u);
+            float s = sin(wv * age + p1) - sin(p1);
+            s += 0.5 * (sin(2.13 * wv * age + p2) - sin(p2));
+            wav[ax] = s / 1.5;
+        }
+        dp += ph.y * wav;
+    }
+    float size = (lf.y + (lf.z - lf.y) * u) * (1.0 + lf.w * (2.0 * rnd(seed, i, 9u) - 1.0)) * bZ;
+    size = max(size, 0.0);
+    vec4 ca = c0, cb = c1;
+    float ff = u * 2.0;
+    if (u >= 0.5) { ca = c1; cb = c2; ff = (u - 0.5) * 2.0; }
+    vec4 col = ca + (cb - ca) * ff;
+    if (fd.x > 0.0) col.a *= min(1.0, u / fd.x);
+    if (fd.y > 0.0) col.a *= min(1.0, (1.0 - u) / fd.y);
+    if (col.a <= 0.0) return;
+
+    vec2 pos = vec2(x0, y0) + dp;
+    float r = size * 0.5;
+    float tiny = r >= 0.7 ? 1.0 : (r * r) / (0.7 * 0.7);
+    if (r < 0.7) r = 0.7;
+    vec2 st = vel * fd.z;
+    int px0 = max(int(floor(min(pos.x, pos.x - st.x) - r - 1.0)) / dv, 0);
+    int px1 = min(int(ceil(max(pos.x, pos.x - st.x) + r + 1.0)) / dv + 1, GW - 1);
+    int py0 = max(int(floor(min(pos.y, pos.y - st.y) - r - 1.0)) / dv, 0);
+    int py1 = min(int(ceil(max(pos.y, pos.y - st.y) + r + 1.0)) / dv + 1, GH - 1);
+    float alpha = col.a * tiny;
+    float edge = max(r * fd.w, 0.5);
+    float l2 = dot(st, st);
+    uint base = uint(e * W * H);
+    for (int yy = py0; yy <= py1; yy++) {
+        for (int xx = px0; xx <= px1; xx++) {
+            vec2 q = (vec2(float(xx), float(yy)) + 0.5) * float(dv) - pos;
+            if (l2 > 0.0) {
+                float t = clamp(-dot(q, st) / l2, 0.0, 1.0);
+                q += st * t;
+            }
+            float dd = length(q);
+            float w = (1.0 - smoothstep(r - edge, r, dd)) * alpha;
+            if (w <= 0.0) continue;
+            uint o = (base + uint(yy * GW + xx)) * 4u;
+            uint qr = uint(col.r * w * FIXED + 0.5), qg = uint(col.g * w * FIXED + 0.5);
+            uint qb = uint(col.b * w * FIXED + 0.5), qa = uint(w * FIXED + 0.5);
+            if (qr > 0u) atomicAdd(acc[o], qr);
+            if (qg > 0u) atomicAdd(acc[o + 1u], qg);
+            if (qb > 0u) atomicAdd(acc[o + 2u], qb);
+            if (qa > 0u) atomicAdd(acc[o + 3u], qa);
+        }
+    }
+}
+
+vec4 cellSum(uint base, int GW, int GH, int cx, int cy) {
+    cx = clamp(cx, 0, GW - 1);
+    cy = clamp(cy, 0, GH - 1);
+    uint o = (base + uint(cy * GW + cx)) * 4u;
+    return vec4(float(acc[o]), float(acc[o + 1u]), float(acc[o + 2u]), float(acc[o + 3u])) / FIXED;
+}
+
+void resolveOne(uint id) {
+    int n = W * H;
+    int e = int(id) / n, p = int(id) - e * n;
+    int h = eh(e);
+    ivec4 v1 = edi4(h + 4);
+    int dv = int(ed[h + 42]);
+    int GW = (W + dv - 1) / dv, GH = (H + dv - 1) / dv;
+    uint base = uint(e * n);
+    int x = p % W, y = p / W;
+    vec4 s;
+    if (dv == 1) s = cellSum(base, GW, GH, x, y);
+    else {
+        vec2 q = (vec2(float(x), float(y)) + 0.5) / float(dv) - 0.5;
+        ivec2 i0 = ivec2(floor(q));
+        vec2 f = q - vec2(i0);
+        vec4 a = cellSum(base, GW, GH, i0.x, i0.y), b = cellSum(base, GW, GH, i0.x + 1, i0.y);
+        vec4 c = cellSum(base, GW, GH, i0.x, i0.y + 1), d = cellSum(base, GW, GH, i0.x + 1, i0.y + 1);
+        vec4 ab = a + (b - a) * f.x, cd = c + (d - c) * f.x;
+        s = ab + (cd - ab) * f.y;
+    }
+    vec4 c = vec4(0.0);
+    if ((v1.w & 1) != 0) {
+        if (s.a > 0.0) {
+            float al = 1.0 - exp(-s.a);
+            c = vec4(s.rgb / s.a * al, al);
+        }
+    } else {
+        float al = min(1.0, max(s.a, max(s.r, max(s.g, s.b))));
+        c = vec4(min(s.rgb, vec3(al)), al);
+    }
+    lay[v1.y + p] = packUnorm4x8(clamp(c, 0.0, 1.0));
+}
+void resolvePhase() {
+    uint n = uint(W * H * NE);
+    for (uint k = gl_GlobalInvocationID.x; k < n; k += THREADS) resolveOne(k);
+}
+
+void main() {
+    NE = int(ed[0]);
+    W = int(ed[1]);
+    H = int(ed[2]);
+    if (NE <= 0) return;
+    if (pc.phase == 0) clearPhase();
+    else if (pc.phase == 1) splatPhase();
+    else resolvePhase();
+}
