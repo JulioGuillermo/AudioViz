@@ -122,8 +122,16 @@ func (s *Session) layersAt(t float64, idx int, feat *audio.FrameFeatures, fx fra
 			if c.FadeOut > 0 {
 				op *= math.Min(1, (c.End-t)/c.FadeOut)
 			}
+			cx, cy, rot := c.X*W, c.Y*H, c.Rotation*math.Pi/180
+			if c.Motion.On() {
+				var a float64
+				cx, cy, a = effects.PathAt(c.Motion.Path, W, H, c.Motion.Progress)
+				if c.Motion.Orient {
+					rot += a
+				}
+			}
 			lf := effects.LayerFrame{Img: img, Ver: fmt.Sprintf("%p:%d", m.r, ver),
-				CX: c.X * W, CY: c.Y * H, SX: sx, SY: sy, Rot: c.Rotation * math.Pi / 180,
+				CX: cx, CY: cy, SX: sx, SY: sy, Rot: rot,
 				Opacity: math.Max(0, math.Min(1, op)), Blend: c.BlendIndex(),
 				Brightness: c.Brightness, Contrast: c.Contrast, Saturate: c.Saturation, Hue: c.Hue * math.Pi / 180, Blur: c.Blur,
 				Key: c.Chroma.Enabled, KeyTol: c.Chroma.Tolerance, KeySoft: c.Chroma.Softness}

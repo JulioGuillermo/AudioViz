@@ -65,6 +65,8 @@ type ClipConfig struct {
 	Effects    LayerEffects `yaml:"effects"`
 	// Masks: where the clip is seen (all of them apply)
 	Masks []MaskConfig `yaml:"masks,omitempty"`
+	// Motion along a path (instead of x, y)
+	Motion Motion `yaml:"motion,omitempty"`
 	// Keyframes (times from Start): any of the numbers and colors above, e.g. x, scale, opacity
 	Keys Keys `yaml:"keys,omitempty"`
 }
@@ -89,6 +91,19 @@ type MaskShape struct {
 	Points [][]float64 `yaml:"points"`
 	Open   bool        `yaml:"open,omitempty"`
 }
+
+// Motion moves a clip or a text along a path drawn on the screen: its center goes to the point at
+// Progress of the path's length (0 = first node, 1 = last; a closed path loops past 1), so keys of
+// progress with their curves give the motion. Orient turns it with the path's direction (added to
+// its rotation; 0° = moving right).
+type Motion struct {
+	Path     *MaskShape `yaml:"path,omitempty"` // 0..1 of the frame, nodes as in a mask
+	Progress float64    `yaml:"progress"`
+	Orient   bool       `yaml:"orient,omitempty"`
+}
+
+// On: it has a path to follow
+func (m *Motion) On() bool { return m.Path != nil && len(m.Path.Points) >= 2 }
 
 // ChromaKey makes a color (green screen) transparent
 type ChromaKey struct {

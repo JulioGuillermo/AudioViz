@@ -237,14 +237,18 @@ export function MaskSection({ clip, kf, selMask, setSelMask, editClip, ctx, open
 
 // Editor overlay for the masks of the selected clip: shows them and does the mask tools.
 // tool: shape | nodes | brush | eraser; brush: { size, hardness, opacity, pSize, pOpacity }
-export function MaskOverlay({ clip, k, time, meta, tool, brush, toFrame, z, editMask, onPainted, geo, screen = false }) {
+// pathShape (not undefined): edits a motion path instead (one open or closed line on the screen,
+// null = none yet; editMask then gets and returns [path])
+export function MaskOverlay({ clip, k, time, meta, tool, brush, toFrame, z, editMask, onPainted, geo, screen = false, pathShape }) {
+  const pathMode = pathShape !== undefined;
+  if (pathMode) screen = true;
   const natC = useNatural(screen ? null : clip.path);
   const nat = screen ? { w: meta.width, h: meta.height } : natC;
   const [live, setLive] = useState(null); // freehand points being drawn, or nodes being dragged
   const paint = useRef(null); // raster: { canvas, ctx } at the mask's size
   const [paintVer, setPaintVer] = useState(0);
   const [selNodes, setSelNodes] = useState([]); // nodes tool: [{ si, pi }]
-  const m = clip.masks && clip.masks[k];
+  const m = pathMode ? PATH_MASK : clip.masks && clip.masks[k];
   const W = meta.width, H = meta.height;
   // Raster: the painted image in an offscreen canvas (loaded from its file the first time)
   useEffect(() => {
@@ -264,7 +268,7 @@ export function MaskOverlay({ clip, k, time, meta, tool, brush, toFrame, z, edit
   if (!nat || !m) return null;
   // where the clip is shown in this frame (its background effects and pulse included)
   const g = screen ? frameGeom(meta) : shownGeom(clip, nat, meta, time, geo);
-  const shapes = m.kind === 'raster' ? [] : (live && live.shapes) || maskShapes(clip, k, time);
+  const shapes = m.kind === 'raster' ? [] : (live && live.shapes) || (pathMode ? (pathShape ? [pathShape] : []) : maskShapes(clip, k, time));
   const toF = (p) => toFramePt(g, p[0], p[1]);
   const map = (u, v) => toFramePt(g, u, v);
   const hs = 1 / z; // handle size compensation
@@ -283,7 +287,10 @@ export function MaskOverlay({ clip, k, time, meta, tool, brush, toFrame, z, edit
         removeEventListener('pointermove', mv); removeEventListener('pointerup', up);
         setLive(null);
         const sp = simplify(pts, 2.5 / Math.max(z, 0.2));
-        if (sp.length >= 3) editMask((cur) => [...cur, { points: sp.map((p) => toClipPt(g, p.x, p.y).map((x) => r5(x))) }]);
+        const sh = { points: sp.map((p) => toClipPt(g, p.x, p.y).map((x) => r5(x))) };
+        // a path: one line, drawn again replaces it
+        if (pathMode) { if (sp.length >= 2) editMask(() => [{ ...sh, open: true }]); }
+        else if (sp.length >= 3) editMask((cur) => [...cur, sh]);
       };
       addEventListener('pointermove', mv); addEventListener('pointerup', up);
     } else if (tool === 'brush' || tool === 'eraser') {
@@ -505,14 +512,15 @@ export function MaskOverlay({ clip, k, time, meta, tool, brush, toFrame, z, edit
       style=${{ cursor: tool === 'shape' ? 'crosshair' : drawing ? 'none' : '' }}>
     ${m.kind === 'raster' && P && html`<${PaintView} canvas=${P.canvas} g=${g} ver=${paintVer} />`}
     <svg class="masksvg" width=${W} height=${H} viewBox=${`0 0 ${W} ${H}`}>
-      ${(clip.masks || []).map((om, ok) => ok !== k && om.kind !== 'raster' && !om.off && maskShapes(clip, ok, time).map((s, si) => html`<path key=${'o' + ok + '-' + si}
+      ${!pathMode && (clip.masks || []).map((om, ok) => ok !== k && om.kind !== 'raster' && !om.off && maskShapes(clip, ok, time).map((s, si) => html`<path key=${'o' + ok + '-' + si}
         d=${shapeSVG(s.points, map, s.open)} class="mask-other" style=${{ strokeWidth: hs }} />`))}
       ${shapes.map((s, si) => {
         const d = shapeSVG(s.points, map, s.open);
         const nodes = tool === 'nodes';
         return html`<g key=${si}>
-          ${!s.open && html`<path d=${d} class="mask-fill" />`}
-          <path d=${d} class=${'mask-line' + (s.open ? ' open' : '')} style=${{ strokeWidth: 1.5 * hs }} />
+          ${!s.open && !pathMode && html`<path d=${d} class="mask-fill" />`}
+          <path d=${d} class=${'mask-line' + (pathMode ? ' path' : s.open ? ' open' : '')} style=${{ strokeWidth: (pathMode ? 2 : 1.5) * hs }} />
+          ${pathMode && s.points.length > 0 && html`<circle class="path-start" cx=${toF(s.points[0]).x} cy=${toF(s.points[0]).y} r=${9 * hs} style=${{ strokeWidth: 1.5 * hs }} />`}
           ${nodes && Array.from({ length: s.open ? s.points.length - 1 : s.points.length }, (_, i) => html`<path key=${'s' + i}
             d=${segmentSVG(s.points, i, map, s.open)} class="mask-hit" style=${{ strokeWidth: 10 * hs }}
             onDblClick=${(e) => { e.stopPropagation(); addNodeAt(si, i, toFrame(e.clientX, e.clientY)); }}
@@ -549,6 +557,8 @@ export function MaskOverlay({ clip, k, time, meta, tool, brush, toFrame, z, edit
     ${(tool === 'brush' || tool === 'eraser') && html`<${BrushCursor} size=${brush.size} hs=${hs} toFrame=${toFrame} />`}
   </div>`;
 }
+
+const PATH_MASK = { kind: 'vector', id: 'path' };
 
 // The painted mask shown over the clip (a red tint where it is painted)
 function PaintView({ canvas, g, ver }) {

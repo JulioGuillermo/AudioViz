@@ -6,6 +6,7 @@ import { Icon } from './icons.js';
 import { t } from './i18n.js';
 import { keyApi, valueAt, keyIndexAt, KEY_EPS } from './keys.js';
 import { MaskSection } from './masks.js';
+import { MotionSection, hasPath, movePath } from './motion.js';
 
 // Overlay layers (config.LayerConfig): proj.layers is bottom to top (drawing order); the studio
 // shows them front first, as a stack of cards.
@@ -26,6 +27,16 @@ export function clipValue(c, key, tt) {
 // value for the others (mutates c, inside an update)
 export function setClipProps(c, props, tt) {
   const u = +Math.max(0, tt - c.start).toFixed(3);
+  if (hasPath(c)) {
+    // it follows a path: moving it moves the path
+    const kx = 'x' in props ? 'x' : 'position_x' in props ? 'position_x' : null;
+    const ky = 'y' in props ? 'y' : 'position_y' in props ? 'position_y' : null;
+    if (kx || ky) {
+      movePath(c, kx ? props[kx] - clipValue(c, kx, tt) : 0, ky ? props[ky] - clipValue(c, ky, tt) : 0);
+      props = { ...props };
+      delete props[kx]; delete props[ky];
+    }
+  }
   for (const k in props) {
     const l = c.keys && c.keys[k];
     if (l && l.length) {
@@ -268,6 +279,7 @@ export function LayerInspector({ proj, sel, setSel, update, time, meta, ctx }) {
       ${c ? html`<${Form} fields=${CLIP_FIELDS} value=${c} ctx=${ctx} kf=${kf}
           onChange=${(nc) => editLayer((l) => { l.clips[j] = { ...nc, start: l.clips[j].start, end: l.clips[j].end }; })} />`
         : html`<p class="faint" style="font-size:12px">${t('No clips yet. Add one at the cursor, or double-click the layer\'s track on the timeline.')}</p>`}
+      ${c && html`<${MotionSection} obj=${c} kf=${kf} ctx=${ctx} edit=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}
       ${c && html`<${MaskSection} clip=${c} kf=${kf} selMask=${ctx.selMask} setSelMask=${ctx.setSelMask} ctx=${ctx}
         openEditor=${ctx.openEditor} editClip=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}
       <div class="section"><div class="sh">${t('Layer')}</div><div class="sb">

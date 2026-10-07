@@ -118,10 +118,18 @@ of the inspector there is a **diamond**:
 - The diamond is **filled** when there is a key at the cursor (click: remove it), **outlined** when the
   property is animated but not at this instant (click: add a key). Removing the last key leaves the
   property still with that value.
-- On the timeline, the keys of the segment appear as diamonds on its track (only those of the
-  property you clicked last, while that segment is selected). **Drag** them to move them (they snap
-  like segments; Alt = free), **click** to go there, **right-click** to choose the curve to the next
-  key (linear, hold, ease in / out / in-out, anticipation and overshoot, spring) or delete them.
+- **Right-click a diamond**: add / remove the key at the cursor, show only that property's keys on
+  the timeline, clear all its keys, or clear all the keys of the element (the properties keep the
+  value they have at the cursor).
+- On the timeline (and on the editor's bar), the keys of the element appear as diamonds on its
+  track. **Click** one to select it and go there; **Shift / Ctrl + click** adds or removes keys from
+  the selection. **Drag** moves the selected keys together (they snap like segments; Alt = free).
+  **Del** deletes the selected keys, **Esc** clears the selection. **Right-click** a key: the curve
+  to the next key (linear, hold, ease in / out / in-out, anticipation and overshoot, spring; for all
+  the selected ones), delete, select all the keys, **show only** one of its properties, or clear
+  keys (of that property or of the whole element).
+- **Property filter**: when only one property's keys are shown (also after clicking its diamond), a
+  chip with its name appears on the timeline bar and the editor's bar; its ✕ shows them all again.
 - Keys belong to their segment: they move with it, and their times count from its start.
 
 Not everything can be animated: the lyrics layout (size, position, spacing, animations), the number of
@@ -200,6 +208,7 @@ keys are marked on it).
   ([texts.md](texts.md#masks)): shape (**S**), nodes (**N**), brush
   (**B**) and eraser (**E**), with the brush's size, hardness, opacity and pressure options in the
   top bar.
+- **Motion path** (**P**) of the selected clip or text: draw it, then drag its nodes ([layers.md](layers.md#motion-path)).
 - **Esc** closes it.
 
 ## Right-click menus

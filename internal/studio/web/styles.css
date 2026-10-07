@@ -470,6 +470,12 @@ a.btn { text-decoration: none; }
   border: 1px solid rgba(0, 0, 0, .55); border-radius: 1px; z-index: 3; cursor: ew-resize; opacity: .7; }
 .lane .kf.sel { opacity: 1; }
 .lane .kf.hold { border-radius: 0; background: #e0b040; }
+.lane .kf.picked, .ed-key.picked { background: #fff; opacity: 1; box-shadow: 0 0 0 2px var(--key); z-index: 2; }
+.kf-chip { display: inline-flex; align-items: center; gap: 6px; padding: 1px 2px 1px 8px; border-radius: 999px; font-size: 11.5px;
+  background: rgba(255, 200, 70, .14); color: var(--text); border: 1px solid rgba(255, 200, 70, .45); white-space: nowrap; max-width: 260px; overflow: hidden; }
+.kf-chip .kfdot { width: 7px; height: 7px; transform: rotate(45deg); background: var(--key); flex: none; }
+.kf-chip .btn { padding: 0 5px; min-height: 0; height: 18px; font-size: 11px; }
+.ed-bottom .kf-chip { margin: 0 4px; }
 .lane .kf:hover { opacity: 1; box-shadow: 0 0 0 2px rgba(255, 200, 70, .35); }
 .ctxmenu { position: fixed; z-index: 80; min-width: 190px; max-height: calc(100vh - 12px); overflow-y: auto; padding: 4px; background: var(--surface-2); border: 1px solid var(--border-2);
   border-radius: var(--r); box-shadow: 0 8px 24px rgba(0, 0, 0, .45); display: flex; flex-direction: column; }
@@ -545,6 +551,8 @@ a.btn { text-decoration: none; }
 .masksvg .mask-hit:hover { stroke: rgba(255, 210, 74, .35); }
 .masksvg .mask-line.open { stroke: #ffb347; stroke-dasharray: 2 3; }
 .masksvg .mask-node.end { stroke: #ffb347; }
+.masksvg .mask-line.path { stroke: #4ad8ff; stroke-dasharray: none; }
+.masksvg .path-start { fill: none; stroke: #4ad8ff; pointer-events: none; }
 .masksvg .mask-node { fill: #fff; stroke: #ff3d6a; pointer-events: auto; cursor: move; }
 .masksvg .mask-draw { fill: none; stroke: #ffd24a; }
 .maskpaint { position: absolute; transform-origin: 50% 50%; pointer-events: none; }

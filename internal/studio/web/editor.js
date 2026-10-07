@@ -6,7 +6,8 @@ import { t } from './i18n.js';
 import { useFrameStream } from './frames.js';
 import { ClipHandles, TextHandles, textBoxOf, geoOf } from './layers.js';
 import { MaskOverlay } from './masks.js';
-import { EASES, EaseIcon, keyTimes, editKeysAt } from './keys.js';
+import { keyTimes } from './keys.js';
+import { keyLabel, targetKey, isPicked, pickedTimes, pickKey, moveKeysAt, keyMenuItems, FocusChip } from './keymarks.js';
 import { openMenu } from './menu.js';
 
 // The editor: the preview over the whole browser, as a canvas that can be zoomed, panned and
@@ -26,6 +27,8 @@ const TOOLS = [
   { id: 'nodes', icon: 'spline', label: 'Mask nodes: drag them; double-click the line adds one, Alt+click removes one (N)', key: 'n', mask: 'vector' },
   { id: 'brush', icon: 'brush', label: 'Paint the mask (B; the pen\'s pressure can set size and opacity)', key: 'b', mask: 'raster' },
   { id: 'eraser', icon: 'eraser', label: 'Erase the painted mask (E)', key: 'e', mask: 'raster' },
+  { sep: true },
+  { id: 'path', icon: 'route', label: 'Motion path: draw it by hand, then drag its nodes (P)', key: 'p', path: true },
 ];
 
 // Pointer capture keeps the events of a drag even outside the element (best effort)
@@ -36,8 +39,8 @@ const rot = (x, y, deg) => {
   return { x: x * c - y * s, y: x * s + y * c };
 };
 
-export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selClip, onClip, inspector, onClose, marks = null, onKeys,
-  tool: tool0 = 'select', selMask = null, editMask, onPainted, onNeedMask, selId, selClipIdx, selText, selTextIdx, onText, maskOwner = null }) {
+export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selClip, onClip, inspector, onClose, marks = null, onKeys, kf = {},
+  tool: tool0 = 'select', selMask = null, editMask, onPainted, onNeedMask, selId, selClipIdx, selText, selTextIdx, onText, maskOwner = null, pathOwner = null, editPath }) {
   const time = useStore(timeStore);
   const W = meta.width, H = meta.height;
   const viewRef = useRef();
@@ -59,6 +62,10 @@ export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selCli
   setToolRef.current = setTool;
   const maskRef = useRef(maskOwner); // what the mask tools work on (a clip, a text, a lyrics segment)
   maskRef.current = maskOwner;
+  const pathRef = useRef(pathOwner); // what the path tool works on (a clip or a text)
+  pathRef.current = pathOwner;
+  const [pathDraw, setPathDraw] = useState(false); // drawing the path again (the nodes otherwise)
+  const curPath = pathOwner && pathOwner.obj.motion && pathOwner.obj.motion.path && pathOwner.obj.motion.path.points ? pathOwner.obj.motion.path : null;
   const setBrush = (k, v) => setBrushState((b) => {
     const n = { ...b, [k]: v };
     try { localStorage.setItem('audioviz.brush', JSON.stringify(n)); } catch (e) { /* ignore */ }
@@ -175,7 +182,7 @@ export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selCli
       if (e.key === '0') { fit(); return; }
       if (e.key === '1') { setZoom(1 / dpr); return; }
       const tl = TOOLS.find((x) => x.key === e.key.toLowerCase());
-      if (tl && !(tl.mask && !maskRef.current)) { setToolRef.current(tl.id); e.stopPropagation(); }
+      if (tl && !(tl.mask && !maskRef.current) && !(tl.path && !pathRef.current)) { setToolRef.current(tl.id); e.stopPropagation(); }
     };
     addEventListener('keydown', k, true);
     return () => removeEventListener('keydown', k, true);
@@ -195,6 +202,10 @@ export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selCli
         <button class=${'btn sm' + (brush.pSize ? ' on' : '')} onClick=${() => setBrush('pSize', !brush.pSize)}>${t('size')}</button>
         <button class=${'btn sm' + (brush.pOpacity ? ' on' : '')} onClick=${() => setBrush('pOpacity', !brush.pOpacity)}>${t('opacity')}</button>
       </div>`}
+      ${tool === 'path' && html`<div class="ed-opts faint">${t(curPath && !pathDraw
+        ? 'The path it follows (start: the ring). Drag its nodes; right-click a node or the line: menu. Its progress over time is in the inspector.'
+        : 'Draw the path by hand, from where it starts to where it ends.')}
+        ${curPath && html`<button class=${'btn sm' + (pathDraw ? ' on' : '')} onClick=${() => setPathDraw(!pathDraw)}><${Icon} name="pencil" size=${13} /> ${t('Draw again')}</button>`}</div>`}
       ${(tool === 'shape' || tool === 'nodes') && html`<div class="ed-opts faint">${t(tool === 'shape'
         ? (maskOwner && maskOwner.screen ? 'Draw a closed shape on the screen: the text is seen inside it (or outside, in the mask settings). Several shapes add up.' : 'Draw a closed shape over the clip: the clip is seen inside it (or outside, in the mask settings). Several shapes add up.')
         : 'Click a node (Shift: several), drag to move · right-click a node or the line: menu (add a node, delete a segment, close, join) · double-click the line: a node there · Del: delete · C: node type · J: join two ends')}</div>`}
@@ -214,7 +225,7 @@ export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selCli
     <div class="ed-main">
       <div class="ed-tools">
         ${TOOLS.map((tl) => tl.sep ? html`<div class="ed-sep"></div>` : html`<button class=${'btn icon' + (tool === tl.id ? ' on' : '')}
-          title=${t(tl.label)} disabled=${tl.mask && !maskOwner} onClick=${() => setTool(tl.id)}>
+          title=${t(tl.label)} disabled=${(tl.mask && !maskOwner) || (tl.path && !pathOwner)} onClick=${() => setTool(tl.id)}>
           <${Icon} name=${tl.icon} size=${17} /></button>`)}
       </div>
       <div class="ed-view" ref=${viewRef} style=${{ cursor }} onPointerDown=${onPointerDown} onPointerMove=${onPointerMove}
@@ -225,7 +236,10 @@ export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selCli
             time=${time} meta=${meta} k=${1} hs=${1 / v.z} toFrame=${toFrame} onChange=${onText} />`}
           ${showClip && tool === 'select' && html`<${ClipHandles} clip=${selClip} time=${time} meta=${meta} k=${1} hs=${1 / v.z}
             toFrame=${toFrame} onChange=${onClip} geo=${geoOf(info.layers, selId, selClipIdx)} />`}
-          ${maskOwner && (maskOwner.screen || showClip) && selMask != null && maskOwner.obj.masks && maskOwner.obj.masks[selMask] && html`<${MaskOverlay}
+          ${tool === 'path' && pathOwner && html`<${MaskOverlay} clip=${pathOwner.obj} k=${0} pathShape=${(pathOwner.obj.motion && pathOwner.obj.motion.path) || null}
+            time=${time} meta=${meta} tool=${curPath && !pathDraw ? 'nodes' : 'shape'} brush=${brush} toFrame=${toFrame} z=${v.z}
+            editMask=${(fn) => { setPathDraw(false); editPath(fn); }} />`}
+          ${tool !== 'path' && maskOwner && (maskOwner.screen || showClip) && selMask != null && maskOwner.obj.masks && maskOwner.obj.masks[selMask] && html`<${MaskOverlay}
             clip=${maskOwner.obj} k=${selMask} screen=${maskOwner.screen}
             time=${time} meta=${meta} tool=${tool} brush=${brush} toFrame=${toFrame} z=${v.z} editMask=${editMask} onPainted=${onPainted}
             geo=${geoOf(info.layers, selId, selClipIdx)} />`}
@@ -239,17 +253,19 @@ export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selCli
       </div>
       ${panel && html`<div class="ed-panel">${inspector}</div>`}
     </div>
-    <${MiniTimeline} meta=${meta} time=${time} seek=${seek} playing=${playing} setPlaying=${setPlaying} marks=${marks} onKeys=${onKeys} />
+    <${MiniTimeline} meta=${meta} time=${time} seek=${seek} playing=${playing} setPlaying=${setPlaying} marks=${marks} onKeys=${onKeys} kf=${kf} />
   </div>`;
 }
 
 // Small timeline of the editor: transport and a bar to move through the song, with the
 // selection's time range and its keys (marks: { start, end, keys, target }). Keys as on the
 // timeline: click = go there, drag = move them (within the range), right-click = curve / delete.
-function MiniTimeline({ meta, time, seek, playing, setPlaying, marks, onKeys }) {
+// kf: the keys' property filter and selection, shared with the timeline ({ focus, setFocus, sel, setSel })
+function MiniTimeline({ meta, time, seek, playing, setPlaying, marks, onKeys, kf }) {
   const bar = useRef();
   const d = meta.duration || 1;
   const xToT = (cx) => { const r = bar.current.getBoundingClientRect(); return Math.max(0, Math.min(d, ((cx - r.left) / r.width) * d)); };
+  const { focus = null, setFocus = () => {}, sel: kfSel = null, setSel: setKfSel = () => {} } = kf;
   const down = (e) => {
     if (e.button !== 0) return;
     const el = bar.current;
@@ -262,28 +278,30 @@ function MiniTimeline({ meta, time, seek, playing, setPlaying, marks, onKeys }) 
     if (e.button !== 0) return;
     e.preventDefault();
     e.stopPropagation();
+    if (!pickKey(e, kfSel, setKfSel, marks.target, k)) return;
+    const ts = pickedTimes(kfSel, marks.target, k);
     const orig = marks.keys, base = marks.start, x0 = e.clientX;
-    let moved = false;
+    let moved = false, last = 0;
     const mv = (ev) => {
       if (!moved && Math.abs(ev.clientX - x0) < 3) return;
       moved = true;
-      const nt = Math.max(0, Math.min(marks.end - base, xToT(ev.clientX) - base));
-      onKeys(marks.target, () => editKeysAt(orig, k.t, k.paths, { to: nt }));
+      const r = moveKeysAt(orig, ts, focus, xToT(ev.clientX) - base - k.t, marks.end - base);
+      last = r.dt;
+      onKeys(marks.target, () => r.keys);
     };
     const up = () => {
       removeEventListener('pointermove', mv); removeEventListener('pointerup', up);
       if (!moved) seek(base + k.t);
+      else setKfSel({ key: targetKey(marks.target), ts: ts.map((x) => +(x + last).toFixed(3)) });
     };
     addEventListener('pointermove', mv); addEventListener('pointerup', up);
   };
-  const keyMenu = (e, k) => openMenu(e, [
-    { header: t('Curve to the next key') },
-    ...EASES.map(([id, label]) => ({ label: t(label), icon: html`<${EaseIcon} name=${id} />`, checked: k.ease === id,
-      onClick: () => onKeys(marks.target, (ks) => editKeysAt(ks, k.t, k.paths, { ease: id })) })),
-    '-',
-    { label: t(k.paths.length > 1 ? 'Delete these keys' : 'Delete the key'), icon: 'trash-2', danger: true,
-      onClick: () => onKeys(marks.target, (ks) => editKeysAt(ks, k.t, k.paths, { remove: true })) },
-  ]);
+  const keyMenu = (e, k) => {
+    const picked = isPicked(kfSel, marks.target, k.t);
+    if (!picked) setKfSel({ key: targetKey(marks.target), ts: [k.t] });
+    openMenu(e, keyMenuItems({ target: marks.target, keys: marks.keys, k, focus, setFocus,
+      kfSel: picked ? kfSel : { key: targetKey(marks.target), ts: [k.t] }, setKfSel, onKeys }));
+  };
   return html`<div class="ed-bottom">
     <div class="btngroup">
       <button class="btn icon" title=${t('Previous frame (←)')} onClick=${() => seek(time - 1 / meta.fps)}><${Icon} name="chevron-left" size=${16} /></button>
@@ -293,10 +311,11 @@ function MiniTimeline({ meta, time, seek, playing, setPlaying, marks, onKeys }) 
       <button class="btn icon" title=${t('Next frame (→)')} onClick=${() => seek(time + 1 / meta.fps)}><${Icon} name="chevron-right" size=${16} /></button>
     </div>
     <span class="time mono">${fmtTime(time)} <small>/ ${fmtTime(meta.duration)}</small></span>
+    <${FocusChip} focus=${focus} setFocus=${setFocus} />
     <div class="ed-bar" ref=${bar} onPointerDown=${down}>
       ${marks && html`<div class="ed-range" style=${{ left: (marks.start / d) * 100 + '%', width: ((marks.end - marks.start) / d) * 100 + '%' }}></div>`}
-      ${marks && keyTimes(marks.keys).map((k) => html`<div class=${'ed-key' + (k.ease === 'step' ? ' hold' : '')} key=${'k' + k.t}
-          style=${{ left: ((marks.start + k.t) / d) * 100 + '%' }} title=${fmtTime(marks.start + k.t) + ' · ' + k.paths.join(', ') + ' — ' + t('drag to move · right-click: curve, delete')}
+      ${marks && keyTimes(marks.keys, focus).map((k) => html`<div class=${'ed-key' + (k.ease === 'step' ? ' hold' : '') + (isPicked(kfSel, marks.target, k.t) ? ' picked' : '')} key=${'k' + k.t}
+          style=${{ left: ((marks.start + k.t) / d) * 100 + '%' }} title=${fmtTime(marks.start + k.t) + ' · ' + k.paths.map(keyLabel).join(', ') + ' — ' + t('click: select (Shift: several) · drag: move · right-click: menu')}
           onPointerDown=${(e) => keyDown(e, k)} onContextMenu=${(e) => keyMenu(e, k)}></div>`)}
       <div class="ed-head" style=${{ left: (time / d) * 100 + '%' }}></div>
     </div>

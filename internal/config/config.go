@@ -267,6 +267,7 @@ type TextConfig struct {
 	End          float64 `yaml:"end"`   // s: has fully left
 	Label        string  `yaml:"label,omitempty"`
 	Rotation     float64 `yaml:"rotation,omitempty"` // degrees clockwise, around its position
+	Motion       Motion  `yaml:"motion,omitempty"`   // along a path (instead of position_x / position_y)
 	LyricsConfig `yaml:",inline"`
 	// Keyframes (times from Start): colors, glow, position_x / position_y (the text moves),
 	// size (it scales around its position), rotation...

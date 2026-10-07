@@ -18,6 +18,7 @@ gradient, outline, glow, shadow, in/out animations and audio reaction), but you 
   text is not on screen, drag on the preview to place it (a crosshair marks the point), or use
   *Position X / Y* and *Rotation*.
 - **Masks**: *Masks* in the inspector (see [below](#masks)).
+- **Motion path**: it can travel along a path (see [below](#motion-path)).
 - **Delete**: *Delete* in the inspector or the **Del** key.
 
 ## Animating a text
@@ -79,6 +80,30 @@ texts:
 | everything else | as a new text | Same options as the lyrics: `font`, `size`, `uppercase`, `line_spacing`, `word_spacing`, `color`, `gradient`, `outline_color`, `outline_width`, `glow`, `shadow`, `in_animation`, `out_animation`, `in_duration`, `out_duration`, `slide_distance`, `react` — see [lyrics/README.md](lyrics/README.md) |
 
 Up to 7 texts with different styles can be on screen at once together with the lyrics.
+
+## Motion path
+
+A clip or a text can travel along a path drawn on the screen (like a motion path in a video
+editor). *Motion path* in the inspector → **Draw a path** opens the [editor](studio.md#editor)
+with the path tool (**P**): draw it by hand from where it starts to where it ends (the ring marks
+the start), then drag its nodes; the node types, the right-click menus (add a node, delete a
+segment, close it...) are the same as for the masks. *Draw again* replaces it.
+
+- **Progress along the path**: 0 = start, 1 = end. A new path gets two keys, 0 at the start and 1
+  at the end (ease in / out): change them, add more, give them curves (it can stop, go back, bounce
+  with a spring...). A closed path goes round again past 1 (2 = two laps).
+- **Turn with the path**: its rotation follows the direction of the path (added to its own
+  rotation; 0° = moving right).
+- While it has a path its *Position* is not used; dragging it on the preview moves the whole path.
+
+```yaml
+    motion:
+      path: { points: [[0.1, 0.8], [0.5, 0.4], [0.9, 0.8]], open: true }   # 0..1 of the frame
+      progress: 0
+      orient: true
+    keys:
+      motion.progress: [{ t: 0, v: 0, ease: ease_in_out }, { t: 6, v: 1 }]
+```
 
 ## Masks
 

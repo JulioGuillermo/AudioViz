@@ -325,6 +325,12 @@ unpremultiply, key alpha = smoothstep(tol, tol + soft, |rgb − key|), brightnes
 saturation / hue (rotation about the gray axis), flash (contrast factor, brightness), blend mode,
 `mix(frame, blended, alpha·key·opacity)`.
 
+Motion paths (`config.Motion`, `effects.PathAt`): the path's Béziers (the masks' nodes, in frame
+px) sampled 24 times per segment with their cumulative length; progress × length gives the point
+(linear between samples) and the direction of that sample (`orient`). Clips: the centre instead of
+`x, y` (in `layersAt`, after the keys); texts: the anchor (in `Multi.Frame`, the items moved by
+point − position). A closed path wraps progress (`p − ⌊p⌋`), an open one clamps it.
+
 Masks (`ClipConfig.Masks`, `effects/masks.go`): combined per clip into one alpha image in the
 clip's image space (`MaskSize`: the image's size up to 1024 on its long side) — vector shapes
 (closed Catmull-Rom curves through the 0..1 points, as cubic Béziers) rasterized with

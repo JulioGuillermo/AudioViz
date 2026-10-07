@@ -148,6 +148,13 @@ export function keyApi({ keys = {}, u, edit, seek, focus, setFocus, max = Infini
         ks[path] = sortKeys(l);
       });
     },
+    // Removes all the keys of a property (it keeps its value at the cursor), or of all of them
+    clear(path) {
+      write((ks, cfg) => { if (ks[path]) { setIn(cfg, path, valueAt(ks[path], u)); delete ks[path]; } });
+    },
+    clearAll() {
+      write((ks, cfg) => { for (const p in ks) { setIn(cfg, p, valueAt(ks[p], u)); delete ks[p]; } });
+    },
     // Moves the cursor to the previous (-1) or next (+1) key of the property
     jump(path, dir) {
       const ts = (keys[path] || []).map((k) => k.t);

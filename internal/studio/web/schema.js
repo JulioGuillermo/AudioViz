@@ -234,6 +234,9 @@ export const SIMPLE_TRANSITIONS = [['cut', 'Cut'], ['fade', 'Fade']];
 export const DIRECTED = ['wipe', 'slide', 'push'];
 export const DIRECTIONS = [['left', 'Left'], ['right', 'Right'], ['up', 'Up'], ['down', 'Down']];
 
+// It follows a motion path (its position comes from it)
+const onPath = (c) => !!(c.motion && c.motion.path && (c.motion.path.points || []).length >= 2);
+
 // Fixed texts (titles): the lyrics style options, positioned by hand
 const TEXT_SKIP = new Set(['enabled', 'path', 'offset', 'position', 'margin', 'mode', 'word_pop', 'upcoming_color']);
 export const TEXT_FIELDS = [
@@ -241,7 +244,7 @@ export const TEXT_FIELDS = [
   { key: 'text', label: 'Text', type: 'textarea', help: 'Enter = new row' },
   ...trackById.lyrics.fields.filter((f) => !TEXT_SKIP.has(f.key)).map((f) => {
     // A fixed text can move and scale over time (keyframes)
-    if (f.key === 'position_x' || f.key === 'position_y') return { ...f, anim: true, showIf: undefined, help: f.key === 'position_x' ? 'Or drag the text on the preview' : undefined };
+    if (f.key === 'position_x' || f.key === 'position_y') return { ...f, anim: true, showIf: (c) => !onPath(c), help: f.key === 'position_x' ? 'Or drag the text on the preview' : undefined };
     if (f.key === 'size') return { ...f, anim: true };
     if (f.key === 'align') return { ...f, showIf: undefined, help: 'Left / right: the text starts / ends at Position X' };
     return f;
@@ -262,8 +265,8 @@ export const CLIP_FIELDS = [
   { key: 'path', label: 'File', type: 'file', kind: 'bg', help: 'Image (PNG / WebP with transparency), GIF or video' },
   { key: 'fit', label: 'Base size', type: 'enum', def: 'contain', anim: false, options: [['contain', 'Inside the frame'],
     ['cover', 'Covering the frame'], ['stretch', 'Exactly the frame'], ['none', 'Its own pixels']] },
-  { key: 'x', label: 'Position X', type: 'num', min: -0.5, max: 1.5, step: 0.001, help: 'Or drag it on the preview' },
-  { key: 'y', label: 'Position Y', type: 'num', min: -0.5, max: 1.5, step: 0.001 },
+  { key: 'x', label: 'Position X', type: 'num', min: -0.5, max: 1.5, step: 0.001, help: 'Or drag it on the preview', showIf: (c) => !onPath(c) },
+  { key: 'y', label: 'Position Y', type: 'num', min: -0.5, max: 1.5, step: 0.001, showIf: (c) => !onPath(c) },
   { key: 'scale', label: 'Scale', type: 'num', min: 0.01, max: 4, step: 0.005, help: 'Or drag a corner on the preview' },
   { key: 'rotation', label: 'Rotation (°)', type: 'num', min: -360, max: 360, step: 0.5, help: 'Or drag the round handle on the preview' },
   { key: 'flip_x', label: 'Flip horizontally', type: 'bool' },

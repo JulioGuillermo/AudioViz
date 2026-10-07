@@ -2,6 +2,7 @@ import { html, useState, Component } from './vendor/preact-htm.js';
 import { basename, splitHex, joinHex, gradientCSS, clone } from './util.js';
 import { Icon } from './icons.js';
 import { t } from './i18n.js';
+import { openMenu } from './menu.js';
 import { animatable, valueAt, keyIndexAt } from './keys.js';
 
 // Generic form built from the schema. value = config object; onChange(newObject).
@@ -40,7 +41,21 @@ function KeyButton({ kf, path, list, cur }) {
   const animated = !!(list && list.length);
   const here = animated && keyIndexAt(list, kf.u) >= 0;
   const focus = kf.focus === path;
-  return html`<span class=${'kfbtn' + (animated ? ' anim' : '') + (focus ? ' focus' : '')}>
+  // Right-click: show only its keys on the timeline, clear its keys or all of the element's
+  const menu = (e) => {
+    const any = Object.keys(kf.keys || {}).length > 0;
+    const setFocus = (p) => kf.setFocus && kf.setFocus(p);
+    openMenu(e, [
+      { label: t(here ? 'Remove the key at the cursor' : 'Add a key at the cursor'), icon: here ? 'minus' : 'plus', onClick: () => kf.toggle(path, cur) },
+      '-',
+      focus ? { label: t('Show the keys of all the properties'), icon: 'eye', onClick: () => setFocus(null) }
+        : { label: t('Show only its keys on the timeline'), icon: 'filter', disabled: !animated, onClick: () => setFocus(path) },
+      '-',
+      { label: t('Clear all its keys'), icon: 'eraser', danger: true, disabled: !animated, onClick: () => { kf.clear(path); if (focus) setFocus(null); } },
+      { label: t('Clear all the keys of this element'), icon: 'eraser', danger: true, disabled: !any, onClick: () => { kf.clearAll(); setFocus(null); } },
+    ]);
+  };
+  return html`<span class=${'kfbtn' + (animated ? ' anim' : '') + (focus ? ' focus' : '')} onContextMenu=${menu}>
     <button class=${'kfd' + (here ? ' on' : '')} onClick=${() => kf.toggle(path, cur)}
       title=${t(here ? 'Remove the key at the cursor' : animated ? 'Add a key at the cursor' : 'Animate: first key at the cursor (then change the value at other instants)')}></button>
   </span>`;

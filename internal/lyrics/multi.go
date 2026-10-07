@@ -7,6 +7,7 @@ import (
 
 	"audioviz/internal/audio"
 	"audioviz/internal/config"
+	"audioviz/internal/effects"
 )
 
 // MaxStyles is how many different text styles a frame can show at once (lyrics + fixed texts);
@@ -154,6 +155,7 @@ func (m *Multi) Frame(t float64, feat *audio.FrameFeatures, lyr *config.LyricsCo
 			tc := m.texts[i-m.nLyr]
 			var dx, dy, sc float32 = 0, 0, 1
 			rot := tc.Rotation
+			mo := tc.Motion
 			if len(tc.Keys) > 0 {
 				// Animated text: style from its properties now; moved by the change of its
 				// position, scaled and turned around it by the change of its size and rotation
@@ -167,6 +169,15 @@ func (m *Multi) Frame(t float64, feat *audio.FrameFeatures, lyr *config.LyricsCo
 					sc = float32(k.Size / tc.Size)
 				}
 				rot = k.Rotation
+				mo = k.Motion
+			}
+			if mo.On() {
+				// along its path: the anchor goes to the path's point
+				x, y, a := effects.PathAt(mo.Path, float64(m.w), float64(m.h), mo.Progress)
+				dx, dy = float32(x-tc.PositionX*float64(m.w)), float32(y-tc.PositionY*float64(m.h))
+				if mo.Orient {
+					rot += a * 180 / math.Pi
+				}
 			}
 			st := StyleFor(cfg, t, feat)
 			st.Z = cfg.ZIndex

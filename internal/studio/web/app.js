@@ -5,9 +5,11 @@ import { Form, Select, Edit } from './fields.js';
 import { Icon } from './icons.js';
 import { Timeline, segSummary } from './timeline.js';
 import { keyApi, valueAt, setIn, KEY_EPS } from './keys.js';
+import { editKeysTimes } from './keymarks.js';
 import { useFrameStream } from './frames.js';
 import { Editor } from './editor.js';
 import { maskShapes, setMaskShapes, MaskSection, segMaskOwner, editSegMasks } from './masks.js';
+import { MotionSection, setPath } from './motion.js';
 import { ContextMenu, openMenu } from './menu.js';
 import { LayerInspector, ClipHandles, TextHandles, textBoxOf, geoOf, frontFirst, layerName, newLayerId, setClipProps, duplicateClip } from './layers.js';
 import { ImagesDialog } from './images.js';
@@ -294,6 +296,9 @@ function TextsInspector({ proj, sel, setSel, update, time, meta, ctx }) {
       <${Form} fields=${TEXT_FIELDS} value=${x} onChange=${set} ctx=${ctx} kf=${keyApi({ keys: x.keys, u: time - x.start, max: x.end - x.start,
         focus: ctx.kfFocus, setFocus: ctx.setKfFocus, seek: (u) => ctx.seek(x.start + u),
         edit: (fn) => update((p) => { const tx = p.texts[i]; fn(tx, tx); }) })} />
+      <${MotionSection} obj=${x} what="text" ctx=${ctx} edit=${(fn) => update((p) => fn(p.texts[i]))} kf=${keyApi({ keys: x.keys, u: time - x.start, max: x.end - x.start,
+        focus: ctx.kfFocus, setFocus: ctx.setKfFocus, seek: (u) => ctx.seek(x.start + u),
+        edit: (fn) => update((p) => { const tx = p.texts[i]; fn(tx, tx); }) })} />
       <${MaskSection} clip=${x} screen=${true} kf=${keyApi({ keys: x.keys, u: time - x.start, max: x.end - x.start,
         focus: ctx.kfFocus, setFocus: ctx.setKfFocus, seek: (u) => ctx.seek(x.start + u),
         edit: (fn) => update((p) => { const tx = p.texts[i]; fn(tx, tx); }) })}
@@ -463,12 +468,13 @@ function App() {
   const [wordEdit, setWordEdit] = useState(false); // word blocks of the selected line on the timeline
   // Keyframes: the property whose keys the timeline shows alone (set by its diamond), per selection
   const [kfFocus, setKfFocus] = useState(null);
+  const [kfSel, setKfSel] = useState(null); // selected keys: { key: the target's id, ts: their times }
   const [layerDrag, setLayerDrag] = useState(null); // reordering layers: { from, to }
   const [editor, setEditor] = useState(false); // the full-screen editor
   const [editorTool, setEditorTool] = useState('select');
   const [selMask, setSelMask] = useState(null); // the mask of the selected clip being edited
   useEffect(() => setSelMask(null), [sel.kind, sel.id, sel.clip, sel.i, sel.track, sel.seg]);
-  useEffect(() => setKfFocus(null), [sel.kind, sel.track, sel.seg, sel.i, sel.id, sel.clip]);
+  useEffect(() => { setKfFocus(null); setKfSel(null); }, [sel.kind, sel.track, sel.seg, sel.i, sel.id, sel.clip]);
   const [playing, setPlaying] = useState(false);
   const [scale, setScale] = useState(2);
   const [rev, setRev] = useState(0);
@@ -729,7 +735,7 @@ function App() {
     openEditor: (tool) => { setEditorTool(tool || 'select'); setEditor(true); },
     // z_index choices: each layer bottom to top as [z, name]
     get layerChoices() { return (projRef.current.layers || []).map((l, i) => [i + 1, l.name || t('Layer {n}', { n: i + 1 })]); },
-    kfFocus, setKfFocus,
+    kfFocus, setKfFocus, kfSel, setKfSel,
     dialog: setDlg,
     pickFile: (kind, cb, start) => setPick({ kind, cb, start }),
     openProject: async (p) => { try { await api('POST', '/api/project/open', { path: p }); await loadAll(); } catch (e) { showErr(e); } },
@@ -1047,6 +1053,9 @@ function App() {
   }, []);
 
   // --- keyboard
+  const kfSelRef = useRef(kfSel); kfSelRef.current = kfSel;
+  const kfFocusRef = useRef(kfFocus); kfFocusRef.current = kfFocus;
+  const onKeysRef = useRef(null);
   useEffect(() => {
     const k = (e) => {
       if (e.target.matches('input, select, textarea')) return; // (they keep their own undo)
@@ -1064,7 +1073,13 @@ function App() {
       else if (e.key === 'm' || e.key === 'M') onMarker('add');
       else if ((e.key === 'e' || e.key === 'E') && !editor) setEditor(true);
       else if (e.key === 's' || e.key === 'S') setScrub(!scrubRef.current);
-      else if (e.key === 'Escape') setWordEdit(false);
+      else if (e.key === 'Escape') { setWordEdit(false); setKfSel(null); }
+      else if ((e.key === 'Delete' || e.key === 'Backspace') && kfSelRef.current && kfSelRef.current.ts.length) {
+        // the selected keys (of the shown property, if one is)
+        const ks = kfSelRef.current, target = JSON.parse(ks.key);
+        onKeysRef.current(target, (keys) => editKeysTimes(keys, ks.ts, kfFocusRef.current, { remove: true }));
+        setKfSel(null);
+      }
       else if ((e.key === 'n' || e.key === 'N') && sel.kind === 'track') ctx.addSeg(sel.track, now);
       else if (e.key === 'Delete' && sel.kind === 'track' && sel.seg > 0) {
         update((p) => { p.tracks[sel.track].splice(sel.seg, 1); });
@@ -1188,6 +1203,8 @@ function App() {
     : selText ? { obj: selText, screen: true, edit: (fn) => update((p) => fn(p.texts[sel.i])) }
     : selLyrSeg ? { obj: segMaskOwner(selLyrSeg), screen: true, edit: (fn) => update((p) => editSegMasks(p.tracks.lyrics[sel.seg], fn)) }
     : null;
+  // What the path tool works on: the selected clip or fixed text
+  const pathOwner = maskOwner && !selLyrSeg ? maskOwner : null;
   // A mask tool was picked: use the selected mask if it is of that kind, else the first of that
   // kind, else a new one
   const needMask = (kind) => {
@@ -1225,10 +1242,15 @@ function App() {
     return start == null ? null : { start, end, keys: keys || {}, target };
   })();
   // Changes the keys of a target (a segment, a text or a clip): fn(keys) → new keys
+  onKeysRef.current = (...a) => onKeys(...a);
+  // (a property left without keys keeps the value it had at the cursor)
   const onKeys = (target, fn) => update((p) => {
     const h = target.layer != null ? p.layers.find((l) => l.id === target.layer).clips[target.clip]
       : target.text != null ? p.texts[target.text] : p.tracks[target.track][target.seg];
-    const ks = fn(h.keys || {});
+    const old = h.keys || {};
+    const ks = fn(old);
+    const cfg = target.track != null ? h.cfg : h, u = timeStore.get() - (target.track != null ? h.at : h.start);
+    for (const path in old) if (!ks[path] && old[path].length) setIn(cfg, path, valueAt(old[path], u));
     if (Object.keys(ks).length) h.keys = ks; else delete h.keys;
   });
   // Burn transition with chosen points: they are placed on the preview
@@ -1357,15 +1379,15 @@ function App() {
       texts=${proj.texts || []} onSelectText=${(i) => ctx.selectText(i)} onMoveText=${onMoveText} onAddText=${(tt) => ctx.addText(tt)}
       sel=${sel} lineSel=${lineSel} wordEdit=${wordEdit} height=${tlH} setHeight=${setTlH}
       onSeek=${seek} onSelect=${selTrack} onMoveSeg=${onMoveSeg} onAddSeg=${ctx.addSeg} onMarker=${onMarker}
-      view=${view} onToggleZone=${(z) => toggleView('collapsed', z)} kfFocus=${kfFocus} onContext=${onContext}
+      view=${view} onToggleZone=${(z) => toggleView('collapsed', z)} kfFocus=${kfFocus} setKfFocus=${setKfFocus} kfSel=${kfSel} setKfSel=${setKfSel} onContext=${onContext}
       layers=${layersFF} onSelectLayer=${selectLayer} onMoveClip=${onMoveClip} onAddClip=${(id, tt) => ctx.addClip(id, tt)} onAddLayer=${(tt) => ctx.addLayer(tt)}
       onKeys=${onKeys}
       onSelectLine=${selectLine} onLyrics=${(lines) => editLyrics((all) => { all.splice(0, all.length, ...lines); }, false)}
       onLyricsCommit=${() => { lyrSaveRef.current(); record(); }} />
     ${editor && html`<${Editor} meta=${meta} timeStore=${timeStore} playing=${playing} setPlaying=${setPlaying} seek=${seek} rev=${rev}
-      selClip=${selClip} inspector=${inspector} onClose=${() => { setEditor(false); setEditorTool('select'); }} marks=${editorMarks} onKeys=${onKeys}
+      selClip=${selClip} inspector=${inspector} onClose=${() => { setEditor(false); setEditorTool('select'); }} marks=${editorMarks} onKeys=${onKeys} kf=${{ focus: kfFocus, setFocus: setKfFocus, sel: kfSel, setSel: setKfSel }}
       tool=${editorTool} selMask=${selMask} onNeedMask=${needMask} selId=${sel.id} selClipIdx=${sel.clip}
-      maskOwner=${maskOwner} editMask=${(fn) => maskOwner && maskOwner.edit((o) => { const tt = timeStore.get();
+      maskOwner=${maskOwner} pathOwner=${pathOwner} editPath=${(fn) => pathOwner && pathOwner.edit((o) => setPath(o, fn))} editMask=${(fn) => maskOwner && maskOwner.edit((o) => { const tt = timeStore.get();
         setMaskShapes(o, selMask, tt, fn(maskShapes(o, selMask, tt))); })}
       onPainted=${onPainted} selText=${selText} selTextIdx=${selText ? sel.i : null}
       onText=${(props) => update((p) => { const tx = p.texts[sel.i]; if (tx) setClipProps(tx, props, timeStore.get()); })}

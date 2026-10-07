@@ -4,7 +4,8 @@ import { fmtTime, basename, clone } from './util.js';
 import { Icon } from './icons.js';
 import { t } from './i18n.js';
 import { useStore } from './store.js';
-import { EASES, EaseIcon, keyTimes, editKeysAt } from './keys.js';
+import { keyTimes } from './keys.js';
+import { keyLabel, targetKey, isPicked, pickedTimes, pickKey, moveKeysAt, keyMenuItems, FocusChip } from './keymarks.js';
 import { openMenu } from './menu.js';
 
 const H = { ruler: 26, audio: 74, lyrics: 30, track: 28, textRow: 24, zone: 22 };
@@ -149,7 +150,7 @@ function Playhead({ timeStore, pps, scroller, follow }) {
 export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, sel, lineSel, onSeek, onSelect, onMoveSeg,
   onAddSeg, onSelectLine, onLyrics, onLyricsCommit, onMarker, height, setHeight, wordEdit,
   texts = [], onSelectText, onMoveText, onAddText, view = { hidden: [], collapsed: [] }, onToggleZone,
-  kfFocus = null, onKeys, onContext, layers = [], onSelectLayer, onMoveClip, onAddClip, onAddLayer }) {
+  kfFocus = null, setKfFocus = () => {}, kfSel = null, setKfSel = () => {}, onKeys, onContext, layers = [], onSelectLayer, onMoveClip, onAddClip, onAddLayer }) {
   const scroller = useRef();
   const namesRef = useRef();
   const [pps, setPps] = useState(null); // pixels per second
@@ -386,32 +387,38 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
   const hidden = new Set(view.hidden || []), folded = new Set(view.collapsed || []);
 
   // --- keyframes: a diamond per instant with keys (of every property, or only of the focused
-  // one in the selected segment / text). Drag: move them (snaps; within the segment); click: go
-  // there; right-click: easing towards the next key, or delete.
-  const keyDrag = (e, target, keys, k, base, end) => {
+  // one in the selected segment / text / clip). Click: select it and go there (Shift / Ctrl: add
+  // to the selection); drag: move the selected ones (snaps; within the element); right-click:
+  // curve, delete, filter, clear (keymarks.js).
+  const keyDrag = (e, target, keys, k, base, end, isSel) => {
     e.stopPropagation();
     if (e.button !== 0) return;
+    const focus = isSel ? kfFocus : null;
+    if (!pickKey(e, kfSel, setKfSel, target, k)) return;
+    const ts = pickedTimes(kfSel, target, k);
     const orig = keys;
+    let last = 0;
     drag(e, (dt, ev) => {
-      const nt = Math.max(0, Math.min(end - base, snap(base + k.t + dt, ev) - base));
-      onKeys(target, () => editKeysAt(orig, k.t, k.paths, { to: nt }));
-    }, (moved) => { if (!moved) onSeek(base + k.t); });
+      const want = snap(base + k.t + dt, ev) - base - k.t;
+      const r = moveKeysAt(orig, ts, focus, want, end - base);
+      last = r.dt;
+      onKeys(target, () => r.keys);
+    }, (moved) => {
+      if (!moved) onSeek(base + k.t);
+      else setKfSel({ key: targetKey(target), ts: ts.map((x) => +(x + last).toFixed(3)) });
+    });
   };
   const keyMarks = (keys, base, end, target, isSel, top) => keyTimes(keys, isSel ? kfFocus : null).map((k) => html`<div
-      class=${'kf' + (isSel ? ' sel' : '') + (k.ease === 'step' ? ' hold' : '')} key=${'k' + k.t}
+      class=${'kf' + (isSel ? ' sel' : '') + (k.ease === 'step' ? ' hold' : '') + (isPicked(kfSel, target, k.t) ? ' picked' : '')} key=${'k' + k.t}
       style=${{ left: (base + k.t) * effPps + 'px', top: top == null ? '50%' : top + 'px' }}
-      title=${fmtTime(base + k.t) + ' · ' + k.paths.join(', ') + ' — ' + t('drag to move · right-click: curve, delete')}
-      onMouseDown=${(e) => keyDrag(e, target, keys, k, base, end)} onDblClick=${(e) => e.stopPropagation()}
-      onContextMenu=${(e) => keyMenu(e, target, keys, k)}></div>`);
-  // Right-click on a key: the curve towards the next key (each drawn), or delete
-  const keyMenu = (e, target, keys, k) => openMenu(e, [
-    { header: t('Curve to the next key') },
-    ...EASES.map(([id, label]) => ({ label: t(label), icon: html`<${EaseIcon} name=${id} />`, checked: k.ease === id,
-      onClick: () => onKeys(target, (ks) => editKeysAt(ks, k.t, k.paths, { ease: id })) })),
-    '-',
-    { label: t(k.paths.length > 1 ? 'Delete these keys' : 'Delete the key'), icon: 'trash-2', danger: true,
-      onClick: () => onKeys(target, (ks) => editKeysAt(ks, k.t, k.paths, { remove: true })) },
-  ]);
+      title=${fmtTime(base + k.t) + ' · ' + k.paths.map(keyLabel).join(', ') + ' — ' + t('click: select (Shift: several) · drag: move · right-click: menu')}
+      onMouseDown=${(e) => keyDrag(e, target, keys, k, base, end, isSel)} onDblClick=${(e) => e.stopPropagation()}
+      onContextMenu=${(e) => keyMenu(e, target, keys, k, isSel)}></div>`);
+  const keyMenu = (e, target, keys, k, isSel) => {
+    if (!isPicked(kfSel, target, k.t)) setKfSel({ key: targetKey(target), ts: [k.t] });
+    openMenu(e, keyMenuItems({ target, keys, k, focus: isSel ? kfFocus : null, setFocus: setKfFocus,
+      kfSel: isPicked(kfSel, target, k.t) ? kfSel : { key: targetKey(target), ts: [k.t] }, setKfSel, onKeys }));
+  };
   const trackRow = (tr) => {
     const segs = proj.tracks[tr.id] || [];
     const on = sel.kind === 'track' && sel.track === tr.id;
@@ -559,6 +566,7 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
       <span class="label-sm" style="color:var(--text-2)">${t('Timeline')}</span>
       <span class="hint">${t('Double-click a track: new segment · Drag to move (snaps; Alt = free) · Ctrl + wheel: zoom · Drag the ruler: scroll')}</span>
       <span class="spacer"></span>
+      <${FocusChip} focus=${kfFocus} setFocus=${setKfFocus} />
       <span class="legend">
         <span><i style="background:var(--band-bass)"></i>${t('Bass')}</span>
         <span><i style="background:var(--band-mid)"></i>${t('Mids')}</span>
