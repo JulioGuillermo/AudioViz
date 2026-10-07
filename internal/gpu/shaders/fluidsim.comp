@@ -1,0 +1,206 @@
+#version 450
+// Fluid / liquid transition simulation on the GPU: the same steps as Fluid.simulate in
+// internal/effects/fluid.go (CPU path), one kernel per step chosen by a push constant, one
+// invocation per particle (or per grid cell). Sums over neighbors are done in fixed point so the
+// result does not depend on the order the GPU visits them (the same run gives the same frames).
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Cfg {
+    ivec4 c0;   // particles, width, height, liquid (0/1)
+    ivec4 c1;   // collision grid: cells across, down, capacity per cell, -
+    ivec4 c2;   // liquid grid: cells across, down; flow grid: nodes across, down
+    vec4 f0;    // particle diameter, collision cell size, max speed, dt
+    vec4 f1;    // liquid cell size, particles per cell at rest, viscosity, pressure
+    vec4 f2;    // flow node spacing x, stream gain, flow node spacing y, -
+} C;
+layout(std430, set = 0, binding = 1) buffer Pos { vec2 pos[]; };
+layout(std430, set = 0, binding = 2) buffer Vel { vec2 vel[]; };
+layout(std430, set = 0, binding = 3) buffer Pred { vec2 pred[]; };       // predicted positions
+layout(std430, set = 0, binding = 4) buffer Corr { vec2 corr[]; };       // collision corrections
+layout(std430, set = 0, binding = 5) readonly buffer Ends { vec4 ends[]; };  // start x, y, slot x, y
+layout(std430, set = 0, binding = 6) readonly buffer Times { vec2 times[]; }; // departure, arrival
+layout(std430, set = 0, binding = 7) readonly buffer Flow { vec2 flow[]; };
+layout(std430, set = 0, binding = 8) buffer Count { uint cnt[]; };
+layout(std430, set = 0, binding = 9) buffer Slots { uint slots[]; };
+layout(std430, set = 0, binding = 10) buffer LGrid { int lg[]; };        // per cell: weight, vx, vy sums
+layout(std430, set = 0, binding = 11) buffer Snaps { uint snaps[]; };    // x, y in 1/8 px (int16 pairs)
+
+layout(push_constant) uniform Push {
+    int kernel;
+    int arg;   // snapshot index (store)
+    float t;   // time 0..1 (predict, liquid)
+} K;
+
+const float WSCALE = 65536.0; // fixed point: liquid weights
+const float VSCALE = 16.0;    //              liquid velocities
+const float PSCALE = 4096.0;  //              collision pushes
+
+uint hashU(uint x) {
+    x = x * 747796405u + 2891336453u;
+    uint w = ((x >> ((x >> 28u) + 4u)) ^ x) * 277803737u;
+    return (w >> 22u) ^ w;
+}
+
+float hash3(uint a, uint b, uint c) { return float(hashU(a + hashU(b + hashU(c)))) / 4294967296.0; }
+
+float smooth01(float t) {
+    t = clamp(t, 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+
+vec2 clampFrame(vec2 q) { return clamp(q, vec2(0.0), vec2(float(C.c0.y), float(C.c0.z)) - 0.01); }
+
+// The divergence-free stream: bilinear on its nodes (node (0, 0) on the top-left corner,
+// spacing f2.x × f2.z), as flowField.at
+vec2 flowAt(vec2 p) {
+    int nx = C.c2.z, ny = C.c2.w;
+    vec2 q = clamp(p / vec2(C.f2.x, C.f2.z), vec2(0.0), vec2(float(nx - 1), float(ny - 1)));
+    int x0 = min(int(q.x), nx - 2), y0 = min(int(q.y), ny - 2);
+    vec2 f = q - vec2(x0, y0);
+    return mix(mix(flow[y0 * nx + x0], flow[y0 * nx + x0 + 1], f.x), mix(flow[(y0 + 1) * nx + x0], flow[(y0 + 1) * nx + x0 + 1], f.x), f.y);
+}
+
+// Liquid grid: density relative to rest and mean velocity of cell (x, y), edge-clamped
+int lcell(int x, int y) { return clamp(y, 0, C.c2.y - 1) * C.c2.x + clamp(x, 0, C.c2.x - 1); }
+// How much of the bilinear weight of node x falls inside [0, l] (tentIn in fluid.go)
+float tentF(float u) { return u < 0.0 ? u + u * u / 2.0 : u - u * u / 2.0; }
+float tentIn(float x, float l) {
+    float a = max(-1.0, -x), b = min(1.0, l - x);
+    return b <= a ? 0.0 : tentF(b) - tentF(a);
+}
+// Density against the rest density of the part of the node's cells inside the frame
+float lden(int x, int y) {
+    x = clamp(x, 0, C.c2.x - 1);
+    y = clamp(y, 0, C.c2.y - 1);
+    float l = C.f1.x;
+    float m = max(0.05, tentIn(float(x), float(C.c0.y) / l) * tentIn(float(y), float(C.c0.z) / l));
+    return float(lg[(y * C.c2.x + x) * 3]) / WSCALE / (C.f1.y * m);
+}
+vec2 lvel(int x, int y) {
+    int k = lcell(x, y) * 3;
+    float w = float(lg[k]) / WSCALE;
+    return w > 1e-6 ? vec2(float(lg[k + 1]), float(lg[k + 2])) / VSCALE / w : vec2(0.0);
+}
+
+void main() {
+    int i = int(gl_GlobalInvocationID.x);
+    int n = C.c0.x;
+    float dt = C.f0.w;
+    switch (K.kernel) {
+    case 0: { // predict: each particle wants to reach its slot (or is carried by the stream)
+        if (i >= n) return;
+        vec2 p = pos[i], v = vel[i], w = vec2(0.0);
+        float t = K.t;
+        if (C.c0.w != 0) {
+            // Liquid: carried by the incompressible stream, slowing down to rest at the end
+            float rate = 1.57079632679 * sin(3.14159265359 * t);
+            w = flowAt(p) * rate * C.f2.y;
+        } else if (t >= times[i].x) {
+            float ramp = smooth01((t - times[i].x) / 0.18);
+            float gain = ramp / max(0.05, times[i].y - t);
+            w = (ends[i].zw - p) * gain;
+            float l = length(w);
+            if (l > C.f0.z) w *= C.f0.z / l;
+        }
+        v += (w - v) * min(1.0, 18.0 * dt);
+        vel[i] = v;
+        pred[i] = clampFrame(p + v * dt);
+        return;
+    }
+    case 1: { // liquid: clear the grid
+        if (i >= C.c2.x * C.c2.y * 3) return;
+        lg[i] = 0;
+        return;
+    }
+    case 2: { // liquid: density and velocity of each cell (bilinear splat)
+        if (i >= n) return;
+        vec2 g = pos[i] / C.f1.x;
+        int x0 = int(g.x), y0 = int(g.y);
+        vec2 f = g - vec2(x0, y0);
+        vec2 v = vel[i];
+        float ws[4] = float[4]((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
+        int ks[4] = int[4](y0 * C.c2.x + x0, y0 * C.c2.x + x0 + 1, (y0 + 1) * C.c2.x + x0, (y0 + 1) * C.c2.x + x0 + 1);
+        for (int c = 0; c < 4; c++) {
+            atomicAdd(lg[ks[c] * 3], int(round(ws[c] * WSCALE)));
+            atomicAdd(lg[ks[c] * 3 + 1], int(round(v.x * ws[c] * VSCALE)));
+            atomicAdd(lg[ks[c] * 3 + 2], int(round(v.y * ws[c] * VSCALE)));
+        }
+        return;
+    }
+    case 3: { // liquid: viscosity (move like the neighbors) and pressure (down the density gradient)
+        if (i >= n) return;
+        vec2 p = pos[i];
+        vec2 g = p / C.f1.x;
+        int x0 = int(g.x), y0 = int(g.y);
+        float fx = g.x - float(x0), fy = g.y - float(y0);
+        vec2 mv = mix(mix(lvel(x0, y0), lvel(x0 + 1, y0), fx), mix(lvel(x0, y0 + 1), lvel(x0 + 1, y0 + 1), fx), fy);
+        vec2 v = vel[i];
+        v += (mv - v) * C.f1.z;
+        vel[i] = v;
+        float gdx = ((lden(x0 + 1, y0) - lden(x0 - 1, y0)) * (1.0 - fy) + (lden(x0 + 2, y0 + 1) - lden(x0, y0 + 1)) * fy) * 0.5;
+        float gdy = ((lden(x0, y0 + 1) - lden(x0, y0 - 1)) * (1.0 - fx) + (lden(x0 + 1, y0 + 2) - lden(x0 + 1, y0)) * fx) * 0.5;
+        pred[i] = clampFrame(p + v * dt - C.f1.w * C.f1.x * vec2(gdx, gdy));
+        return;
+    }
+    case 4: { // collisions: clear the grid
+        if (i >= C.c1.x * C.c1.y) return;
+        cnt[i] = 0u;
+        return;
+    }
+    case 5: { // collisions: each particle into its cell
+        if (i >= n) return;
+        vec2 q = pred[i];
+        int c = int(q.y / C.f0.y) * C.c1.x + int(q.x / C.f0.y);
+        uint s = atomicAdd(cnt[c], 1u);
+        if (s < uint(C.c1.z)) slots[c * C.c1.z + int(s)] = uint(i);
+        return;
+    }
+    case 6: { // collisions: overlapping pairs are pushed apart (half each)
+        if (i >= n) return;
+        vec2 q = pred[i];
+        float diam = C.f0.x, cs = C.f0.y;
+        int cx = int(q.x / cs), cy = int(q.y / cs);
+        ivec2 s = ivec2(0);
+        for (int yy = max(0, cy - 1); yy <= min(C.c1.y - 1, cy + 1); yy++) {
+            for (int xx = max(0, cx - 1); xx <= min(C.c1.x - 1, cx + 1); xx++) {
+                int c = yy * C.c1.x + xx;
+                int m = min(int(cnt[c]), C.c1.z);
+                for (int k = 0; k < m; k++) {
+                    int j = int(slots[c * C.c1.z + k]);
+                    if (j == i) continue;
+                    vec2 e = q - pred[j];
+                    float d2 = dot(e, e);
+                    if (d2 >= diam * diam) continue;
+                    float d = sqrt(d2);
+                    if (d < 1e-4) { // exactly on top: separate along a fixed direction
+                        e = vec2(hash3(uint(i), uint(j), 7u) - 0.5, hash3(uint(j), uint(i), 9u) - 0.5);
+                        d = 1e-4;
+                    }
+                    vec2 push = clamp(e * ((diam - d) * 0.5 / max(d, 1e-4)), -diam, diam);
+                    s += ivec2(round(push * PSCALE));
+                }
+            }
+        }
+        corr[i] = vec2(s) / PSCALE * 0.8;
+        return;
+    }
+    case 7: { // collisions: apply the corrections
+        if (i >= n) return;
+        pred[i] = clampFrame(pred[i] + corr[i]);
+        return;
+    }
+    case 8: { // the velocity is what really happened (pushes included), a little damped
+        if (i >= n) return;
+        vel[i] = (pred[i] - pos[i]) / dt * 0.98;
+        pos[i] = pred[i];
+        return;
+    }
+    case 9: { // store the positions (1/8 px)
+        if (i >= n) return;
+        ivec2 q = ivec2(floor(pos[i] * 8.0 + 0.5));
+        snaps[K.arg * n + i] = uint(q.x & 0xffff) | (uint(q.y & 0xffff) << 16);
+        return;
+    }
+    }
+}

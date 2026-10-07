@@ -6,8 +6,9 @@ import (
 	"math/rand/v2"
 	"os"
 	"runtime"
-	"slices"
 	"sync"
+
+	"audioviz/internal/gpu"
 )
 
 // Fluid transition ("pixels that travel"): every small piece of the old image is a particle that
@@ -36,7 +37,16 @@ type FluidOpts struct {
 	// directions (crowds spread out, gaps fill in) and whole areas leave together
 	Liquid    bool
 	Viscosity float64 // liquid: how much neighbors move together
+	// GPU: simulate on this Vulkan device (-1 = automatic) when possible; the CPU otherwise
+	GPU       bool
+	GPUDevice int
 }
+
+const (
+	liquidPressure = 0.45 // how strongly crowds spread out and gaps fill in
+	// The stream keeps only the turning part of the wanted motion (smaller): amplified
+	streamGain = 2.2
+)
 
 // Fluid is a simulated transition, ready to render any instant of it
 type Fluid struct {
@@ -48,10 +58,11 @@ type Fluid struct {
 	colA, colB []uint32 // per particle: its color and the color of its slot (RGB)
 	sx, sy     []float32
 	tx, ty     []float32
-	acc        []float32 // per-frame splat buffer (r, g, b, w per pixel)
 	liquid     bool
 	delay      []float32 // liquid: when each particle starts changing color
-	mu         sync.Mutex
+	// SimGPU: the simulation ran on the GPU; SimErr: why it could not (it ran on the CPU)
+	SimGPU bool
+	SimErr error
 }
 
 func px(img *image.RGBA, x, y int) uint32 {
@@ -115,6 +126,13 @@ func NewFluid(a, b *image.RGBA, w, h, frames int, o FluidOpts) *Fluid {
 		f.tx[i], f.ty[i] = float32((float64(j%f.gx)+0.5)*bx), float32((float64(j/f.gx)+0.5)*by)
 	}
 	f.simulate(frames, o)
+	if o.Liquid {
+		// A drop ends where the stream left it, not on its matched slot: its color in the new
+		// image (for the gap fill) is the one there
+		for i := range f.n {
+			f.colB[i] = px(b, min(int(f.tx[i]), w-1), min(int(f.ty[i]), h-1))
+		}
+	}
 	return f
 }
 
@@ -140,6 +158,7 @@ func sliceOT(A, B [][5]float32, seed uint32) []int {
 	rng := rand.New(rand.NewPCG(uint64(seed)+1, 0x9e3779b97f4a7c15))
 	ia, ib := make([]int32, n), make([]int32, n)
 	pa, pb := make([]float32, n), make([]float32, n)
+	ka, kb, kc, kd := make([]uint64, n), make([]uint64, n), make([]uint64, n), make([]uint64, n)
 	for i := range n {
 		ia[i], ib[i] = int32(i), int32(i)
 	}
@@ -160,8 +179,8 @@ func sliceOT(A, B [][5]float32, seed uint32) []int {
 		}
 		var wg sync.WaitGroup
 		wg.Add(2)
-		go func() { defer wg.Done(); slices.SortFunc(ia, func(x, y int32) int { return cmpF(pa[x], pa[y]) }) }()
-		go func() { defer wg.Done(); slices.SortFunc(ib, func(x, y int32) int { return cmpF(pb[x], pb[y]) }) }()
+		go func() { defer wg.Done(); sortByKey(ia, pa, ka, kb) }()
+		go func() { defer wg.Done(); sortByKey(ib, pb, kc, kd) }()
 		wg.Wait()
 		if it == iters-1 {
 			break
@@ -180,14 +199,39 @@ func sliceOT(A, B [][5]float32, seed uint32) []int {
 	return out
 }
 
-func cmpF(a, b float32) int {
-	switch {
-	case a < b:
-		return -1
-	case a > b:
-		return 1
+// sortByKey orders idx (0..n-1) by key[idx] ascending (ties by index): LSD radix sort of the
+// keys' order-preserving bits with the index attached; buf, tmp are scratch of len n
+func sortByKey(idx []int32, key []float32, buf, tmp []uint64) {
+	for i := range idx {
+		b := math.Float32bits(key[i])
+		if b&0x80000000 != 0 {
+			b = ^b // negative: reversed order
+		} else {
+			b |= 0x80000000
+		}
+		buf[i] = uint64(b)<<32 | uint64(i)
 	}
-	return 0
+	const bits = 11
+	var count [1 << bits]int
+	for shift := 32; shift < 64; shift += bits {
+		clear(count[:])
+		for _, v := range buf {
+			count[(v>>shift)&(1<<bits-1)]++
+		}
+		sum := 0
+		for d := range count {
+			count[d], sum = sum, sum+count[d]
+		}
+		for _, v := range buf {
+			d := (v >> shift) & (1<<bits - 1)
+			tmp[count[d]] = v
+			count[d]++
+		}
+		buf, tmp = tmp, buf
+	}
+	for i, v := range buf {
+		idx[i] = int32(uint32(v))
+	}
 }
 
 // simulate moves the particles and stores their positions at `snaps` instants. Each particle
@@ -270,7 +314,11 @@ func (f *Fluid) simulate(frames int, o FluidOpts) {
 		}
 		wg.Wait()
 	}
-	for st := 1; st <= steps; st++ {
+	if o.GPU {
+		// The same steps on the GPU (fluidsim.comp); on any error, the CPU below
+		f.SimGPU = f.simulateGPU(o, flow, t0, t1, diam, cs, nx, ny, vmax, gc, lnx, lny, rest, sub, px, py)
+	}
+	for st := 1; !f.SimGPU && st <= steps; st++ {
 		t := float32(st) * dt
 		// 1. Each particle wants to cover what is left of its way in the time it has left (so the
 		// journey spreads over the whole transition), starting gently; predicts its position
@@ -283,8 +331,6 @@ func (f *Fluid) simulate(frames int, o FluidOpts) {
 					// 1 over the transition and slows down to rest at the end
 					fu, fv := flow.at(px[i], py[i])
 					rate := float32(math.Pi / 2 * math.Sin(math.Pi*float64(t)))
-					// The stream kept only the turning part of the wanted motion (smaller): amplified
-					const streamGain = 2.2
 					wx, wy = fu*rate*streamGain, fv*rate*streamGain
 				} else if t >= t0[i] {
 					ramp := float32(smooth01(float64((t - t0[i]) / 0.18)))
@@ -342,9 +388,11 @@ func (f *Fluid) simulate(frames int, o FluidOpts) {
 								if d < 1e-4 { // exactly on top: separate along a fixed direction
 									ex, ey, d = float32(hash3(uint32(i), uint32(j), 7)-0.5), float32(hash3(uint32(j), uint32(i), 9)-0.5), 1e-4
 								}
+								// At most a particle's size per pair: two particles exactly on top of each
+								// other (piled in a corner) separate instead of shooting across the frame
 								push := (diam - d) * 0.5 / max(d, 1e-4)
-								sx += ex * push
-								sy += ey * push
+								sx += min(max(ex*push, -diam), diam)
+								sy += min(max(ey*push, -diam), diam)
 							}
 						}
 					}
@@ -384,122 +432,142 @@ func (f *Fluid) simulate(frames int, o FluidOpts) {
 	}
 }
 
-// Render draws instant k (0..1) of the transition into dst (w×h). sa / sb are the two images as
-// they are shown now (with their motion): it starts exactly on the first and ends on the second.
-func (f *Fluid) Render(dst *image.RGBA, k float64, sa, sb *sampler) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
+// simulateGPU runs the simulation on the GPU, filling f.pos and the final positions px, py
+func (f *Fluid) simulateGPU(o FluidOpts, flow *flowField, t0, t1 []float32, diam float32, cs float64, nx, ny int,
+	vmax, gc float32, lnx, lny int, rest float32, sub int, px, py []float32) bool {
+	n := f.n
+	in := &gpu.FluidSim{W: f.W, H: f.H, N: n, Liquid: o.Liquid, Ends: make([]float32, n*4), Times: make([]float32, n*2),
+		Gain: streamGain, Diam: diam, CellSize: float32(cs), GridW: nx, GridH: ny, VMax: vmax,
+		LCell: gc, Rest: rest, Visc: float32(o.Viscosity * 0.9), Pres: liquidPressure, LGridW: lnx, LGridH: lny,
+		Snaps: f.snaps, Sub: sub}
+	for i := range n {
+		in.Ends[4*i], in.Ends[4*i+1], in.Ends[4*i+2], in.Ends[4*i+3] = f.sx[i], f.sy[i], f.tx[i], f.ty[i]
+		in.Times[2*i], in.Times[2*i+1] = t0[i], t1[i]
+	}
+	if flow != nil {
+		in.Flow = make([]float32, len(flow.u)*2)
+		for k := range flow.u {
+			in.Flow[2*k], in.Flow[2*k+1] = flow.u[k], flow.v[k]
+		}
+		in.FlowW, in.FlowH, in.FlowHX, in.FlowHY = flow.nx, flow.ny, flow.hx, flow.hy
+	}
+	pos, final, err := gpu.RunFluidSim(o.GPUDevice, in)
+	if err != nil {
+		f.SimErr = err
+		return false
+	}
+	f.pos = pos
+	for i := range n {
+		px[i], py[i] = final[2*i], final[2*i+1]
+	}
+	return true
+}
+
+// FluidFrame is one instant of a fluid transition, ready to be drawn on the CPU (Render) or on
+// the GPU (fluid.comp, the same per-pixel math). Parts holds, per particle, where
+// it is now, how far its color has gone from its piece of the old image to its piece of the new
+// one, and where those pieces are. The particles are sorted into bins so that each pixel only
+// looks at the ones around it. Coarse is the soft color that fills the gaps (1/8 resolution).
+type FluidFrame struct {
+	W, H int
+	K    float64
+	// Per particle 8 values: x, y, p, -, piece in the old image (x, y), in the new one (x, y);
+	// sorted by bin (the particles of bin b are BinStart[b] .. BinStart[b+1]-1)
+	Parts    []float32
+	HBW, HBH float32 // half size of a piece
+	Bin      int     // bin side in pixels
+	NBX, NBY int
+	BinStart []uint32 // NBX*NBY+1
+	CW, CH   int
+	Coarse   []float32 // CW×CH × (r, g, b sums 0..255, weight), blurred
+}
+
+// FluidBufWords: an upper bound of the 32-bit words a FluidFrame takes on the GPU at w×h
+// (parts, bins, coarse), to size the buffer once
+func FluidBufWords(w, h int) int {
+	cell := math.Max(2, float64(h)/270)
+	n := max(8, int(float64(w)/cell)) * max(8, int(float64(h)/cell))
+	nb := (w/2 + 1) * (h/2 + 1) // bins are at least 2 px
+	return n*8 + nb + 1 + ((w+7)/8)*((h+7)/8)*4
+}
+
+// Frame computes instant k (0..1) of the transition: the particles' positions and colors
+func (f *Fluid) Frame(k float64) *FluidFrame {
 	k = math.Max(0, math.Min(1, k))
 	ft := k * float64(f.snaps-1)
 	s0 := min(int(ft), f.snaps-2)
 	fr := float32(ft - float64(s0))
 	settle := float32(smooth01((k - 0.9) / 0.1))
-	W, H := f.W, f.H
-	if len(f.acc) != W*H*4 {
-		f.acc = make([]float32, W*H*4)
-	}
-	clear(f.acc)
-	// Current position of every particle; particles sorted into horizontal bands so that each
-	// worker splats into its own rows
-	n := f.n
-	xs, ys := make([]float32, n), make([]float32, n)
-	bands := runtime.NumCPU() * 4
-	bandH := (H + bands - 1) / bands
+	W, H, n := f.W, f.H, f.n
 	// Each particle is drawn as a crisp square the size of its block, carrying its own piece of
 	// the image: at rest the squares tile the frame exactly (the old image, pixel for pixel)
-	hbw, hbh := float32(f.W)/float32(f.gx)*0.5, float32(f.H)/float32(f.gy)*0.5
+	hbw, hbh := float32(W)/float32(f.gx)*0.5, float32(H)/float32(f.gy)*0.5
 	if f.liquid {
 		// A liquid has no gaps between its drops: slightly bigger pieces close the small ones
 		// (at rest the overlap only blends each piece with its neighbors' edges)
 		hbw, hbh = hbw*1.3, hbh*1.3
 	}
-	R := int(math.Ceil(float64(hbh))) + 1
-	lists := make([][]int32, bands)
-	for i := range n {
-		b0, b1 := s0*n*2+2*i, (s0+1)*n*2+2*i
-		x := (float32(f.pos[b0]) + float32(f.pos[b1]-f.pos[b0])*fr) / 8
-		y := (float32(f.pos[b0+1]) + float32(f.pos[b1+1]-f.pos[b0+1])*fr) / 8
-		x += (f.tx[i] - x) * settle
-		y += (f.ty[i] - y) * settle
-		xs[i], ys[i] = x, y
-		for b := max(0, (int(y)-R)/bandH); b <= min(bands-1, (int(y)+R)/bandH); b++ {
-			lists[b] = append(lists[b], int32(i))
-		}
-	}
-	var wg sync.WaitGroup
-	jobs := make(chan int, bands)
-	for b := range bands {
-		jobs <- b
-	}
-	close(jobs)
-	for range runtime.NumCPU() {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for b := range jobs {
-				ylo, yhi := b*bandH, min(H, (b+1)*bandH)
-				for _, i := range lists[b] {
-					x, y := xs[i], ys[i]
-					// From its old piece to its new piece as it gets there
-					dd := math.Hypot(float64(f.tx[i]-f.sx[i]), float64(f.ty[i]-f.sy[i]))
-					rem := math.Hypot(float64(f.tx[i]-x), float64(f.ty[i]-y))
-					p := 1.0
-					if dd > 1 {
-						p = 1 - math.Min(1, rem/dd)
-					}
-					p = smooth01(math.Max(p, (k-0.8)/0.2))
-					if f.liquid {
-						// Liquid: the color changes little by little, each area at its own moment
-						p = smooth01((k - float64(f.delay[i])) / 0.42)
-					}
-					// Square [x-hbw, x+hbw) × [y-hbh, y+hbh), antialiased by pixel coverage
-					x0, x1, y0, y1 := x-hbw, x+hbw, y-hbh, y+hbh
-					for yy := max(ylo, int(math.Floor(float64(y0)))); yy <= min(yhi-1, int(math.Ceil(float64(y1)))-1); yy++ {
-						cy := min(float32(yy+1), y1) - max(float32(yy), y0)
-						if cy <= 0 {
-							continue
-						}
-						for xx := max(0, int(math.Floor(float64(x0)))); xx <= min(W-1, int(math.Ceil(float64(x1)))-1); xx++ {
-							cx := min(float32(xx+1), x1) - max(float32(xx), x0)
-							if cx <= 0 {
-								continue
-							}
-							wgt := cx * cy
-							// The piece it carries: the same offset inside its block, in each image
-							ox, oy := float64(xx)+0.5-float64(x), float64(yy)+0.5-float64(y)
-							var c rgb
-							if p < 1 {
-								c = sa.at(float64(f.sx[i])+ox-0.5, float64(f.sy[i])+oy-0.5)
-							}
-							if p > 0 {
-								c = mixc(c, sb.at(float64(f.tx[i])+ox-0.5, float64(f.ty[i])+oy-0.5), p)
-							}
-							o := (yy*W + xx) * 4
-							f.acc[o] += float32(c[0]) * wgt
-							f.acc[o+1] += float32(c[1]) * wgt
-							f.acc[o+2] += float32(c[2]) * wgt
-							f.acc[o+3] += wgt
-						}
-					}
-				}
+	bin := int(math.Ceil(float64(max(hbw, hbh)))) + 1
+	ff := &FluidFrame{W: W, H: H, K: k, HBW: hbw, HBH: hbh, Bin: bin,
+		NBX: (W + bin - 1) / bin, NBY: (H + bin - 1) / bin, CW: (W + 7) / 8, CH: (H + 7) / 8}
+	raw := make([]float32, n*8) // particle order; Parts gets them by bin
+	parallelFor(n, func(i0, i1 int) {
+		for i := i0; i < i1; i++ {
+			b0, b1 := s0*n*2+2*i, (s0+1)*n*2+2*i
+			x := (float32(f.pos[b0]) + float32(f.pos[b1]-f.pos[b0])*fr) / 8
+			y := (float32(f.pos[b0+1]) + float32(f.pos[b1+1]-f.pos[b0+1])*fr) / 8
+			x += (f.tx[i] - x) * settle
+			y += (f.ty[i] - y) * settle
+			x, y = min(max(x, 0), float32(W)-0.01), min(max(y, 0), float32(H)-0.01)
+			// From its old piece to its new piece as it gets there
+			dd := math.Hypot(float64(f.tx[i]-f.sx[i]), float64(f.ty[i]-f.sy[i]))
+			rem := math.Hypot(float64(f.tx[i]-x), float64(f.ty[i]-y))
+			p := 1.0
+			if dd > 1 {
+				p = 1 - math.Min(1, rem/dd)
 			}
-		}()
-	}
-	wg.Wait()
-	// Coarse level (1/8 resolution, box sums): where the particles moved apart, the gap takes
-	// the color of the particles around it, like a continuous fluid
-	cw, chh := (W+7)/8, (H+7)/8
-	coarse := make([]float32, cw*chh*4)
-	for y := 0; y < H; y++ {
-		for x := 0; x < W; x++ {
-			o, c := (y*W+x)*4, ((y/8)*cw+x/8)*4
-			coarse[c] += f.acc[o]
-			coarse[c+1] += f.acc[o+1]
-			coarse[c+2] += f.acc[o+2]
-			coarse[c+3] += f.acc[o+3]
+			p = smooth01(math.Max(p, (k-0.8)/0.2))
+			if f.liquid {
+				// Liquid: the color changes little by little, each area at its own moment
+				p = smooth01((k - float64(f.delay[i])) / 0.42)
+			}
+			q := raw[i*8 : i*8+8 : i*8+8]
+			q[0], q[1], q[2] = x, y, float32(p)
+			q[4], q[5], q[6], q[7] = f.sx[i], f.sy[i], f.tx[i], f.ty[i]
 		}
+	})
+	// Bins (counting sort) and the coarse level: each particle adds its block's color and area
+	// to the 8×8 cell it is in; two passes of a 3×3 box blur make the gap fill smooth
+	nb := ff.NBX * ff.NBY
+	ff.BinStart = make([]uint32, nb+1)
+	binOf := make([]uint32, n)
+	coarse := make([]float32, ff.CW*ff.CH*4)
+	area := 4 * hbw * hbh
+	for i := range n {
+		x, y := raw[i*8], raw[i*8+1]
+		b := uint32(int(y)/bin*ff.NBX + int(x)/bin)
+		binOf[i] = b
+		ff.BinStart[b+1]++
+		p := raw[i*8+2]
+		c := ((int(y)/8)*ff.CW + int(x)/8) * 4
+		for ch := range 3 {
+			a, bb := float32((f.colA[i]>>(8*ch))&255), float32((f.colB[i]>>(8*ch))&255)
+			coarse[c+ch] += (a + (bb-a)*p) * area
+		}
+		coarse[c+3] += area
 	}
-	// Two passes of a 3×3 box blur on the coarse level: smooth fill, no blocks
+	for b := 1; b <= nb; b++ {
+		ff.BinStart[b] += ff.BinStart[b-1]
+	}
+	ff.Parts = make([]float32, n*8)
+	fill := make([]uint32, nb)
+	for i := range n {
+		b := binOf[i]
+		j := ff.BinStart[b] + fill[b]
+		copy(ff.Parts[j*8:j*8+8], raw[i*8:i*8+8])
+		fill[b]++
+	}
+	cw, chh := ff.CW, ff.CH
 	tmp := make([]float32, len(coarse))
 	for range 2 {
 		for y := 0; y < chh; y++ {
@@ -519,44 +587,17 @@ func (f *Fluid) Render(dst *image.RGBA, k float64, sa, sb *sampler) {
 		}
 		coarse, tmp = tmp, coarse
 	}
-	out := smooth01((k - 0.96) / 0.04)
-	parallelFor(H, func(y0, y1 int) {
+	ff.Coarse = coarse
+	return ff
+}
+
+// Render draws the frame into dst (W×H) on the CPU. sa / sb are the two images as they are shown
+// now (with their motion): it starts exactly on the first and ends exactly on the second.
+func (ff *FluidFrame) Render(dst *image.RGBA, sa, sb *sampler) {
+	parallelFor(ff.H, func(y0, y1 int) {
 		for y := y0; y < y1; y++ {
-			for x := 0; x < W; x++ {
-				o := (y*W + x) * 4
-				w := float64(f.acc[o+3])
-				A, B := sa.at(float64(x), float64(y)), sb.at(float64(x), float64(y))
-				// Coarse color around (bilinear on the 1/8 grid)
-				qx, qy := (float64(x)+0.5)/8-0.5, (float64(y)+0.5)/8-0.5
-				c0, r0 := min(max(int(math.Floor(qx)), 0), cw-1), min(max(int(math.Floor(qy)), 0), chh-1)
-				c1, r1 := min(c0+1, cw-1), min(r0+1, chh-1)
-				gx, gy := math.Max(0, math.Min(1, qx-float64(c0))), math.Max(0, math.Min(1, qy-float64(r0)))
-				cb := func(ch int) float64 {
-					a := float64(coarse[(r0*cw+c0)*4+ch])*(1-gx) + float64(coarse[(r0*cw+c1)*4+ch])*gx
-					b := float64(coarse[(r1*cw+c0)*4+ch])*(1-gx) + float64(coarse[(r1*cw+c1)*4+ch])*gx
-					return a*(1-gy) + b*gy
-				}
-				// Covered pixels show their particles as they are; only the uncovered part of a pixel
-				// takes the soft color of the particles around (a gap in the fluid)
-				var c rgb
-				if w > 1e-4 {
-					c = rgb{float64(f.acc[o]) / w, float64(f.acc[o+1]) / w, float64(f.acc[o+2]) / w}
-				}
-				if w < 1 {
-					// Where the area is almost empty (e.g. edges the particles left), fade to a
-					// dim mix of both images instead of stretching a few particles' colors
-					dim := mixc(A, B, k)
-					dim = rgb{dim[0] * 0.5, dim[1] * 0.5, dim[2] * 0.5}
-					g := dim
-					if cw := cb(3); cw > 1e-3 {
-						g = mixc(dim, rgb{cb(0) / cw, cb(1) / cw, cb(2) / cw}, smooth01(cw/40))
-					}
-					c = mixc(g, c, w)
-				}
-				if fluidDebug && w < 0.5 {
-					c = rgb{255, 0, 255}
-				}
-				c = mixc(c, B, out)
+			for x := 0; x < ff.W; x++ {
+				c := ff.pixel(x, y, sa, sb)
 				d := y*dst.Stride + x*4
 				dst.Pix[d] = uint8(math.Max(0, math.Min(255, c[0]+0.5)))
 				dst.Pix[d+1] = uint8(math.Max(0, math.Min(255, c[1]+0.5)))
@@ -565,6 +606,77 @@ func (f *Fluid) Render(dst *image.RGBA, k float64, sa, sb *sampler) {
 			}
 		}
 	})
+}
+
+// pixel: the pieces covering pixel (x, y), each weighted by how much of the pixel it covers
+// (antialiased squares); the uncovered part takes the soft color around. Mirrors main() in
+// fluid.comp.
+func (ff *FluidFrame) pixel(x, y int, sa, sb *sampler) rgb {
+	var acc rgb
+	var w float64
+	fx, fy := float32(x), float32(y)
+	// Only the bins that can hold a piece touching the pixel (its center within half a piece)
+	bs := float32(ff.Bin)
+	bx0, bx1 := max(0, int((fx-ff.HBW)/bs)), min(ff.NBX-1, int((fx+1+ff.HBW)/bs))
+	by0, by1 := max(0, int((fy-ff.HBH)/bs)), min(ff.NBY-1, int((fy+1+ff.HBH)/bs))
+	for yy := by0; yy <= by1; yy++ {
+		for xx := bx0; xx <= bx1; xx++ {
+			b := yy*ff.NBX + xx
+			for i := ff.BinStart[b]; i < ff.BinStart[b+1]; i++ {
+				q := ff.Parts[i*8 : i*8+8 : i*8+8]
+				cx := min(fx+1, q[0]+ff.HBW) - max(fx, q[0]-ff.HBW)
+				cy := min(fy+1, q[1]+ff.HBH) - max(fy, q[1]-ff.HBH)
+				if cx <= 0 || cy <= 0 {
+					continue
+				}
+				wgt := float64(cx * cy)
+				// The piece it carries: the same offset inside its block, in each image
+				ox, oy := float64(fx-q[0]), float64(fy-q[1])
+				p := float64(q[2])
+				var c rgb
+				if p < 1 {
+					c = sa.at(float64(q[4])+ox, float64(q[5])+oy)
+				}
+				if p > 0 {
+					c = mixc(c, sb.at(float64(q[6])+ox, float64(q[7])+oy), p)
+				}
+				acc = rgb{acc[0] + c[0]*wgt, acc[1] + c[1]*wgt, acc[2] + c[2]*wgt}
+				w += wgt
+			}
+		}
+	}
+	var c rgb
+	if w > 1e-4 {
+		c = rgb{acc[0] / w, acc[1] / w, acc[2] / w}
+	}
+	if w < 1 {
+		// Where the area is almost empty (e.g. edges the particles left), fade to a dim mix of
+		// both images instead of stretching a few particles' colors
+		dim := mixc(sa.at(float64(x), float64(y)), sb.at(float64(x), float64(y)), ff.K)
+		g := rgb{dim[0] * 0.5, dim[1] * 0.5, dim[2] * 0.5}
+		// Coarse color around (bilinear on the 1/8 grid)
+		cw, chh := ff.CW, ff.CH
+		qx, qy := (float64(x)+0.5)/8-0.5, (float64(y)+0.5)/8-0.5
+		c0, r0 := min(max(int(math.Floor(qx)), 0), cw-1), min(max(int(math.Floor(qy)), 0), chh-1)
+		c1, r1 := min(c0+1, cw-1), min(r0+1, chh-1)
+		gx, gy := math.Max(0, math.Min(1, qx-float64(c0))), math.Max(0, math.Min(1, qy-float64(r0)))
+		cb := func(ch int) float64 {
+			a := float64(ff.Coarse[(r0*cw+c0)*4+ch])*(1-gx) + float64(ff.Coarse[(r0*cw+c1)*4+ch])*gx
+			b := float64(ff.Coarse[(r1*cw+c0)*4+ch])*(1-gx) + float64(ff.Coarse[(r1*cw+c1)*4+ch])*gx
+			return a*(1-gy) + b*gy
+		}
+		if cw := cb(3); cw > 1e-3 {
+			g = mixc(g, rgb{cb(0) / cw, cb(1) / cw, cb(2) / cw}, smooth01(cw/40))
+		}
+		c = mixc(g, c, w)
+	}
+	if FluidDebug && w < 0.5 {
+		c = rgb{255, 0, 255}
+	}
+	if out := smooth01((ff.K - 0.96) / 0.04); out > 0 {
+		c = mixc(c, sb.at(float64(x), float64(y)), out)
+	}
+	return c
 }
 
 // NewSampler exposes the layer sampler to the engine (the fluid renders with the images' motion)
@@ -595,15 +707,19 @@ func (f *Fluid) liquidStep(px, py, vx, vy, qx, qy, den, mvx, mvy []float32, gc f
 			mvy[c.k] += vy[i] * c.w
 		}
 	}
+	lx, ly := float32(f.W)/gc, float32(f.H)/gc
 	for k := range den {
 		if den[k] > 1e-6 {
 			mvx[k] /= den[k]
 			mvy[k] /= den[k]
 		}
-		den[k] /= rest // 1 = rest density
+		// 1 = rest density. Nodes on the edges only gather particles from the part of their
+		// cells inside the frame: measured against that part, so the walls do not look empty
+		// (which would pull the liquid against them and leave holes behind)
+		den[k] /= rest * max(0.05, tentIn(float32(k%nx), lx)*tentIn(float32(k/nx), ly))
 	}
 	visc := float32(o.Viscosity * 0.9)
-	pres := float32(0.45)
+	pres := float32(liquidPressure)
 	at := func(g []float32, x, y int) float32 { return g[min(max(y, 0), ny-1)*nx+min(max(x, 0), nx-1)] }
 	par(func(lo, hi int) {
 		for i := lo; i < hi; i++ {
@@ -623,6 +739,22 @@ func (f *Fluid) liquidStep(px, py, vx, vy, qx, qy, den, mvx, mvy []float32, gc f
 			qy[i] = float32(math.Max(0, math.Min(float64(f.H)-0.01, float64(py[i]+vy[i]*dt-pres*gc*gdy))))
 		}
 	})
+}
+
+// tentIn: how much of the bilinear weight of grid node x (a tent of half width 1) falls inside
+// [0, l]: 1 inside, 1/2 on the edge, 0 far outside
+func tentIn(x, l float32) float32 {
+	F := func(u float32) float32 { // ∫ 1-|u| du
+		if u < 0 {
+			return u + u*u/2
+		}
+		return u - u*u/2
+	}
+	a, b := max(-1, -x), min(1, l-x)
+	if b <= a {
+		return 0
+	}
+	return F(b) - F(a)
 }
 
 // smoothedTargets: each particle's start plus the mean displacement of the particles around it
@@ -689,27 +821,24 @@ func (f *Fluid) smoothedTargets(r int) ([]float32, []float32) {
 }
 
 // AUDIOVIZ_FLUID_DEBUG=1 paints the gaps (pixels without particles) magenta
-var fluidDebug = os.Getenv("AUDIOVIZ_FLUID_DEBUG") != ""
+var FluidDebug = os.Getenv("AUDIOVIZ_FLUID_DEBUG") != ""
 
-// streamTargets: the stream each area follows (liquid, first stage). The particles' wanted
-// displacements are smoothed over their neighborhood and then made divergence-free (Helmholtz
-// projection on a coarse grid, no flow through the edges): the liquid moves and turns but is
-// neither compressed nor stretched, so it does not shrink toward the center.
+// streamField: the stream each area of the liquid follows. The particles' wanted displacements
+// are smoothed over their neighborhood; the stream keeps only their turning (the vorticity) and
+// is rebuilt from a stream function that is zero on the edges of the frame: the liquid moves and
+// turns but is neither compressed nor stretched (it does not shrink toward the center or tear
+// away from the walls), and nothing flows through the edges.
 func (f *Fluid) streamField(r int) *flowField {
 	sx, sy := f.smoothedTargets(r)
 	n, gx, gy := f.n, f.gx, f.gy
-	dx, dy := make([]float32, n), make([]float32, n)
-	for i := range n {
-		dx[i], dy[i] = sx[i]-f.sx[i], sy[i]-f.sy[i]
-	}
-	// Coarse grid (4 particles per cell side)
+	// Coarse cells (4 particles per side): mean displacement U, V
 	const cg = 4
 	cx, cy := (gx+cg-1)/cg, (gy+cg-1)/cg
 	U, V, cnt := make([]float64, cx*cy), make([]float64, cx*cy), make([]float64, cx*cy)
 	for i := range n {
 		k := (i/gx/cg)*cx + (i%gx)/cg
-		U[k] += float64(dx[i])
-		V[k] += float64(dy[i])
+		U[k] += float64(sx[i] - f.sx[i])
+		V[k] += float64(sy[i] - f.sy[i])
 		cnt[k]++
 	}
 	for k := range U {
@@ -718,72 +847,64 @@ func (f *Fluid) streamField(r int) *flowField {
 			V[k] /= cnt[k]
 		}
 	}
-	// Divergence with zero flow outside the frame
-	at := func(g []float64, x, y int) float64 {
-		if x < 0 || y < 0 || x >= cx || y >= cy {
-			return 0
+	// Nodes on the cell corners, spanning the frame exactly (the outer ones lie on the edges)
+	nx, ny := cx+1, cy+1
+	hx, hy := float64(f.W)/float64(cx), float64(f.H)/float64(cy)
+	cell := func(g []float64, x, y int) float64 { return g[min(max(y, 0), cy-1)*cx+min(max(x, 0), cx-1)] }
+	// Vorticity at the inner nodes, from the four cells around each
+	w := make([]float64, nx*ny)
+	for y := 1; y < ny-1; y++ {
+		for x := 1; x < nx-1; x++ {
+			dvdx := (cell(V, x, y-1) + cell(V, x, y) - cell(V, x-1, y-1) - cell(V, x-1, y)) / (2 * hx)
+			dudy := (cell(U, x-1, y) + cell(U, x, y) - cell(U, x-1, y-1) - cell(U, x, y-1)) / (2 * hy)
+			w[y*nx+x] = dvdx - dudy
 		}
-		return g[y*cx+x]
 	}
-	div := make([]float64, cx*cy)
-	for y := range cy {
-		for x := range cx {
-			div[y*cx+x] = (at(U, x+1, y) - at(U, x-1, y) + at(V, x, y+1) - at(V, x, y-1)) * 0.5
-		}
-	}
-	// Poisson ∇²φ = div (successive over-relaxation, red-black, Neumann edges): converges far
-	// faster than Jacobi, so no compression is left even at large scales
-	phi := make([]float64, cx*cy)
-	pa := func(x, y int) float64 { return phi[min(max(y, 0), cy-1)*cx+min(max(x, 0), cx-1)] }
+	// Stream function: ∇²ψ = -ω with ψ = 0 on the edges (successive over-relaxation, red-black)
+	psi := make([]float64, nx*ny)
+	ax, ay := 1/(hx*hx), 1/(hy*hy)
+	den := 2*ax + 2*ay
 	const omega = 1.9
 	for range 1500 {
 		for color := range 2 {
-			for y := range cy {
-				for x := (y + color) % 2; x < cx; x += 2 {
-					k := y*cx + x
-					g := (pa(x+1, y) + pa(x-1, y) + pa(x, y+1) + pa(x, y-1) - div[k]) * 0.25
-					phi[k] += omega * (g - phi[k])
+			for y := 1; y < ny-1; y++ {
+				for x := 1 + (y+color)%2; x < nx-1; x += 2 {
+					k := y*nx + x
+					g := ((psi[k-1]+psi[k+1])*ax + (psi[k-nx]+psi[k+nx])*ay + w[k]) / den
+					psi[k] += omega * (g - psi[k])
 				}
 			}
 		}
 	}
-	// Subtract ∇φ (bilinear on the particle grid)
-	gpx, gpy := make([]float64, cx*cy), make([]float64, cx*cy)
-	for y := range cy {
-		for x := range cx {
-			gpx[y*cx+x] = (pa(x+1, y) - pa(x-1, y)) * 0.5
-			gpy[y*cx+x] = (pa(x, y+1) - pa(x, y-1)) * 0.5
+	// Velocity at the nodes: u = ∂ψ/∂y, v = -∂ψ/∂x (one-sided on the edges). ψ is constant
+	// along each edge, so the flow across it is exactly zero there
+	ff := &flowField{nx: nx, ny: ny, hx: float32(hx), hy: float32(hy), u: make([]float32, nx*ny), v: make([]float32, nx*ny)}
+	ps := func(x, y int) float64 { return psi[y*nx+x] }
+	for y := range ny {
+		for x := range nx {
+			y0, y1 := max(y-1, 0), min(y+1, ny-1)
+			x0, x1 := max(x-1, 0), min(x+1, nx-1)
+			ff.u[y*nx+x] = float32((ps(x, y1) - ps(x, y0)) / (float64(y1-y0) * hy))
+			ff.v[y*nx+x] = float32(-(ps(x1, y) - ps(x0, y)) / (float64(x1-x0) * hx))
 		}
-	}
-	ff := &flowField{cx: cx, cy: cy, cell: float32(f.W) / float32(gx) * cg, u: make([]float32, cx*cy), v: make([]float32, cx*cy)}
-	// Near the edges the flow toward them fades out (a wall: the liquid slides along it
-	// instead of piling up against it)
-	wall := func(i, n int) float32 {
-		d := float64(min(i, n-1-i)) / 4 // cells to the edge, 4 cells of transition
-		return float32(smooth01(d))
-	}
-	for k := range U {
-		x, y := k%cx, k/cx
-		ff.u[k] = float32(U[k]-gpx[k]) * wall(x, cx)
-		ff.v[k] = float32(V[k]-gpy[k]) * wall(y, cy)
 	}
 	return ff
 }
 
-// flowField: a displacement field on a coarse grid (pixels), sampled bilinearly anywhere
+// flowField: a displacement field (pixels) on a grid of nodes spanning the frame (node (0, 0) on
+// the top-left corner, spacing hx × hy), sampled bilinearly anywhere
 type flowField struct {
-	cx, cy int
-	cell   float32
+	nx, ny int
+	hx, hy float32
 	u, v   []float32
 }
 
 func (g *flowField) at(x, y float32) (float32, float32) {
-	qx, qy := x/g.cell-0.5, y/g.cell-0.5
-	x0, y0 := min(max(int(math.Floor(float64(qx))), 0), g.cx-1), min(max(int(math.Floor(float64(qy))), 0), g.cy-1)
-	x1, y1 := min(x0+1, g.cx-1), min(y0+1, g.cy-1)
-	fx, fy := min(max(qx-float32(x0), 0), 1), min(max(qy-float32(y0), 0), 1)
+	qx, qy := min(max(x/g.hx, 0), float32(g.nx-1)), min(max(y/g.hy, 0), float32(g.ny-1))
+	x0, y0 := min(int(qx), g.nx-2), min(int(qy), g.ny-2)
+	fx, fy := qx-float32(x0), qy-float32(y0)
 	b := func(a []float32) float32 {
-		return (a[y0*g.cx+x0]*(1-fx)+a[y0*g.cx+x1]*fx)*(1-fy) + (a[y1*g.cx+x0]*(1-fx)+a[y1*g.cx+x1]*fx)*fy
+		return (a[y0*g.nx+x0]*(1-fx)+a[y0*g.nx+x0+1]*fx)*(1-fy) + (a[(y0+1)*g.nx+x0]*(1-fx)+a[(y0+1)*g.nx+x0+1]*fx)*fy
 	}
 	return b(g.u), b(g.v)
 }

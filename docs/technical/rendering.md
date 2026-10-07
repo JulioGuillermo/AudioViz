@@ -64,7 +64,7 @@ missing index fails. `--list-gpus` (`vkr_list_devices`) prints `[i] name (discre
 ### What is uploaded, and when
 
 All buffers are host-visible and persistently mapped; there are no staging copies. Each *slot*
-(frame in flight) has its own set of 7 storage buffers:
+(frame in flight) has its own set of 9 storage buffers:
 
 | Binding | `VKR_BUF_*` | Size | Memory preference | Written by CPU |
 |---|---|---|---|---|
@@ -75,6 +75,8 @@ All buffers are host-visible and persistently mapped; there are no staging copie
 | 4 | `RGBA` | W·H·4 | HOST_CACHED \| HOST_COHERENT | GPU output (stills/preview) |
 | 5 | `TEXT` | `textCap` rounded to 4 | DEVICE_LOCAL \| HOST_COHERENT | when `Session.LyrVer` changed for that slot |
 | 6 | `BG2` | W·H·4 | DEVICE_LOCAL \| HOST_COHERENT | only during a transition, when `VerB` changed |
+| 7 | `FLUID` | `effects.FluidBufWords(W, H)`·4 (≈ 7 MB at 1080p) | DEVICE_LOCAL \| HOST_COHERENT | every frame of a fluid / liquid transition (`Renderer.fluidData`): particles sorted by bin, bin starts, coarse level |
+| 8 | `FIMG` | W·H·4 | DEVICE_LOCAL | GPU only: the fluid pass writes it, the main pass reads it as image 2 |
 
 `PadW`, `PadH` = W, H rounded up to 16 (x264 macroblocks). `find_mem` first looks for a type with
 `HOST_VISIBLE` + the preference, then any `HOST_VISIBLE` type. DEVICE_LOCAL+HOST_VISIBLE is
@@ -97,11 +99,19 @@ frame (`video.videoReader.FrameAt` bumps `ver`).
 - Instance: API 1.1; if creation fails it retries with `VK_KHR_portability_enumeration` + the
   portability flag (MoltenVK).
 - First queue family with `VK_QUEUE_COMPUTE_BIT`, one queue.
-- One descriptor set layout (7 storage buffers), no push constants, one compute pipeline.
-- **Command buffers are pre-recorded once per slot** at creation (bind pipeline, bind the slot's
-  descriptor set, `vkCmdDispatch(gx, gy, 1)`, barrier SHADER_WRITE → HOST_READ). Per frame the
-  CPU only rewrites mapped memory and calls `vkr_submit` (one `vkQueueSubmit` + fence) and later
-  `vkr_wait`.
+- One descriptor set layout (9 storage buffers), no push constants, two compute pipelines on it:
+  `render.comp` (main pass) and `fluid.comp` (fluid pass).
+- **Command buffers are pre-recorded once per slot** at creation, two per slot: the main pass alone
+  (bind pipeline, bind the slot's descriptor set, `vkCmdDispatch(gx, gy, 1)`, barrier SHADER_WRITE
+  → HOST_READ), and the fluid pass (`ceil(W/8) × ceil(H/8)` workgroups of 8×8, one invocation per
+  pixel), a SHADER_WRITE → SHADER_READ barrier, then the same main pass. Per frame the CPU only
+  rewrites mapped memory and calls `vkr_submit(slot, fluid)` (one `vkQueueSubmit` + fence) and
+  later `vkr_wait`.
+- **Compute jobs** (`vkj_*`, used by the fluid simulation): `vkr_create` with `spirv == NULL` opens
+  the device only (command pool with RESET_COMMAND_BUFFER); a job has one shader whose kernels are
+  chosen by a 16-byte push constant, up to 16 host-visible storage buffers (bindings 0..n-1), and
+  records dispatches each followed by a SHADER_WRITE → SHADER_READ|WRITE|HOST_READ barrier;
+  `vkj_run` submits what was recorded and waits.
 - `gx = ceil(PadW/4 / 8)`, `gy = ceil(PadH/2 / 8)`: one invocation per 4×2 pixel block, 8×8
   invocations per workgroup → **one workgroup = 32×16 pixel tile**.
 - `MAX_SLOTS = 8`; export uses 3, stills/studio use 1.
@@ -137,6 +147,10 @@ Must match `gpu.Params` field for field (`gpu.go`). Limits: `MAX_GRAD 8`, `MAX_G
 | `layerA`, `layerB` | scale, offX, offY, rot of BG and BG2 (segment motion) |
 | `trans` | mode (index in `config.TransitionModes`, 0 = none), direction, has (bit0 A, bit1 B), seed |
 | `transP` | x = transition progress k |
+| `burnP`, `burnCol`, `burnPts[8]` | burn: edge, roughness, max distance, point count; ember color; ignition points |
+| `fluidI` | fluid / liquid: word offsets in `FLUID` of the bin starts, (unused), the coarse level; bin side in px (0 = no fluid frame) |
+| `fluidN` | bins across, bins down, coarse width, coarse height |
+| `fluidF` | piece half width, half height, progress k, debug (1 = gaps magenta) |
 
 ### Per-invocation flow
 
@@ -274,8 +288,8 @@ same math is in Go (`effects.Compose` / `transitionPixel`, used by the CPU path)
 | clock | B where the angle from 12 o'clock `< ke·2π` |
 | glitch | 24 bands, re-rolled 16× during the transition: each band shows B if `hash < k`, shifted `±4 %·W·sin(πk)` with an RGB split of `8 px·sin(πk)` |
 | pixelate | blocks of `1 + 48·sin(πk)` px (at 1080 p), A → B at k = 0.5 |
-| fluid | `effects/fluid.go`, precomputed per transition (`Session.fluidFor`, cache of 4): (1) particles = blocks of ~H/270 px of A, slots = same blocks of B, matched by sliced optimal transport (40 random 1D projections) in (r, g, b, λx, λy), λ from `color_weight`; (2) each particle steers toward its slot with velocity = remaining distance / remaining time to its own arrival time (staggered departures, gentle start, inertia), then position-based collisions on a neighbor grid (2 passes per step) keep particles from overlapping (diameter = spacing × (0.55 + 0.45·interaction)); velocity = actual displacement; positions stored (int16, 1/8 px) at up to 120 instants; (3) per frame each particle is drawn as an antialiased square of its block size carrying its piece of the image (A sampled at its start block, B at its slot, blended as it arrives), so the frame is exactly A at k = 0 and B at k = 1; only uncovered pixels take a blurred 1/8 level of the particles (dim A/B mix where almost empty). The frame is composed on the CPU and given to the renderer as the background |
-| liquid | same engine (`FluidOpts.Liquid`): the particles are advected the whole transition (no own goal) by a stream field: the OT displacements box-blurred (radius 8 particles), averaged on a coarse grid (4 particles per cell) and made divergence-free (Poisson by red-black SOR, ω = 1.9, 1500 iterations, Neumann; normal component faded over 4 cells at the walls), × 2.2, rate `π/2·sin(πt)` (integrates to 1, rests at the end); plus viscosity (blend with the coarse-grid mean velocity) and two-way pressure (down the density gradient), collisions as in fluid. The final positions become the particles' places in B (`tx, ty`): each particle shows its A piece blending into the B piece at its final place, from a per-area delay (fbm, 0.12–0.52) over 0.42 — no crossfade, exactly B when the motion stops. Pieces drawn 1.3× to close sub-pixel gaps |
+| fluid | `effects/fluid.go`, precomputed per transition (`Session.fluidFor`, cache of 4): (1) particles = blocks of ~H/270 px of A, slots = same blocks of B, matched by sliced optimal transport (40 random 1D projections, each sorted by an LSD radix sort of the keys) in (r, g, b, λx, λy), λ from `color_weight`; (2) simulation, on the GPU (`fluidsim.comp` through `gpu.RunFluidSim`, one kernel per step below, submissions of 8 steps) unless rendering is forced to the CPU or Vulkan fails (`AUDIOVIZ_FLUID_CPU=1` forces the CPU): each particle steers toward its slot with velocity = remaining distance / remaining time to its own arrival time (staggered departures, gentle start, inertia), then position-based collisions on a neighbor grid (2 passes per step; at most one diameter per pair, so particles exactly on top of each other separate instead of jumping across the frame; GPU grid: 16 particles per cell) keep particles from overlapping (diameter = spacing × (0.55 + 0.45·interaction)); velocity = actual displacement; positions stored (int16, 1/8 px) at up to 120 instants; (3) per frame `Fluid.Frame(k)` (CPU, ~5 ms at 1080p) interpolates the positions, works out each particle's color progress, sorts the particles into bins (side ⌈half piece⌉+1 px) and builds the 1/8 coarse level (each particle's block colors × area at its cell, two 3×3 box blurs); `FluidFrame.Render` (CPU) or `fluid.comp` (GPU, into `FIMG`, sampled by the main pass as background image 2 with an identity layer) draw each pixel from the pieces of the bins that can touch it: each particle is an antialiased square of its block size carrying its piece of the image (A sampled at its start block, B at its slot, both with their layers, blended as it arrives), so the frame is exactly A at k = 0 and B at k = 1; only uncovered pixels take the coarse color around (dim A/B mix where almost empty) |
+| liquid | same engine (`FluidOpts.Liquid`): the particles are advected the whole transition (no own goal) by a stream field: the OT displacements box-blurred (radius 8 particles), averaged on a coarse grid (4 particles per cell), and rebuilt from their vorticity as a stream function ψ (∇²ψ = −ω by red-black SOR, ω = 1.9, 1500 iterations, ψ = 0 on the frame edges; velocity at the cell-corner nodes, sampled bilinearly): divergence-free with no flow through the edges, so the liquid neither shrinks nor tears away from the walls; × 2.2, rate `π/2·sin(πt)` (integrates to 1, rests at the end); plus viscosity (blend with the coarse-grid mean velocity) and two-way pressure (down the density gradient; the density of edge nodes is measured against the part of their cells inside the frame), collisions as in fluid. The final positions become the particles' places in B (`tx, ty`, and their B color for the gap fill): each particle shows its A piece blending into the B piece at its final place, from a per-area delay (fbm, 0.12–0.52) over 0.42 — no crossfade, exactly B when the motion stops. Pieces drawn 1.3× to close sub-pixel gaps |
 | burn | `effects/burn.go` / `burnPixel`: distance (in frame heights) to the nearest ignition point + `0.25·roughness·(fbm−0.5)·2` + fine crinkle noise; front `r = ke·(maxD + 2amp + 2charW) − (amp + charW)` so it starts nowhere and ends everywhere; charring ahead of it, ember line (broken by noise, flickering with k) on the paper side, sparks, soot on B. Ignition points (random ones from the seed) and `maxD` are computed once per frame on the CPU (`BurnSetup`) and passed as `burnP / burnCol / burnPts[8]` |
 
 Effects (glitch slices, ripple, zoom/shake, chroma) act on the composited result, so both images
@@ -492,12 +506,15 @@ the 5 s re-warm. See [studio.md](studio.md).
 
 ## 7. Shader build and embedding
 
-- Source: `internal/gpu/shaders/render.comp` (GLSL 450).
-- `build.sh`: if `glslc` exists and `render.comp` is newer than `render.spv` (or the `.spv` is
-  missing), runs `glslc -O --target-env=vulkan1.1 render.comp -o render.spv`.
-- `gpu.go`: `//go:embed shaders/render.spv` → `renderSPV`; copied to C memory and passed to
+- Sources (GLSL 450): `internal/gpu/shaders/render.comp` (main pass), `fluid.comp` (fluid pass),
+  both including `common.glsl` (the `Params` block, the two background buffers, `texel` /
+  `bilinearImg` / `layerAt`; `FLUID_IMG_READ` adds image 2 = the fluid pass output), and
+  `fluidsim.comp` (the fluid simulation kernels, standalone).
+- `build.sh`: for each of them, if `glslc` exists and the `.comp` (or `common.glsl`) is newer than
+  its `.spv` (or the `.spv` is missing), runs `glslc -O --target-env=vulkan1.1 X.comp -o X.spv`.
+- `gpu.go` / `sim.go`: `//go:embed shaders/*.spv`; copied to C memory and passed to
   `vkCreateShaderModule`. The binary contains the SPIR-V; nothing is compiled at runtime.
-- After changing `Params`, update **both** `gpu.Params` and the GLSL block in the same order; std430
+- After changing `Params`, update **both** `gpu.Params` and the GLSL block (`common.glsl`) in the same order; std430
   with only 16-byte members keeps the layouts identical with no padding rules to worry about.
   `vkr_create` sizes the buffer from `unsafe.Sizeof(Params{})`; there is no runtime check that the
   shader agrees.
@@ -516,3 +533,4 @@ the 5 s re-warm. See [studio.md](studio.md).
 | Lyric chromatic aberration | only if `Chroma > 0.3` px | if `Chroma > 0` |
 | Wave `gradient_axis: length` | supported | ignored (first/last stop colours) |
 | Preview downscale | point sample per cell | box filter of a full frame |
+| Fluid / liquid simulation | `fluidsim.comp`, neighbor sums in fixed point (order independent: the same run gives the same frames) | `Fluid.simulate` in float: the trajectories drift apart from the GPU's (chaotic system), same look |

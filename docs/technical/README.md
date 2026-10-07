@@ -50,7 +50,7 @@ flowchart LR
     LP --> ATL[SDF word atlas + layout]
     BGR --> FR
   end
-  FR --> GPU[Vulkan compute shader<br/>one dispatch per frame → NV12]
+  FR --> GPU[Vulkan compute shader<br/>one dispatch per frame → NV12<br/>+ fluid pass in fluid transitions]
   FR -. no Vulkan .-> CPU[Go CPU renderer]
   ATL --> GPU
   GPU --> X264[x264 static] --> MUX[MP4 muxer<br/>H.264 + FLAC]

@@ -5,6 +5,7 @@ import (
 	"image"
 	"math"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -324,13 +325,9 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 			fs.Trans.Burn = effects.BurnSetup(tr.Burn, seed, s.W, s.H)
 		}
 		if (tr.Mode == "fluid" || tr.Mode == "liquid") && fs.BgA != nil && fs.BgB != nil {
-			// Simulated once per transition (the first frame that needs it), then only drawn
-			fl := s.fluidFor(bi, tr, seed, fs.BgA, fs.BgB)
-			frame := image.NewRGBA(image.Rect(0, 0, s.W, s.H))
-			fl.Render(frame, k, effects.NewSampler(fs.BgA, fs.LayerA, s.W, s.H), effects.NewSampler(fs.BgB, fs.LayerB, s.W, s.H))
-			fs.BgA, fs.VerA, fs.LayerA = frame, fmt.Sprintf("fluid:%p:%.6f", fl, k), effects.Identity
-			fs.BgB, fs.VerB = nil, ""
-			fs.Trans = effects.Trans{HasA: true}
+			// Simulated once per transition (the first frame that needs it); each frame only
+			// places the particles, and the CPU or the GPU draws them over both images
+			fs.Trans.Fluid = s.fluidFor(bi, tr, seed, fs.BgA, fs.BgB).Frame(k)
 		}
 	}
 
@@ -601,7 +598,9 @@ func (s *Session) Duration() float64 { return float64(s.Frames) / float64(s.FPS)
 // fluidFor returns the simulation of the fluid transition into background segment bi, running
 // it the first time (it depends on both images, the size, the duration and the options)
 func (s *Session) fluidFor(bi int, tr config.Transition, seed uint32, a, b *image.RGBA) *effects.Fluid {
-	o := effects.FluidOpts{Seed: seed, Liquid: tr.Mode == "liquid"}
+	// Simulated on the GPU unless rendering is forced to the CPU (AUDIOVIZ_FLUID_CPU=1: always CPU)
+	o := effects.FluidOpts{Seed: seed, Liquid: tr.Mode == "liquid", GPUDevice: s.Cfg.Output.GPUDevice,
+		GPU: !strings.EqualFold(s.Cfg.Output.Renderer, "cpu") && os.Getenv("AUDIOVIZ_FLUID_CPU") == ""}
 	if tr.Fluid != nil {
 		o.ColorWeight, o.Interaction, o.Stagger, o.Viscosity = tr.Fluid.ColorWeight, tr.Fluid.Interaction, tr.Fluid.Stagger, tr.Fluid.Viscosity
 		if tr.Fluid.Seed > 0 {
@@ -617,7 +616,13 @@ func (s *Session) fluidFor(bi int, tr config.Transition, seed uint32, a, b *imag
 	t0 := time.Now()
 	f := effects.NewFluid(a, b, s.W, s.H, frames, o)
 	if s.Logf != nil {
-		s.Logf("🌊 Fluid transition simulated in %v", time.Since(t0).Round(time.Millisecond))
+		where := "CPU"
+		if f.SimGPU {
+			where = "GPU"
+		} else if f.SimErr != nil {
+			where = fmt.Sprintf("CPU, GPU not available: %v", f.SimErr)
+		}
+		s.Logf("🌊 Fluid transition simulated in %v (%s)", time.Since(t0).Round(time.Millisecond), where)
 	}
 	if s.fluids == nil || len(s.fluids) >= 4 {
 		s.fluids = map[string]*effects.Fluid{}

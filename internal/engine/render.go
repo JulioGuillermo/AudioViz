@@ -74,7 +74,7 @@ func NewRenderer(s *Session, mode string, slots int) (*Renderer, error) {
 		if s.lyr != nil {
 			textCap = max(textCap, len(s.lyr.Atlas.Pix)*2)
 		}
-		g, err := gpu.New(s.W, s.H, slots, s.Cfg.Output.GPUDevice, textCap)
+		g, err := gpu.New(s.W, s.H, slots, s.Cfg.Output.GPUDevice, textCap, effects.FluidBufWords(s.W, s.H))
 		if err != nil {
 			if mode == "gpu" {
 				return nil, fmt.Errorf("Vulkan GPU not available: %w", err)
@@ -126,8 +126,35 @@ func (r *Renderer) submit(slot int, fs *FrameState, writeRGBA bool) error {
 		copy(g.Text(slot, len(fs.Lyr.Atlas.Pix)), fs.Lyr.Atlas.Pix)
 		r.lyrVer[slot] = r.s.LyrVer
 	}
-	r.s.fillParams(g.Params(slot), fs, g.PadW, g.PadH, writeRGBA)
-	return g.Submit(slot)
+	p := g.Params(slot)
+	r.s.fillParams(p, fs, g.PadW, g.PadH, writeRGBA)
+	fluid := r.fluidData(slot, p, fs.Trans.Fluid)
+	return g.Submit(slot, fluid)
+}
+
+// fluidData uploads the fluid / liquid frame (particles, bins, coarse level) for the fluid pass;
+// false when there is none (the main pass then shows a fade)
+func (r *Renderer) fluidData(slot int, p *gpu.Params, fr *effects.FluidFrame) bool {
+	p.FluidI, p.FluidN, p.FluidF = [4]int32{}, [4]int32{}, [4]float32{}
+	if fr == nil {
+		return false
+	}
+	oStart := len(fr.Parts)
+	oCoarse := oStart + len(fr.BinStart)
+	if oCoarse+len(fr.Coarse) > r.G.FluidWords {
+		return false
+	}
+	u, f := r.G.FluidData(slot)
+	copy(f, fr.Parts)
+	copy(u[oStart:], fr.BinStart)
+	copy(f[oCoarse:], fr.Coarse)
+	p.FluidI = [4]int32{int32(oStart), 0, int32(oCoarse), int32(fr.Bin)}
+	p.FluidN = [4]int32{int32(fr.NBX), int32(fr.NBY), int32(fr.CW), int32(fr.CH)}
+	p.FluidF = [4]float32{fr.HBW, fr.HBH, float32(fr.K)}
+	if effects.FluidDebug {
+		p.FluidF[3] = 1
+	}
+	return true
 }
 
 // Still renders a single frame as an RGBA image

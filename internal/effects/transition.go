@@ -105,6 +105,7 @@ type Trans struct {
 	Seed       uint32
 	HasA, HasB bool // false = that side is black (no background)
 	Burn       BurnParams
+	Fluid      *FluidFrame // fluid / liquid: the particles at this instant
 }
 
 // Hash as in the shader (PCG): deterministic noise for dissolve and glitch
@@ -181,6 +182,10 @@ func Compose(dst, a, b *image.RGBA, la, lb Layer, tr Trans) {
 		b = nil
 	}
 	sa, sb := newSampler(a, la, w, h), newSampler(b, lb, w, h)
+	if tr.Fluid != nil {
+		tr.Fluid.Render(dst, &sa, &sb)
+		return
+	}
 	parallelFor(h, func(y0, y1 int) {
 		for y := y0; y < y1; y++ {
 			for x := 0; x < w; x++ {

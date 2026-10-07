@@ -83,11 +83,13 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(VkInstance instan
     X(vkCreateCommandPool)              \
     X(vkDestroyCommandPool)             \
     X(vkAllocateCommandBuffers)         \
+    X(vkFreeCommandBuffers)             \
     X(vkBeginCommandBuffer)             \
     X(vkEndCommandBuffer)               \
     X(vkCmdBindPipeline)                \
     X(vkCmdBindDescriptorSets)          \
     X(vkCmdDispatch)                    \
+    X(vkCmdPushConstants)               \
     X(vkCmdPipelineBarrier)             \
     X(vkCreateFence)                    \
     X(vkDestroyFence)                   \
@@ -115,7 +117,7 @@ typedef struct {
 typedef struct {
     vbuf b[VKR_NUM_BUFS];
     VkDescriptorSet ds;
-    VkCommandBuffer cmd;
+    VkCommandBuffer cmd, cmdFluid; // main pass; fluid pass + main pass
     VkFence fence;
     int pending;
 } slot_t;
@@ -129,7 +131,7 @@ struct vkr {
     VkPhysicalDeviceMemoryProperties memprops;
     VkDescriptorSetLayout dsl;
     VkPipelineLayout layout;
-    VkPipeline pipe;
+    VkPipeline pipe, pipeFluid;
     VkDescriptorPool dpool;
     VkCommandPool cpool;
     int nslots;
@@ -353,13 +355,18 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
     VK_DEVICE_FUNCS(LOADD)
     p_vkGetDeviceQueue(r->dev, r->qfam, 0, &r->queue);
 
+    if (!cfg->spirv) {
+        // Device only, for compute jobs (vkj_*)
+        VkCommandPoolCreateInfo cpci = {VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO};
+        cpci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+        cpci.queueFamilyIndex = r->qfam;
+        if (p_vkCreateCommandPool(r->dev, &cpci, NULL, &r->cpool) != VK_SUCCESS) FAIL("command pool");
+        *out = r;
+        return 0;
+    }
+
     // Compute pipeline
-    VkShaderModuleCreateInfo smi = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-    smi.codeSize = cfg->spirv_size;
-    smi.pCode = cfg->spirv;
-    VkShaderModule sm;
-    vk_step("creating the shader and pipeline");
-    if (p_vkCreateShaderModule(r->dev, &smi, NULL, &sm) != VK_SUCCESS) FAIL("invalid shader");
+    vk_step("creating the shaders and pipelines");
 
     VkDescriptorSetLayoutBinding binds[VKR_NUM_BUFS];
     for (int i = 0; i < VKR_NUM_BUFS; i++) {
@@ -374,15 +381,24 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
     pli.setLayoutCount = 1;
     pli.pSetLayouts = &r->dsl;
     if (p_vkCreatePipelineLayout(r->dev, &pli, NULL, &r->layout) != VK_SUCCESS) FAIL("pipeline layout");
-    VkComputePipelineCreateInfo cpi = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
-    cpi.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    cpi.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-    cpi.stage.module = sm;
-    cpi.stage.pName = "main";
-    cpi.layout = r->layout;
-    VkResult pres = p_vkCreateComputePipelines(r->dev, VK_NULL_HANDLE, 1, &cpi, NULL, &r->pipe);
-    p_vkDestroyShaderModule(r->dev, sm, NULL);
-    if (pres != VK_SUCCESS) FAIL("vkCreateComputePipelines failed (%d)", pres);
+    // Main pass and fluid pass: two pipelines on the same descriptor layout
+    for (int k = 0; k < 2; k++) {
+        VkShaderModuleCreateInfo smi = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+        smi.codeSize = k == 0 ? cfg->spirv_size : cfg->spirv_fluid_size;
+        smi.pCode = k == 0 ? cfg->spirv : cfg->spirv_fluid;
+        VkShaderModule sm;
+        if (p_vkCreateShaderModule(r->dev, &smi, NULL, &sm) != VK_SUCCESS) FAIL("invalid shader");
+        VkComputePipelineCreateInfo cpi = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+        cpi.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+        cpi.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+        cpi.stage.module = sm;
+        cpi.stage.pName = "main";
+        cpi.layout = r->layout;
+        VkResult pres =
+            p_vkCreateComputePipelines(r->dev, VK_NULL_HANDLE, 1, &cpi, NULL, k == 0 ? &r->pipe : &r->pipeFluid);
+        p_vkDestroyShaderModule(r->dev, sm, NULL);
+        if (pres != VK_SUCCESS) FAIL("vkCreateComputePipelines failed (%d)", pres);
+    }
 
     VkDescriptorPoolSize ps = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)(VKR_NUM_BUFS * r->nslots)};
     VkDescriptorPoolCreateInfo dpi = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -403,6 +419,8 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
     sizes[VKR_BUF_RGBA] = (VkDeviceSize)cfg->width * cfg->height * 4;
     sizes[VKR_BUF_TEXT] = cfg->text_size < 16 ? 16 : (cfg->text_size + 3) / 4 * 4;
     sizes[VKR_BUF_BG2] = sizes[VKR_BUF_BG];
+    sizes[VKR_BUF_FLUID] = cfg->fluid_size < 16 ? 16 : (cfg->fluid_size + 3) / 4 * 4;
+    sizes[VKR_BUF_FIMG] = sizes[VKR_BUF_BG];
     VkMemoryPropertyFlags prefs[VKR_NUM_BUFS] = {
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -411,6 +429,8 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
         VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+        VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
     };
 
     uint32_t gx = (uint32_t)((cfg->pad_w / 4 + 7) / 8);
@@ -439,23 +459,40 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
         }
         p_vkUpdateDescriptorSets(r->dev, VKR_NUM_BUFS, wr, 0, NULL);
 
-        // Pre-recorded command buffer: each slot's buffers are fixed
+        // Pre-recorded command buffers (each slot's buffers are fixed): the main pass alone, and
+        // the fluid pass (one invocation per pixel) followed by the main pass
         VkCommandBufferAllocateInfo cai = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
         cai.commandPool = r->cpool;
         cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
         cai.commandBufferCount = 1;
-        if (p_vkAllocateCommandBuffers(r->dev, &cai, &sl->cmd) != VK_SUCCESS) FAIL("command buffer");
-        VkCommandBufferBeginInfo cbi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
-        p_vkBeginCommandBuffer(sl->cmd, &cbi);
-        p_vkCmdBindPipeline(sl->cmd, VK_PIPELINE_BIND_POINT_COMPUTE, r->pipe);
-        p_vkCmdBindDescriptorSets(sl->cmd, VK_PIPELINE_BIND_POINT_COMPUTE, r->layout, 0, 1, &sl->ds, 0, NULL);
-        p_vkCmdDispatch(sl->cmd, gx, gy, 1);
-        VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
-        mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-        mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
-        p_vkCmdPipelineBarrier(sl->cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb,
-                               0, NULL, 0, NULL);
-        if (p_vkEndCommandBuffer(sl->cmd) != VK_SUCCESS) FAIL("command recording");
+        for (int k = 0; k < 2; k++) {
+            VkCommandBuffer cmd;
+            if (p_vkAllocateCommandBuffers(r->dev, &cai, &cmd) != VK_SUCCESS) FAIL("command buffer");
+            VkCommandBufferBeginInfo cbi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+            p_vkBeginCommandBuffer(cmd, &cbi);
+            p_vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, r->layout, 0, 1, &sl->ds, 0, NULL);
+            if (k == 1) {
+                p_vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, r->pipeFluid);
+                p_vkCmdDispatch(cmd, (uint32_t)((cfg->width + 7) / 8), (uint32_t)((cfg->height + 7) / 8), 1);
+                VkMemoryBarrier fb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+                fb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+                fb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+                p_vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                                       0, 1, &fb, 0, NULL, 0, NULL);
+            }
+            p_vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, r->pipe);
+            p_vkCmdDispatch(cmd, gx, gy, 1);
+            VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+            mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+            mb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+            p_vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb,
+                                   0, NULL, 0, NULL);
+            if (p_vkEndCommandBuffer(cmd) != VK_SUCCESS) FAIL("command recording");
+            if (k == 0)
+                sl->cmd = cmd;
+            else
+                sl->cmdFluid = cmd;
+        }
 
         VkFenceCreateInfo fci = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
         if (p_vkCreateFence(r->dev, &fci, NULL, &sl->fence) != VK_SUCCESS) FAIL("fence");
@@ -469,11 +506,11 @@ const char *vkr_device_name(vkr *r) { return r->name; }
 
 void *vkr_map(vkr *r, int slot, int which) { return r->slots[slot].b[which].map; }
 
-int vkr_submit(vkr *r, int slot) {
+int vkr_submit(vkr *r, int slot, int fluid) {
     slot_t *sl = &r->slots[slot];
     VkSubmitInfo si = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
     si.commandBufferCount = 1;
-    si.pCommandBuffers = &sl->cmd;
+    si.pCommandBuffers = fluid ? &sl->cmdFluid : &sl->cmd;
     if (p_vkQueueSubmit(r->queue, 1, &si, sl->fence) != VK_SUCCESS) return -1;
     sl->pending = 1;
     return 0;
@@ -512,10 +549,179 @@ void vkr_destroy(vkr *r) {
         if (r->cpool) p_vkDestroyCommandPool(r->dev, r->cpool, NULL);
         if (r->dpool) p_vkDestroyDescriptorPool(r->dev, r->dpool, NULL);
         if (r->pipe) p_vkDestroyPipeline(r->dev, r->pipe, NULL);
+        if (r->pipeFluid) p_vkDestroyPipeline(r->dev, r->pipeFluid, NULL);
         if (r->layout) p_vkDestroyPipelineLayout(r->dev, r->layout, NULL);
         if (r->dsl) p_vkDestroyDescriptorSetLayout(r->dev, r->dsl, NULL);
         p_vkDestroyDevice(r->dev, NULL);
     }
     if (r->inst) p_vkDestroyInstance(r->inst, NULL);
     free(r);
+}
+
+// ---------------------------------------------------------------- compute jobs
+// A job: one compute shader (its kernels picked by a push constant), its storage buffers
+// (bindings 0..n-1, host-visible) and a list of dispatches, each followed by a barrier, run in
+// submissions short enough for drivers that reset long jobs.
+
+struct vkj {
+    vkr *r;
+    vbuf b[VKJ_MAX_BUFS];
+    int nb;
+    VkDescriptorSetLayout dsl;
+    VkPipelineLayout layout;
+    VkPipeline pipe;
+    VkDescriptorPool dpool;
+    VkDescriptorSet ds;
+    VkCommandBuffer cmd;
+    VkFence fence;
+    int recording;
+    uint32_t push_size;
+};
+
+#undef FAIL
+#define FAIL(...)                           \
+    do {                                    \
+        snprintf(err, errlen, __VA_ARGS__); \
+        vkj_destroy(j);                     \
+        return -1;                          \
+    } while (0)
+
+int vkj_create(vkj **out, vkr *r, const uint32_t *spirv, size_t spirv_size, const size_t *sizes, int nbufs,
+               int push_size, char *err, int errlen) {
+    *out = NULL;
+    if (nbufs > VKJ_MAX_BUFS) {
+        snprintf(err, errlen, "too many buffers");
+        return -1;
+    }
+    vkj *j = calloc(1, sizeof(vkj));
+    j->r = r;
+    j->push_size = (uint32_t)push_size;
+    for (int i = 0; i < nbufs; i++) {
+        VkDeviceSize sz = sizes[i] < 16 ? 16 : (sizes[i] + 3) / 4 * 4;
+        if (make_buf(r, &j->b[i], sz, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0)
+            FAIL("out of GPU memory for buffers");
+        j->nb = i + 1;
+    }
+    VkDescriptorSetLayoutBinding binds[VKJ_MAX_BUFS];
+    for (int i = 0; i < nbufs; i++)
+        binds[i] = (VkDescriptorSetLayoutBinding){(uint32_t)i, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1,
+                                                  VK_SHADER_STAGE_COMPUTE_BIT, NULL};
+    VkDescriptorSetLayoutCreateInfo dli = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
+    dli.bindingCount = (uint32_t)nbufs;
+    dli.pBindings = binds;
+    if (p_vkCreateDescriptorSetLayout(r->dev, &dli, NULL, &j->dsl) != VK_SUCCESS) FAIL("descriptor layout");
+    VkPushConstantRange pcr = {VK_SHADER_STAGE_COMPUTE_BIT, 0, j->push_size};
+    VkPipelineLayoutCreateInfo pli = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
+    pli.setLayoutCount = 1;
+    pli.pSetLayouts = &j->dsl;
+    pli.pushConstantRangeCount = push_size > 0 ? 1 : 0;
+    pli.pPushConstantRanges = &pcr;
+    if (p_vkCreatePipelineLayout(r->dev, &pli, NULL, &j->layout) != VK_SUCCESS) FAIL("pipeline layout");
+    VkShaderModuleCreateInfo smi = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
+    smi.codeSize = spirv_size;
+    smi.pCode = spirv;
+    VkShaderModule sm;
+    if (p_vkCreateShaderModule(r->dev, &smi, NULL, &sm) != VK_SUCCESS) FAIL("invalid shader");
+    VkComputePipelineCreateInfo cpi = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
+    cpi.stage.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    cpi.stage.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    cpi.stage.module = sm;
+    cpi.stage.pName = "main";
+    cpi.layout = j->layout;
+    VkResult pres = p_vkCreateComputePipelines(r->dev, VK_NULL_HANDLE, 1, &cpi, NULL, &j->pipe);
+    p_vkDestroyShaderModule(r->dev, sm, NULL);
+    if (pres != VK_SUCCESS) FAIL("vkCreateComputePipelines failed (%d)", pres);
+    VkDescriptorPoolSize ps = {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, (uint32_t)nbufs};
+    VkDescriptorPoolCreateInfo dpi = {VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
+    dpi.maxSets = 1;
+    dpi.poolSizeCount = 1;
+    dpi.pPoolSizes = &ps;
+    if (p_vkCreateDescriptorPool(r->dev, &dpi, NULL, &j->dpool) != VK_SUCCESS) FAIL("descriptor pool");
+    VkDescriptorSetAllocateInfo dai = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO};
+    dai.descriptorPool = j->dpool;
+    dai.descriptorSetCount = 1;
+    dai.pSetLayouts = &j->dsl;
+    if (p_vkAllocateDescriptorSets(r->dev, &dai, &j->ds) != VK_SUCCESS) FAIL("descriptor set");
+    VkDescriptorBufferInfo dbi[VKJ_MAX_BUFS];
+    VkWriteDescriptorSet wr[VKJ_MAX_BUFS];
+    for (int i = 0; i < nbufs; i++) {
+        dbi[i] = (VkDescriptorBufferInfo){j->b[i].buf, 0, VK_WHOLE_SIZE};
+        wr[i] = (VkWriteDescriptorSet){VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        wr[i].dstSet = j->ds;
+        wr[i].dstBinding = (uint32_t)i;
+        wr[i].descriptorCount = 1;
+        wr[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        wr[i].pBufferInfo = &dbi[i];
+    }
+    p_vkUpdateDescriptorSets(r->dev, (uint32_t)nbufs, wr, 0, NULL);
+    VkCommandBufferAllocateInfo cai = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO};
+    cai.commandPool = r->cpool;
+    cai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cai.commandBufferCount = 1;
+    if (p_vkAllocateCommandBuffers(r->dev, &cai, &j->cmd) != VK_SUCCESS) FAIL("command buffer");
+    VkFenceCreateInfo fci = {VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};
+    if (p_vkCreateFence(r->dev, &fci, NULL, &j->fence) != VK_SUCCESS) FAIL("fence");
+    *out = j;
+    return 0;
+}
+
+void *vkj_map(vkj *j, int buf) { return j->b[buf].map; }
+
+int vkj_dispatch(vkj *j, const void *push, uint32_t gx, uint32_t gy, uint32_t gz) {
+    if (!j->recording) {
+        VkCommandBufferBeginInfo cbi = {VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO};
+        cbi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+        if (p_vkBeginCommandBuffer(j->cmd, &cbi) != VK_SUCCESS) return -1;
+        p_vkCmdBindPipeline(j->cmd, VK_PIPELINE_BIND_POINT_COMPUTE, j->pipe);
+        p_vkCmdBindDescriptorSets(j->cmd, VK_PIPELINE_BIND_POINT_COMPUTE, j->layout, 0, 1, &j->ds, 0, NULL);
+        j->recording = 1;
+    }
+    if (j->push_size) p_vkCmdPushConstants(j->cmd, j->layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, j->push_size, push);
+    p_vkCmdDispatch(j->cmd, gx, gy, gz);
+    VkMemoryBarrier mb = {VK_STRUCTURE_TYPE_MEMORY_BARRIER};
+    mb.srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+    mb.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_HOST_READ_BIT;
+    p_vkCmdPipelineBarrier(j->cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+                           VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_HOST_BIT, 0, 1, &mb, 0, NULL, 0,
+                           NULL);
+    return 0;
+}
+
+int vkj_run(vkj *j) {
+    if (!j->recording) return 0;
+    j->recording = 0;
+    if (p_vkEndCommandBuffer(j->cmd) != VK_SUCCESS) return -1;
+    VkSubmitInfo si = {VK_STRUCTURE_TYPE_SUBMIT_INFO};
+    si.commandBufferCount = 1;
+    si.pCommandBuffers = &j->cmd;
+    if (p_vkQueueSubmit(j->r->queue, 1, &si, j->fence) != VK_SUCCESS) return -1;
+    VkResult res = p_vkWaitForFences(j->r->dev, 1, &j->fence, VK_TRUE, UINT64_MAX);
+    p_vkResetFences(j->r->dev, 1, &j->fence);
+    if (res != VK_SUCCESS) return -1;
+    for (int i = 0; i < j->nb; i++) {
+        if (!j->b[i].coherent) {
+            VkMappedMemoryRange mr = {VK_STRUCTURE_TYPE_MAPPED_MEMORY_RANGE};
+            mr.memory = j->b[i].mem;
+            mr.size = VK_WHOLE_SIZE;
+            p_vkInvalidateMappedMemoryRanges(j->r->dev, 1, &mr);
+        }
+    }
+    return 0;
+}
+
+void vkj_destroy(vkj *j) {
+    if (!j) return;
+    VkDevice d = j->r->dev;
+    p_vkDeviceWaitIdle(d);
+    for (int i = 0; i < j->nb; i++) {
+        if (j->b[i].buf) p_vkDestroyBuffer(d, j->b[i].buf, NULL);
+        if (j->b[i].mem) p_vkFreeMemory(d, j->b[i].mem, NULL);
+    }
+    if (j->fence) p_vkDestroyFence(d, j->fence, NULL);
+    if (j->cmd) p_vkFreeCommandBuffers(d, j->r->cpool, 1, &j->cmd);
+    if (j->dpool) p_vkDestroyDescriptorPool(d, j->dpool, NULL);
+    if (j->pipe) p_vkDestroyPipeline(d, j->pipe, NULL);
+    if (j->layout) p_vkDestroyPipelineLayout(d, j->layout, NULL);
+    if (j->dsl) p_vkDestroyDescriptorSetLayout(d, j->dsl, NULL);
+    free(j);
 }

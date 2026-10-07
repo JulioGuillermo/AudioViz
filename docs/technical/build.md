@@ -29,7 +29,7 @@ Inside the binary:
 | Component | How it gets in |
 |---|---|
 | Go code, the web studio (`internal/studio/web`) | Go compiler, `//go:embed web` |
-| Vulkan compute shader `render.spv` | `//go:embed shaders/render.spv` (internal/gpu/gpu.go) |
+| Vulkan compute shaders `render.spv`, `fluid.spv`, `fluidsim.spv` | `//go:embed shaders/*.spv` (internal/gpu/gpu.go, sim.go) |
 | x264 (H.264 encoder) | static `libx264.a` via cgo (internal/encode/x264.go) |
 | Decode-only FFmpeg (libavformat, libavcodec, libswscale, libavutil) | static `.a` via cgo (internal/video/ffdec.go) |
 | whisper.cpp + stable-diffusion.cpp on **one** ggml (CPU and Vulkan backends, incl. ggml's own SPIR-V shaders) | static `.a` via cgo (internal/lyricsgen/whisper.go, internal/imagegen/sd.go; Vulkan bridge in internal/ggml) |
@@ -48,9 +48,12 @@ cd "$(dirname "$0")"
 scripts/build-x264.sh
 scripts/build-ffmpeg.sh
 scripts/build-ml.sh
-if command -v glslc >/dev/null && [ internal/gpu/shaders/render.comp -nt internal/gpu/shaders/render.spv ]; then
-  glslc -O --target-env=vulkan1.1 internal/gpu/shaders/render.comp -o internal/gpu/shaders/render.spv
-fi
+for sh in render fluid fluidsim; do
+  src=internal/gpu/shaders/$sh.comp spv=internal/gpu/shaders/$sh.spv
+  if command -v glslc >/dev/null && { [ $src -nt $spv ] || [ internal/gpu/shaders/common.glsl -nt $spv ]; }; then
+    glslc -O --target-env=vulkan1.1 $src -o $spv
+  fi
+done
 CGO_ENABLED=1 go build -trimpath -tags netgo,osusergo \
   -ldflags="-s -w -extldflags '-static-libstdc++ -static-libgcc'" -o audioviz ./cmd/audioviz
 echo "OK -> ./audioviz ($(du -h audioviz | cut -f1))"; ldd audioviz 2>/dev/null || true
@@ -58,12 +61,12 @@ echo "OK -> ./audioviz ($(du -h audioviz | cut -f1))"; ldd audioviz 2>/dev/null 
 
 1. **Third-party static libraries** (each script is idempotent, see below). They install into
    `third_party/build/{lib,include}`.
-2. **Shader**: the renderer's GLSL compute shader is compiled to SPIR-V only if `glslc` exists
-   **and** `render.comp` is newer than `render.spv` (`-nt` is also true when the `.spv` doesn't
-   exist). `-O` optimizes; `--target-env=vulkan1.1` matches the API version the renderer requests.
-   The resulting `render.spv` is embedded, so it must be present at `go build` time: it is meant to
-   be kept in the repository so that building without `glslc` works as long as the shader is not
-   modified.
+2. **Shaders**: each GLSL compute shader (`render`, `fluid`, `fluidsim`) is compiled to SPIR-V
+   only if `glslc` exists **and** the `.comp` or the shared `common.glsl` is newer than its `.spv`
+   (`-nt` is also true when the `.spv` doesn't exist). `-O` optimizes; `--target-env=vulkan1.1`
+   matches the API version the renderer requests. The resulting `.spv` files are embedded, so they
+   must be present at `go build` time: they are kept in the repository so that building without
+   `glslc` works as long as the shaders are not modified.
 3. **Go build**:
 
    | Flag | Why |
@@ -292,11 +295,13 @@ existing ones.
 
 | Shader | Compiled by | When | Embedded as |
 |---|---|---|---|
-| `internal/gpu/shaders/render.comp` (the whole frame renderer, see [rendering.md](rendering.md)) | `build.sh`: `glslc -O --target-env=vulkan1.1` | only if `glslc` exists and the `.comp` is newer | `//go:embed shaders/render.spv` → `renderSPV`, passed to `vkr_create` |
+| `internal/gpu/shaders/render.comp` (the whole frame renderer, see [rendering.md](rendering.md)) | `build.sh`: `glslc -O --target-env=vulkan1.1` | only if `glslc` exists and the `.comp` or `common.glsl` is newer | `//go:embed shaders/render.spv` → `renderSPV`, passed to `vkr_create` |
+| `internal/gpu/shaders/fluid.comp` (fluid / liquid transition pass) | same | same | `fluidSPV`, passed to `vkr_create` |
+| `internal/gpu/shaders/fluidsim.comp` (fluid / liquid simulation) | same | only if the `.comp` is newer | `fluidSimSPV` (`sim.go`), passed to `vkj_create` |
 | ggml's Vulkan kernels | whisper.cpp's CMake (`vulkan-shaders-gen` + `glslc`) | when `libggml-vulkan.a` is built | inside `libggml-vulkan.a` |
 
-`go generate` is not used. When editing `render.comp`, run `./build.sh` (or the `glslc` line) and
-commit the regenerated `render.spv` together with the source.
+`go generate` is not used. When editing a shader (or `common.glsl`), run `./build.sh` (or the
+`glslc` line) and commit the regenerated `.spv` files together with the source.
 
 ## cgo flags summary
 

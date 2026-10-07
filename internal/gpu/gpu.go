@@ -57,6 +57,9 @@ var (
 //go:embed shaders/render.spv
 var renderSPV []byte
 
+//go:embed shaders/fluid.spv
+var fluidSPV []byte
+
 const (
 	MaxGrad   = 8
 	MaxGlitch = 64
@@ -103,6 +106,11 @@ type Params struct {
 	BurnP   [4]float32
 	BurnCol [4]float32
 	BurnPts [8][4]float32
+	// Fluid / liquid (see fluid.comp): word offsets of the bin starts, - and coarse level
+	// in the FluidData buffer, and the bin side (0 = no fluid); bins across and down, coarse
+	// width and height; piece half width and height, progress, debug
+	FluidI, FluidN [4]int32
+	FluidF         [4]float32
 }
 
 // TextStyle mirrors 'TStyle' in render.comp: one entry of the per-frame text style table
@@ -122,7 +130,9 @@ type Renderer struct {
 	PadW, PadH int
 	Slots      int
 	DeviceName string
+	FluidWords int // capacity of the fluid data buffer (32-bit words)
 	spirv      unsafe.Pointer
+	spirvFluid unsafe.Pointer
 }
 
 // ListDevices returns the list of visible Vulkan GPUs
@@ -144,34 +154,43 @@ func ListDevices() string {
 
 func align(v, a int) int { return (v + a - 1) / a * a }
 
-// New creates the renderer. deviceIndex -1 = automatic.
-func New(width, height, slots, deviceIndex int, textSize int) (*Renderer, error) {
+// New creates the renderer. deviceIndex -1 = automatic. fluidWords: size of the fluid
+// transition data (effects.FluidBufWords).
+func New(width, height, slots, deviceIndex int, textSize, fluidWords int) (*Renderer, error) {
 	type res struct {
 		g   *Renderer
 		err error
 	}
-	r, ok := withTimeout(func() res { g, err := newRenderer(width, height, slots, deviceIndex, textSize); return res{g, err} })
+	r, ok := withTimeout(func() res {
+		g, err := newRenderer(width, height, slots, deviceIndex, textSize, fluidWords)
+		return res{g, err}
+	})
 	if !ok {
 		return nil, ErrStuck
 	}
 	return r.g, r.err
 }
 
-func newRenderer(width, height, slots, deviceIndex int, textSize int) (*Renderer, error) {
-	g := &Renderer{Width: width, Height: height, PadW: align(width, 16), PadH: align(height, 16), Slots: slots}
+func newRenderer(width, height, slots, deviceIndex int, textSize, fluidWords int) (*Renderer, error) {
+	g := &Renderer{Width: width, Height: height, PadW: align(width, 16), PadH: align(height, 16), Slots: slots,
+		FluidWords: fluidWords}
 	g.spirv = C.CBytes(renderSPV)
+	g.spirvFluid = C.CBytes(fluidSPV)
 	cfg := C.vkr_config{
 		width: C.int(width), height: C.int(height),
 		pad_w: C.int(g.PadW), pad_h: C.int(g.PadH),
 		slots: C.int(slots), device_index: C.int(deviceIndex),
 		params_size: C.size_t(unsafe.Sizeof(Params{})),
 		text_size:   C.size_t(textSize),
+		fluid_size:  C.size_t(fluidWords * 4),
 		spirv:       (*C.uint32_t)(g.spirv), spirv_size: C.size_t(len(renderSPV)),
+		spirv_fluid: (*C.uint32_t)(g.spirvFluid), spirv_fluid_size: C.size_t(len(fluidSPV)),
 	}
 	errBuf := make([]byte, 512)
 	var r *C.vkr
 	if C.vkr_create(&r, &cfg, (*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf))) != 0 {
 		C.free(g.spirv)
+		C.free(g.spirvFluid)
 		return nil, fmt.Errorf("%s", C.GoString((*C.char)(unsafe.Pointer(&errBuf[0]))))
 	}
 	g.r = r
@@ -206,8 +225,19 @@ func (g *Renderer) Text(slot, n int) []byte { return g.bytes(slot, C.VKR_BUF_TEX
 
 func (g *Renderer) RGBA(slot int) []byte { return g.bytes(slot, C.VKR_BUF_RGBA, g.Width*g.Height*4) }
 
-func (g *Renderer) Submit(slot int) error {
-	if C.vkr_submit(g.r, C.int(slot)) != 0 {
+// FluidData returns the slot's fluid data buffer (FluidWords words) as integers and as floats
+func (g *Renderer) FluidData(slot int) ([]uint32, []float32) {
+	p := C.vkr_map(g.r, C.int(slot), C.VKR_BUF_FLUID)
+	return unsafe.Slice((*uint32)(p), g.FluidWords), unsafe.Slice((*float32)(p), g.FluidWords)
+}
+
+// Submit launches the slot's frame; fluid runs the fluid pass first (FluidData and Params.Fluid* filled)
+func (g *Renderer) Submit(slot int, fluid bool) error {
+	f := C.int(0)
+	if fluid {
+		f = 1
+	}
+	if C.vkr_submit(g.r, C.int(slot), f) != 0 {
 		return fmt.Errorf("vkQueueSubmit failed")
 	}
 	return nil
@@ -228,5 +258,9 @@ func (g *Renderer) Close() {
 	if g.spirv != nil {
 		C.free(g.spirv)
 		g.spirv = nil
+	}
+	if g.spirvFluid != nil {
+		C.free(g.spirvFluid)
+		g.spirvFluid = nil
 	}
 }

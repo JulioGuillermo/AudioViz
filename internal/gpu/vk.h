@@ -17,7 +17,9 @@ enum {
     VKR_BUF_RGBA = 4,
     VKR_BUF_TEXT = 5,
     VKR_BUF_BG2 = 6,
-    VKR_NUM_BUFS = 7,
+    VKR_BUF_FLUID = 7, // fluid transition data (particles, bins, coarse level)
+    VKR_BUF_FIMG = 8,  // fluid pass output, read by the main pass
+    VKR_NUM_BUFS = 9,
 };
 
 typedef struct {
@@ -27,16 +29,32 @@ typedef struct {
     int device_index;    // -1 = automatic
     size_t params_size;
     size_t text_size;    // text atlas size in bytes (SDF)
+    size_t fluid_size;   // fluid data in bytes
     const uint32_t *spirv;
     size_t spirv_size;
+    const uint32_t *spirv_fluid; // fluid pass (same descriptor layout)
+    size_t spirv_fluid_size;
 } vkr_config;
 
 int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen);
 void vkr_destroy(vkr *r);
 const char *vkr_device_name(vkr *r);
 void *vkr_map(vkr *r, int slot, int which);
-int vkr_submit(vkr *r, int slot);
+// fluid != 0: run the fluid pass first (a fluid / liquid transition is on screen)
+int vkr_submit(vkr *r, int slot, int fluid);
 int vkr_wait(vkr *r, int slot);
 int vkr_list_devices(char *out, int len);
+
+// Compute jobs on a device opened with cfg->spirv == NULL (no renderer): one shader whose
+// storage buffers are bindings 0..nbufs-1 (mapped, host-visible), kernels chosen by push constants.
+// Each dispatch is followed by a barrier; vkj_run submits what was recorded and waits.
+#define VKJ_MAX_BUFS 16
+typedef struct vkj vkj;
+int vkj_create(vkj **out, vkr *r, const uint32_t *spirv, size_t spirv_size, const size_t *sizes, int nbufs,
+               int push_size, char *err, int errlen);
+void *vkj_map(vkj *j, int buf);
+int vkj_dispatch(vkj *j, const void *push, uint32_t gx, uint32_t gy, uint32_t gz);
+int vkj_run(vkj *j);
+void vkj_destroy(vkj *j);
 
 #endif

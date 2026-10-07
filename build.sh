@@ -16,9 +16,14 @@ if [ "$TARGET_OS" = darwin ]; then
   scripts/build-moltenvk.sh || echo "MoltenVK not available: the renderer will look for a Vulkan SDK at runtime or use the CPU"
 fi
 cd "$ROOT"
-if command -v glslc >/dev/null && [ internal/gpu/shaders/render.comp -nt internal/gpu/shaders/render.spv ]; then
-  glslc -O --target-env=vulkan1.1 internal/gpu/shaders/render.comp -o internal/gpu/shaders/render.spv
-fi
+# Shaders (the .spv are in git, so building without glslc works): recompiled when the shader
+# or the shared common.glsl changed
+for sh in render fluid fluidsim; do
+  src=internal/gpu/shaders/$sh.comp spv=internal/gpu/shaders/$sh.spv
+  if command -v glslc >/dev/null && { [ $src -nt $spv ] || [ internal/gpu/shaders/common.glsl -nt $spv ]; }; then
+    glslc -O --target-env=vulkan1.1 $src -o $spv
+  fi
+done
 tags=netgo,osusergo
 bin=audioviz
 case "$TARGET_OS" in
