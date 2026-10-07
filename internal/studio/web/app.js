@@ -1,5 +1,5 @@
 import { html, render, useState, useEffect, useRef } from './vendor/preact-htm.js';
-import { TRACKS, AUDIO_FIELDS, OUTPUT_FIELDS, trackById, TRANSITIONS, SIMPLE_TRANSITIONS, DIRECTED, DIRECTIONS, TEXT_FIELDS } from './schema.js';
+import { TRACKS, ZONES, zoneOf, AUDIO_FIELDS, OUTPUT_FIELDS, trackById, TRANSITIONS, SIMPLE_TRANSITIONS, DIRECTED, DIRECTIONS, TEXT_FIELDS } from './schema.js';
 import { api, clone, fmtTime, parseTime, b64u8, basename, debounce } from './util.js';
 import { Form, Select, Edit } from './fields.js';
 import { Icon } from './icons.js';
@@ -634,7 +634,8 @@ function App() {
     } catch (e) { setSave({ kind: 'error' }); showErr(e); }
   }, 250));
 
-  const update = (fn) => {
+  // history = false: saved with the project but not an undo step (e.g. the view of the tracks)
+  const update = (fn, history = true) => {
     histBase();
     const old = projRef.current;
     const p = clone(old);
@@ -642,15 +643,24 @@ function App() {
     setProj(p);
     projRef.current = p;
     pushRef.current(p, old.audio.path, old.tracks.lyrics[0].cfg.path);
-    record();
+    if (history) record();
   };
+  // Studio view stored in the project: hidden timeline tracks and folded zones
+  const toggleView = (key, id) => update((p) => {
+    p.view = { hidden: [], collapsed: [], ...(p.view || {}) };
+    const a = (p.view[key] = [...(p.view[key] || [])]);
+    const i = a.indexOf(id);
+    if (i >= 0) a.splice(i, 1); else a.push(id);
+  }, false);
 
   // Restores a snapshot (undo/redo): saves the project, and the lyrics if they differ
   const applySnap = (snap) => {
     const old = projRef.current;
-    projRef.current = snap.proj;
-    setProj(snap.proj);
-    pushRef.current(snap.proj, old.audio.path, old.tracks.lyrics[0].cfg.path);
+    // The view of the tracks is not part of the history: it stays as it is now
+    const np = { ...snap.proj, view: old.view };
+    projRef.current = np;
+    setProj(np);
+    pushRef.current(np, old.audio.path, old.tracks.lyrics[0].cfg.path);
     if (snap.lyr !== lyrRef.current) {
       lyrRef.current = snap.lyr;
       setLyr(snap.lyr);
@@ -948,7 +958,31 @@ function App() {
 
   if (!proj || !meta) return html`<${Welcome} st=${st} ctx=${ctx} />${dialogs}`;
 
-  const groups = [...new Set(TRACKS.map((tr) => tr.group))];
+  const view = { hidden: [], collapsed: [], ...(proj.view || {}) };
+  // Entries of each zone in the track list (track ids, "texts")
+  const zoneIds = { main: ['background', 'lyrics', 'texts'], layers: [],
+    effects: TRACKS.filter((tr) => zoneOf(tr.id) === 'effects').map((tr) => tr.id) };
+  // Eye: shows / hides the entry's track on the timeline (the effect keeps rendering)
+  const eye = (id) => {
+    const off = view.hidden.includes(id);
+    return html`<button class=${'eye' + (off ? ' off' : '')} title=${t(off ? 'Show its track on the timeline' : 'Hide its track on the timeline (it keeps rendering)')}
+      onClick=${(e) => { e.stopPropagation(); toggleView('hidden', id); }}><${Icon} name=${off ? 'eye-off' : 'eye'} size=${14} /></button>`;
+  };
+  const trackEntry = (tr) => {
+    const segs = proj.tracks[tr.id];
+    let cur = 0;
+    segs.forEach((s, k) => { if (s.at <= time) cur = k; });
+    const c = segs[cur].cfg;
+    const on = tr.id === 'background' ? !!c.path : c.enabled !== false;
+    return html`<div class=${'trk' + (sel.kind === 'track' && sel.track === tr.id ? ' on' : '') + (on ? '' : ' off') + (view.hidden.includes(tr.id) ? ' hid' : '')}
+        title=${segSummary(tr.id, c)} onClick=${() => selTrack(tr.id, null)}>
+      <${Icon} name=${tr.icon} size=${15} /><span class="lbl">${t(tr.label)}</span>
+      ${segs.length > 1 && html`<span class="badge" title=${t('Number of segments')}>${segs.length}</span>`}${eye(tr.id)}</div>`;
+  };
+  const textsEntry = () => html`<div class=${'trk' + (sel.kind === 'text' ? ' on' : '') + (view.hidden.includes('texts') ? ' hid' : '')}
+      onClick=${() => ctx.selectText((proj.texts || []).length ? 0 : -1)}>
+    <${Icon} name="type" size=${15} /><span class="lbl">${t('Titles and texts')}</span>
+    ${(proj.texts || []).length > 0 && html`<span class="badge">${proj.texts.length}</span>`}${eye('texts')}</div>`;
   const selTrack = (track, seg) => {
     const segs = proj.tracks[track];
     if (seg === null) { seg = 0; segs.forEach((s, k) => { if (s.at <= timeStore.get()) seg = k; }); }
@@ -1011,25 +1045,24 @@ function App() {
 
     <div class="tracks">
       <div class="label-sm">${t('Project')}</div>
-      <div class=${'trk' + (sel.kind === 'audio' ? ' on' : '')} onClick=${() => setSel({ kind: 'audio' })} title=${proj.audio.path || t('No audio')}>
-        <${Icon} name="music" size=${15} /><span class="lbl">${t('Audio')}</span>${!proj.audio.path && html`<span class="badge">${t('empty')}</span>`}</div>
       <div class=${'trk' + (sel.kind === 'output' ? ' on' : '')} onClick=${() => setSel({ kind: 'output' })}>
         <${Icon} name="monitor" size=${15} /><span class="lbl">${t('Output')}</span><span class="n">${meta.width}×${meta.height}</span></div>
-      ${groups.map((g) => html`<div class="label-sm">${t(g)}</div>${TRACKS.filter((tr) => tr.group === g).map((tr) => {
-        const segs = proj.tracks[tr.id];
-        let cur = 0;
-        segs.forEach((s, k) => { if (s.at <= time) cur = k; });
-        const c = segs[cur].cfg;
-        const on = tr.id === 'background' ? !!c.path : c.enabled !== false;
-        return html`<div class=${'trk' + (sel.kind === 'track' && sel.track === tr.id ? ' on' : '') + (on ? '' : ' off')}
-            title=${segSummary(tr.id, c)} onClick=${() => selTrack(tr.id, null)}>
-          <${Icon} name=${tr.icon} size=${15} /><span class="lbl">${t(tr.label)}</span>
-          ${segs.length > 1 && html`<span class="badge" title=${t('Number of segments')}>${segs.length}</span>`}</div>`;
-      })}`)}
-      <div class="label-sm">${t('Texts')}</div>
-      <div class=${'trk' + (sel.kind === 'text' ? ' on' : '')} onClick=${() => ctx.selectText((proj.texts || []).length ? 0 : -1)}>
-        <${Icon} name="type" size=${15} /><span class="lbl">${t('Titles and texts')}</span>
-        ${(proj.texts || []).length > 0 && html`<span class="badge">${proj.texts.length}</span>`}</div>
+      ${ZONES.map((z) => {
+        const folded = view.collapsed.includes(z.id);
+        const ids = zoneIds[z.id];
+        const nHidden = ids.filter((id) => view.hidden.includes(id)).length;
+        return html`<div class=${'zone-h z-' + z.id} onClick=${() => toggleView('collapsed', z.id)}
+            title=${t(folded ? 'Click to unfold' : 'Click to fold')}>
+          <${Icon} name=${folded ? 'chevron-right' : 'chevron-down'} size=${13} />${t(z.label)}
+          ${nHidden > 0 && html`<span class="n">${t(nHidden === 1 ? '1 hidden' : '{n} hidden', { n: nHidden })}</span>`}</div>
+        ${!folded && html`<div class=${'zone-b z-' + z.id}>
+          ${z.id === 'main' && html`<div class=${'trk' + (sel.kind === 'audio' ? ' on' : '')} onClick=${() => setSel({ kind: 'audio' })}
+              title=${(proj.audio.path || t('No audio')) + ' · ' + t('Always at the top of the timeline')}>
+            <${Icon} name="music" size=${15} /><span class="lbl">${t('Audio')}</span>${!proj.audio.path && html`<span class="badge">${t('empty')}</span>`}</div>`}
+          ${ids.map((id) => id === 'texts' ? textsEntry() : trackEntry(trackById[id]))}
+          ${z.id === 'layers' && html`<div class="zone-empty">${t('Overlay layers and emitters will go here')}</div>`}
+        </div>`}`;
+      })}
     </div>
 
     <div class="preview">
@@ -1069,6 +1102,7 @@ function App() {
       texts=${proj.texts || []} onSelectText=${(i) => ctx.selectText(i)} onMoveText=${onMoveText} onAddText=${(tt) => ctx.addText(tt)}
       sel=${sel} lineSel=${lineSel} wordEdit=${wordEdit} height=${tlH} setHeight=${setTlH}
       onSeek=${seek} onSelect=${selTrack} onMoveSeg=${onMoveSeg} onAddSeg=${ctx.addSeg} onMarker=${onMarker}
+      view=${view} onToggleZone=${(z) => toggleView('collapsed', z)}
       onSelectLine=${selectLine} onLyrics=${(lines) => editLyrics((all) => { all.splice(0, all.length, ...lines); }, false)}
       onLyricsCommit=${() => { lyrSaveRef.current(); record(); }} />
     ${dialogs}

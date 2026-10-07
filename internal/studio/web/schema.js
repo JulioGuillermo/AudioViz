@@ -19,6 +19,16 @@ const ANIMS = [['fade', 'Fade'], ['slide_up', 'Slide up'], ['slide_down', 'Slide
   ['slide_left', 'Slide left'], ['slide_right', 'Slide right'], ['slide_side', 'From its side'],
   ['pop', 'Pop'], ['zoom', 'Zoom'], ['none', 'No animation']];
 
+// Zones of the track list and the timeline, top to bottom, each with its own tint (styles.css
+// .z-<id>). Layers: overlay layers and emitters (to come).
+export const ZONES = [
+  { id: 'main', label: 'Main' },
+  { id: 'layers', label: 'Layers' },
+  { id: 'effects', label: 'Effects' },
+];
+// Zone of a track list entry (track id or "texts"); everything else is an effect
+export const zoneOf = (id) => ({ background: 'main', lyrics: 'main', texts: 'main' })[id] || 'effects';
+
 export const TRACKS = [
   { id: 'background', group: 'Background', label: 'Image / video', icon: 'image', fields: [
     { key: 'path', label: 'File', type: 'file', kind: 'bg', help: 'Image, GIF or video (mp4, mov, mkv, webm)' },

@@ -1,11 +1,11 @@
 import { html, useEffect, useLayoutEffect, useRef, useState, useMemo } from './vendor/preact-htm.js';
-import { TRACKS } from './schema.js';
+import { TRACKS, ZONES, zoneOf } from './schema.js';
 import { fmtTime, basename, clone } from './util.js';
 import { Icon } from './icons.js';
 import { t } from './i18n.js';
 import { useStore } from './store.js';
 
-const H = { ruler: 26, audio: 74, lyrics: 30, track: 28, textRow: 24 };
+const H = { ruler: 26, audio: 74, lyrics: 30, track: 28, textRow: 24, zone: 22 };
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const BAND = { bass: 'bass', mid: 'mids', treble: 'treble', overall: 'volume', transient: 'transients', beat: 'beats' };
 
@@ -146,7 +146,7 @@ function Playhead({ timeStore, pps, scroller, follow }) {
 
 export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, sel, lineSel, onSeek, onSelect, onMoveSeg,
   onAddSeg, onSelectLine, onLyrics, onLyricsCommit, onMarker, height, setHeight, wordEdit,
-  texts = [], onSelectText, onMoveText, onAddText }) {
+  texts = [], onSelectText, onMoveText, onAddText, view = { hidden: [], collapsed: [] }, onToggleZone }) {
   const scroller = useRef();
   const namesRef = useRef();
   const [pps, setPps] = useState(null); // pixels per second
@@ -377,6 +377,97 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
     } else sc.scrollLeft = Math.max(0, mid * effPps - sc.clientWidth / 2);
   }, [editLine]);
 
+  // --- rows, top to bottom: ruler and audio (always visible, they stay at the top), then each
+  // zone with a header (click: fold / unfold) and the lanes of its entries that are not hidden.
+  // The names column and the lanes are built from the same list so they always line up.
+  const hidden = new Set(view.hidden || []), folded = new Set(view.collapsed || []);
+  const trackRow = (tr) => {
+    const segs = proj.tracks[tr.id] || [];
+    const on = sel.kind === 'track' && sel.track === tr.id;
+    return {
+      key: tr.id, h: H.track, on, sel: on, onName: () => onSelect(tr.id, null),
+      name: html`<${Icon} name=${tr.icon} size=${14} /> ${t(tr.label)}`,
+      onDown: seekDrag, onDbl: (e) => onAddSeg(tr.id, snap(xToT(e.clientX), e)),
+      lane: segs.map((s, i) => {
+        const end = i + 1 < segs.length ? segs[i + 1].at : duration;
+        const son = on && sel.seg === i;
+        const fade = s.transition && s.transition.mode !== 'cut' && i > 0 ? s.transition.duration * effPps : 0;
+        const enabled = tr.id === 'background' ? !!s.cfg.path : s.cfg.enabled !== false;
+        return html`<div class=${'seg' + (son ? ' on' : '') + (enabled ? '' : ' off')}
+            style=${{ left: s.at * effPps + 'px', width: Math.max(3, (end - s.at) * effPps - 1) + 'px' }}
+            title=${(s.label ? s.label + ' · ' : '') + fmtTime(s.at) + ' → ' + fmtTime(end)}
+            onMouseDown=${(e) => segDrag(e, tr.id, i)} onDblClick=${(e) => e.stopPropagation()}>
+          ${fade > 0 && html`<div class="fade" style=${{ width: fade + 'px' }}></div>`}
+          ${i > 0 && html`<div class="grip"></div>`}
+          <span class="t">${s.label ? html`<b>${s.label}</b> · ` : ''}${segSummary(tr.id, s.cfg)}</span>
+        </div>`;
+      }),
+    };
+  };
+  const linesRow = {
+    key: 'lines', h: H.lyrics, onName: () => onSelect('lyrics', 0), onDown: seekDrag,
+    name: html`<${Icon} name="text-cursor-input" size=${14} /> ${t('Lyric lines')}`,
+    lane: html`${lyr.lines.map((l, i) => {
+      const cls = 'lyrline' + (i === editLine ? ' edit' : lineSel.includes(i) ? (lineSel.length > 1 ? ' multi' : ' on') : i === curLine ? ' now' : '');
+      return html`<div class=${cls} key=${i}
+        style=${{ left: l.start * effPps + 'px', width: Math.max(4, (l.end - l.start) * effPps) + 'px' }}
+        title=${l.words.map((w) => w.text).join(' ') + ' — ' + t(sel.kind === 'line' && lineSel.includes(i) ? 'drag to move · Shift+click: select several' : 'click to select · Shift+click: select several')}
+        onMouseDown=${(e) => lineDrag(e, i)}>${i === editLine ? '' : l.words.map((w) => w.text).join(' ')}</div>`;
+    })}
+    ${editLine >= 0 && lyr.lines[editLine].words.map((w, wi) => html`<div class=${'lyrword' + (slowTime >= w.start && slowTime < w.end ? ' now' : '')} key=${'w' + wi}
+        style=${{ left: w.start * effPps + 'px', width: Math.max(6, (w.end - w.start) * effPps - 1) + 'px' }}
+        title=${w.text + ' · ' + fmtTime(w.start) + ' — ' + t('drag to move, edges = start / end')}
+        onMouseDown=${(e) => wordDrag(e, editLine, wi, false)}>
+        <div class="grip" onMouseDown=${(e) => wordDrag(e, editLine, wi, 'start')}></div>${w.text}<div class="grip end" onMouseDown=${(e) => wordDrag(e, editLine, wi, 'end')}></div></div>`)}`,
+  };
+  const textsRow = {
+    key: 'texts', h: textLaneH, on: sel.kind === 'text', sel: sel.kind === 'text',
+    onName: () => onSelectText(texts.length ? 0 : -1), title: t('Double-click the lane: new text at that point'),
+    name: html`<${Icon} name="type" size=${14} /> ${t('Texts')}`,
+    onDown: seekDrag, onDbl: (e) => onAddText(snap(xToT(e.clientX), e)),
+    lane: texts.map((x, i) => {
+      const on = sel.kind === 'text' && sel.i === i;
+      return html`<div class=${'seg txt' + (on ? ' on' : '') + (x.enabled === false ? ' off' : '')} key=${'tx' + i}
+          style=${{ left: x.start * effPps + 'px', width: Math.max(4, (x.end - x.start) * effPps - 1) + 'px',
+            top: 3 + textRows.rowOf[i] * H.textRow + 'px', '--rowh': H.textRow + 'px' }}
+          title=${(x.text || '').replace(/\n/g, ' / ') + ' · ' + fmtTime(x.start) + ' → ' + fmtTime(x.end)}
+          onMouseDown=${(e) => textDrag(e, i)} onDblClick=${(e) => e.stopPropagation()}>
+        <div class="grip" onMouseDown=${(e) => textDrag(e, i, 'start')}></div>
+        <span class="t">${x.label ? html`<b>${x.label}</b> · ` : ''}${(x.text || '').replace(/\n/g, ' / ')}</span>
+        <div class="grip end" onMouseDown=${(e) => textDrag(e, i, 'end')}></div>
+      </div>`;
+    }),
+  };
+  const byId = Object.fromEntries(TRACKS.map((tr) => [tr.id, tr]));
+  const zoneLanes = {
+    main: [
+      !hidden.has('background') && trackRow(byId.background),
+      !hidden.has('lyrics') && linesRow,
+      !hidden.has('lyrics') && trackRow(byId.lyrics),
+      !hidden.has('texts') && textsRow,
+    ],
+    layers: [{ key: 'layers-empty', h: H.track, cls: 'empty', name: '', lane: t('Overlay layers and emitters will go here') }],
+    effects: TRACKS.filter((tr) => zoneOf(tr.id) === 'effects' && !hidden.has(tr.id)).map(trackRow),
+  };
+  const zoneEntries = { main: ['background', 'lyrics', 'texts'], layers: [], effects: TRACKS.filter((tr) => zoneOf(tr.id) === 'effects').map((tr) => tr.id) };
+  const rows = [
+    { key: 'ruler', h: H.ruler, cls: 'ruler sticky', top: 0, name: '', onDown: rulerDrag, laneTitle: t('Drag to scroll the timeline · click to move the cursor'),
+      lane: html`<${Ruler} pps=${effPps} duration=${duration} scroller=${scroller} />` },
+    { key: 'audio', h: H.audio, cls: 'sticky', top: H.ruler + 'px', on: sel.kind === 'audio', onDown: seekDrag,
+      name: html`<${Icon} name="audio-waveform" size=${14} /> ${t('Audio')}`,
+      lane: html`<${AudioLane} ana=${ana} pps=${effPps} scroller=${scroller} />` },
+  ];
+  for (const z of ZONES) {
+    const nHidden = zoneEntries[z.id].filter((id) => hidden.has(id)).length;
+    const isFolded = folded.has(z.id);
+    rows.push({ key: 'zone-' + z.id, h: H.zone, cls: 'zh z-' + z.id, onName: () => onToggleZone(z.id),
+      title: t(isFolded ? 'Click to unfold' : 'Click to fold'),
+      name: html`<${Icon} name=${isFolded ? 'chevron-right' : 'chevron-down'} size=${13} />${t(z.label)}
+        ${nHidden > 0 && html`<span class="n">${t(nHidden === 1 ? '1 hidden' : '{n} hidden', { n: nHidden })}</span>`}`,
+      onDown: seekDrag, lane: '' });
+    if (!isFolded) for (const r of zoneLanes[z.id]) if (r) rows.push({ ...r, cls: (r.cls ? r.cls + ' ' : '') + 'zl z-' + z.id, onDown: r.onDown || seekDrag });
+  }
+
   return html`<div class="timeline">
     <div class="tl-resize" onMouseDown=${resize} onDblClick=${() => setHeight(null)}
       title=${t('Drag to resize · double-click: default size')}></div>
@@ -398,72 +489,13 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
     </div>
     <div class="tl-body">
       <div class="tl-names" ref=${namesRef}>
-        <div class="nm" style=${{ '--h': H.ruler + 'px' }}></div>
-        <div class="nm" style=${{ '--h': H.audio + 'px' }}><${Icon} name="audio-waveform" size=${14} /> ${t('Audio')}</div>
-        <div class="nm" style=${{ '--h': H.lyrics + 'px' }} onClick=${() => onSelect('lyrics', 0)}><${Icon} name="text-cursor-input" size=${14} /> ${t('Lyric lines')}</div>
-        <div class=${'nm' + (sel.kind === 'text' ? ' on' : '')} style=${{ '--h': textLaneH + 'px' }} onClick=${() => onSelectText(texts.length ? 0 : -1)}
-          title=${t('Double-click the lane: new text at that point')}><${Icon} name="type" size=${14} /> ${t('Texts')}</div>
-        ${TRACKS.map((tr) => html`<div class=${'nm' + (sel.kind === 'track' && sel.track === tr.id ? ' on' : '')} style=${{ '--h': H.track + 'px' }}
-            onClick=${() => onSelect(tr.id, null)}><${Icon} name=${tr.icon} size=${14} /> ${t(tr.label)}</div>`)}
+        ${rows.map((r) => html`<div key=${r.key} class=${'nm ' + (r.cls || '') + (r.on ? ' on' : '')} style=${{ '--h': r.h + 'px', top: r.top }}
+            onClick=${r.onName} title=${r.title || ''}>${r.name}</div>`)}
       </div>
       <div class="tl-scroll" ref=${scroller} onWheel=${wheel} onScroll=${onScroll}>
         <div class="tl-inner" style=${{ width: width + 'px' }}>
-          <div class="lane ruler" style=${{ '--h': H.ruler + 'px' }} onMouseDown=${rulerDrag}
-              title=${t('Drag to scroll the timeline · click to move the cursor')}>
-            <${Ruler} pps=${effPps} duration=${duration} scroller=${scroller} />
-          </div>
-          <div class="lane" style=${{ '--h': H.audio + 'px' }} onMouseDown=${seekDrag}>
-            <${AudioLane} ana=${ana} pps=${effPps} scroller=${scroller} />
-          </div>
-          <div class="lane" style=${{ '--h': H.lyrics + 'px' }} onMouseDown=${seekDrag}>
-            ${lyr.lines.map((l, i) => {
-              const cls = 'lyrline' + (i === editLine ? ' edit' : lineSel.includes(i) ? (lineSel.length > 1 ? ' multi' : ' on') : i === curLine ? ' now' : '');
-              return html`<div class=${cls} key=${i}
-                style=${{ left: l.start * effPps + 'px', width: Math.max(4, (l.end - l.start) * effPps) + 'px' }}
-                title=${l.words.map((w) => w.text).join(' ') + ' — ' + t(sel.kind === 'line' && lineSel.includes(i) ? 'drag to move · Shift+click: select several' : 'click to select · Shift+click: select several')}
-                onMouseDown=${(e) => lineDrag(e, i)}>${i === editLine ? '' : l.words.map((w) => w.text).join(' ')}</div>`;
-            })}
-            ${editLine >= 0 && lyr.lines[editLine].words.map((w, wi) => html`<div class=${'lyrword' + (slowTime >= w.start && slowTime < w.end ? ' now' : '')} key=${'w' + wi}
-                style=${{ left: w.start * effPps + 'px', width: Math.max(6, (w.end - w.start) * effPps - 1) + 'px' }}
-                title=${w.text + ' · ' + fmtTime(w.start) + ' — ' + t('drag to move, edges = start / end')}
-                onMouseDown=${(e) => wordDrag(e, editLine, wi, false)}>
-                <div class="grip" onMouseDown=${(e) => wordDrag(e, editLine, wi, 'start')}></div>${w.text}<div class="grip end" onMouseDown=${(e) => wordDrag(e, editLine, wi, 'end')}></div></div>`)}
-          </div>
-          <div class=${'lane' + (sel.kind === 'text' ? ' sel' : '')} style=${{ '--h': textLaneH + 'px' }}
-              onMouseDown=${seekDrag} onDblClick=${(e) => onAddText(snap(xToT(e.clientX), e))}>
-            ${texts.map((x, i) => {
-              const on = sel.kind === 'text' && sel.i === i;
-              return html`<div class=${'seg txt' + (on ? ' on' : '') + (x.enabled === false ? ' off' : '')} key=${'tx' + i}
-                  style=${{ left: x.start * effPps + 'px', width: Math.max(4, (x.end - x.start) * effPps - 1) + 'px',
-                    top: 3 + textRows.rowOf[i] * H.textRow + 'px', '--rowh': H.textRow + 'px' }}
-                  title=${(x.text || '').replace(/\n/g, ' / ') + ' · ' + fmtTime(x.start) + ' → ' + fmtTime(x.end)}
-                  onMouseDown=${(e) => textDrag(e, i)} onDblClick=${(e) => e.stopPropagation()}>
-                <div class="grip" onMouseDown=${(e) => textDrag(e, i, 'start')}></div>
-                <span class="t">${x.label ? html`<b>${x.label}</b> · ` : ''}${(x.text || '').replace(/\n/g, ' / ')}</span>
-                <div class="grip end" onMouseDown=${(e) => textDrag(e, i, 'end')}></div>
-              </div>`;
-            })}
-          </div>
-          ${TRACKS.map((tr) => {
-            const segs = proj.tracks[tr.id] || [];
-            return html`<div class=${'lane' + (sel.kind === 'track' && sel.track === tr.id ? ' sel' : '')} style=${{ '--h': H.track + 'px' }}
-                onMouseDown=${seekDrag} onDblClick=${(e) => onAddSeg(tr.id, snap(xToT(e.clientX), e))}>
-              ${segs.map((s, i) => {
-                const end = i + 1 < segs.length ? segs[i + 1].at : duration;
-                const on = sel.kind === 'track' && sel.track === tr.id && sel.seg === i;
-                const fade = s.transition && s.transition.mode !== 'cut' && i > 0 ? s.transition.duration * effPps : 0;
-                const enabled = tr.id === 'background' ? !!s.cfg.path : s.cfg.enabled !== false;
-                return html`<div class=${'seg' + (on ? ' on' : '') + (enabled ? '' : ' off')}
-                    style=${{ left: s.at * effPps + 'px', width: Math.max(3, (end - s.at) * effPps - 1) + 'px' }}
-                    title=${(s.label ? s.label + ' · ' : '') + fmtTime(s.at) + ' → ' + fmtTime(end)}
-                    onMouseDown=${(e) => segDrag(e, tr.id, i)} onDblClick=${(e) => e.stopPropagation()}>
-                  ${fade > 0 && html`<div class="fade" style=${{ width: fade + 'px' }}></div>`}
-                  ${i > 0 && html`<div class="grip"></div>`}
-                  <span class="t">${s.label ? html`<b>${s.label}</b> · ` : ''}${segSummary(tr.id, s.cfg)}</span>
-                </div>`;
-              })}
-            </div>`;
-          })}
+          ${rows.map((r) => html`<div key=${r.key} class=${'lane ' + (r.cls || '') + (r.sel ? ' sel' : '')} style=${{ '--h': r.h + 'px', top: r.top }}
+              onMouseDown=${r.onDown} onDblClick=${r.onDbl} title=${r.laneTitle || null}>${r.lane}</div>`)}
           ${proj.markers.map((m, i) => html`<div class="marker" style=${{ left: m.at * effPps + 'px' }}>
             <b title=${t('Click: go · double-click: rename · right-click: delete')}
               onMouseDown=${(e) => { e.stopPropagation(); if (e.button === 0) onSeek(m.at); }}

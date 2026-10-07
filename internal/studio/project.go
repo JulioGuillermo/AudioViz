@@ -32,12 +32,18 @@ type MarkerJSON struct {
 	Label string  `json:"label"`
 }
 
+type ViewJSON struct {
+	Hidden    []string `json:"hidden"`
+	Collapsed []string `json:"collapsed"`
+}
+
 type ProjectJSON struct {
 	Audio   map[string]any       `json:"audio"`
 	Output  map[string]any       `json:"output"`
 	Tracks  map[string][]SegJSON `json:"tracks"`
 	Markers []MarkerJSON         `json:"markers"`
 	Texts   []map[string]any     `json:"texts"` // fixed texts (config.TextConfig, YAML keys)
+	View    ViewJSON             `json:"view"`  // studio view: hidden tracks, folded zones
 	// Values of a new text (read-only for the UI; ignored when the project comes back)
 	TextDefaults map[string]any `json:"textDefaults,omitempty"`
 }
@@ -150,6 +156,7 @@ func ProjectToJSON(c *config.ProjectConfig) *ProjectJSON {
 	for _, m := range c.Markers {
 		p.Markers = append(p.Markers, MarkerJSON{m.At, m.Label})
 	}
+	p.View = ViewJSON{Hidden: append([]string{}, c.Studio.Hidden...), Collapsed: append([]string{}, c.Studio.Collapsed...)}
 	p.TextDefaults = toMap(config.DefaultText())
 	p.Texts = []map[string]any{}
 	for _, t := range c.Texts {
@@ -209,6 +216,7 @@ func ProjectFromJSON(p *ProjectJSON, dir string) (*config.ProjectConfig, error) 
 	for _, m := range p.Markers {
 		c.Markers = append(c.Markers, config.Marker{At: m.At, Label: m.Label})
 	}
+	c.Studio = config.StudioView{Hidden: p.View.Hidden, Collapsed: p.View.Collapsed}
 	for i, m := range p.Texts {
 		t := config.DefaultText()
 		if err := fromMap(m, &t); err != nil {

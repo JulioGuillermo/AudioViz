@@ -335,4 +335,10 @@ export const ES = {
   'Window (s)': 'Ventana (s)', 'Width (0 = background)': 'Ancho (0 = el del fondo)', 'Height (0 = background)': 'Alto (0 = el del fondo)', 'FPS': 'FPS',
   'Renderer': 'Render', 'Auto (GPU if available)': 'Auto (GPU si hay)', 'GPU': 'GPU', 'CPU': 'CPU', 'x264 preset': 'Preset x264',
   'Quality (CRF, lower = better)': 'Calidad (CRF, menor = mejor)', 'No animation': 'Sin animación',
+  // Track zones and visibility
+  'Main': 'Principal', 'Effects': 'Efectos', 'Click to fold': 'Clic para plegar', 'Click to unfold': 'Clic para desplegar',
+  '1 hidden': '1 oculta', '{n} hidden': '{n} ocultas', 'Overlay layers and emitters will go here': 'Aquí irán las capas superpuestas y los emisores',
+  'Show its track on the timeline': 'Mostrar su pista en la línea de tiempo',
+  'Hide its track on the timeline (it keeps rendering)': 'Ocultar su pista en la línea de tiempo (se sigue renderizando)',
+  'Always at the top of the timeline': 'Siempre arriba en la línea de tiempo',
 };

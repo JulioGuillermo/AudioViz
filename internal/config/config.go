@@ -19,6 +19,8 @@ type ProjectConfig struct {
 	Lyrics            LyricsConfig            `yaml:"lyrics"`
 	Texts             []TextConfig            `yaml:"texts,omitempty"`
 	Output            OutputConfig            `yaml:"output"`
+	// How the studio shows the project (no effect on the video)
+	Studio StudioView `yaml:"studio,omitempty"`
 
 	// Changes over the course of the song (see timeline.go). Timeline is built on load.
 	TimelineRaw yaml.Node `yaml:"timeline,omitempty"`
@@ -26,6 +28,14 @@ type ProjectConfig struct {
 	Markers     []Marker  `yaml:"-"`
 	// Project folder (relative paths in the YAML are resolved against it)
 	Dir string `yaml:"-"`
+}
+
+// StudioView: the studio's view of the project. Hidden: entries whose timeline track is hidden
+// (track ids, "texts"); Collapsed: folded zones of the track list and timeline ("main",
+// "layers", "effects").
+type StudioView struct {
+	Hidden    []string `yaml:"hidden,omitempty"`
+	Collapsed []string `yaml:"collapsed,omitempty"`
 }
 
 type AudioConfig struct {
