@@ -3,13 +3,13 @@ import { TRACKS, ZONES, zoneOf } from './schema.js';
 import { fmtTime, basename, clone } from './util.js';
 import { Icon } from './icons.js';
 import { t } from './i18n.js';
-import { useStore } from './store.js';
+import { useStore, createStore } from './store.js';
 import { keyTimes } from './keys.js';
 import { isEmitterLayer, presetLabel } from './emitters.js';
 import { keyLabel, targetKey, isPicked, pickedTimes, pickKey, moveKeysAt, keyMenuItems, FocusChip } from './keymarks.js';
 import { openMenu } from './menu.js';
 
-const H = { ruler: 26, audio: 74, lyrics: 30, track: 28, textRow: 24, zone: 22 };
+const H = { ruler: 26, audio: 74, lyrics: 30, track: 28, textRow: 24, zone: 22, stem: 30 };
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const BAND = { bass: 'bass', mid: 'mids', treble: 'treble', overall: 'volume', transient: 'transients', beat: 'beats' };
 
@@ -72,7 +72,11 @@ function ViewCanvas({ scroller, height, draw, deps }) {
   return html`<canvas ref=${ref}></canvas>`;
 }
 
+// what the audio lane draws: the mix's bands, or the separated song's instruments
+const bandsView = createStore((() => { try { return localStorage.getItem('av.bands') || 'mix'; } catch (e) { return 'mix'; } })());
+
 function AudioLane({ ana, pps, scroller }) {
+  const view = useStore(bandsView);
   const draw = (g, xa, xb) => {
     if (!ana) return;
     const n = ana.frames, fps = ana.fps, mid = H.audio / 2;
@@ -102,16 +106,29 @@ function AudioLane({ ana, pps, scroller }) {
       }
       g.stroke();
     };
+    const ticks = (list, color, y, h) => {
+      g.fillStyle = color;
+      for (const b of list || []) {
+        const x = (b / fps) * pps;
+        if (x >= x0 - 1 && x <= x1) g.fillRect(x, y, 1, h);
+      }
+    };
+    if (view === 'stems' && ana.stems) {
+      const s = ana.stems;
+      curve(s.drums, cssVar('--stem-drums'));
+      curve(s.bassline, cssVar('--stem-bass'));
+      curve(s.vocals, cssVar('--stem-vocals'));
+      curve(s.other, cssVar('--stem-other'));
+      ticks(s.kicks, 'rgba(255,255,255,0.55)', 0, 6);
+      ticks(s.snares, 'rgba(255,214,90,0.6)', 7, 4);
+      return;
+    }
     curve(ana.bass, cssVar('--band-bass'));
     curve(ana.mid, cssVar('--band-mid'));
     curve(ana.treble, cssVar('--band-treble'));
-    g.fillStyle = 'rgba(255,255,255,0.22)';
-    for (const b of ana.beats || []) {
-      const x = (b / fps) * pps;
-      if (x >= x0 - 1 && x <= x1) g.fillRect(x, 0, 1, 5);
-    }
+    ticks(ana.beats, 'rgba(255,255,255,0.22)', 0, 5);
   };
-  return html`<${ViewCanvas} scroller=${scroller} height=${H.audio} draw=${draw} deps=${[ana, pps]} />`;
+  return html`<${ViewCanvas} scroller=${scroller} height=${H.audio} draw=${draw} deps=${[ana, pps, view]} />`;
 }
 
 function Ruler({ pps, duration, scroller }) {
@@ -148,7 +165,79 @@ function Playhead({ timeStore, pps, scroller, follow }) {
   return html`<div class="playhead" style=${{ transform: `translateX(${time * pps}px)` }}></div>`;
 }
 
-export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, sel, lineSel, onSeek, onSelect, onMoveSeg,
+// The audio track unfolded: one lane per instrument of the separated song
+const stemsOpen = createStore((() => { try { return localStorage.getItem('av.stemsOpen') === '1'; } catch (e) { return false; } })());
+const STEM_LANES = [['drums', 'Drums', '--stem-drums', 'drum'], ['bassline', 'Bass line', '--stem-bass', 'bass'],
+  ['vocals', 'Vocals', '--stem-vocals', 'mic-vocal'], ['other', 'The rest', '--stem-other', 'music']];
+
+// One instrument's lane: its energy as a filled area; the drums with their hits (kick, snare, hi-hats)
+function StemLane({ ana, which, color, pps, scroller }) {
+  const draw = (g, xa, xb) => {
+    const s = ana && ana.stems;
+    if (!s) return;
+    const arr = s[which], n = ana.frames, fps = ana.fps, h = H.stem;
+    const x0 = Math.floor(xa), x1 = Math.ceil(xb);
+    const c = cssVar(color);
+    g.fillStyle = c;
+    g.globalAlpha = 0.55;
+    for (let x = x0; x < x1; x++) {
+      const i0 = Math.floor((x / pps) * fps), i1 = Math.max(i0 + 1, Math.floor(((x + 1) / pps) * fps));
+      let pk = 0;
+      for (let i = i0; i < i1 && i < n; i++) pk = Math.max(pk, arr[i]);
+      const v = (pk / 255) * (h - 4);
+      g.fillRect(x, h - 2 - v, 1, v);
+    }
+    g.globalAlpha = 1;
+    if (which === 'drums') {
+      const ticks = (list, col, y, hh) => {
+        g.fillStyle = col;
+        for (const b of list || []) {
+          const x = (b / fps) * pps;
+          if (x >= x0 - 1 && x <= x1) g.fillRect(x, y, 1, hh);
+        }
+      };
+      ticks(s.kicks, 'rgba(255,255,255,0.8)', 0, 7);
+      ticks(s.snares, 'rgba(255,214,90,0.85)', 8, 5);
+      ticks(s.hats, 'rgba(150,215,255,0.7)', 14, 3);
+    }
+  };
+  return html`<${ViewCanvas} scroller=${scroller} height=${H.stem} draw=${draw} deps=${[ana, pps]} />`;
+}
+
+// The audio lane's legend: the mix's bands or (the song separated) its instruments; a click switches
+function BandsLegend({ ana }) {
+  const view = useStore(bandsView);
+  const stems = view === 'stems' && ana && ana.stems;
+  const flip = () => {
+    const v = view === 'stems' ? 'mix' : 'stems';
+    bandsView.set(v);
+    try { localStorage.setItem('av.bands', v); } catch (e) { /* private */ }
+  };
+  const tip = ana && ana.stems ? t('Click: the mix\'s bands or the separated instruments') : t('Separate the song (Audio → Instruments) to see its instruments');
+  return html`<span class="legend clickable" title=${tip} onClick=${flip}>
+    ${stems ? html`
+      <span><i style="background:var(--stem-drums)"></i>${t('Drums')}</span>
+      <span><i style="background:var(--stem-bass)"></i>${t('Bass line')}</span>
+      <span><i style="background:var(--stem-vocals)"></i>${t('Vocals')}</span>
+      <span><i style="background:var(--stem-other)"></i>${t('The rest')}</span>`
+      : html`
+      <span><i style="background:var(--band-bass)"></i>${t('Bass')}</span>
+      <span><i style="background:var(--band-mid)"></i>${t('Mids')}</span>
+      <span><i style="background:var(--band-treble)"></i>${t('Treble')}</span>`}
+  </span>`;
+}
+
+export function Timeline(props) {
+  const openStems = useStore(stemsOpen);
+  const toggleStems = () => {
+    const v = !stemsOpen.get();
+    stemsOpen.set(v);
+    try { localStorage.setItem('av.stemsOpen', v ? '1' : '0'); } catch (e) { /* private */ }
+  };
+  return TimelineInner({ ...props, openStems, toggleStems });
+}
+
+function TimelineInner({ openStems, toggleStems,  proj, meta, ana, lyr, timeStore, slowTime, playing, sel, lineSel, onSeek, onSelect, onMoveSeg,
   onAddSeg, onSelectLine, onLyrics, onLyricsCommit, onMarker, height, setHeight, wordEdit,
   texts = [], onSelectText, onMoveText, onAddText, view = { hidden: [], collapsed: [] }, onToggleZone,
   kfFocus = null, setKfFocus = () => {}, kfSel = null, setKfSel = () => {}, onKeys, onContext, layers = [], onSelectLayer, onMoveClip, onAddClip, onAddLayer }) {
@@ -545,9 +634,20 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
       lane: html`<${Ruler} pps=${effPps} duration=${duration} scroller=${scroller} />` },
     { key: 'audio', h: H.audio, cls: 'sticky', top: H.ruler + 'px', on: sel.kind === 'audio', onDown: seekDrag,
       onCtx: (e) => onContext(e, { kind: 'time', at: snap(xToT(e.clientX), e) }),
-      name: html`<${Icon} name="audio-waveform" size=${14} /> ${t('Audio')}`,
+      name: html`<span class=${'tl-unfold' + (ana && ana.stems ? '' : ' off')}
+          title=${t(ana && ana.stems ? (openStems ? 'Fold the instruments' : 'Unfold the instruments') : 'Separate the song (Audio → Instruments) to see its instruments')}
+          onClick=${(e) => { e.stopPropagation(); if (ana && ana.stems) toggleStems(); }}><${Icon} name=${openStems && ana && ana.stems ? 'chevron-down' : 'chevron-right'} size=${13} /></span>
+        <${Icon} name="audio-waveform" size=${14} /> ${t('Audio')}`,
       lane: html`<${AudioLane} ana=${ana} pps=${effPps} scroller=${scroller} />` },
   ];
+  if (openStems && ana && ana.stems) {
+    for (const [k, label, color, icon] of STEM_LANES) {
+      rows.push({ key: 'stem-' + k, h: H.stem, cls: 'stemlane', onDown: seekDrag,
+        title: k === 'drums' ? t('Drums: white kick, yellow snare, blue hi-hats') : '',
+        name: html`<i class="stem-dot" style=${{ background: `var(${color})` }}></i> ${t(label)}`,
+        lane: html`<${StemLane} ana=${ana} which=${k} color=${color} pps=${effPps} scroller=${scroller} />` });
+    }
+  }
   for (const z of ZONES) {
     const nHidden = zoneEntries[z.id].filter((id) => hidden.has(id)).length;
     const isFolded = folded.has(z.id);
@@ -568,11 +668,7 @@ export function Timeline({ proj, meta, ana, lyr, timeStore, slowTime, playing, s
       <span class="hint">${t('Double-click a track: new segment · Drag to move (snaps; Alt = free) · Ctrl + wheel: zoom · Drag the ruler: scroll')}</span>
       <span class="spacer"></span>
       <${FocusChip} focus=${kfFocus} setFocus=${setKfFocus} />
-      <span class="legend">
-        <span><i style="background:var(--band-bass)"></i>${t('Bass')}</span>
-        <span><i style="background:var(--band-mid)"></i>${t('Mids')}</span>
-        <span><i style="background:var(--band-treble)"></i>${t('Treble')}</span>
-      </span>
+      <${BandsLegend} ana=${ana} />
       <button class="btn sm" title=${t('Marker at the cursor (M)')} onClick=${() => onMarker('add')}><${Icon} name="flag" size=${14} /> ${t('Marker')}</button>
       <div class="btngroup">
         <button class="btn sm icon" title=${t('Zoom out')} onClick=${() => zoomTo(effPps / 1.5)}><${Icon} name="zoom-out" size=${14} /></button>

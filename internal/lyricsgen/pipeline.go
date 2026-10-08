@@ -14,6 +14,7 @@ import (
 	"strings"
 	"unsafe"
 
+	"audioviz/internal/audio"
 	"audioviz/internal/progress"
 )
 
@@ -30,6 +31,11 @@ type Options struct {
 	Lyrics     string // plain-text lyrics (Suno format is accepted); empty = transcribe the audio
 	Lang       string
 	Separate   bool // separate the vocals before recognizing (more accurate, slower)
+	// The song's separated parts (audio.StemsDir): their vocals are used if they are there;
+	// otherwise the four parts are separated (the same work) and kept there, in full quality
+	// (StemsFull) or as mono for their analysis
+	StemsDir  string
+	StemsFull bool
 }
 
 type Result struct {
@@ -113,6 +119,13 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 	if opt.Separate && cachePath != "" {
 		vocals16 = loadF32(cachePath)
 	}
+	fromStems := false
+	if opt.Separate && vocals16 == nil && opt.StemsDir != "" && audio.StemsReady(opt.StemsDir) {
+		// the song is already separated: its vocals
+		if v, err := audio.LoadStem(filepath.Join(opt.StemsDir, "vocals.wav")); err == nil {
+			vocals16, fromStems = Resample(v, 1, audio.StemRate, 16000), true
+		}
+	}
 
 	// 1. Models (downloaded the first time)
 	t.Start("models", "Checking…")
@@ -168,8 +181,36 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 	case !opt.Separate:
 		t.End("separate", "skipped", "Fast mode: using the full mix")
 		vocals16 = mix16
+	case fromStems:
+		t.End("separate", "skipped", "Reused from the separated song")
 	case vocals16 != nil:
 		t.End("separate", "skipped", "Reused from the cache")
+	case opt.StemsDir != "":
+		// the four parts (the same work as the vocals alone), kept for the effects
+		t.Start("separate", "Demucs htdemucs · CPU · drums, bass, vocals and the rest")
+		err := SeparateStemsTo(ctx, DemucsModel.Path(), stereo44, opt.StemsFull, func(p float64) { t.Progress("separate", p, "") },
+			func(i int, x []float32) error {
+				ch := 1
+				if opt.StemsFull {
+					ch = 2
+				}
+				if StemNames[i] == "vocals" {
+					v := x
+					if ch == 2 {
+						v = ToMono(x)
+					}
+					vocals16 = Resample(v, 1, 44100, 16000)
+				}
+				return audio.SaveStem(filepath.Join(opt.StemsDir, StemNames[i]+".wav"), x, ch, 44100, opt.StemsFull)
+			})
+		if err != nil {
+			t.End("separate", "error", err.Error())
+			return nil, err
+		}
+		if cachePath != "" {
+			saveF32(cachePath, vocals16)
+		}
+		t.End("separate", "done", "")
 	default:
 		t.Start("separate", "Demucs htdemucs · CPU")
 		v44, err := SeparateVocals(ctx, DemucsModel.Path(), stereo44, func(p float64) { t.Progress("separate", p, "") })

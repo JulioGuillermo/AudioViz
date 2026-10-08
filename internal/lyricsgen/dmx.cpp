@@ -31,13 +31,16 @@ extern "C" void *dmx_load(const char *path, char *err, int errlen) {
 
 extern "C" void dmx_free(void *model) { delete static_cast<demucscpp::demucs_model *>(model); }
 
-extern "C" int dmx_vocals(void *model, const float *stereo, long n, int threads, float *out,
-                          float *progress, volatile int *cancel, char *err, int errlen) {
+// separate: the stems' audio blended across the threads' chunks. all: the four stems (model
+// order), else the vocals only; mono: each as (L+R)/2 (n samples), else stereo interleaved (2n).
+static int separate(void *model, const float *stereo, long n, int threads, float *out, bool all, bool mono,
+                    float *progress, volatile int *cancel, char *err, int errlen) {
     auto *m = static_cast<demucscpp::demucs_model *>(model);
     threads = std::max(1, std::min(threads, (int)(n / (SR * 10)) + 1));
     long seg = (n + threads - 1) / threads;
     const int vocals = 3; // drums, bass, other, vocals
-    std::vector<Eigen::MatrixXf> outs(threads);
+    const int nst = all ? 4 : 1, nch = mono ? 1 : 2;
+    std::vector<Eigen::MatrixXf> outs(threads); // rows: stem × channel
     std::vector<long> starts(threads), lens(threads);
     std::atomic<int> failed{0};
     std::string firstErr;
@@ -61,10 +64,17 @@ extern "C" int dmx_vocals(void *model, const float *stereo, long n, int threads,
                     if (*cancel) throw Cancelled();
                 };
                 Eigen::Tensor3dXf r = demucscpp::demucs_inference(*m, audio, cb);
-                Eigen::MatrixXf v(2, b - a);
+                Eigen::MatrixXf v(nst * nch, b - a);
                 for (long i = 0; i < b - a; i++) {
-                    v(0, i) = r(vocals, 0, i);
-                    v(1, i) = r(vocals, 1, i);
+                    for (int k = 0; k < nst; k++) {
+                        int st = all ? k : vocals;
+                        if (mono) {
+                            v(k, i) = 0.5f * (r(st, 0, i) + r(st, 1, i));
+                        } else {
+                            v(2 * k, i) = r(st, 0, i);
+                            v(2 * k + 1, i) = r(st, 1, i);
+                        }
+                    }
                 }
                 outs[t] = std::move(v);
                 progress[t] = 1;
@@ -86,8 +96,9 @@ extern "C" int dmx_vocals(void *model, const float *stereo, long n, int threads,
     }
 
     // Blend with linear ramps in the overlap regions
+    const long rows = nst * nch;
     std::vector<float> wsum(n, 0.0f);
-    std::memset(out, 0, sizeof(float) * 2 * n);
+    std::memset(out, 0, sizeof(float) * rows * n);
     for (int t = 0; t < threads; t++) {
         long a = starts[t], len = lens[t];
         for (long i = 0; i < len; i++) {
@@ -95,16 +106,42 @@ extern "C" int dmx_vocals(void *model, const float *stereo, long n, int threads,
             if (a > 0 && i < 2 * OVERLAP) w = std::min(w, (i + 1) / float(2 * OVERLAP));
             if (a + len < n && len - i <= 2 * OVERLAP) w = std::min(w, (len - i) / float(2 * OVERLAP));
             long g = a + i;
-            out[2 * g] += outs[t](0, i) * w;
-            out[2 * g + 1] += outs[t](1, i) * w;
+            for (int k = 0; k < nst; k++) {
+                if (mono) {
+                    out[k * n + g] += outs[t](k, i) * w;
+                } else {
+                    out[k * 2 * n + 2 * g] += outs[t](2 * k, i) * w;
+                    out[k * 2 * n + 2 * g + 1] += outs[t](2 * k + 1, i) * w;
+                }
+            }
             wsum[g] += w;
         }
     }
     for (long g = 0; g < n; g++) {
-        if (wsum[g] > 0) {
-            out[2 * g] /= wsum[g];
-            out[2 * g + 1] /= wsum[g];
+        if (wsum[g] <= 0) continue;
+        for (int k = 0; k < nst; k++) {
+            if (mono) {
+                out[k * n + g] /= wsum[g];
+            } else {
+                out[k * 2 * n + 2 * g] /= wsum[g];
+                out[k * 2 * n + 2 * g + 1] /= wsum[g];
+            }
         }
     }
     return 0;
+}
+
+extern "C" int dmx_vocals(void *model, const float *stereo, long n, int threads, float *out,
+                          float *progress, volatile int *cancel, char *err, int errlen) {
+    return separate(model, stereo, n, threads, out, false, false, progress, cancel, err, errlen);
+}
+
+extern "C" int dmx_stems_mono(void *model, const float *stereo, long n, int threads, float *out,
+                              float *progress, volatile int *cancel, char *err, int errlen) {
+    return separate(model, stereo, n, threads, out, true, true, progress, cancel, err, errlen);
+}
+
+extern "C" int dmx_stems_stereo(void *model, const float *stereo, long n, int threads, float *out,
+                                float *progress, volatile int *cancel, char *err, int errlen) {
+    return separate(model, stereo, n, threads, out, true, false, progress, cancel, err, errlen);
 }

@@ -10,9 +10,37 @@ Almost every effect and every particle layer accepts `react_to`:
 | `treble` | `high`, `highs`, `agudos` | 3–16 kHz (cymbals, brightness) |
 | `overall` | `rms`, `volume` | Overall volume |
 | `transient` | `flux` | Sudden rises in the bass (attacks) |
-| `beat` | `kick` | Detected beat pulse: 1 on the beat, then decays |
+| `beat` | — | Detected beat pulse: 1 on the beat, then decays |
 
 All of them range from 0 to 1.
+
+### The song separated into its instruments
+
+In the studio, **Audio → Instruments → Separate the song** splits it with Demucs (on the CPU, a few
+minutes, once per song; the model is the same as the lyrics' and is downloaded the first time) into
+drums, bass, vocals and the rest, kept as WAV files in the project's `cache/stems/<song>/`
+(`drums.wav`, `bass.wav`, `other.wav`, `vocals.wav`): mono at 22 kHz, enough for the effects, or with
+**Keep the parts in full quality** (`audio.stems_full: true`) stereo at 44.1 kHz, to listen to them or
+use them elsewhere (**Open the folder**). Generating the lyrics uses the separated vocals when they
+are there, and otherwise separates the four parts on its way (the same work) and keeps them. Then
+these sources follow one instrument only, without the others getting in:
+
+| Value | Aliases | Meaning |
+|---|---|---|
+| `drums` | — | The drums' energy |
+| `kick` | — | A pulse at each kick (the drums' low hits), fading in 0.15 s |
+| `snare` | — | A pulse at each snare hit (the drums' middle), fading in 0.12 s |
+| `hats` | `hihat` | A pulse at each hi-hat / cymbal hit (the drums' highs), fading in 0.06 s |
+| `bassline` | — | The bass line's energy |
+| `vocals` | `voice` | The vocals' energy |
+| `instruments` | `other` | The rest (guitars, synths, keys...) |
+
+Each energy is rescaled to the instrument's own loud moments within ±`normalize_window` seconds
+(silence stays silent); a hit is a sudden rise above the rises around it, at least 70 ms apart.
+Until the song is separated they use the closest thing in the mix (`kick` the beat, `vocals` the
+mids, `drums` and `snare` the transients, `hats` the treble, `bassline` the bass, `instruments` the
+volume), so a project works either way. Rendering from the command line uses the stems if they are
+in the cache.
 
 Example assignment:
 ```yaml

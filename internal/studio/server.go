@@ -123,6 +123,9 @@ func Run(opt Options, ready func(url string)) error {
 	mux.HandleFunc("DELETE /api/images", s.hDeleteImage)
 	mux.HandleFunc("POST /api/job/cancel", s.hCancel)
 	mux.HandleFunc("POST /api/depth", s.hDepth)
+	mux.HandleFunc("POST /api/stems", s.hStems)
+	mux.HandleFunc("GET /api/stems", s.hStemsState)
+	mux.HandleFunc("POST /api/stems/open", s.hStemsOpen)
 	mux.HandleFunc("GET /api/depth/view", s.hDepthView)
 	mux.HandleFunc("GET /api/events", s.hub.serve)
 
@@ -391,8 +394,30 @@ func (s *Server) hAnalysis(w http.ResponseWriter, r *http.Request) {
 			wave[c] = math.Min(pk/2, 1)
 		}
 	}
-	writeJSON(w, map[string]any{"fps": sess.FPS, "frames": n, "bass": b64u8(bass), "mid": b64u8(mid),
-		"treble": b64u8(tre), "rms": b64u8(rms), "wave": b64u8(wave), "beats": beats})
+	res := map[string]any{"fps": sess.FPS, "frames": n, "bass": b64u8(bass), "mid": b64u8(mid),
+		"treble": b64u8(tre), "rms": b64u8(rms), "wave": b64u8(wave), "beats": beats}
+	if n > 0 && feats[0].Stem != nil {
+		// the separated song: each instrument's energy, and the frames of the kick's and the
+		// snare's hits (where their pulse jumps)
+		dr, ba, vo, ot := make([]float64, n), make([]float64, n), make([]float64, n), make([]float64, n)
+		kicks, snares, hats := []int{}, []int{}, []int{}
+		for i, f := range feats {
+			st := f.Stem
+			dr[i], ba[i], vo[i], ot[i] = math.Min(st.Drums, 1), math.Min(st.Bass, 1), math.Min(st.Vocals, 1), math.Min(st.Other, 1)
+			if i > 0 && st.Kick-feats[i-1].Stem.Kick > 0.3 {
+				kicks = append(kicks, i)
+			}
+			if i > 0 && st.Snare-feats[i-1].Stem.Snare > 0.3 {
+				snares = append(snares, i)
+			}
+			if i > 0 && st.Hats-feats[i-1].Stem.Hats > 0.3 {
+				hats = append(hats, i)
+			}
+		}
+		res["stems"] = map[string]any{"drums": b64u8(dr), "bassline": b64u8(ba), "vocals": b64u8(vo), "other": b64u8(ot),
+			"kicks": kicks, "snares": snares, "hats": hats}
+	}
+	writeJSON(w, res)
 }
 
 type wordJSON struct {
@@ -1072,7 +1097,7 @@ func (s *Server) hGenLyrics(w http.ResponseWriter, r *http.Request) {
 			stereo[i] = float32(v) * sc
 		}
 		res, err := lyricsgen.Generate(ctx, lyricsgen.Options{Stereo: stereo, SampleRate: d.SampleRate, AudioKey: key,
-			Lyrics: string(txt), Lang: req.Lang, Separate: !req.Fast}, func(st lyricsgen.Status) {
+			Lyrics: string(txt), Lang: req.Lang, Separate: !req.Fast, StemsDir: sess.StemsDir(), StemsFull: cfg.Audio.StemsFull}, func(st lyricsgen.Status) {
 			j.mu.Lock()
 			j.Gen = &st
 			j.Progress = st.Progress
@@ -1087,6 +1112,7 @@ func (s *Server) hGenLyrics(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
+		sess.ReloadStems() // the song may have been separated on the way
 		// If lyrics already existed, keep a backup copy
 		if _, err := os.Stat(out); err == nil {
 			_ = os.Rename(out, strings.TrimSuffix(out, ".lrc")+time.Now().Format("-20060102-150405")+".lrc")

@@ -26,19 +26,67 @@ import (
 // SeparateVocals extracts the vocals from an interleaved stereo song at 44.1 kHz with Demucs (htdemucs).
 // progress receives 0..1.
 func SeparateVocals(ctx context.Context, modelPath string, stereo44 []float32, progress func(float64)) ([]float32, error) {
+	var res []float32
+	err := separate(ctx, modelPath, stereo44, sepVocals, progress, func(x []float32) error {
+		res = append([]float32(nil), x...)
+		return nil
+	})
+	return res, err
+}
+
+// StemNames: the four parts Demucs separates, in its order
+var StemNames = [4]string{"drums", "bass", "other", "vocals"}
+
+// SeparateStemsTo separates the four stems (StemNames) of an interleaved stereo song at 44.1 kHz
+// and gives each to save while it is in memory (only during the call): mono (n samples) or
+// stereo (2n, interleaved), at 44.1 kHz. progress receives 0..1.
+func SeparateStemsTo(ctx context.Context, modelPath string, stereo44 []float32, stereo bool, progress func(float64),
+	save func(i int, x []float32) error) error {
+	mode, ch := sepMono, 1
+	if stereo {
+		mode, ch = sepStereo, 2
+	}
+	n := len(stereo44) / 2
+	return separate(ctx, modelPath, stereo44, mode, progress, func(all []float32) error {
+		for i := range StemNames {
+			if err := save(i, all[i*ch*n:(i+1)*ch*n]); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// what separate gives: the vocals in stereo, or the four stems, mono or stereo
+const (
+	sepVocals = iota
+	sepMono
+	sepStereo
+)
+
+// separate runs Demucs (sepVocals: the vocals in stereo, 2n samples; sepMono: the four stems mono,
+// 4n; sepStereo: the four in stereo, 8n) and gives the result to use while it is in C memory
+func separate(ctx context.Context, modelPath string, stereo44 []float32, mode int, progress func(float64), use func([]float32) error) error {
 	cp := C.CString(modelPath)
 	defer C.free(unsafe.Pointer(cp))
 	errBuf := (*C.char)(C.calloc(512, 1))
 	defer C.free(unsafe.Pointer(errBuf))
 	model := C.dmx_load(cp, errBuf, 512)
 	if model == nil {
-		return nil, errors.New(C.GoString(errBuf))
+		return errors.New(C.GoString(errBuf))
 	}
 	defer C.dmx_free(model)
 
 	n := len(stereo44) / 2
+	outLen := 2 * n
+	switch mode {
+	case sepMono:
+		outLen = 4 * n
+	case sepStereo:
+		outLen = 8 * n
+	}
 	in := (*C.float)(C.malloc(C.size_t(len(stereo44) * 4)))
-	out := (*C.float)(C.malloc(C.size_t(len(stereo44) * 4)))
+	out := (*C.float)(C.malloc(C.size_t(outLen * 4)))
 	defer C.free(unsafe.Pointer(in))
 	defer C.free(unsafe.Pointer(out))
 	copy(unsafe.Slice((*float32)(unsafe.Pointer(in)), len(stereo44)), stereo44)
@@ -53,7 +101,14 @@ func SeparateVocals(ctx context.Context, modelPath string, stereo44 []float32, p
 	done := make(chan C.int, 1)
 	go func() {
 		runtime.LockOSThread()
-		done <- C.dmx_vocals(model, in, C.long(n), C.int(threads), out, prog, cancel, errBuf, 512)
+		switch mode {
+		case sepMono:
+			done <- C.dmx_stems_mono(model, in, C.long(n), C.int(threads), out, prog, cancel, errBuf, 512)
+		case sepStereo:
+			done <- C.dmx_stems_stereo(model, in, C.long(n), C.int(threads), out, prog, cancel, errBuf, 512)
+		default:
+			done <- C.dmx_vocals(model, in, C.long(n), C.int(threads), out, prog, cancel, errBuf, 512)
+		}
 	}()
 	tick := time.NewTicker(250 * time.Millisecond)
 	defer tick.Stop()
@@ -79,12 +134,10 @@ loop:
 		}
 	}
 	if ctx.Err() != nil {
-		return nil, ctx.Err()
+		return ctx.Err()
 	}
 	if ret != 0 {
-		return nil, fmt.Errorf("%s", C.GoString(errBuf))
+		return fmt.Errorf("%s", C.GoString(errBuf))
 	}
-	res := make([]float32, len(stereo44))
-	copy(res, unsafe.Slice((*float32)(unsafe.Pointer(out)), len(stereo44)))
-	return res, nil
+	return use(unsafe.Slice((*float32)(unsafe.Pointer(out)), outLen))
 }

@@ -41,6 +41,8 @@ type Session struct {
 	masks      map[string]maskEntry
 	emitTabs   map[string]*emitTable  // births of the emitter clips (emitters.go)
 	textPts    map[string][]float32   // points on the letters of the texts emitters are born on
+	stems      []audio.StemFrame      // the separated song per frame (stems.go), nil until separated
+	stemsKey   string
 	depths     map[string]*depthEntry // depth maps of the backgrounds, fitted to the frame (depth.go)
 	maskSeq    int
 	lyr        *lyrics.Multi
@@ -154,6 +156,7 @@ func (s *Session) Update(cfg *config.ProjectConfig) error {
 	if _, err := s.featuresLocked(s.baseKey); err != nil {
 		return err
 	}
+	s.loadStemsLocked()
 
 	// Lyrics: rebuilt only if their track changes
 	lk := ""
@@ -211,6 +214,7 @@ func (s *Session) featuresLocked(k anaKey) ([]audio.FrameFeatures, error) {
 	an.Normalize = k.normalize
 	an.WindowSec = k.window
 	f := an.AnalyzeAllFrames(s.Frames)
+	s.attachStems(f)
 	s.feats[k] = f
 	s.Logf("⚡ Analysis (%d bands, %d frames) in %v", k.bars, s.Frames, time.Since(t0).Round(time.Millisecond))
 	return f, nil

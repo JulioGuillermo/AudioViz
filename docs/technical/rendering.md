@@ -399,6 +399,14 @@ A text bent along its path (`Motion.Bend`) is laid out letter by letter in one r
 (`buildEngine` letters) and each letter is placed at s0 + its x along the sampled path, its y across
 it, turned with its tangent (`Multi.Frame`); up to 256 text pieces per frame.
 
+Stems (`audio/stems.go`, `engine/stems.go`, `studio/stems.go`): `dmx_stems_mono` runs htdemucs on
+overlapping chunks per thread and returns the four stems as mono mixes; they are saved at 22 050 Hz
+16-bit (`cache/stems/<song hash>/`). The session analyzes them once (`AnalyzeStems`: per-frame RMS
+against a sliding maximum of ±window with a floor from the song's 95th percentile, held with a
+0.85 decay; the drums split by one-pole filters at 120 Hz, 200–2500 Hz and 6 kHz, their rises
+above 1.8 × the mean rise of ±0.5 s plus 0.04 make pulses) and points every frame of every
+analysis at its `StemFrame` (`FrameFeatures.Stem`), read by `Band`.
+
 The zoom's `depth` share becomes the camera's dolly (focus at the back when the parallax is off).
 Texts and lyrics with a depth (`LyricsConfig.Depth`; `Session.textsInDepth`): their place is a
 fixed text's anchor or the middle of the lyrics' words now; the style gets `TStyle.depth` (behind,

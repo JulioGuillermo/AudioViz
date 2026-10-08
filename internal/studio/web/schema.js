@@ -5,9 +5,13 @@
 export const BANDS = [
   ['bass', 'Bass'], ['mid', 'Mids'], ['treble', 'Treble'],
   ['overall', 'Volume'], ['transient', 'Transients'], ['beat', 'Beats'],
+  // the song separated into its instruments (Audio → Instruments); before that, the closest from the mix
+  ['drums', 'Drums · separated'], ['kick', 'Kick (hits) · separated'], ['snare', 'Snare (hits) · separated'],
+  ['hats', 'Hi-hats (hits) · separated'], ['bassline', 'Bass line · separated'], ['vocals', 'Vocals · separated'],
+  ['instruments', 'The rest · separated'],
 ];
 const react = (def = 'bass') => ({ key: 'react_to', label: 'Reacts to', type: 'enum', options: BANDS, def,
-  help: 'Frequency band that drives the effect' });
+  help: 'What drives it: a band of the whole song, or one instrument of the separated song (Audio → Instruments; until it is separated, the closest from the mix)' });
 
 // A section groups fields of the same object under a title (folded until opened)
 const sec = (key, label, fields) => ({ key: 'sec_' + key, label, type: 'section', fields });

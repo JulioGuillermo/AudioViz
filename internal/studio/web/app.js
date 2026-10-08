@@ -11,6 +11,7 @@ import { Editor } from './editor.js';
 import { maskShapes, setMaskShapes, MaskSection, segMaskOwner, editSegMasks } from './masks.js';
 import { MotionSection, setPath } from './motion.js';
 import { DepthSection } from './depth.js';
+import { StemsSection } from './stems.js';
 import { isEmitterLayer, newEmitterClip, emitterMenuItems, EmitterHandles } from './emitters.js';
 import { ContextMenu, openMenu } from './menu.js';
 import { LayerInspector, ClipHandles, TextHandles, textBoxOf, geoOf, frontFirst, layerName, newLayerId, setClipProps, duplicateClip } from './layers.js';
@@ -584,7 +585,9 @@ function App() {
   const loadAna = async () => {
     try {
       const a = await api('GET', '/api/analysis');
-      setAna({ ...a, bass: b64u8(a.bass), mid: b64u8(a.mid), treble: b64u8(a.treble), rms: b64u8(a.rms), wave: b64u8(a.wave) });
+      const st = a.stems && { ...a.stems, drums: b64u8(a.stems.drums), bassline: b64u8(a.stems.bassline),
+        vocals: b64u8(a.stems.vocals), other: b64u8(a.stems.other) };
+      setAna({ ...a, bass: b64u8(a.bass), mid: b64u8(a.mid), treble: b64u8(a.treble), rms: b64u8(a.rms), wave: b64u8(a.wave), stems: st });
     } catch (e) { showErr(e); }
   };
   const loadLyrics = async () => {
@@ -745,6 +748,7 @@ function App() {
     kfFocus, setKfFocus, kfSel, setKfSel,
     dialog: setDlg,
     pickFile: (kind, cb, start) => setPick({ kind, cb, start }),
+    reloadAna: () => loadAna(),
     openProject: async (p) => { try { await api('POST', '/api/project/open', { path: p }); await loadAll(); } catch (e) { showErr(e); } },
     importPackage: async (f) => { try { await uploadPackage(f); await loadAll(); } catch (e) { showErr(e); } },
     setAudio: (path) => update((p) => { p.audio.path = path; }),
@@ -1334,7 +1338,8 @@ function App() {
   const burnSel = selBg && sel.seg > 0 && selBg.transition.mode === 'burn' && (selBg.transition.burn || {}).origins === 'points' ? selBg.transition.burn : null;
   let inspector;
   if (sel.kind === 'audio') inspector = html`<div><div class="insp-h"><div class="insp-title"><${Icon} name="music" size=${16} cls="muted" />${t('Audio')}<span class="sub">${t('Project')}</span></div></div><div class="insp-b">
-      <${Form} fields=${AUDIO_FIELDS} value=${proj.audio} onChange=${(v) => update((p) => { p.audio = v; })} ctx=${ctx} /></div></div>`;
+      <${Form} fields=${AUDIO_FIELDS} value=${proj.audio} onChange=${(v) => update((p) => { p.audio = v; })} ctx=${ctx} />
+      <${StemsSection} ctx=${ctx} hasAudio=${meta.hasAudio} audio=${proj.audio} onAudio=${(v) => update((p) => { p.audio = v; })} /></div></div>`;
   else if (sel.kind === 'output') inspector = html`<div><div class="insp-h"><div class="insp-title"><${Icon} name="monitor" size=${16} cls="muted" />${t('Output')}<span class="sub">${t('Project')}</span></div></div><div class="insp-b">
       <${Form} fields=${OUTPUT_FIELDS} value=${proj.output} onChange=${(v) => update((p) => { p.output = v; })} ctx=${ctx} />
       <p class="faint" style="font-size:12px">${t('Current resolution')}: ${meta.width}×${meta.height} · ${meta.fps} fps · ${fmtTime(meta.duration)}</p></div></div>`;
@@ -1359,7 +1364,7 @@ function App() {
       <span class="projname" title=${meta.path}>${meta.name}</span>
       <span class=${'save' + (save.kind === 'error' ? ' err' : '')}>${saveText && html`<${Icon} name=${save.kind === 'error' ? 'triangle-alert' : save.kind === 'saving' ? 'loader-circle' : 'check'} size=${13} />`}${saveText}</span>
       <span class="spacer"></span>
-      ${job && html`<div class="jobbar" title=${job.message} onClick=${() => job.kind !== 'depth' && setDlg({ type: { lyrics: 'genlyrics', image: 'images' }[job.kind] || 'export' })}>
+      ${job && html`<div class="jobbar" title=${job.message} onClick=${() => job.kind !== 'depth' && job.kind !== 'stems' && setDlg({ type: { lyrics: 'genlyrics', image: 'images' }[job.kind] || 'export' })}>
         <${Icon} name=${job.status === 'running' ? (job.kind === 'export' ? 'film' : 'wand-sparkles') : job.status === 'done' ? 'check' : 'triangle-alert'} size=${14}
           cls=${{ done: 'st-ok', error: 'st-err', canceled: 'st-warn' }[job.status] || 'muted'} />
         <div class="progress"><i style=${{ width: (job.progress * 100).toFixed(1) + '%' }}></i></div>

@@ -29,6 +29,9 @@ type FrameFeatures struct {
 	SpectralFlux float64 // Sudden change in spectral energy
 	IsBeat       bool    // Drum hit / strong transient trigger
 	BeatPulse    float64 // Damped hit pulse (1.0 at peak, decays to 0.0)
+
+	// The song separated into its instruments at this frame (nil until it is separated)
+	Stem *StemFrame
 }
 
 // AudioAnalyzer processes successive frames, keeping temporal smoothing state

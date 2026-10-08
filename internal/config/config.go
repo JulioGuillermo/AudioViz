@@ -47,6 +47,9 @@ type AudioConfig struct {
 	// so they don't stay saturated (or dead) when a band is always high/low.
 	Normalize       bool    `yaml:"normalize"`
 	NormalizeWindow float64 `yaml:"normalize_window"` // seconds on each side of the window (def. 4)
+	// The song separated into its instruments: keep the parts in full quality (stereo 44.1 kHz,
+	// to listen to them or use them elsewhere) instead of as mono for their analysis
+	StemsFull bool `yaml:"stems_full,omitempty"`
 }
 
 type BackgroundConfig struct {
