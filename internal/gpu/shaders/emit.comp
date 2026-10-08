@@ -89,6 +89,22 @@ vec4 pathPoint(int o, int n, float L, bool closed, float s) {
     return vec4(pa + (pb - pa) * f, (pb - pa) / dl);
 }
 
+// what they go round: the signed distance (px, < 0 inside) at p, bilinear on the grid at word o
+// (gw×gh cells of dv px); a particle inside comes out at the surface, losing the speed that went
+// in (as EmitParams.collide)
+float sdfAt(int o, int gw, int gh, float dv, vec2 p) {
+    vec2 q = p / dv - 0.5;
+    ivec2 i0 = ivec2(floor(q));
+    vec2 f = q - vec2(i0);
+    float v[4];
+    for (int k = 0; k < 4; k++) {
+        ivec2 c = clamp(i0 + ivec2(k & 1, k >> 1), ivec2(0), ivec2(gw - 1, gh - 1));
+        v[k] = edf(o + c.y * gw + c.x);
+    }
+    float a = v[0] + (v[1] - v[0]) * f.x, b = v[2] + (v[3] - v[2]) * f.x;
+    return a + (b - a) * f.y;
+}
+
 void splatPhase() {
     int j = int(gl_GlobalInvocationID.x);
     int e = -1, i = 0;
@@ -230,6 +246,23 @@ void splatPhase() {
     if (col.a <= 0.0) return;
 
     vec2 pos = vec2(x0, y0) + dp;
+    int cgw = int(ed[h + 81]);
+    if (cgw > 0) {
+        int co = int(ed[h + 80]), cgh = int(ed[h + 82]);
+        float cd = float(ed[h + 83]);
+        float dd = sdfAt(co, cgw, cgh, cd, pos);
+        if (dd < 0.0) {
+            vec2 g = vec2(sdfAt(co, cgw, cgh, cd, pos + vec2(cd, 0.0)) - sdfAt(co, cgw, cgh, cd, pos - vec2(cd, 0.0)),
+                          sdfAt(co, cgw, cgh, cd, pos + vec2(0.0, cd)) - sdfAt(co, cgw, cgh, cd, pos - vec2(0.0, cd)));
+            float gl = length(g);
+            if (gl >= 1e-6) {
+                vec2 n = g / gl;
+                pos += n * (0.5 - dd);
+                float vn = dot(vel, n);
+                if (vn < 0.0) vel -= n * vn;
+            }
+        }
+    }
     float r = size * 0.5;
     float tiny = r >= 0.7 ? 1.0 : (r * r) / (0.7 * 0.7);
     if (r < 0.7) r = 0.7;

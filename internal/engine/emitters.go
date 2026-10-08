@@ -117,23 +117,6 @@ func (s *Session) textPoints(i int, fill bool) []float32 {
 	return pts
 }
 
-// pathSamples: a motion path as points along it with the length so far (x, y, px), its length
-func pathSamples(sh *config.MaskShape, W, H float64) ([]float32, float32) {
-	const n = effects.MaxPathSamples
-	out := make([]float32, 0, n*3)
-	var L float64
-	var px, py float64
-	for i := 0; i < n; i++ {
-		x, y, _ := effects.PathAt(sh, W, H, float64(i)/float64(n-1))
-		if i > 0 {
-			L += math.Hypot(x-px, y-py)
-		}
-		px, py = x, y
-		out = append(out, float32(x), float32(y), float32(L))
-	}
-	return out, float32(L)
-}
-
 // emitTableFor builds (or reuses) the table of births of a clip
 func (s *Session) emitTableFor(li, ci int, c0 *config.ClipConfig, feats []audio.FrameFeatures) *emitTable {
 	b, _ := yaml.Marshal(c0)
@@ -258,7 +241,7 @@ func (s *Session) emitFrame(li, ci int, c0, c *config.ClipConfig, idx int, feats
 	}
 	if e.FollowPath && c.Motion.On() {
 		p.Follow = true
-		p.Path, p.PathLen = pathSamples(c.Motion.Path, float64(s.W), float64(s.H))
+		p.Path, p.PathLen = effects.SamplePath(c.Motion.Path, float64(s.W), float64(s.H))
 		p.PathClosed = !c.Motion.Path.Open
 	}
 	if e.Floor > 0 || e.FloorDepth {

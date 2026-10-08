@@ -467,7 +467,7 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
     { key: 'turbulence', label: 'Turbulence (px)', type: 'num', min: 0, max: 400, step: 1 },
     { key: 'turb_freq', label: 'Turbulence speed (Hz)', type: 'num', min: 0, max: 8, step: 0.05 },
   ] },
-  { key: 'floorsec', label: 'Floor (bounces)', type: 'section', fields: [
+  { key: 'floorsec', label: 'Floor and the scene', type: 'section', fields: [
     { key: 'floor', label: 'Floor below it (px)', type: 'num', min: 0, max: 3000, step: 1, def: 0,
       help: '0 = none. With gravity they fall onto it and bounce' },
     { key: 'floor_depth', label: 'The scene\'s floor', type: 'bool', anim: false,
@@ -475,6 +475,10 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
     { key: 'bounce', label: 'Bounce', type: 'num', min: 0, max: 0.95, step: 0.01, def: 0.5, showIf: (c) => c.floor > 0 || c.floor_depth,
       help: 'How much of their speed they keep at each bounce' },
     { key: 'friction', label: 'Sideways speed kept', type: 'num', min: 0, max: 1, step: 0.01, def: 0.7, showIf: (c) => c.floor > 0 || c.floor_depth },
+    { key: 'collide', label: 'They go round the scene', type: 'bool', anim: false,
+      help: 'With a depth map: what is in the scene at their depth is solid: they slide off it (what is nearer hides them, what is farther is behind)' },
+    { key: 'collide_band', label: 'Solid within (depth)', type: 'num', min: 0.005, max: 0.5, step: 0.005, def: 0.06, showIf: (c) => c.collide,
+      help: 'How far in depth from the emitter something counts as solid: more = thicker things' },
   ] },
   { key: 'lifesize', label: 'Life and size', type: 'section', fields: [
     { key: 'life', label: 'Life (s)', type: 'num', min: 0.05, max: 30, step: 0.05 },

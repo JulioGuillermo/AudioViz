@@ -120,6 +120,33 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx f
 				}
 				z, ok := clipDepth(&c.Depth, scene, ox, oy)
 				s.placeInDepth(&lf, &c.Depth, scene, z, ox, oy, ok)
+				if e := c.Emitter; e != nil && e.Collide && scene.On() {
+					// what they go round: the scene at their depth (within the band), but where
+					// they are born
+					zc := z
+					if !ok {
+						zc = float64(scene.Ground(float32(ox), float32(oy)))
+					}
+					band := e.CollideBand
+					if band <= 0 {
+						band = 0.06
+					}
+					sc := s.emitScale() * math.Max(c.Scale, 0.01)
+					free := math.Max(e.Width, e.Height)*sc/2 + 24*s.emitScale()
+					div := effects.CollideDiv(s.W, s.H)
+					gw, gh := (s.W+div-1)/div, (s.H+div-1)/div
+					solid := make([]bool, gw*gh)
+					for cy := 0; cy < gh; cy++ {
+						for cx := 0; cx < gw; cx++ {
+							x, y := (float64(cx)+0.5)*float64(div), (float64(cy)+0.5)*float64(div)
+							if math.Hypot(x-ox, y-oy) < free {
+								continue
+							}
+							solid[cy*gw+cx] = math.Abs(float64(scene.At(float32(x), float32(y)))-zc) < band
+						}
+					}
+					ef.P.CSDF, ef.P.CGW, ef.P.CGH, ef.P.CDiv = effects.CollideField(solid, gw, gh, div), gw, gh, div
+				}
 				if e := c.Emitter; e != nil && e.FloorDepth && scene.On() {
 					// the scene's floor: below the emitter, where the depth comes up to its own
 					zf := z

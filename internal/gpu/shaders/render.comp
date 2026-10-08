@@ -27,7 +27,7 @@ vec3 gHit = vec3(0.0);
 
 // Per-tile (workgroup) lists: particles and words that may touch the tile
 const int TILE_PARTS = 512;
-const int TILE_TEXT = 48;
+const int TILE_TEXT = 96;
 shared int sPart[TILE_PARTS];
 shared int sPartN;
 shared int sText[TILE_TEXT];

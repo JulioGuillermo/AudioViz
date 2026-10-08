@@ -72,7 +72,7 @@ const (
 	EmitHeaderWords  = 128
 	EmitBirthWords   = 10
 	MaxEmitBirths    = 4096 // births per emitter (older ones are left out)
-	EmitExtraWords   = 4096*2 + 256*3
+	EmitExtraWords   = 4096*2 + 256*3 + 240*240 // text points, path samples, collision grid
 )
 
 // EmitDataWords: size of the emitter data buffer for n emitters
@@ -86,7 +86,7 @@ const (
 	MaxBars   = 256
 	MaxParts  = 1024
 
-	MaxTextItems  = 96
+	MaxTextItems  = 256
 	MaxTextStyles = 8
 	// texts lighting the scene at once, and the cells of each one's light (at most 60×60, in vec4s)
 	MaxTextLights = 2

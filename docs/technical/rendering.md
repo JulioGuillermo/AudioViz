@@ -386,6 +386,14 @@ its shape offset, plus the forces; the *floor* (y px: below the emitter, or wher
 below it reaches its own) is met by halving on the closed-form motion, then bounces in closed form
 (flights of 2v/g, v × bounce each time; sideways speed × friction); look *smoke* resolves the soft
 sums at a point moved by rising fbm noise and multiplies the alpha by a finer fbm (wisps).
+*Collide* (with depth): each frame, cells of `CollideDiv` px (at most 240 a side) are solid where
+the scene's depth is within the band of the emitter's (but around its origin), a signed distance
+is made of them by two chamfer passes each way (`CollideField`), and a particle at a negative
+distance is moved out along its gradient to the surface, its inward speed taken off (`collide`;
+`sdfAt` in emit.comp), after the motion and the turbulence.
+A text bent along its path (`Motion.Bend`) is laid out letter by letter in one row
+(`buildEngine` letters) and each letter is placed at s0 + its x along the sampled path, its y across
+it, turned with its tangent (`Multi.Frame`); up to 256 text pieces per frame.
 
 The zoom's `depth` share becomes the camera's dolly (focus at the back when the parallax is off).
 Texts and lyrics with a depth (`LyricsConfig.Depth`; `Session.textsInDepth`): their place is a

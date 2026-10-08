@@ -12,6 +12,11 @@ export const MOTION_FIELDS = [
     help: '0 = start, 1 = end (a closed path goes round again past 1). Key it: the curves give the motion.' },
   { key: 'orient', label: 'Turn with the path', type: 'bool', anim: false, help: 'Its rotation follows the direction of the path' },
 ];
+// a fixed text can also bend its letters along the path
+const TEXT_MOTION_FIELDS = [...MOTION_FIELDS,
+  { key: 'bend', label: 'Bend along the path', type: 'bool', anim: false,
+    help: 'Its letters follow the shape of the path, each turned with it (the progress places its middle)' },
+];
 
 const hasPath = (o) => !!(o && o.motion && o.motion.path && (o.motion.path.points || []).length >= 2);
 
@@ -53,7 +58,7 @@ export function MotionSection({ obj, kf, ctx, edit, what = 'clip' }) {
     ${!on && html`<p class="faint" style="margin:2px 0 8px;font-size:12px">${t(what === 'text'
       ? 'The text can travel along a path drawn on the screen: draw it in the editor, then key its progress (it goes from start to end over the text\'s time).'
       : 'The clip can travel along a path drawn on the screen: draw it in the editor, then key its progress (it goes from start to end over the clip\'s time).')}</p>`}
-    ${on && html`<${Form} fields=${MOTION_FIELDS} value=${obj.motion} ctx=${ctx} kf=${kf} prefix="motion"
+    ${on && html`<${Form} fields=${what === 'text' ? TEXT_MOTION_FIELDS : MOTION_FIELDS} value=${obj.motion} ctx=${ctx} kf=${kf} prefix="motion"
       onChange=${(nm) => edit((o) => { o.motion = { ...nm, path: o.motion.path }; })} />`}
     <div class="row" style="margin-top:6px">
       <button class="btn sm" onClick=${() => ctx.openEditor('path')}><${Icon} name="route" size=${13} /> ${t(on ? 'Edit the path' : 'Draw a path')}</button>

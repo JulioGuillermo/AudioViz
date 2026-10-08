@@ -1,6 +1,7 @@
 package effects
 
 import (
+	"audioviz/internal/config"
 	"image"
 	"math"
 	"sync"
@@ -98,6 +99,136 @@ type EmitParams struct {
 	// rises (px/s), how far it moves the smoke (px)
 	Smoke                                     bool
 	SmokeWisp, SmokeScale, SmokeSpeed, SmokeWarp float64
+	// What they go round in the scene: a signed distance (px; < 0 inside) on a CGW×CGH grid of
+	// CDiv px cells (nil: nothing)
+	CSDF          []float32
+	CGW, CGH, CDiv int
+}
+
+// MaxCollideCells: cells of an emitter's collision grid (at most 240 a side)
+const MaxCollideCells = 240 * 240
+
+// CollideDiv: the collision grid's cell (px) for a W×H frame
+func CollideDiv(W, H int) int { return max(8, (max(W, H)+239)/240) }
+
+// sdfAt: the signed distance at (x, y), bilinear between the cells (as in emit.comp)
+func (p *EmitParams) sdfAt(x, y float32) float32 {
+	d := float32(p.CDiv)
+	qx, qy := x/d-0.5, y/d-0.5
+	ix, iy := int(math.Floor(float64(qx))), int(math.Floor(float64(qy)))
+	fx, fy := qx-float32(ix), qy-float32(iy)
+	at := func(cx, cy int) float32 {
+		cx, cy = max(0, min(p.CGW-1, cx)), max(0, min(p.CGH-1, cy))
+		return p.CSDF[cy*p.CGW+cx]
+	}
+	a := at(ix, iy) + (at(ix+1, iy)-at(ix, iy))*fx
+	b := at(ix, iy+1) + (at(ix+1, iy+1)-at(ix, iy+1))*fx
+	return a + (b-a)*fy
+}
+
+// collide: a particle inside what it goes round comes out at its surface, losing the speed that
+// went in (it slides off it)
+func (p *EmitParams) collide(x, y, vx, vy float32) (float32, float32, float32, float32) {
+	d := p.sdfAt(x, y)
+	if d >= 0 {
+		return x, y, vx, vy
+	}
+	h := float32(p.CDiv)
+	gx := p.sdfAt(x+h, y) - p.sdfAt(x-h, y)
+	gy := p.sdfAt(x, y+h) - p.sdfAt(x, y-h)
+	l := float32(math.Sqrt(float64(gx*gx + gy*gy)))
+	if l < 1e-6 {
+		return x, y, vx, vy
+	}
+	nx, ny := gx/l, gy/l
+	x, y = x+nx*(0.5-d), y+ny*(0.5-d)
+	if vn := vx*nx + vy*ny; vn < 0 {
+		vx, vy = vx-nx*vn, vy-ny*vn
+	}
+	return x, y, vx, vy
+}
+
+// CollideField: the signed distance (px, < 0 inside) to what is solid on a gw×gh grid of div px
+// cells (solid: one per cell, true = solid): two chamfer passes each way, as distances to the
+// nearest cell of the other kind
+func CollideField(solid []bool, gw, gh, div int) []float32 {
+	const big = 1e9
+	dist := func(in bool) []float32 {
+		d := make([]float32, gw*gh)
+		for i := range d {
+			if solid[i] == in {
+				d[i] = big
+			}
+		}
+		const a, b = 1, 1.4142135
+		for y := 0; y < gh; y++ {
+			for x := 0; x < gw; x++ {
+				i := y*gw + x
+				if x > 0 {
+					d[i] = min(d[i], d[i-1]+a)
+				}
+				if y > 0 {
+					d[i] = min(d[i], d[i-gw]+a)
+					if x > 0 {
+						d[i] = min(d[i], d[i-gw-1]+b)
+					}
+					if x < gw-1 {
+						d[i] = min(d[i], d[i-gw+1]+b)
+					}
+				}
+			}
+		}
+		for y := gh - 1; y >= 0; y-- {
+			for x := gw - 1; x >= 0; x-- {
+				i := y*gw + x
+				if x < gw-1 {
+					d[i] = min(d[i], d[i+1]+a)
+				}
+				if y < gh-1 {
+					d[i] = min(d[i], d[i+gw]+a)
+					if x < gw-1 {
+						d[i] = min(d[i], d[i+gw+1]+b)
+					}
+					if x > 0 {
+						d[i] = min(d[i], d[i+gw-1]+b)
+					}
+				}
+			}
+		}
+		return d
+	}
+	out, in := dist(false), dist(true) // to the nearest solid cell; to the nearest free one
+	sdf := make([]float32, gw*gh)
+	for i := range sdf {
+		if solid[i] {
+			sdf[i] = -(in[i] - 0.5) * float32(div)
+		} else {
+			sdf[i] = (out[i] - 0.5) * float32(div)
+		}
+	}
+	return sdf
+}
+
+// PathPoint: pathPoint, for others (a text bent along a path)
+func PathPoint(pp []float32, L float32, closed bool, s float32) (x, y, tx, ty float32) {
+	return pathPoint(pp, L, closed, s)
+}
+
+// SamplePath: a motion path as MaxPathSamples points along it with the length so far (x, y, px),
+// and its length
+func SamplePath(sh *config.MaskShape, W, H float64) ([]float32, float32) {
+	const n = MaxPathSamples
+	out := make([]float32, 0, n*3)
+	var L, px, py float64
+	for i := 0; i < n; i++ {
+		x, y, _ := PathAt(sh, W, H, float64(i)/float64(n-1))
+		if i > 0 {
+			L += math.Hypot(x-px, y-py)
+		}
+		px, py = x, y
+		out = append(out, float32(x), float32(y), float32(L))
+	}
+	return out, float32(L)
 }
 
 // pathPoint: the point at length s along a sampled path (x, y, length so far), and its unit
@@ -329,7 +460,11 @@ func (e *EmitFrame) At(i int) (Particle, bool) {
 	if p.FadeOut > 0 {
 		c[3] *= min(1, (1-u)/float32(p.FadeOut))
 	}
-	return Particle{x0 + dx, y0 + dy, vx, vy, max(size, 0), c[0], c[1], c[2], c[3]}, true
+	px, py := x0+dx, y0+dy
+	if p.CSDF != nil {
+		px, py, vx, vy = p.collide(px, py, vx, vy)
+	}
+	return Particle{px, py, vx, vy, max(size, 0), c[0], c[1], c[2], c[3]}, true
 }
 
 // footprint: the box of pixels a particle touches, and its radius and streak

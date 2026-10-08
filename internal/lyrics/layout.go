@@ -90,12 +90,13 @@ func New(cfg *config.LyricsConfig, w, h int) (*Engine, error) {
 }
 
 func newEngine(cfg *config.LyricsConfig, lines []Line, w, h int) (*Engine, error) {
-	return buildEngine(cfg, lines, w, h, false)
+	return buildEngine(cfg, lines, w, h, false, false)
 }
 
 // buildEngine rasterizes and lays out the lines. edge: align left/right put the block's left /
 // right edge at the anchor (fixed texts) instead of aligning inside the max width (lyrics).
-func buildEngine(cfg *config.LyricsConfig, lines []Line, w, h int, edge bool) (*Engine, error) {
+// letters: each letter its own piece, all in one row (a text bent along a path places each one)
+func buildEngine(cfg *config.LyricsConfig, lines []Line, w, h int, edge, letters bool) (*Engine, error) {
 	face, err := loadFace(cfg)
 	if err != nil {
 		return nil, err
@@ -140,7 +141,24 @@ func buildEngine(cfg *config.LyricsConfig, lines []Line, w, h int, edge bool) (*
 				ll.side = 1
 			}
 		}
-		for _, wd := range ln.Words {
+		words := ln.Words
+		if letters {
+			// each letter a piece; the spaces between words too (with their width)
+			var ws []Word
+			for k, wd := range ln.Words {
+				if k > 0 {
+					ws = append(ws, Word{Text: " ", Start: wd.Start, End: wd.End})
+				}
+				if wd.Text == BreakWord {
+					continue
+				}
+				for _, r := range wd.Text {
+					ws = append(ws, Word{Text: string(r), Start: wd.Start, End: wd.End})
+				}
+			}
+			words = ws
+		}
+		for _, wd := range words {
 			if wd.Text == BreakWord {
 				if ll.breaks == nil {
 					ll.breaks = map[int]bool{}
@@ -153,6 +171,9 @@ func buildEngine(cfg *config.LyricsConfig, lines []Line, w, h int, edge bool) (*
 				text = strings.ToUpper(text)
 			}
 			adv := float64(font.MeasureString(face, text)) / 64
+			if letters && text == " " {
+				adv = spaceAdv
+			}
 			bw := int(math.Ceil(adv)) + 2*pad
 			bw = min(bw, atlasW)
 			cov := image.NewAlpha(image.Rect(0, 0, bw, boxH))
@@ -176,7 +197,11 @@ func buildEngine(cfg *config.LyricsConfig, lines []Line, w, h int, edge bool) (*
 		} else if ll.side > 0 {
 			align = "right"
 		}
-		ll.halfH = layoutRows(&ll, spaceAdv, maxW, lineH, align, edge)
+		if letters {
+			ll.halfH = layoutRows(&ll, 0, math.Inf(1), lineH, align, edge) // one row, no gaps
+		} else {
+			ll.halfH = layoutRows(&ll, spaceAdv, maxW, lineH, align, edge)
+		}
 		e.maxW = maxW
 		e.lines = append(e.lines, ll)
 	}
@@ -422,7 +447,7 @@ func (e *Engine) Band(feat *audio.FrameFeatures) float64 {
 	return math.Min(feat.Band(e.cfg.React.ReactTo, "bass"), 1)
 }
 
-const maxItems = 96
+const maxItems = 256
 
 // buildSDF computes the signed distance (px, + outside) from the text coverage
 func buildSDF(cov *image.Alpha, maxD float64) []byte {

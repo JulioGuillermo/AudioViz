@@ -406,6 +406,13 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		u[h+72] = fl
 		f[h+73], f[h+74], f[h+75] = float32(P.Floor), float32(P.Bounce), float32(P.Friction)
 		f[h+76], f[h+77], f[h+78], f[h+79] = float32(P.SmokeWisp), float32(P.SmokeScale), float32(P.SmokeSpeed), float32(P.SmokeWarp)
+		// what they go round in the scene: its signed distance grid
+		co := po + effects.MaxPathSamples*3
+		u[h+80], u[h+81], u[h+82], u[h+83] = uint32(co), 0, 0, 0
+		if P.CSDF != nil && P.CGW*P.CGH <= effects.MaxCollideCells {
+			copy(f[co:], P.CSDF)
+			u[h+81], u[h+82], u[h+83] = uint32(P.CGW), uint32(P.CGH), uint32(P.CDiv)
+		}
 		bo += gpu.MaxEmitBirths * gpu.EmitBirthWords
 		base += cnt
 	}

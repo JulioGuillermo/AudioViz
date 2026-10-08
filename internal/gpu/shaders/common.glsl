@@ -6,7 +6,7 @@ const int MAX_GRAD = 8;
 const int MAX_GLITCH = 64;
 const int MAX_BARS = 256;
 const int MAX_PARTS = 1024;
-const int MAX_TEXT = 96;
+const int MAX_TEXT = 256;
 const int MAX_TSTYLE = 8;
 
 // One overlay clip (gpu.LayerP); its image is in the Layers buffer (render.comp)

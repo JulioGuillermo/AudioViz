@@ -106,6 +106,9 @@ type Motion struct {
 	Path     *MaskShape `yaml:"path,omitempty"` // 0..1 of the frame, nodes as in a mask
 	Progress float64    `yaml:"progress"`
 	Orient   bool       `yaml:"orient,omitempty"`
+	// Bend (texts): its letters follow the path's shape, each at its distance from the anchor
+	// along it and turned with it, instead of the text moving as one block
+	Bend bool `yaml:"bend,omitempty"`
 }
 
 // On: it has a path to follow

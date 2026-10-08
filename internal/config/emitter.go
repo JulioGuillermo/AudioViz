@@ -44,6 +44,10 @@ type EmitterConfig struct {
 	FloorDepth bool    `yaml:"floor_depth,omitempty"`
 	Bounce     float64 `yaml:"bounce,omitempty"`
 	Friction   float64 `yaml:"friction,omitempty"`
+	// With a depth map: they go round what is in the scene at their depth (within CollideBand
+	// of the emitter's depth: nearer things hide them, farther ones are behind), sliding off it
+	Collide     bool    `yaml:"collide,omitempty"`
+	CollideBand float64 `yaml:"collide_band,omitempty"`
 	// How they leave: direction (degrees, 0 = up, clockwise; turned with the clip), the spread of
 	// the cone around it (degrees; 360 = every way), speed and its random part (0..1)
 	Direction float64 `yaml:"direction"`

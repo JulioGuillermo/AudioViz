@@ -117,6 +117,13 @@ see the lyrics' [In the depth](lyrics/README.md#in-the-depth).
 A text can light the scene behind it from its letters (a warm title lighting the throne): see the
 lyrics' [Light on the scene](lyrics/README.md#light-on-the-scene).
 
+## Bent along its path
+
+With a motion path, **Bend along the path** (in *Motion path*) lays the text out letter by letter and
+puts each one at its distance from the anchor along the path, turned with it: the text follows the
+path's shape instead of moving as one block (the progress places its middle; a closed path goes
+round). Its own rotation is added to each letter.
+
 ## Masks
 
 A text (and the [lyrics](lyrics/README.md)) can have masks, like an overlay [clip](layers.md#masks),

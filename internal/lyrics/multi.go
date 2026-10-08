@@ -126,7 +126,7 @@ func textEngine(tc *config.TextConfig, w, h int) (*Engine, error) {
 			ln.Words = append(ln.Words, Word{Text: wd, Start: start, End: end})
 		}
 	}
-	return buildEngine(&cfg, []Line{ln}, w, h, true)
+	return buildEngine(&cfg, []Line{ln}, w, h, true, tc.Motion.Bend && tc.Motion.On())
 }
 
 // Frame returns the words visible at t (combined atlas coordinates) and the style table they
@@ -171,13 +171,42 @@ func (m *Multi) Frame(t float64, feat *audio.FrameFeatures, lyr *config.LyricsCo
 				rot = k.Rotation
 				mo = k.Motion
 			}
-			if mo.On() {
+			bend := mo.On() && mo.Bend && tc.Motion.Bend // laid out letter by letter
+			if mo.On() && !bend {
 				// along its path: the anchor goes to the path's point
 				x, y, a := effects.PathAt(mo.Path, float64(m.w), float64(m.h), mo.Progress)
 				dx, dy = float32(x-tc.PositionX*float64(m.w)), float32(y-tc.PositionY*float64(m.h))
 				if mo.Orient {
 					rot += a * 180 / math.Pi
 				}
+			}
+			if bend {
+				// bent along its path: each letter at its distance from the anchor along it, at
+				// its height across it, turned with it (plus the text's own rotation)
+				pts, L := effects.SamplePath(mo.Path, float64(m.w), float64(m.h))
+				closed := !mo.Path.Open
+				ax, ay := float32(tc.PositionX*float64(m.w)), float32(tc.PositionY*float64(m.h))
+				s0 := float32(mo.Progress) * L
+				r0 := float32(rot * math.Pi / 180)
+				for j := range its {
+					ox, oy := (its[j].CX-ax)*sc, (its[j].CY-ay)*sc
+					px, py, tx, ty := effects.PathPoint(pts, L, closed, s0+ox)
+					its[j].CX, its[j].CY = px-ty*oy, py+tx*oy
+					its[j].Rot = float32(math.Atan2(float64(ty), float64(tx))) + r0
+					its[j].Scale *= sc
+				}
+				st := StyleFor(cfg, t, feat)
+				st.Z = cfg.ZIndex
+				px, py, tx, ty := effects.PathPoint(pts, L, closed, s0)
+				st.Text, st.AnchorX, st.AnchorY = i-m.nLyr, px, py
+				st.Rotation = float32(math.Atan2(float64(ty), float64(tx))) + r0
+				styles = append(styles, st)
+				for _, it := range its {
+					it.AY += float32(m.offs[i])
+					it.Style = si
+					items = append(items, it)
+				}
+				continue
 			}
 			st := StyleFor(cfg, t, feat)
 			st.Z = cfg.ZIndex
