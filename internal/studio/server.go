@@ -543,11 +543,21 @@ func (s *Server) hFrame(w http.ResponseWriter, r *http.Request) {
 		// an object's depth (?layer=&clip=): what is behind it, tinted
 		var obj *[2]float32
 		if v == "objdepth" {
-			id := r.URL.Query().Get("layer")
-			ci, _ := strconv.Atoi(r.URL.Query().Get("clip"))
-			for _, l := range fs.Layers {
-				if l.LayerID == id && l.Clip == ci && l.InDepth {
-					obj = &[2]float32{l.DepthZ, l.DepthSoft}
+			if tx := r.URL.Query().Get("text"); tx != "" {
+				// a fixed text (its index) or the lyrics (-1)
+				ti, _ := strconv.Atoi(tx)
+				for _, st := range fs.TextStyles {
+					if st.Text == ti && st.InDepth {
+						obj = &[2]float32{float32(st.DepthZ), float32(st.DepthSoft)}
+					}
+				}
+			} else {
+				id := r.URL.Query().Get("layer")
+				ci, _ := strconv.Atoi(r.URL.Query().Get("clip"))
+				for _, l := range fs.Layers {
+					if l.LayerID == id && l.Clip == ci && l.InDepth {
+						obj = &[2]float32{l.DepthZ, l.DepthSoft}
+					}
 				}
 			}
 		}

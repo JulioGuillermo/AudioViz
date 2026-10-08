@@ -286,6 +286,9 @@ type LyricsConfig struct {
 	// Drawing order among the overlay layers: k = right above layer k (0 = above the
 	// background); unset = above all of them
 	ZIndex *int    `yaml:"z_index,omitempty"`
+	// Its depth in the scene (with a depth map), as a clip's: fixed or the scene's where it is,
+	// behind what is nearer; it moves with the 2.5D camera and blurs with the depth of field
+	Depth  ClipDepth `yaml:"depth,omitempty"`
 	Path   string  `yaml:"path"`
 	Offset float64 `yaml:"offset"` // seconds added to all timestamps (+ = later)
 

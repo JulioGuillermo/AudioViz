@@ -364,6 +364,20 @@ for the lights and the occlusion (`gHit`; `Scene.Hit` / `Scene.Near` on the CPU)
 depth add the move of their depth at their place to their own shake. The search is written once
 per pixel on purpose: inlined at every `layerAt` it made the shader too big to compile in time.
 
+Depth of field (`effects.DoF`, `Params.dof`): the blur of a point at nearness z is
+blur · smoothstep(0, soft, max(to − z, z − from, 0)); the background is gathered over 24 samples
+on a golden-angle spiral of that radius, a sample nearer than the point counting only as far as
+its own blur reaches it (sharp things in front don't bleed). On the GPU `warpedDof` takes the
+samples of `composite` around the point (the move of the 2.5D camera found at the pixel);
+`background` samples every point it needs (the pixel, the glitch's other one, the chromatic
+aberration's red and blue ones, each with and without the ripple when it has a depth range) in one
+loop with bounds from the params, so the compiler writes the whole background once (the shader
+compiles in about 8 s on an Intel iGPU; the setup timeout is 45 s). On the CPU it is a pass after
+the ripple (`effects.ApplyDoF`, over `DepthField`). Clips with a depth add the blur of their depth.
+Background effects on a depth range (`config.DepthRange`, `Params.ranges`): the effect's result is
+mixed with what was there by the range mask at the pixel's depth (`rangeMask` / `MaskedBlend`).
+The zoom's `depth` share becomes the camera's dolly (focus at the back when the parallax is off).
+
 Particle emitters (`config.EmitterConfig`, `effects/emit.go`, `engine/emitters.go`,
 `shaders/emit.comp`): stateless. Per clip the session builds once a **table of births** (one entry
 per frame: cumulative count N, origin and rotation from the clip's keys / motion path, the music's

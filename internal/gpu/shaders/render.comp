@@ -556,6 +556,13 @@ vec3 drawText(vec3 col, vec2 p0, float ch, int stage) {
             alpha *= maskBilinear(tm, p0 * vec2(tm.yz) / vec2(W, H));
             if (alpha <= 0.0) continue;
         }
+        vec4 dp = P.ts[s].depth;
+        if (dp.x > 0.5 && P.depthI.z != 0) {
+            // hidden where the scene is nearer (this pixel's depth)
+            alpha *= 1.0 - smoothstep(dp.y - dp.z, dp.y + dp.z + 1e-4, gHit.z);
+            if (alpha <= 0.0) continue;
+        }
+        float bl = dp.w; // the depth of field's blur: a soft edge of the distance field
 
         // Shadow (blurred)
         vec4 sh = P.ts[s].shadow;
@@ -575,7 +582,8 @@ vec3 drawText(vec3 col, vec2 p0, float ch, int stage) {
         }
         // Outline
         if (ow > 0.0) {
-            col = mix(col, P.ts[s].outline.rgb, clamp(0.5 - (d - ow), 0.0, 1.0) * P.ts[s].outline.a * alpha);
+            float co = bl > 0.5 ? 1.0 - smoothstep(-bl, bl, d - ow) : clamp(0.5 - (d - ow), 0.0, 1.0);
+            col = mix(col, P.ts[s].outline.rgb, co * P.ts[s].outline.a * alpha);
         }
         // Fill: main color up to the karaoke progress, the rest in the "upcoming" color
         float fillX = r.x + pad + P.tC[i].x * (r.z - 2.0 * pad);
@@ -584,7 +592,8 @@ vec3 drawText(vec3 col, vec2 p0, float ch, int stage) {
         float k = clamp(fillX - a.x + 0.5, 0.0, 1.0);
         vec3 fc = mix(P.ts[s].upcoming.rgb, main, k);
         float fa = mix(P.ts[s].upcoming.a, P.ts[s].color.a, k);
-        col = mix(col, fc, clamp(0.5 - d, 0.0, 1.0) * fa * alpha);
+        float cf = bl > 0.5 ? 1.0 - smoothstep(-bl, bl, d) : clamp(0.5 - d, 0.0, 1.0);
+        col = mix(col, fc, cf * fa * alpha);
     }
     return col;
 }
@@ -977,7 +986,7 @@ void buildTileLists(vec2 lo, vec2 hi) {
     int nt = P.textInfo.x;
     for (int i = int(li); i < nt; i += 64) {
         int s = int(P.tC[i].z);
-        float extra = abs(P.ts[s].info.w) + max(abs(P.ts[s].shadow.x), abs(P.ts[s].shadow.y)) + 2.0;
+        float extra = abs(P.ts[s].info.w) + max(abs(P.ts[s].shadow.x), abs(P.ts[s].shadow.y)) + P.ts[s].depth.w + 2.0;
         vec2 hw = P.tA[i].zw * 0.5 * P.tB[i].z;
         float rc = abs(cos(P.tC[i].w)), rs = abs(sin(P.tC[i].w));
         vec2 hs = vec2(hw.x * rc + hw.y * rs, hw.x * rs + hw.y * rc) + extra;

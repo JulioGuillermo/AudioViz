@@ -48,6 +48,17 @@ logo behind a mountain) without drawing masks.
 With a depth map the background can be seen by a camera that moves (what is near moves more than
 what is far): the [parallax](background/parallax.md) effect.
 
+The zoom can be the camera moving in (the near grows more than the far): `depth` in
+[bass_zoom](background/bass_zoom.md). And only a range of depths can be in focus, the rest blurred:
+[depth_of_field](background/depth_of_field.md).
+
+## Background effects on some depths
+
+The flash, the chromatic aberration, the ripple and the glitch have **Only on some depths**: between
+**Up to (far)** and **From (near)**, 0 far … 1 near, with a soft edge (the flash on the far
+mountains only, the glitch breaking only what is behind). While you adjust them the preview shows
+the depth map with what they leave out in black. They still react to their band as always.
+
 ## Clips and emitters in the depth
 
 A clip or an emitter has a **Depth** section:

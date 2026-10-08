@@ -30,6 +30,7 @@ and lossless FLAC audio inside an MP4.
 | [glitch](background/glitch.md) | Displaced stripes (VHS) | beats |
 | [color_flash](background/color_flash.md) | Brightness and contrast flash | bass |
 | [parallax](background/parallax.md) | 2.5D camera through the depth map | bass (beat motion) |
+| [depth_of_field](background/depth_of_field.md) | Focus on a range of depths, the rest blurred | bass (optional) |
 
 ## Visualizer — [overview](visualizer/README.md)
 | Type | Description |

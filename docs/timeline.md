@@ -35,7 +35,7 @@ timeline:
 | Track | Block it changes |
 |---|---|
 | `background` | `background` (image, GIF or video, fit, darken...) |
-| `bass_zoom`, `shake`, `chromatic_aberration`, `ripple`, `glitch`, `color_flash`, `parallax` | `background_effects.<effect>` |
+| `bass_zoom`, `shake`, `chromatic_aberration`, `ripple`, `glitch`, `color_flash`, `parallax`, `depth_of_field` | `background_effects.<effect>` |
 | `visualizer` | `visualizer` |
 | `particles` | `particles` (layers are replaced as a whole) |
 | `lyrics` | `lyrics` style (the path and the offset are always those of the first segment) |

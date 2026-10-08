@@ -1250,6 +1250,8 @@ function App() {
     }
     if (adj && adj.kind === 'objdepth' && selClip) // adjusting a clip's depth: what is behind it, in red
       return 'objdepth&' + new URLSearchParams({ layer: sel.id, clip: sel.clip }).toString();
+    if (adj && adj.kind === 'objdepth' && sel.kind === 'text') return 'objdepth&text=' + sel.i; // a fixed text's
+    if (adj && adj.kind === 'objdepth' && sel.kind === 'track' && sel.track === 'lyrics') return 'objdepth&text=-1'; // the lyrics'
     return depthView ? 'depth' : '';
   })();
   const selText = sel.kind === 'text' ? (proj.texts || [])[sel.i] : null;

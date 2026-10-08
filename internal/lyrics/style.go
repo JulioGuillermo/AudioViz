@@ -8,6 +8,7 @@ import (
 
 	"audioviz/internal/audio"
 	"audioviz/internal/config"
+	"audioviz/internal/effects"
 	"audioviz/internal/visualizer"
 )
 
@@ -36,6 +37,21 @@ type Style struct {
 	Mask           *image.Alpha
 	MaskVer        string
 	MaskSX, MaskSY float64 // mask px per frame px
+	// Its depth (config): the engine places it (InDepth) at DepthZ, hidden where the scene is
+	// nearer if Behind (soft by DepthSoft), and blurred by DepthBlur px (the depth of field)
+	Depth                       config.ClipDepth
+	InDepth, Behind             bool
+	DepthZ, DepthSoft, DepthBlur float64
+	Scene                       *effects.Scene
+}
+
+// cover: how much of a point at distance d (px, inside < 0) of an edge is covered: a sharp edge,
+// or blurred over bl px (as in drawText)
+func cover(d, bl float64) float64 {
+	if bl > 0.5 {
+		return 1 - smoothstep(-bl, bl, d)
+	}
+	return clampF(0.5-d, 0, 1)
 }
 
 func rgba(hex string, def [4]float64) [4]float64 {
@@ -66,6 +82,7 @@ func StyleFor(cfg *config.LyricsConfig, t float64, feat *audio.FrameFeatures) St
 	}
 	white := [4]float64{1, 1, 1, 1}
 	st := Style{
+		Depth:    cfg.Depth,
 		Masks:    cfg.Masks,
 		OutlineW: cfg.OutlineWidth,
 		Color:    rgba(cfg.Color, white),
@@ -223,6 +240,14 @@ func (e *Engine) textAt(col [3]float64, px0, py float64, ch float64, items []Ite
 				continue
 			}
 		}
+		if st.Behind && st.Scene.On() {
+			// hidden where the scene is nearer (the depth at this pixel)
+			z := float64(st.Scene.At(float32(px0-0.5), float32(py-0.5)))
+			if alpha *= 1 - smoothstep(st.DepthZ-st.DepthSoft, st.DepthZ+st.DepthSoft+1e-4, z); alpha <= 0 {
+				continue
+			}
+		}
+		bl := st.DepthBlur
 		if st.ShadowOp > 0 {
 			sx, sy := unrot(st.ShadowDX/sc, st.ShadowDY/sc)
 			ds := e.sdfAt(ax-sx, ay-sy, it)*sc - ow
@@ -237,7 +262,7 @@ func (e *Engine) textAt(col [3]float64, px0, py float64, ch float64, items []Ite
 			col = mix3(col, [3]float64{st.GlowC[0], st.GlowC[1], st.GlowC[2]}, clampF(g, 0, 1)*0.85)
 		}
 		if ow > 0 {
-			col = mix3(col, [3]float64{st.Outline[0], st.Outline[1], st.Outline[2]}, clampF(0.5-(d-ow), 0, 1)*st.Outline[3]*alpha)
+			col = mix3(col, [3]float64{st.Outline[0], st.Outline[1], st.Outline[2]}, cover(d-ow, bl)*st.Outline[3]*alpha)
 		}
 		fillX := float64(it.AX) + pad + float64(it.Fill)*(float64(it.AW)-2*pad)
 		ty := clampF((ay-float64(it.AY)-pad)/math.Max(float64(it.AH)-2*pad, 1), 0, 1)
@@ -245,7 +270,7 @@ func (e *Engine) textAt(col [3]float64, px0, py float64, ch float64, items []Ite
 		k := clampF(fillX-ax+0.5, 0, 1)
 		fc := mix3([3]float64{st.Upcoming[0], st.Upcoming[1], st.Upcoming[2]}, main, k)
 		fa := st.Upcoming[3] + (st.Color[3]-st.Upcoming[3])*k
-		col = mix3(col, fc, clampF(0.5-d, 0, 1)*fa*alpha)
+		col = mix3(col, fc, cover(d, bl)*fa*alpha)
 	}
 	return col
 }
@@ -268,8 +293,8 @@ func (e *Engine) DrawCPU(img *image.RGBA, items []Item, styles []Style) {
 			c, s := math.Abs(math.Cos(float64(it.Rot))), math.Abs(math.Sin(float64(it.Rot)))
 			hw, hh = hw*c+hh*s, hw*s+hh*c
 		}
-		ex := chromaOf(st) + math.Abs(st.ShadowDX) + 2
-		ey := math.Abs(st.ShadowDY) + 2
+		ex := chromaOf(st) + math.Abs(st.ShadowDX) + st.DepthBlur + 2
+		ey := math.Abs(st.ShadowDY) + st.DepthBlur + 2
 		x0, x1 = math.Min(x0, float64(it.CX)-hw-ex), math.Max(x1, float64(it.CX)+hw+ex)
 		y0, y1 = math.Min(y0, float64(it.CY)-hh-ey), math.Max(y1, float64(it.CY)+hh+ey)
 	}

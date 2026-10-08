@@ -18,5 +18,6 @@ background_effects:
 | `sensitivity` | 1.2 | Reaction multiplier |
 | `react_to` | bass | [Source](../reactivity.md) |
 | `decay_speed` | 0.15 | Reserved (currently unused) |
+| `depth` | 0 | With a [depth map](../depth.md): how much of the zoom is the camera moving in, 0 … 1 (0 = a flat zoom; 1 = what is near grows by the whole zoom and what is far stays) |
 
 zoom = 1 + (max_zoom − 1) · band · sensitivity + (max_zoom − 1) · beat_pulse · 0.5

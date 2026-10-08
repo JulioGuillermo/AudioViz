@@ -17,3 +17,4 @@ background_effects:
 | `max_shift` | 10.0 | Maximum shift in pixels |
 | `mode` | radial | `radial` (grows towards the edges, like a lens) or `horizontal` |
 | `react_to` | bass | [Source](../reactivity.md) |
+| `depth_only`, `depth_from`, `depth_to`, `depth_soft` | off, 1, 0, 0.05 | With a [depth map](../depth.md#background-effects-on-some-depths): only between `depth_to` (far) and `depth_from` (near), 0 far … 1 near, with a soft edge |

@@ -19,3 +19,4 @@ background_effects:
 | `frequency` | 0.04 | Spatial frequency (higher = waves closer together) |
 | `speed` | 1.5 | Wave travel speed |
 | `react_to` | mid | [Source](../reactivity.md) |
+| `depth_only`, `depth_from`, `depth_to`, `depth_soft` | off, 1, 0, 0.05 | With a [depth map](../depth.md#background-effects-on-some-depths): only between `depth_to` (far) and `depth_from` (near), 0 far … 1 near, with a soft edge |

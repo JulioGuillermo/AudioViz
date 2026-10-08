@@ -1081,6 +1081,10 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 			ts.Color, ts.Upcoming, ts.Outline, ts.GlowC = f4(st.Color), f4(st.Upcoming), f4(st.Outline), f4(st.GlowC)
 			ts.Shadow = [4]float32{float32(st.ShadowDX), float32(st.ShadowDY), float32(st.ShadowOp), float32(st.Blur)}
 			ts.ShadowC = f4(st.ShadowC)
+			ts.Depth = [4]float32{0, float32(st.DepthZ), float32(st.DepthSoft), float32(st.DepthBlur)}
+			if st.Behind && st.Scene.On() {
+				ts.Depth[0] = 1
+			}
 		}
 		p.TextInfo = [4]int32{int32(n), int32(fs.Lyr.Atlas.W), chroma}
 	}

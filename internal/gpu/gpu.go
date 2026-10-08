@@ -186,6 +186,7 @@ type TextStyle struct {
 	ShadowC                         [4]float32
 	GradN                           [4]int32 // gradient stop count, stage
 	Mask                            [4]int32 // screen mask: offset in the overlay buffer (words; a byte per px), width, height, on
+	Depth                           [4]float32 // behind what is nearer (0/1), its depth, soft edge; blur (px)
 	Grad                            [MaxGrad][4]float32
 }
 

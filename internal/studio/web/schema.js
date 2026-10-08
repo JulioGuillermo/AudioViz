@@ -44,6 +44,18 @@ const DEPTH_RANGE = [
   { key: 'depth_soft', label: 'Soft edge', type: 'num', min: 0, max: 0.5, step: 0.005, def: 0.05, trackOnly: true, showIf: (c) => c.depth_only,
     adjust: 'range', rangeKeys: RANGE_KEYS, help: 'While you adjust these three, the preview shows the depth map with what it leaves out in black' },
 ];
+// a clip's, a text's or the lyrics' depth in the scene (config.ClipDepth)
+const CLIP_DEPTH = { key: 'depth', label: 'Depth', type: 'group', fields: [
+  { key: 'mode', label: 'Its depth', type: 'enum', def: 'off', anim: false, options: [['off', 'None'],
+    ['fixed', 'Fixed'], ['auto', 'Auto: the scene\'s, where it is']], help: 'Needs a background with a depth map (Image / video → Depth)' },
+  { key: 'z', label: 'Depth (0 far, 1 near)', type: 'num', min: 0, max: 1, step: 0.005, showIf: (c) => c.mode === 'fixed', adjust: 'objdepth',
+    help: 'While you adjust it the preview shows the depth map, with what is behind it in red' },
+  { key: 'z', label: 'Nearer / farther than the scene', type: 'num', min: -0.5, max: 0.5, step: 0.005, showIf: (c) => c.mode === 'auto', adjust: 'objdepth',
+    help: 'While you adjust it the preview shows the depth map, with what is behind it in red' },
+  { key: 'behind', label: 'Behind what is nearer', type: 'bool', anim: false, showIf: (c) => c.mode === 'fixed' || c.mode === 'auto',
+    help: 'Hidden where the scene is nearer than it (it goes behind things)' },
+  { key: 'soft', label: 'Soft edge', type: 'num', min: 0, max: 0.3, step: 0.005, showIf: (c) => c.behind && c.mode && c.mode !== 'off', adjust: 'objdepth' },
+] };
 export const TRACKS = [
   { id: 'background', group: 'Background', label: 'Image / video', icon: 'image', fields: [
     { key: 'path', label: 'File', type: 'file', kind: 'bg', help: 'Image, GIF or video (mp4, mov, mkv, webm)' },
@@ -245,6 +257,7 @@ export const TRACKS = [
       { key: 'opacity', label: 'Opacity', type: 'num', min: 0, max: 1, step: 0.01 },
       { key: 'blur', label: 'Blur', type: 'num', min: 0, max: 20, step: 0.5 },
     ] },
+    CLIP_DEPTH,
     { key: 'react', label: 'Audio reaction', type: 'group', fields: [
       react('bass'),
       { key: 'scale', label: 'Pulse (scale)', type: 'num', min: 0, max: 0.5, step: 0.005 },
@@ -336,17 +349,6 @@ const layerEffect = (key, label) => ({ key, label, type: 'group', fields: [
 ] });
 export const BLENDS = [['normal', 'Normal'], ['add', 'Add (light)'], ['multiply', 'Multiply (darken)'], ['screen', 'Screen'],
   ['overlay', 'Overlay'], ['lighten', 'Lighten'], ['darken', 'Darken']];
-const CLIP_DEPTH = { key: 'depth', label: 'Depth', type: 'group', fields: [
-  { key: 'mode', label: 'Its depth', type: 'enum', def: 'off', anim: false, options: [['off', 'None'],
-    ['fixed', 'Fixed'], ['auto', 'Auto: the scene\'s, where it is']], help: 'Needs a background with a depth map (Image / video → Depth)' },
-  { key: 'z', label: 'Depth (0 far, 1 near)', type: 'num', min: 0, max: 1, step: 0.005, showIf: (c) => c.mode === 'fixed', adjust: 'objdepth',
-    help: 'While you adjust it the preview shows the depth map, with what is behind it in red' },
-  { key: 'z', label: 'Nearer / farther than the scene', type: 'num', min: -0.5, max: 0.5, step: 0.005, showIf: (c) => c.mode === 'auto', adjust: 'objdepth',
-    help: 'While you adjust it the preview shows the depth map, with what is behind it in red' },
-  { key: 'behind', label: 'Behind what is nearer', type: 'bool', anim: false, showIf: (c) => c.mode === 'fixed' || c.mode === 'auto',
-    help: 'Hidden where the scene is nearer than it (it goes behind things)' },
-  { key: 'soft', label: 'Soft edge', type: 'num', min: 0, max: 0.3, step: 0.005, showIf: (c) => c.behind && c.mode && c.mode !== 'off', adjust: 'objdepth' },
-] };
 export const CLIP_FIELDS = [
   { key: 'path', label: 'File', type: 'file', kind: 'bg', help: 'Image (PNG / WebP with transparency), GIF or video' },
   { key: 'fit', label: 'Base size', type: 'enum', def: 'contain', anim: false, options: [['contain', 'Inside the frame'],

@@ -43,6 +43,7 @@ struct TStyle {
     vec4 shadowC;
     ivec4 gradN;      // gradient stop count, stage
     ivec4 mask;       // screen mask: offset in lay (words; a byte per px), width, height, on
+    vec4 depth;       // behind what is nearer (0/1), its depth, soft edge; blur (px, depth of field)
     vec4 grad[MAX_GRAD];
 };
 

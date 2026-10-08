@@ -443,6 +443,9 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 			Zoom: fx.zoom, ShakeX: fx.shakeX, ShakeY: fx.shakeY, RippleAmp: fx.rippleAmp, RippleFreq: fx.rippleFreq, RippleTm: fx.rTim,
 			W: s.W, H: s.H, Par: fx.par, N: fx.par.Steps(s.W, s.H), DoF: fx.dof}
 	}
+	if fs.Scene.On() && len(fs.TextStyles) > 0 {
+		s.textsInDepth(fs)
+	}
 	if len(cfg.Layers) > 0 {
 		if fs.Layers, fs.layerStack, err = s.layersAt(t, idx, base, fs.FX, fs.GlitchAmount, fs.Scene); err != nil {
 			return nil, err
@@ -452,6 +455,52 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 	fs.ZParts = fs.Stage(tl.Particles[config.Active(tl.Particles, t)].CfgAt(t).ZIndex)
 	fs.ZLyric = fs.Stage(fs.LyrSt.ZIndex)
 	return fs, nil
+}
+
+// textsInDepth: the lyrics and texts that have a depth: where it is (fixed, or the scene's at
+// their place: a fixed text's anchor, the middle of the lyrics' words now), hidden behind what
+// is nearer if they ask, moved by the 2.5D camera and blurred by the depth of field
+func (s *Session) textsInDepth(fs *FrameState) {
+	sc := fs.Scene
+	for si := range fs.TextStyles {
+		st := &fs.TextStyles[si]
+		if st.Depth.Mode == "" || st.Depth.Mode == "off" {
+			continue
+		}
+		ax, ay := float64(st.AnchorX), float64(st.AnchorY)
+		if st.Text < 0 {
+			n := 0
+			ax, ay = 0, 0
+			for _, it := range fs.TextItems {
+				if it.Style == si {
+					ax, ay, n = ax+float64(it.CX), ay+float64(it.CY), n+1
+				}
+			}
+			if n == 0 {
+				continue
+			}
+			ax, ay = ax/float64(n), ay/float64(n)
+		}
+		z, ok := clipDepth(&st.Depth, sc, ax, ay)
+		if !ok {
+			continue
+		}
+		st.InDepth, st.Behind, st.Scene = true, st.Depth.Behind, sc
+		st.DepthZ, st.DepthSoft = z, math.Max(st.Depth.Soft, 0.005)
+		if sc.DoF.On() {
+			st.DepthBlur = float64(sc.DoF.CoC(float32(z)))
+		}
+		if sc.Par.On() {
+			dx, dy := sc.Par.Disp(z, ax, ay, s.W, s.H)
+			st.AnchorX, st.AnchorY = st.AnchorX+float32(dx), st.AnchorY+float32(dy)
+			for i := range fs.TextItems {
+				if fs.TextItems[i].Style == si {
+					fs.TextItems[i].CX += float32(dx)
+					fs.TextItems[i].CY += float32(dy)
+				}
+			}
+		}
+	}
 }
 
 // ---------------------------------------------------------------- background effects
