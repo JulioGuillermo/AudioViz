@@ -120,6 +120,22 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx f
 				}
 				z, ok := clipDepth(&c.Depth, scene, ox, oy)
 				s.placeInDepth(&lf, &c.Depth, scene, z, ox, oy, ok)
+				if e := c.Emitter; e != nil && e.FloorDepth && scene.On() {
+					// the scene's floor: below the emitter, where the depth comes up to its own
+					zf := z
+					if !ok {
+						zf = float64(scene.Ground(float32(ox), float32(oy)))
+					}
+					for y := oy + 2; y < H; y += 2 {
+						if float64(scene.Ground(float32(ox), float32(y))) >= zf-0.01 {
+							ef.P.FloorOn, ef.P.Floor = true, y+math.Max(e.Floor, 0)*s.emitScale()
+							if ef.P.Bounce == 0 && ef.P.Friction == 0 {
+								ef.P.Bounce, ef.P.Friction = math.Min(math.Max(e.Bounce, 0), 0.95), math.Min(math.Max(e.Friction, 0), 1)
+							}
+							break
+						}
+					}
+				}
 				if P := &ef.P; P.LightOn && scene.On() {
 					// its light in 2.5D: from its origin (as moved), at its depth (the scene's there
 					// when it has none)

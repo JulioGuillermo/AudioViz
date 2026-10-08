@@ -435,7 +435,8 @@ export const CLIP_FIELDS = [
 // it throws. Every number and color can have keys.
 export const EMITTER_PRESETS = [['fire', 'Fire', 'flame'], ['fire_real', 'Realistic fire', 'flame'], ['sparks', 'Sparks', 'sparkles'], ['smoke', 'Smoke', 'cloud'],
   ['dust', 'Dust', 'focus'], ['light', 'Lights (bokeh)', 'sun'], ['explosion', 'Explosion', 'zap'], ['snow', 'Snow', 'snowflake']];
-const EMIT_SHAPES = [['point', 'Point'], ['circle', 'Circle (filled)'], ['ring', 'Ring'], ['line', 'Line'], ['box', 'Rectangle']];
+const EMIT_SHAPES = [['point', 'Point'], ['circle', 'Circle (filled)'], ['ring', 'Ring'], ['line', 'Line'], ['box', 'Rectangle'],
+  ['text', 'The letters of a text']];
 const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', fields: [
   { key: 'amount', label: 'Amount', type: 'section', fields: [
     { key: 'rate', label: 'Per second', type: 'num', min: 0, max: 3000, step: 1 },
@@ -444,8 +445,14 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
   ] },
   { key: 'origin', label: 'Where they are born', type: 'section', fields: [
     { key: 'shape', label: 'Shape', type: 'enum', def: 'point', options: EMIT_SHAPES, anim: false },
-    { key: 'width', label: 'Width / diameter (px)', type: 'num', min: 0, max: 4000, step: 1, showIf: (c) => c.shape && c.shape !== 'point' },
+    { key: 'width', label: 'Width / diameter (px)', type: 'num', min: 0, max: 4000, step: 1, showIf: (c) => c.shape && c.shape !== 'point' && c.shape !== 'text' },
     { key: 'height', label: 'Height (px)', type: 'num', min: 0, max: 4000, step: 1, showIf: (c) => c.shape === 'box' },
+    { key: 'text', label: 'Text', type: 'textpick', anim: false, showIf: (c) => c.shape === 'text',
+      help: 'Born on its letters, following it as it moves, turns and grows (it can be hidden: then only the particles show it)' },
+    { key: 'text_part', label: 'On its', type: 'enum', def: 'outline', anim: false, showIf: (c) => c.shape === 'text',
+      options: [['outline', 'Outline'], ['fill', 'Whole letters']] },
+    { key: 'follow_path', label: 'They travel along the motion path', type: 'bool', anim: false,
+      help: 'With a motion path (Motion path section): they go along it at their speed, from where the emitter is on it; the shape\'s width spreads them across it' },
   ] },
   { key: 'launch', label: 'How they leave', type: 'section', fields: [
     { key: 'direction', label: 'Direction (°)', type: 'num', min: -180, max: 180, step: 1, help: '0 = up, 90 = right (plus the clip\'s rotation)' },
@@ -459,6 +466,15 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
     { key: 'drag', label: 'Drag', type: 'num', min: 0, max: 10, step: 0.05, help: 'How fast they slow down' },
     { key: 'turbulence', label: 'Turbulence (px)', type: 'num', min: 0, max: 400, step: 1 },
     { key: 'turb_freq', label: 'Turbulence speed (Hz)', type: 'num', min: 0, max: 8, step: 0.05 },
+  ] },
+  { key: 'floorsec', label: 'Floor (bounces)', type: 'section', fields: [
+    { key: 'floor', label: 'Floor below it (px)', type: 'num', min: 0, max: 3000, step: 1, def: 0,
+      help: '0 = none. With gravity they fall onto it and bounce' },
+    { key: 'floor_depth', label: 'The scene\'s floor', type: 'bool', anim: false,
+      help: 'With a depth map: where the depth below the emitter comes up to its own (plus the px above)' },
+    { key: 'bounce', label: 'Bounce', type: 'num', min: 0, max: 0.95, step: 0.01, def: 0.5, showIf: (c) => c.floor > 0 || c.floor_depth,
+      help: 'How much of their speed they keep at each bounce' },
+    { key: 'friction', label: 'Sideways speed kept', type: 'num', min: 0, max: 1, step: 0.01, def: 0.7, showIf: (c) => c.floor > 0 || c.floor_depth },
   ] },
   { key: 'lifesize', label: 'Life and size', type: 'section', fields: [
     { key: 'life', label: 'Life (s)', type: 'num', min: 0.05, max: 30, step: 0.05 },
@@ -481,7 +497,7 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
   ] },
   { key: 'lookgrp', label: 'Look (particles or flame)', type: 'section', fields: [
     { key: 'look', label: 'Look', type: 'enum', def: 'plain', anim: false,
-      options: [['plain', 'Particles (as they are)'], ['flame', 'Flame (they melt into fire)']],
+      options: [['plain', 'Particles (as they are)'], ['flame', 'Flame (they melt into fire)'], ['smoke', 'Smoke (torn into wisps)']],
       help: 'Flame: the color comes from the heat that piles up, and rising noise cuts its edges into tongues' },
     { key: 'flame', label: 'Flame', type: 'group', showIf: (c) => c.look === 'flame', fields: [
       { key: 'color_cool', label: 'Color of its edges', type: 'color' },
@@ -492,6 +508,12 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
       { key: 'noise_scale', label: 'Whirl size (px)', type: 'num', min: 4, max: 400, step: 1 },
       { key: 'noise_speed', label: 'Rising speed (px/s)', type: 'num', min: 0, max: 1500, step: 5 },
       { key: 'edge', label: 'Eaten edges', type: 'num', min: 0, max: 1, step: 0.01 },
+    ] },
+    { key: 'smoke', label: 'Smoke', type: 'group', showIf: (c) => c.look === 'smoke', fields: [
+      { key: 'wisp', label: 'Wisps', type: 'num', min: 0, max: 1, step: 0.01, def: 0.7, help: 'How much the noise tears it' },
+      { key: 'scale', label: 'Wisp size (px)', type: 'num', min: 4, max: 600, step: 1, def: 70 },
+      { key: 'speed', label: 'Rising speed (px/s)', type: 'num', min: 0, max: 600, step: 1, def: 30 },
+      { key: 'warp', label: 'Swirl (px)', type: 'num', min: 0, max: 200, step: 0.5, def: 25, help: 'How far the noise moves it' },
     ] },
   ] },
   { key: 'light', label: 'Light', type: 'group', fields: [

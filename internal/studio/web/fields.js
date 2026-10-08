@@ -262,6 +262,12 @@ function Field({ f, v, set, ctx, isFirst, kf, path, dia }) {
       return html`<${Row} f=${f} dia=${dia}><${Edit} type="text" class="grow" value=${v ?? ''} onChange=${(e) => set(e.target.value)} /></${Row}>`;
     case 'textarea':
       return html`<${Row} f=${f} dia=${dia}><${Edit} tag="textarea" class="grow" rows="3" value=${v ?? ''} onChange=${(e) => set(e.target.value)} /></${Row}>`;
+    case 'textpick': {
+      // one of the project's fixed texts (its index)
+      const opts = (ctx.textChoices || []).map(([i, name]) => [i, name]);
+      if (!opts.length) return html`<${Row} f=${f} dia=${dia}><span class="faint" style="font-size:12px">${t('No fixed texts yet (Titles and texts)')}</span></${Row}>`;
+      return html`<${Row} f=${f} dia=${dia}><${Select} value=${v ?? 0} options=${opts} translate=${false} onChange=${(x) => set(+x)} /></${Row}>`;
+    }
     case 'zindex': {
       // Above all the layers (unset), above the background (0), or above a layer (its index + 1)
       const opts = [['', t('Above all the layers')], [0, t('Above the background, under the layers')],

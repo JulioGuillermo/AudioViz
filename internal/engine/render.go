@@ -356,6 +356,8 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		u[h+43] = 0
 		if P.Flame {
 			u[h+43] = 1
+		} else if P.Smoke {
+			u[h+43] = 2
 		}
 		for c := 0; c < 3; c++ {
 			for j := 0; j < 3; j++ {
@@ -379,8 +381,31 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		for j, b := range bs {
 			o := bo + j*gpu.EmitBirthWords
 			f[o], f[o+1], f[o+2], f[o+3] = float32(b.T), float32(b.N), float32(b.X), float32(b.Y)
-			f[o+4], f[o+5], f[o+6], f[o+7] = float32(b.Rot), float32(b.Speed), float32(b.Size), 0
+			f[o+4], f[o+5], f[o+6], f[o+7] = float32(b.Rot), float32(b.Speed), float32(b.Size), float32(b.Scale)
+			f[o+8], f[o+9] = float32(b.PathP), 0
 		}
+		// its extra data: the points on a text's letters, its motion path
+		xo := 4 + g.Emitters*(gpu.EmitHeaderWords+gpu.MaxEmitBirths*gpu.EmitBirthWords) + k*gpu.EmitExtraWords
+		np := min(len(P.Pts)/2, effects.MaxEmitPts)
+		copy(f[xo:], P.Pts[:np*2])
+		u[h+67], u[h+68] = uint32(xo), uint32(np)
+		po := xo + effects.MaxEmitPts*2
+		ns := 0
+		if P.Follow {
+			ns = min(len(P.Path)/3, effects.MaxPathSamples)
+			copy(f[po:], P.Path[:ns*3])
+		}
+		u[h+69], u[h+70], f[h+71] = uint32(po), uint32(ns), P.PathLen
+		fl := uint32(0)
+		if P.PathClosed {
+			fl |= 1
+		}
+		if P.FloorOn {
+			fl |= 2
+		}
+		u[h+72] = fl
+		f[h+73], f[h+74], f[h+75] = float32(P.Floor), float32(P.Bounce), float32(P.Friction)
+		f[h+76], f[h+77], f[h+78], f[h+79] = float32(P.SmokeWisp), float32(P.SmokeScale), float32(P.SmokeSpeed), float32(P.SmokeWarp)
 		bo += gpu.MaxEmitBirths * gpu.EmitBirthWords
 		base += cnt
 	}

@@ -17,6 +17,7 @@ layout(std430, set = 0, binding = 10) buffer Acc { uint acc[]; };
 layout(std430, set = 0, binding = 11) readonly buffer EData { uint ed[]; };
 
 const int ESTRIDE = 128; // words per emitter header
+const int BW = 10;       // words per birth (gpu.EmitBirthWords)
 const float FIXED = 1024.0;
 
 float edf(int i) { return uintBitsToFloat(ed[i]); }
@@ -63,6 +64,31 @@ void addCell(uint o, vec3 c, float w) {
     if (qa > 0u) atomicAdd(acc[o + 3u], qa);
 }
 
+// the launch and the forces at time t: displacement and velocity (closed form, with drag k)
+vec4 motionAt(float t, vec2 v0, vec2 a, float k) {
+    if (k > 1e-3) {
+        float ek = exp(-k * t);
+        float g = (1.0 - ek) / k;
+        return vec4(v0 * g + a * (t - g) / k, v0 * ek + a * g);
+    }
+    return vec4(v0 * t + 0.5 * a * t * t, v0 + a * t);
+}
+// the point at length s along a sampled path (x, y, length so far; n samples at word o) and its
+// unit tangent; past its ends straight on (round, closed). As effects.pathPoint
+vec4 pathPoint(int o, int n, float L, bool closed, float s) {
+    if (closed && L > 0.0) s -= L * floor(s / L);
+    int lo = 1, hi = n - 1;
+    while (lo < hi) {
+        int m = (lo + hi) / 2;
+        if (edf(o + m * 3 + 2) >= s) hi = m; else lo = m + 1;
+    }
+    int a = o + (lo - 1) * 3, b = o + lo * 3;
+    float dl = max(edf(b + 2) - edf(a + 2), 1e-6);
+    float f = (s - edf(a + 2)) / dl;
+    vec2 pa = vec2(edf(a), edf(a + 1)), pb = vec2(edf(b), edf(b + 1));
+    return vec4(pa + (pb - pa) * f, (pb - pa) / dl);
+}
+
 void splatPhase() {
     int j = int(gl_GlobalInvocationID.x);
     int e = -1, i = 0;
@@ -83,13 +109,13 @@ void splatPhase() {
     // birth: the first table entry whose count reaches i + 0.5
     int bo = v0.w, nb = v1.x;
     float x = float(i) + 0.5;
-    if (nb < 2 || x <= edf(bo + 1) || x > edf(bo + (nb - 1) * 8 + 1)) return;
+    if (nb < 2 || x <= edf(bo + 1) || x > edf(bo + (nb - 1) * BW + 1)) return;
     int lo = 0, hi = nb - 1;
     while (lo < hi) {
         int m = (lo + hi) / 2;
-        if (edf(bo + m * 8 + 1) >= x) hi = m; else lo = m + 1;
+        if (edf(bo + m * BW + 1) >= x) hi = m; else lo = m + 1;
     }
-    int ia = bo + (lo - 1) * 8, ib = bo + lo * 8;
+    int ia = bo + (lo - 1) * BW, ib = bo + lo * BW;
     float d = edf(ib + 1) - edf(ia + 1);
     float f = d > 0.0 ? (x - edf(ia + 1)) / d : 0.0;
     float bT = edf(ia) + (edf(ib) - edf(ia)) * f;
@@ -98,6 +124,8 @@ void splatPhase() {
     float bR = edf(ia + 4) + (edf(ib + 4) - edf(ia + 4)) * f;
     float bS = edf(ia + 5) + (edf(ib + 5) - edf(ia + 5)) * f;
     float bZ = edf(ia + 6) + (edf(ib + 6) - edf(ia + 6)) * f;
+    float bSc = edf(ia + 7) + (edf(ib + 7) - edf(ia + 7)) * f; // the shape's scale (a text's size)
+    float bP = edf(ia + 8) + (edf(ib + 8) - edf(ia + 8)) * f;  // where on its motion path
 
     float life = ph.w * (1.0 + lf.x * (2.0 * rnd(seed, i, 0u) - 1.0));
     if (life < 0.05) life = 0.05;
@@ -116,22 +144,68 @@ void splatPhase() {
         ox = (rnd(seed, i, 1u) - 0.5) * shp.x;
     } else if (shape == 4) {
         ox = (rnd(seed, i, 1u) - 0.5) * shp.x; oy = (rnd(seed, i, 2u) - 0.5) * shp.y;
+    } else if (shape == 5) {
+        // a point on the letters of a text (a pixel aside), at the text's size then
+        int np = int(ed[h + 68]);
+        if (np > 0) {
+            int kp = min(int(rnd(seed, i, 1u) * float(np)), np - 1);
+            int po = int(ed[h + 67]) + kp * 2;
+            ox = (edf(po) + (rnd(seed, i, 2u) - 0.5) * 1.5) * bSc;
+            oy = (edf(po + 1) + (rnd(seed, i, 10u) - 0.5) * 1.5) * bSc;
+        }
     }
     float x0 = bX + ox * rc - oy * rs, y0 = bY + ox * rs + oy * rc;
-    float a = shp.z + bR + (rnd(seed, i, 3u) - 0.5) * shp.w;
+    // launch direction: turned with the emitter, not with a text it is born on
+    float a = shp.z + (shape == 5 ? 0.0 : bR) + (rnd(seed, i, 3u) - 0.5) * shp.w;
     float spd = sp.x * (1.0 + sp.y * (2.0 * rnd(seed, i, 4u) - 1.0)) * bS;
     vec2 v0l = vec2(spd * sin(a), -spd * cos(a));
     vec2 acc2 = vec2(sp.w, sp.z); // wind, gravity
     float k = ph.x;
-    vec2 dp, vel;
-    if (k > 1e-3) {
-        float ek = exp(-k * age);
-        float g = (1.0 - ek) / k;
-        dp = v0l * g + acc2 * (age - g) / k;
-        vel = v0l * ek + acc2 * g;
-    } else {
-        dp = v0l * age + 0.5 * acc2 * age * age;
-        vel = v0l + acc2 * age;
+    vec4 mv = motionAt(age, v0l, acc2, k);
+    vec2 dp = mv.xy, vel = mv.zw;
+    int nsamp = int(ed[h + 70]);
+    uint flg = ed[h + 72];
+    if (nsamp >= 2) {
+        // along the motion path: as far as its speed takes it, its shape's cross offset, the forces
+        float along = spd * age, sv = spd;
+        if (k > 1e-3) {
+            float ek = exp(-k * age);
+            along = spd * (1.0 - ek) / k;
+            sv = spd * ek;
+        }
+        float L = edf(h + 71);
+        vec4 pt = pathPoint(int(ed[h + 69]), nsamp, L, (flg & 1u) != 0u, bP * L + along);
+        vec4 fm = motionAt(age, vec2(0.0), acc2, k);
+        x0 = pt.x - pt.w * ox;
+        y0 = pt.y + pt.z * ox;
+        dp = fm.xy;
+        vel = pt.zw * sv + fm.zw;
+    } else if ((flg & 2u) != 0u && acc2.y > 0.0 && y0 < edf(h + 73) && y0 + dp.y > edf(h + 73)) {
+        // it reached the floor: the moment (halving), then bounces losing speed
+        float fl = edf(h + 73);
+        float lo2 = 0.0, hi2 = age;
+        for (int it = 0; it < 14; it++) {
+            float m = 0.5 * (lo2 + hi2);
+            if (y0 + motionAt(m, v0l, acc2, k).y > fl) hi2 = m; else lo2 = m;
+        }
+        float t1 = hi2;
+        vec4 m1 = motionAt(t1, v0l, acc2, k);
+        float fr = edf(h + 75), bo2 = edf(h + 74);
+        float tau = age - t1, v = bo2 * max(m1.w, 0.0);
+        float ry = 0.0, rvy = 0.0;
+        for (int b = 0; b < 16; b++) {
+            float flight = 2.0 * v / acc2.y;
+            if (v < 1.0) break;
+            if (tau < flight) {
+                ry = v * tau - 0.5 * acc2.y * tau * tau;
+                rvy = v - acc2.y * tau;
+                break;
+            }
+            tau -= flight;
+            v *= bo2;
+        }
+        dp = vec2(m1.x + m1.z * fr * (age - t1), fl - y0 - ry);
+        vel = vec2(m1.z * fr, -rvy);
     }
     if (ph.y > 0.0) {
         float wv = 6.2831855 * ph.z;
@@ -281,6 +355,20 @@ void resolveOne(uint id) {
         else fc = mid + (hot - mid) * ((ht - 0.7) / 0.3);
         float al = smoothstep(0.02, 0.3, ht);
         c = vec4(fc * al, al);
+    } else if (ed[h + 43] == 2u) {
+        // smoke: soft matter taken aside by rising noise and torn into wisps by finer noise
+        float sc = max(edf(h + 77), 1.0);
+        float tt = T * edf(h + 78) / sc;
+        float nx = fbm(vec2(pp.x / sc, pp.y / sc + tt), seed + 17u);
+        float ny = fbm(vec2(pp.x / sc + 4.1, pp.y / sc + tt + 8.7), seed + 17u);
+        float wp = edf(h + 79);
+        vec4 s = sumAt(base, GW, GH, dv, vec2(pp.x + wp * (nx - 0.5) * 2.0, pp.y + wp * (ny - 0.5) * 2.0));
+        if (s.a > 0.0) {
+            float al = 1.0 - exp(-s.a);
+            float m = fbm(vec2(pp.x / (sc * 0.5), pp.y / (sc * 0.5) + tt * 1.3), seed + 23u);
+            al *= 1.0 - edf(h + 76) * (1.0 - smoothstep(0.35, 0.75, m));
+            c = vec4(s.rgb / s.a * al, al);
+        }
     } else {
         vec4 s = dv == 1 ? cellSum(base, GW, GH, x, y) : sumAt(base, GW, GH, dv, pp);
         if ((v1.w & 1) != 0) {

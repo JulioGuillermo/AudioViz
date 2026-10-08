@@ -9,6 +9,7 @@ import (
 	"audioviz/internal/audio"
 	"audioviz/internal/config"
 	"audioviz/internal/effects"
+	"audioviz/internal/lyrics"
 	"audioviz/internal/visualizer"
 )
 
@@ -37,6 +38,8 @@ func emitShape(s string) int {
 		return effects.EmitLine
 	case "box":
 		return effects.EmitBox
+	case "text":
+		return effects.EmitText
 	}
 	return effects.EmitPoint
 }
@@ -58,10 +61,87 @@ func (s *Session) clipPlace(c *config.ClipConfig) (x, y, rot float64) {
 	return
 }
 
+// textRef: the moment a fixed text's letters are measured at (fully in)
+func textRef(tc *config.TextConfig) float64 {
+	return math.Min(tc.Start+tc.InDuration+0.05, (tc.Start+tc.End)/2)
+}
+
+// textAt: a fixed text's settings at time t (its keys applied)
+func textAt(tc *config.TextConfig, t float64) *config.TextConfig {
+	if len(tc.Keys) > 0 {
+		return config.ApplyKeys(tc, tc.Keys, t-tc.Start)
+	}
+	return tc
+}
+
+// textPlace: where fixed text i is at time t (its anchor, px), its rotation (rad) and its size
+// against the moment its letters were measured (textRef)
+func (s *Session) textPlace(i int, t float64) (x, y, rot, scale float64, ok bool) {
+	if i < 0 || i >= len(s.Cfg.Texts) {
+		return 0, 0, 0, 1, false
+	}
+	tc := &s.Cfg.Texts[i]
+	k := textAt(tc, t)
+	W, H := float64(s.W), float64(s.H)
+	x, y, rot, scale = k.PositionX*W, k.PositionY*H, k.Rotation*math.Pi/180, 1
+	if mo := k.Motion; mo.On() {
+		var a float64
+		x, y, a = effects.PathAt(mo.Path, W, H, mo.Progress)
+		if mo.Orient {
+			rot += a
+		}
+	}
+	if r := textAt(tc, textRef(tc)); r.Size > 0 && k.Size > 0 {
+		scale = k.Size / r.Size
+	}
+	return x, y, rot, scale, true
+}
+
+// textPoints: points on the letters of fixed text i (its outline, or all of it), around its
+// anchor before its rotation, as drawn at textRef; kept until the text changes
+func (s *Session) textPoints(i int, fill bool) []float32 {
+	if i < 0 || i >= len(s.Cfg.Texts) {
+		return nil
+	}
+	tc := &s.Cfg.Texts[i]
+	b, _ := yaml.Marshal(tc)
+	key := fmt.Sprintf("%d|%v|%dx%d|%s", i, fill, s.W, s.H, b)
+	if v, ok := s.textPts[key]; ok {
+		return v
+	}
+	pts := lyrics.TextPointsOf(*tc, textRef(tc), fill, effects.MaxEmitPts, s.W, s.H)
+	if s.textPts == nil || len(s.textPts) > 32 {
+		s.textPts = map[string][]float32{}
+	}
+	s.textPts[key] = pts
+	return pts
+}
+
+// pathSamples: a motion path as points along it with the length so far (x, y, px), its length
+func pathSamples(sh *config.MaskShape, W, H float64) ([]float32, float32) {
+	const n = effects.MaxPathSamples
+	out := make([]float32, 0, n*3)
+	var L float64
+	var px, py float64
+	for i := 0; i < n; i++ {
+		x, y, _ := effects.PathAt(sh, W, H, float64(i)/float64(n-1))
+		if i > 0 {
+			L += math.Hypot(x-px, y-py)
+		}
+		px, py = x, y
+		out = append(out, float32(x), float32(y), float32(L))
+	}
+	return out, float32(L)
+}
+
 // emitTableFor builds (or reuses) the table of births of a clip
 func (s *Session) emitTableFor(li, ci int, c0 *config.ClipConfig, feats []audio.FrameFeatures) *emitTable {
 	b, _ := yaml.Marshal(c0)
 	key := fmt.Sprintf("%d:%d:%dx%d@%d|%s", li, ci, s.W, s.H, s.FPS, b)
+	if e := c0.Emitter; e != nil && e.Shape == "text" && e.Text >= 0 && e.Text < len(s.Cfg.Texts) {
+		tb, _ := yaml.Marshal(&s.Cfg.Texts[e.Text]) // born on a text: it follows the text
+		key += "|" + string(tb)
+	}
 	id := fmt.Sprintf("%d:%d", li, ci)
 	if tb, ok := s.emitTabs[id]; ok && tb.key == key {
 		return tb
@@ -89,7 +169,17 @@ func (s *Session) emitTableFor(li, ci int, c0 *config.ClipConfig, feats []audio.
 			beat = feats[f].IsBeat
 		}
 		x, y, rot := s.clipPlace(c)
-		bt := effects.Birth{T: t, N: n, X: x, Y: y, Rot: rot, Speed: 1 + e.React.Speed*band, Size: 1 + e.React.Size*band}
+		scale, pathP := 1.0, 0.0
+		if e.Shape == "text" {
+			if tx, ty, tr, ts, ok := s.textPlace(e.Text, t); ok {
+				x, y, rot, scale = tx, ty, tr, ts
+			}
+		}
+		if c.Motion.On() {
+			pathP = c.Motion.Progress
+		}
+		bt := effects.Birth{T: t, N: n, X: x, Y: y, Rot: rot, Speed: 1 + e.React.Speed*band, Size: 1 + e.React.Size*band,
+			Scale: scale, PathP: pathP}
 		lifeMax := math.Max(0.05, e.Life*(1+math.Abs(e.LifeVar)))
 		capN := float64(max(e.Max, 1))
 		burst := 0
@@ -156,6 +246,26 @@ func (s *Session) emitFrame(li, ci int, c0, c *config.ClipConfig, idx int, feats
 		p.Flame = true
 		p.FlameCol = [3][3]float64{rgb(fl.ColorCool, "#b8200a"), rgb(fl.ColorMid, "#ff8a1e"), rgb(fl.ColorHot, "#fff4d0")}
 		p.Heat, p.Noise, p.NoiseScale, p.NoiseSpeed, p.Edge = math.Max(fl.Heat, 0), fl.Noise*sc, math.Max(fl.NoiseScale*sc, 1), fl.NoiseSpeed*sc, math.Min(math.Max(fl.Edge, 0), 1)
+	}
+	if e.Look == "smoke" {
+		sm := e.Smoke
+		p.Smoke = true
+		p.SmokeWisp, p.SmokeScale = math.Min(math.Max(sm.Wisp, 0), 1), math.Max(sm.Scale*sc, 1)
+		p.SmokeSpeed, p.SmokeWarp = sm.Speed*sc, sm.Warp*sc
+	}
+	if p.Shape == effects.EmitText {
+		p.Pts = s.textPoints(e.Text, e.TextPart == "fill")
+	}
+	if e.FollowPath && c.Motion.On() {
+		p.Follow = true
+		p.Path, p.PathLen = pathSamples(c.Motion.Path, float64(s.W), float64(s.H))
+		p.PathClosed = !c.Motion.Path.Open
+	}
+	if e.Floor > 0 || e.FloorDepth {
+		// below the emitter now (with a depth map and FloorDepth, layersAt finds the scene's)
+		_, y, _ := s.clipPlace(c)
+		p.FloorOn, p.Floor = true, y+math.Max(e.Floor, 0)*sc
+		p.Bounce, p.Friction = math.Min(math.Max(e.Bounce, 0), 0.95), math.Min(math.Max(e.Friction, 0), 1)
 	}
 	if e.Glow.Intensity > 0 && e.Glow.Radius > 0 {
 		p.GlowI, p.GlowR = e.Glow.Intensity, e.Glow.Radius*sc

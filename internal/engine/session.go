@@ -40,6 +40,7 @@ type Session struct {
 	layerMedia map[string]*layerMedia
 	masks      map[string]maskEntry
 	emitTabs   map[string]*emitTable  // births of the emitter clips (emitters.go)
+	textPts    map[string][]float32   // points on the letters of the texts emitters are born on
 	depths     map[string]*depthEntry // depth maps of the backgrounds, fitted to the frame (depth.go)
 	maskSeq    int
 	lyr        *lyrics.Multi

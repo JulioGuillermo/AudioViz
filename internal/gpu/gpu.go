@@ -65,16 +65,20 @@ var fluidSPV []byte
 var emitSPV []byte
 
 // Emitter pass (emit.comp): the most particles drawn at once, and the layout of its data
-// buffer: a header (count, W, H), per emitter EmitHeaderWords words, then the births
+// buffer: a header (count, W, H), per emitter EmitHeaderWords words, then the births of each,
+// then each one's extra data: the points on a text's letters, the samples of its motion path
 const (
 	MaxEmitParticles = C.VKR_EMIT_THREADS
 	EmitHeaderWords  = 128
-	EmitBirthWords   = 8
+	EmitBirthWords   = 10
 	MaxEmitBirths    = 4096 // births per emitter (older ones are left out)
+	EmitExtraWords   = 4096*2 + 256*3
 )
 
 // EmitDataWords: size of the emitter data buffer for n emitters
-func EmitDataWords(n int) int { return 4 + n*(EmitHeaderWords+MaxEmitBirths*EmitBirthWords) }
+func EmitDataWords(n int) int {
+	return 4 + n*(EmitHeaderWords+MaxEmitBirths*EmitBirthWords+EmitExtraWords)
+}
 
 const (
 	MaxGrad   = 8

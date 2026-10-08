@@ -26,12 +26,13 @@ always give the same result: any frame can be seen or rendered directly.
 | Group | Settings |
 |---|---|
 | Amount | per second, a burst at the start, the most alive at once |
-| Where they are born | shape: point, circle, ring, line or rectangle, and its size (px) |
+| Where they are born | shape: point, circle, ring, line or rectangle, and its size (px); or **the letters of a text** (a fixed text: on its outline or all over its letters; they follow it as it moves, turns and grows, and the text can be hidden: letters made of fire). **They travel along the motion path**: with a motion path they go along it at their speed (the shape's width spreads them across it) |
 | How they leave | direction (0° = up, plus the clip's rotation), spread of the cone (360° = every way), speed and its variation |
 | Forces | gravity (negative: they rise), wind, drag (they slow down), turbulence (wandering) and its speed |
+| Floor | a floor px below the emitter, or **the scene's** (with a depth map: where the depth below the emitter comes up to its own): with gravity they fall onto it and **bounce**, keeping part of their speed (bounce) and of their sideways speed |
 | Life and size | life (s) and its variation; size at birth and at the end, and its variation |
 | Color and look | colors at birth, halfway and at the end (their opacity fades them), fade in / out, how they add up (*light* or *matter*), streak (stretched along their motion), soft edge, random seed |
-| Look | *particles* (each as it is) or *flame*: they melt into one flame — the color comes from the heat that piles up (colors of its edges, body and core; heat), and rising noise cuts its edges into long tongues (how far, the size of the whirls, how fast they rise, how much they eat the edges) |
+| Look | *particles* (each as it is) or *flame*: they melt into one flame — the color comes from the heat that piles up (colors of its edges, body and core; heat), and rising noise cuts its edges into long tongues (how far, the size of the whirls, how fast they rise, how much they eat the edges) — or *smoke*: soft matter torn into wisps by noise (how much, the size of the wisps, how fast the pattern rises, how far it swirls) |
 | Glow | a halo of light around them: strength, reach (px) and color (empty = the particles' own; the flame's body color with the flame look) |
 | Light | it lights up what is behind it (the background and the layers below it), from where its particles are: strength, reach (px, where it is still strong), where it fades out (px; 0 = 2.5 × the reach), color (empty = the particles' own; the flame's body), how (*soft*: lights and tints what is there; *add*: adds its color, like neon) and flicker. On by default for fire, realistic fire and explosion |
 | Audio reaction | the band (bass, mids, treble, volume, transients, beats) makes more of them, faster, bigger, and a burst on each beat |

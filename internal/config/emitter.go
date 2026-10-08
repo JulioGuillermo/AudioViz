@@ -27,10 +27,23 @@ type EmitterConfig struct {
 	Rate  float64 `yaml:"rate"`
 	Burst int     `yaml:"burst"`
 	Max   int     `yaml:"max"`
-	// Where they are born: point, circle, ring, line, box; width / height of the shape (px)
+	// Where they are born: point, circle, ring, line, box, text; width / height of the shape (px)
 	Shape  string  `yaml:"shape"`
 	Width  float64 `yaml:"width"`
 	Height float64 `yaml:"height"`
+	// Shape text: born on the letters of a fixed text (its index in texts), on their outline or
+	// all over them (fill); they follow the text as it moves, turns and grows
+	Text     int    `yaml:"text,omitempty"`
+	TextPart string `yaml:"text_part,omitempty"`
+	// They travel along the clip's motion path (at their speed), from where the emitter is on it
+	FollowPath bool `yaml:"follow_path,omitempty"`
+	// A floor they bounce on: px below the emitter (0 = none) or the scene's (FloorDepth: where
+	// the depth below the emitter comes up to its own); how much speed they keep at each bounce
+	// (0..1) and how much of their sideways speed (friction, 0..1)
+	Floor      float64 `yaml:"floor,omitempty"`
+	FloorDepth bool    `yaml:"floor_depth,omitempty"`
+	Bounce     float64 `yaml:"bounce,omitempty"`
+	Friction   float64 `yaml:"friction,omitempty"`
 	// How they leave: direction (degrees, 0 = up, clockwise; turned with the clip), the spread of
 	// the cone around it (degrees; 360 = every way), speed and its random part (0..1)
 	Direction float64 `yaml:"direction"`
@@ -69,6 +82,7 @@ type EmitterConfig struct {
 	// comes from how much heat piles up, and rising noise cuts its edges into tongues)
 	Look  string    `yaml:"look"`
 	Flame FlameLook `yaml:"flame"`
+	Smoke SmokeLook `yaml:"smoke,omitempty"`
 	Glow  EmitGlow  `yaml:"glow"`
 	Light EmitLight `yaml:"light"`
 }
@@ -109,6 +123,15 @@ type EmitLight struct {
 // FlameLook: the colors of the flame from cool (its edges) to hot (its core), how fast it gets
 // hot, and its tongues: how far the noise moves it (px), the size of its whirls (px), how fast
 // they rise (px/s) and how much they eat its edges (0..1)
+// SmokeLook (look "smoke"): soft matter torn into wisps by noise: how much (0..1), the size of the
+// wisps (px), how fast the pattern rises (px/s) and how far the noise moves the smoke (px)
+type SmokeLook struct {
+	Wisp  float64 `yaml:"wisp"`
+	Scale float64 `yaml:"scale"`
+	Speed float64 `yaml:"speed"`
+	Warp  float64 `yaml:"warp"`
+}
+
 type FlameLook struct {
 	ColorCool  string  `yaml:"color_cool"`
 	ColorMid   string  `yaml:"color_mid"`

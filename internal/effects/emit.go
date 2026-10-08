@@ -21,6 +21,14 @@ const (
 	EmitRing
 	EmitLine
 	EmitBox
+	EmitText // on the letters of a fixed text (EmitParams.Pts)
+)
+
+// MaxEmitPts: points on a text's letters an emitter is born on; MaxPathSamples: points along the
+// motion path its particles travel (both travel to the GPU with the emitter)
+const (
+	MaxEmitPts     = 4096
+	MaxPathSamples = 256
 )
 
 // EmitFixed: fixed-point scale of the accumulation (1.0 = EmitFixed)
@@ -31,6 +39,8 @@ const EmitFixed = 1024
 // turned Rot (rad), and the music pushed the speed and the size by Speed, Size (factors).
 type Birth struct {
 	T, N, X, Y, Rot, Speed, Size float64
+	// the shape's scale (a text's size then) and where on its motion path it was (0..1)
+	Scale, PathP float64
 }
 
 // EmitParams: an emitter's settings now, in px of this frame
@@ -74,6 +84,43 @@ type EmitParams struct {
 	LightRimFrom, LightRimSoft, LightRimW, LightRimGain, LightRimEdge float64
 	LightCol                 [3]float64
 	LightAdd                 bool
+	// Text shape: points on its letters (x, y pairs, px around its anchor, before its rotation)
+	Pts []float32
+	// Along the motion path: the path sampled (x, y, length so far: px), its length, closed
+	Follow     bool
+	Path       []float32
+	PathLen    float32
+	PathClosed bool
+	// A floor (y px) they bounce on: how much speed they keep (bounce) and sideways (friction)
+	FloorOn                 bool
+	Floor, Bounce, Friction float64
+	// Smoke look: soft matter torn into wisps by noise: how much, its scale (px), how fast it
+	// rises (px/s), how far it moves the smoke (px)
+	Smoke                                     bool
+	SmokeWisp, SmokeScale, SmokeSpeed, SmokeWarp float64
+}
+
+// pathPoint: the point at length s along a sampled path (x, y, length so far), and its unit
+// tangent; past its ends it goes on straight (round, when closed). As in emit.comp.
+func pathPoint(pp []float32, L float32, closed bool, s float32) (x, y, tx, ty float32) {
+	n := len(pp) / 3
+	if closed && L > 0 {
+		s -= L * float32(math.Floor(float64(s/L)))
+	}
+	lo, hi := 1, n-1
+	for lo < hi {
+		m := (lo + hi) / 2
+		if pp[m*3+2] >= s {
+			hi = m
+		} else {
+			lo = m + 1
+		}
+	}
+	a, b := (lo-1)*3, lo*3
+	dl := max(pp[b+2]-pp[a+2], 1e-6)
+	f := (s - pp[a+2]) / dl
+	x, y = pp[a]+(pp[b]-pp[a])*f, pp[a+1]+(pp[b+1]-pp[a+1])*f
+	return x, y, (pp[b] - pp[a]) / dl, (pp[b+1] - pp[a+1]) / dl
 }
 
 // EmitFrame is one emitter on screen at time T: its settings, the births that can still be
@@ -132,7 +179,8 @@ func (e *EmitFrame) birthOf(i int) (Birth, bool) {
 		f = (x - float32(a.N)) / d
 	}
 	l := func(p, q float64) float64 { return float64(float32(p) + (float32(q)-float32(p))*f) }
-	return Birth{l(a.T, c.T), x64(x), l(a.X, c.X), l(a.Y, c.Y), l(a.Rot, c.Rot), l(a.Speed, c.Speed), l(a.Size, c.Size)}, true
+	return Birth{l(a.T, c.T), x64(x), l(a.X, c.X), l(a.Y, c.Y), l(a.Rot, c.Rot), l(a.Speed, c.Speed), l(a.Size, c.Size),
+		l(a.Scale, c.Scale), l(a.PathP, c.PathP)}, true
 }
 
 func x64(v float32) float64 { return float64(v) }
@@ -170,25 +218,87 @@ func (e *EmitFrame) At(i int) (Particle, bool) {
 		ox = (r(1) - 0.5) * w
 	case EmitBox:
 		ox, oy = (r(1)-0.5)*w, (r(2)-0.5)*h
+	case EmitText:
+		// a point on its letters (a pixel aside), at the text's size then
+		if n := len(p.Pts) / 2; n > 0 {
+			k := min(int(r(1)*float32(n)), n-1)
+			sc := float32(bt.Scale)
+			ox, oy = (p.Pts[2*k]+(r(2)-0.5)*1.5)*sc, (p.Pts[2*k+1]+(r(10)-0.5)*1.5)*sc
+		}
 	}
 	x0 := float32(bt.X) + ox*rc - oy*rs
 	y0 := float32(bt.Y) + ox*rs + oy*rc
-	// launch: direction in the cone (0 = up, clockwise), speed
-	a := float32(p.Dir) + float32(bt.Rot) + (r(3)-0.5)*float32(p.Spread)
+	// launch: direction in the cone (0 = up, clockwise; turned with the emitter, not with a
+	// text it is born on), speed
+	rot := float32(bt.Rot)
+	if p.Shape == EmitText {
+		rot = 0
+	}
+	a := float32(p.Dir) + rot + (r(3)-0.5)*float32(p.Spread)
 	sp := float32(p.Speed) * (1 + float32(p.SpeedVar)*(2*r(4)-1)) * float32(bt.Speed)
 	vx0, vy0 := sp*float32(math.Sin(float64(a))), -sp*float32(math.Cos(float64(a)))
 	ax, ay := float32(p.Wind), float32(p.Gravity)
 	k := float32(p.Drag)
-	var dx, dy, vx, vy float32
-	if k > 1e-3 {
-		ek := float32(math.Exp(float64(-k * age)))
-		g := (1 - ek) / k
-		dx = vx0*g + ax*(age-g)/k
-		dy = vy0*g + ay*(age-g)/k
-		vx, vy = vx0*ek+ax*g, vy0*ek+ay*g
-	} else {
-		dx, dy = vx0*age+0.5*ax*age*age, vy0*age+0.5*ay*age*age
-		vx, vy = vx0+ax*age, vy0+ay*age
+	// the launch and the forces at time tt: displacement and velocity (closed form, with drag)
+	motion := func(tt float32) (dx, dy, vx, vy float32) {
+		if k > 1e-3 {
+			ek := float32(math.Exp(float64(-k * tt)))
+			g := (1 - ek) / k
+			return vx0*g + ax*(tt-g)/k, vy0*g + ay*(tt-g)/k, vx0*ek + ax*g, vy0*ek + ay*g
+		}
+		return vx0*tt + 0.5*ax*tt*tt, vy0*tt + 0.5*ay*tt*tt, vx0 + ax*tt, vy0 + ay*tt
+	}
+	dx, dy, vx, vy := motion(age)
+	if p.Follow && len(p.Path) >= 6 {
+		// along the path: as far as its speed takes it, the cross offset of its shape, the forces
+		along, sv := sp*age, sp
+		if k > 1e-3 {
+			ek := float32(math.Exp(float64(-k * age)))
+			along, sv = sp*(1-ek)/k, sp*ek
+		}
+		px, py, tx, ty := pathPoint(p.Path, p.PathLen, p.PathClosed, float32(bt.PathP)*p.PathLen+along)
+		lat := ox
+		fx, fy, fvx, fvy := float32(0), float32(0), float32(0), float32(0)
+		if k > 1e-3 {
+			ek := float32(math.Exp(float64(-k * age)))
+			g := (1 - ek) / k
+			fx, fy, fvx, fvy = ax*(age-g)/k, ay*(age-g)/k, ax*g, ay*g
+		} else {
+			fx, fy, fvx, fvy = 0.5*ax*age*age, 0.5*ay*age*age, ax*age, ay*age
+		}
+		x0, y0 = px-ty*lat, py+tx*lat
+		dx, dy, vx, vy = fx, fy, tx*sv+fvx, ty*sv+fvy
+	} else if p.FloorOn && ay > 0 && y0 < float32(p.Floor) && y0+dy > float32(p.Floor) {
+		// it reached the floor: the moment (halving), then bounces losing speed
+		fl := float32(p.Floor)
+		lo, hi := float32(0), age
+		for it := 0; it < 14; it++ {
+			m := 0.5 * (lo + hi)
+			if _, my, _, _ := motion(m); y0+my > fl {
+				hi = m
+			} else {
+				lo = m
+			}
+		}
+		t1 := hi
+		x1, _, vx1, vy1 := motion(t1)
+		fr, bo := float32(p.Friction), float32(p.Bounce)
+		tau, v := age-t1, bo*max(vy1, 0)
+		ry, rvy := float32(0), float32(0) // height above the floor, its speed (up)
+		for b := 0; b < 16; b++ {
+			flight := 2 * v / ay
+			if v < 1 {
+				break
+			}
+			if tau < flight {
+				ry, rvy = v*tau-0.5*ay*tau*tau, v-ay*tau
+				break
+			}
+			tau -= flight
+			v *= bo
+		}
+		dx, dy = x1+vx1*fr*(age-t1), fl-y0-ry
+		vx, vy = vx1*fr, -rvy
 	}
 	// wandering: two waves per axis with random phases, zero at birth
 	if p.Turb > 0 {
@@ -624,6 +734,20 @@ func resolvePixel(p *EmitParams, T float32, acc []uint32, GW, GH, div int, glow 
 		}
 		c, a := flameColor(p, h)
 		o = [4]float32{c[0] * a, c[1] * a, c[2] * a, a}
+	} else if p.Smoke {
+		// smoke: soft matter taken aside by rising noise and torn into wisps by finer noise
+		sc := max(float32(p.SmokeScale), 1)
+		tt := T * float32(p.SmokeSpeed) / sc
+		nx := efbm(px/sc, py/sc+tt, p.Seed+17)
+		ny := efbm(px/sc+4.1, py/sc+tt+8.7, p.Seed+17)
+		wp := float32(p.SmokeWarp)
+		s := sumAt(acc, GW, GH, div, px+wp*(nx-0.5)*2, py+wp*(ny-0.5)*2)
+		if s[3] > 0 {
+			al := 1 - float32(math.Exp(float64(-s[3])))
+			m := efbm(px/(sc*0.5), py/(sc*0.5)+tt*1.3, p.Seed+23)
+			al *= 1 - float32(p.SmokeWisp)*(1-smooth32(0.35, 0.75, m))
+			o = [4]float32{s[0] / s[3] * al, s[1] / s[3] * al, s[2] / s[3] * al, al}
+		}
 	} else {
 		var s [4]float32
 		if div == 1 {

@@ -376,6 +376,17 @@ compiles in about 8 s on an Intel iGPU; the setup timeout is 45 s). On the CPU i
 the ripple (`effects.ApplyDoF`, over `DepthField`). Clips with a depth add the blur of their depth.
 Background effects on a depth range (`config.DepthRange`, `Params.ranges`): the effect's result is
 mixed with what was there by the range mask at the pixel's depth (`rangeMask` / `MaskedBlend`).
+Emitters, part 2 (`effects.EmitFrame.At` / `emit.comp`, births of 10 words: + the shape's scale and
+the progress on the motion path; each emitter's extra data after the births): shape *text* picks
+one of up to 4096 points sampled every 2 px on the text's letters through its distance field
+(`lyrics.TextPointsOf`, laid out on its own, at the moment it is fully in; outline |d| ≤ 1 or fill
+d ≤ 0), scaled and turned with the text then (`Session.textPlace`); *follow path* puts a particle at
+length s0 + its travel (drag closed form) along 256 samples of the path (`pathPoint`), across it by
+its shape offset, plus the forces; the *floor* (y px: below the emitter, or where the scene's depth
+below it reaches its own) is met by halving on the closed-form motion, then bounces in closed form
+(flights of 2v/g, v × bounce each time; sideways speed × friction); look *smoke* resolves the soft
+sums at a point moved by rising fbm noise and multiplies the alpha by a finer fbm (wisps).
+
 The zoom's `depth` share becomes the camera's dolly (focus at the back when the parallax is off).
 Texts and lyrics with a depth (`LyricsConfig.Depth`; `Session.textsInDepth`): their place is a
 fixed text's anchor or the middle of the lyrics' words now; the style gets `TStyle.depth` (behind,

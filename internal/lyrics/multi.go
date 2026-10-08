@@ -290,3 +290,74 @@ func (m *Multi) LightSources(items []Item, si, div, gw, gh int) []float32 {
 	}
 	return src
 }
+
+// TextPoints: points on the letters of fixed text i as drawn at time t (x, y pairs, px around
+// its anchor then, before its rotation then): its outline, or all of it (fill); at most max,
+// evenly picked
+func (m *Multi) TextPoints(i int, t float64, fill bool, max int) []float32 {
+	items, styles := m.Frame(t, &audio.FrameFeatures{}, nil)
+	si := -1
+	for k := range styles {
+		if styles[k].Text == i {
+			si = k
+		}
+	}
+	if si < 0 {
+		return nil
+	}
+	st := &styles[si]
+	ax, ay := float64(st.AnchorX), float64(st.AnchorY)
+	cr, sr := math.Cos(-float64(st.Rotation)), math.Sin(-float64(st.Rotation))
+	var pts []float32
+	const step = 2.0
+	for k := range items {
+		it := &items[k]
+		if it.Style != si {
+			continue
+		}
+		sc := float64(it.Scale)
+		hw, hh := float64(it.AW)/2, float64(it.AH)/2
+		rc, rs := 1.0, 0.0
+		if it.Rot != 0 {
+			rc, rs = math.Cos(float64(it.Rot)), math.Sin(float64(it.Rot))
+		}
+		ex := (hw*math.Abs(rc) + hh*math.Abs(rs)) * sc
+		ey := (hw*math.Abs(rs) + hh*math.Abs(rc)) * sc
+		cx, cy := float64(it.CX), float64(it.CY)
+		for y := cy - ey; y <= cy+ey; y += step {
+			for x := cx - ex; x <= cx+ex; x += step {
+				dx, dy := x-cx, y-cy
+				lx, ly := (dx*rc+dy*rs)/sc, (-dx*rs+dy*rc)/sc
+				if math.Abs(lx) > hw || math.Abs(ly) > hh {
+					continue
+				}
+				d := m.draw.sdfAt(float64(it.AX)+hw+lx, float64(it.AY)+hh+ly, it) * sc
+				if (fill && d > 0) || (!fill && math.Abs(d) > 1) {
+					continue
+				}
+				px, py := x-ax, y-ay
+				pts = append(pts, float32(px*cr-py*sr), float32(px*sr+py*cr))
+			}
+		}
+	}
+	if n := len(pts) / 2; n > max {
+		out := make([]float32, 0, max*2)
+		for j := 0; j < max; j++ {
+			k := j * n / max
+			out = append(out, pts[2*k], pts[2*k+1])
+		}
+		pts = out
+	}
+	return pts
+}
+
+// TextPointsOf: Multi.TextPoints of a fixed text laid out on its own, shown or not (an emitter
+// can be born on the letters of a hidden text: only the fire shows them)
+func TextPointsOf(tc config.TextConfig, t float64, fill bool, max, w, h int) []float32 {
+	tc.Enabled = true
+	m, err := NewMulti(nil, []config.TextConfig{tc}, w, h)
+	if err != nil || m == nil {
+		return nil
+	}
+	return m.TextPoints(0, t, fill, max)
+}

@@ -741,6 +741,7 @@ function App() {
     openEditor: (tool) => { setEditorTool(tool || 'select'); setEditor(true); },
     // z_index choices: each layer bottom to top as [z, name]
     get layerChoices() { return (projRef.current.layers || []).map((l, i) => [i + 1, l.name || t('Layer {n}', { n: i + 1 })]); },
+    get textChoices() { return (projRef.current.texts || []).map((x, i) => [i, x.label || (x.text || '').split('\n')[0] || t('Text {n}', { n: i + 1 })]); },
     kfFocus, setKfFocus, kfSel, setKfSel,
     dialog: setDlg,
     pickFile: (kind, cb, start) => setPick({ kind, cb, start }),
