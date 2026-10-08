@@ -91,6 +91,40 @@ type BackgroundEffectsConfig struct {
 	Glitch              GlitchConfig              `yaml:"glitch"`
 	ColorFlash          ColorFlashConfig          `yaml:"color_flash"`
 	Parallax            ParallaxConfig            `yaml:"parallax"`
+	DepthOfField        DepthOfFieldConfig        `yaml:"depth_of_field"`
+}
+
+// DepthRange: a background effect only on part of the scene's depth (with a depth map): between
+// DepthTo (far) and DepthFrom (near), 0 far … 1 near, with a soft edge
+type DepthRange struct {
+	DepthOnly bool    `yaml:"depth_only,omitempty"`
+	DepthFrom float64 `yaml:"depth_from,omitempty"`
+	DepthTo   float64 `yaml:"depth_to,omitempty"`
+	DepthSoft float64 `yaml:"depth_soft,omitempty"`
+}
+
+// Range: from, to, soft (from 1 when neither is set)
+func (r DepthRange) Range() (float64, float64, float64) {
+	from := r.DepthFrom
+	if from == 0 && r.DepthTo == 0 {
+		from = 1
+	}
+	return from, r.DepthTo, r.DepthSoft
+}
+
+// DepthOfFieldConfig: with a depth map, only a range of depths in focus (From near … To far);
+// the rest blurs more the farther it is from it (all of Blur px past Soft), as a camera's lens
+type DepthOfFieldConfig struct {
+	Enabled bool    `yaml:"enabled"`
+	From    float64 `yaml:"from"` // in focus up to this near (1 = the nearest)
+	To      float64 `yaml:"to"`   // and this far (0 = the farthest)
+	Soft    float64 `yaml:"soft"` // depth past the range where it is fully blurred
+	Blur    float64 `yaml:"blur"` // px at most
+	// with the music: how much of the blur the band brings (0 = always all of it) and how far
+	// the focus moves (depth, + nearer) at full band
+	React     float64 `yaml:"react"`
+	FocusMove float64 `yaml:"focus_move"`
+	ReactTo   string  `yaml:"react_to"`
 }
 
 // ParallaxConfig: the background seen by a camera that moves, with its depth map: what is near
@@ -115,6 +149,9 @@ type BassZoomConfig struct {
 	Sensitivity float64 `yaml:"sensitivity"` // Bass reaction multiplier
 	DecaySpeed  float64 `yaml:"decay_speed"` // Damping speed (0.1 to 0.5)
 	ReactTo     string  `yaml:"react_to"`    // bass (def.), mid, treble, overall, transient, beat
+	// with a depth map, 0 … 1: how much of it is a camera moving in (what is near grows more)
+	// instead of a flat zoom
+	Depth float64 `yaml:"depth,omitempty"`
 }
 
 // ShakeConfig: camera motion (smooth pseudo-random translation) driven by a band
@@ -130,6 +167,7 @@ type ChromaticAberrationConfig struct {
 	MaxShift float64 `yaml:"max_shift"` // Maximum R and B shift in pixels
 	Mode     string  `yaml:"mode"`      // "horizontal" or "radial"
 	ReactTo  string  `yaml:"react_to"`  // "bass", "treble", "transient", "overall"
+	DepthRange `yaml:",inline"`
 }
 
 type RippleConfig struct {
@@ -138,6 +176,7 @@ type RippleConfig struct {
 	Frequency float64 `yaml:"frequency"` // Spatial frequency of the wave
 	Speed     float64 `yaml:"speed"`     // Temporal propagation speed
 	ReactTo   string  `yaml:"react_to"`  // mid (def.), bass, treble, overall, transient, beat
+	DepthRange `yaml:",inline"`
 }
 
 type GlitchConfig struct {
@@ -145,6 +184,7 @@ type GlitchConfig struct {
 	Threshold float64 `yaml:"threshold"` // Transient energy threshold (0.0 to 1.0)
 	Intensity float64 `yaml:"intensity"` // Strip displacement intensity
 	ReactTo   string  `yaml:"react_to"`  // "" = hits/transients (def.); or a band that triggers when exceeding threshold
+	DepthRange `yaml:",inline"`
 }
 
 type ColorFlashConfig struct {
@@ -152,6 +192,7 @@ type ColorFlashConfig struct {
 	BrightnessBoost float64 `yaml:"brightness_boost"` // e.g. 0.20
 	ContrastBoost   float64 `yaml:"contrast_boost"`   // e.g. 0.15
 	ReactTo         string  `yaml:"react_to"`         // bass (def.), mid, treble, overall, transient, beat
+	DepthRange `yaml:",inline"`
 }
 
 type VisualizerConfig struct {
@@ -435,7 +476,8 @@ func DefaultConfig() ProjectConfig {
 				BrightnessBoost: 0.15,
 				ContrastBoost:   0.10,
 			},
-			Parallax: ParallaxConfig{Amount: 30, Motion: "sway", Speed: 1, Focus: 0.5, ReactTo: "bass"},
+			Parallax:     ParallaxConfig{Amount: 30, Motion: "sway", Speed: 1, Focus: 0.5, ReactTo: "bass"},
+			DepthOfField: DepthOfFieldConfig{From: 1, To: 0.5, Soft: 0.2, Blur: 8, ReactTo: "bass"},
 		},
 		Visualizer: VisualizerConfig{
 			Enabled:         true,

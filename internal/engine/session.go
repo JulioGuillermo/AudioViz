@@ -378,6 +378,18 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 		}
 	}
 
+	// With a depth map: the zoom's share that moves in goes to the camera, which hides the frame's
+	// edges with a little zoom; without one the zoom is flat and nothing depends on depth
+	if fs.DepthA != nil || fs.DepthB != nil {
+		fs.FX.par.Dolly += fs.FX.zoomDolly
+		fs.FX.zoom *= fs.FX.par.EdgeZoom(s.W, s.H)
+	} else {
+		fs.FX.zoom *= 1 + fs.FX.zoomDolly
+		fs.FX.par, fs.FX.dof = effects.Parallax{}, effects.DoF{}
+		fs.FX.rFlash, fs.FX.rChroma, fs.FX.rRipple, fs.FX.rGlitch = [4]float64{}, [4]float64{}, [4]float64{}, [4]float64{}
+	}
+	fs.FX.zoomDolly = 0
+
 	// Visualizer: same type -> interpolate; type change -> one fades out and the other fades in
 	pv, cv, kv := config.Blend(tl.Visualizer, t)
 	fs.VizAlpha = 1
@@ -429,7 +441,7 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 		}
 		fs.Scene = &effects.Scene{A: fs.DepthA, B: fs.DepthB, LA: fs.LayerA, LB: fs.LayerB, K: fs.Trans.K,
 			Zoom: fx.zoom, ShakeX: fx.shakeX, ShakeY: fx.shakeY, RippleAmp: fx.rippleAmp, RippleFreq: fx.rippleFreq, RippleTm: fx.rTim,
-			W: s.W, H: s.H, Par: fx.par, N: fx.par.Steps(s.W, s.H)}
+			W: s.W, H: s.H, Par: fx.par, N: fx.par.Steps(s.W, s.H), DoF: fx.dof}
 	}
 	if len(cfg.Layers) > 0 {
 		if fs.Layers, fs.layerStack, err = s.layersAt(t, idx, base, fs.FX, fs.GlitchAmount, fs.Scene); err != nil {
@@ -471,6 +483,25 @@ func shakeOf(c *config.ShakeConfig, t float64, feat *audio.FrameFeatures, minDim
 	return amp * (0.6*math.Sin(tt*7.3) + 0.4*math.Sin(tt*13.1+1.7)),
 		amp * (0.6*math.Sin(tt*8.9+0.5) + 0.4*math.Sin(tt*11.7+2.3)),
 		1 + 2*c.Amplitude/minDim
+}
+
+// zoomDepth: how much of a zoom is the camera moving in
+func zoomDepth(c *config.BassZoomConfig) float64 {
+	if !c.Enabled {
+		return 0
+	}
+	return math.Max(0, math.Min(1, c.Depth))
+}
+
+// dofOf: the depth of field now: the band brings React of the blur and moves the focus
+func dofOf(c *config.DepthOfFieldConfig, feat *audio.FrameFeatures) effects.DoF {
+	if !c.Enabled || c.Blur <= 0 {
+		return effects.DoF{From: c.From, To: c.To, Soft: c.Soft}
+	}
+	b := feat.Band(c.ReactTo, "bass")
+	r := math.Max(0, math.Min(1, c.React))
+	m := c.FocusMove * b
+	return effects.DoF{From: c.From + m, To: c.To + m, Soft: c.Soft, Blur: c.Blur * ((1 - r) + r*b)}
 }
 
 // parallaxOf: the 2.5D camera now: how far the nearest things move (px), moving in, focus
@@ -543,7 +574,10 @@ func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures) (fram
 	var fx frameFX
 	{
 		a, b, k := config.Blend(tl.BassZoom, t)
-		fx.zoom = lerp(zoomOf(a, feat), zoomOf(b, feat), k)
+		z := lerp(zoomOf(a, feat), zoomOf(b, feat), k)
+		// with depth, part of it is the camera moving in (Prepare puts it back flat without one)
+		d := lerp(zoomDepth(a), zoomDepth(b), k)
+		fx.zoom, fx.zoomDolly = 1+(z-1)*(1-d), (z-1)*d
 	}
 	{
 		a, b, k := config.Blend(tl.Shake, t)
@@ -594,13 +628,53 @@ func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures) (fram
 		pa, pb := parallaxOf(a, t, feat), parallaxOf(b, t, feat)
 		fx.par = effects.Parallax{SX: lerp(pa.SX, pb.SX, k), SY: lerp(pa.SY, pb.SY, k), Dolly: lerp(pa.Dolly, pb.Dolly, k),
 			Focus: lerp(pa.Focus, pb.Focus, k)}
-		if !a.Enabled {
+		switch {
+		case !a.Enabled && !b.Enabled:
+			fx.par.Focus = 0 // only the zoom moves in: what is far stays
+		case !a.Enabled:
 			fx.par.Focus = pb.Focus
-		} else if !b.Enabled {
+		case !b.Enabled:
 			fx.par.Focus = pa.Focus
 		}
-		// a little zoom so that what moves doesn't show the frame's edges
-		fx.zoom *= fx.par.EdgeZoom(s.W, s.H)
+	}
+	{
+		a, b, k := config.Blend(tl.DoF, t)
+		da, db := dofOf(a, feat), dofOf(b, feat)
+		fx.dof = effects.DoF{From: lerp(da.From, db.From, k), To: lerp(da.To, db.To, k), Soft: lerp(da.Soft, db.Soft, k),
+			Blur: lerp(da.Blur, db.Blur, k)}
+		if !a.Enabled {
+			fx.dof.From, fx.dof.To, fx.dof.Soft = db.From, db.To, db.Soft
+		} else if !b.Enabled {
+			fx.dof.From, fx.dof.To, fx.dof.Soft = da.From, da.To, da.Soft
+		}
+	}
+	// only on a depth range (the segment in front during a fade)
+	rangeOf := func(a, b *config.DepthRange, k float64) [4]float64 {
+		r := a
+		if k >= 0.5 {
+			r = b
+		}
+		if !r.DepthOnly {
+			return [4]float64{}
+		}
+		from, to, soft := r.Range()
+		return [4]float64{from, to, soft, 1}
+	}
+	{
+		a, b, k := config.Blend(tl.ColorFlash, t)
+		fx.rFlash = rangeOf(&a.DepthRange, &b.DepthRange, k)
+	}
+	{
+		a, b, k := config.Blend(tl.Chromatic, t)
+		fx.rChroma = rangeOf(&a.DepthRange, &b.DepthRange, k)
+	}
+	{
+		a, b, k := config.Blend(tl.Ripple, t)
+		fx.rRipple = rangeOf(&a.DepthRange, &b.DepthRange, k)
+	}
+	{
+		a, b, k := config.Blend(tl.Glitch, t)
+		fx.rGlitch = rangeOf(&a.DepthRange, &b.DepthRange, k)
 	}
 	return fx, glitchAmt
 }

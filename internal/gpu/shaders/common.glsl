@@ -97,6 +97,8 @@ layout(std430, set = 0, binding = 0) readonly buffer Params {
     ivec4 depthI;  // backgrounds' depth in lay: word offsets of A, B; which are there (bit 0 A, bit 1 B)
     vec4 parallax;    // the 2.5D camera: shift x, y (px), dolly, focus
     ivec4 parallaxN;  // its search steps (0 = off)
+    vec4 dof;         // depth of field: in focus from (near), to (far), soft, blur (px)
+    vec4 ranges[4];   // flash, chromatic aberration, ripple, glitch only on depths: from, to, soft, on
     LayerP layers[MAX_LAYERS];
 } P;
 

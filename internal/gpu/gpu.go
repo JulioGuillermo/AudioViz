@@ -25,8 +25,9 @@ import (
 
 // A broken Vulkan driver can hang inside its setup calls instead of failing. Those calls run
 // with a time limit: past it the GPU is given up for the rest of the process (the CPU renders),
-// rather than freezing the program. The stuck call stays parked in its own thread.
-const setupTimeout = 20 * time.Second
+// rather than freezing the program. The stuck call stays parked in its own thread. The first
+// run compiles the shaders (about 8 s on an Intel iGPU, cached afterwards): room for slower ones.
+const setupTimeout = 45 * time.Second
 
 var stuck atomic.Bool
 
@@ -139,7 +140,11 @@ type Params struct {
 	// The 2.5D camera (effects.Parallax): shift x, y (px), dolly, focus; search steps (0 = off)
 	Parallax  [4]float32
 	ParallaxN [4]int32
-	Layers    [MaxLayers]LayerP
+	// Depth of field (in focus from, to; soft; blur px) and the background effects on a depth
+	// range (flash, chromatic aberration, ripple, glitch: from, to, soft, on)
+	Dof    [4]float32
+	Ranges [4][4]float32
+	Layers [MaxLayers]LayerP
 }
 
 // MaxLayers: overlay clips drawn at once

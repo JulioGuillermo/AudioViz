@@ -86,7 +86,8 @@ export function Edit({ tag = 'input', value, onKeyDown, ...rest }) {
 }
 
 // The field being adjusted right now, for the ones that show something while they are
-// (f.adjust: e.g. 'lightrange' shows the depth a light reaches): { kind } or null
+// (f.adjust: e.g. 'lightrange' shows the depth a light reaches; 'range' a background effect's
+// depth range, f.rangeKeys its [from, to, soft] keys): { kind, keys } or null
 export const adjusting = createStore(null);
 
 function Row({ f, children, dia }) {
@@ -94,7 +95,7 @@ function Row({ f, children, dia }) {
   // f.adjust: say so while the pointer is down on it or it has the focus
   const adj = f.adjust ? {
     onPointerDown: () => {
-      adjusting.set({ kind: f.adjust });
+      adjusting.set({ kind: f.adjust, keys: f.rangeKeys });
       // released: back to normal, unless typing a number in it
       const up = () => {
         removeEventListener('pointerup', up);
@@ -103,7 +104,7 @@ function Row({ f, children, dia }) {
       };
       addEventListener('pointerup', up);
     },
-    onFocusIn: (e) => { if (e.target.type !== 'range') adjusting.set({ kind: f.adjust }); },
+    onFocusIn: (e) => { if (e.target.type !== 'range') adjusting.set({ kind: f.adjust, keys: f.rangeKeys }); },
     onFocusOut: (e) => { if (e.target.type !== 'range') adjusting.set(null); },
   } : {};
   return html`<div class=${'fld' + (dia ? ' kfable' : '') + (f.adjust ? ' adjust' : '')} ...${adj}>

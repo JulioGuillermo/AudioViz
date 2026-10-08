@@ -1242,6 +1242,12 @@ function App() {
       const kv = (k, d) => { const ks = selClip.keys && selClip.keys['emitter.light.' + k]; return ks && ks.length ? valueAt(ks, tt) : (l[k] ?? d); };
       return 'lightrange&' + new URLSearchParams({ from: kv('from', 1), to: kv('to', 0), soft: kv('range_soft', 0.05) }).toString();
     }
+    if (adj && adj.kind === 'range' && adj.keys && sel.kind === 'track' && proj.tracks[sel.track]) {
+      // a background effect's depth range (or the depth of field's focus): what is outside, black
+      const c = (proj.tracks[sel.track][sel.seg] || {}).cfg || {};
+      const [kf, kt, ks] = adj.keys;
+      return 'lightrange&' + new URLSearchParams({ from: c[kf] ?? 1, to: c[kt] ?? 0, soft: Math.min(c[ks] ?? 0.05, 0.08) }).toString();
+    }
     if (adj && adj.kind === 'objdepth' && selClip) // adjusting a clip's depth: what is behind it, in red
       return 'objdepth&' + new URLSearchParams({ layer: sel.id, clip: sel.clip }).toString();
     return depthView ? 'depth' : '';

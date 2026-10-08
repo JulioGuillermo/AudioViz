@@ -21,12 +21,18 @@ func (p Parallax) MaxDisp(W, H int) float64 {
 	return m * (math.Hypot(p.SX, p.SY) + math.Abs(p.Dolly)*math.Hypot(float64(W), float64(H))/2)
 }
 
-// EdgeZoom: the zoom that keeps the frame's edges out of sight
+// EdgeZoom: the zoom that keeps the frame's edges out of sight: the shift's room, and what
+// moving in (or out) shrinks (moving in with the focus at the back shrinks nothing)
 func (p Parallax) EdgeZoom(W, H int) float64 {
 	if !p.On() {
 		return 1
 	}
-	return 1 + 2*p.MaxDisp(W, H)/float64(max(min(W, H), 64))
+	m := math.Max(p.Focus, 1-p.Focus)
+	shrink := p.Dolly * p.Focus
+	if p.Dolly < 0 {
+		shrink = -p.Dolly * (1 - p.Focus)
+	}
+	return (1 + 2*m*math.Hypot(p.SX, p.SY)/float64(max(min(W, H), 64))) * (1 + 1.1*shrink)
 }
 
 // Steps: how many depths the search tries (more for larger moves)

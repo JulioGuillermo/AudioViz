@@ -32,6 +32,18 @@ export const ZONES = [
 // Zone of a track list entry (track id or "texts"); everything else is an effect
 export const zoneOf = (id) => ({ background: 'main', lyrics: 'main', texts: 'main' })[id] || 'effects';
 
+// a background effect only on a depth range (with a depth map); not in a clip's own effects
+const RANGE_KEYS = ['depth_from', 'depth_to', 'depth_soft'];
+const DEPTH_RANGE = [
+  { key: 'depth_only', label: 'Only on some depths', type: 'bool', anim: false, trackOnly: true,
+    help: 'With a depth map: the effect only on part of the scene (near or far)' },
+  { key: 'depth_from', label: 'From (near)', type: 'num', min: 0, max: 1, step: 0.005, def: 1, trackOnly: true, showIf: (c) => c.depth_only,
+    adjust: 'range', rangeKeys: RANGE_KEYS, help: '1 = the nearest (white in the depth map)' },
+  { key: 'depth_to', label: 'Up to (far)', type: 'num', min: 0, max: 1, step: 0.005, def: 0, trackOnly: true, showIf: (c) => c.depth_only,
+    adjust: 'range', rangeKeys: RANGE_KEYS, help: '0 = the farthest (black in the depth map)' },
+  { key: 'depth_soft', label: 'Soft edge', type: 'num', min: 0, max: 0.5, step: 0.005, def: 0.05, trackOnly: true, showIf: (c) => c.depth_only,
+    adjust: 'range', rangeKeys: RANGE_KEYS, help: 'While you adjust these three, the preview shows the depth map with what it leaves out in black' },
+];
 export const TRACKS = [
   { id: 'background', group: 'Background', label: 'Image / video', icon: 'image', fields: [
     { key: 'path', label: 'File', type: 'file', kind: 'bg', help: 'Image, GIF or video (mp4, mov, mkv, webm)' },
@@ -62,6 +74,8 @@ export const TRACKS = [
     { key: 'enabled', label: 'Enabled', type: 'bool' },
     { key: 'max_zoom', label: 'Max zoom', type: 'num', min: 1, max: 1.4, step: 0.005 },
     { key: 'sensitivity', label: 'Sensitivity', type: 'num', min: 0, max: 3, step: 0.05 },
+    { key: 'depth', label: '2.5D (camera moving in)', type: 'num', min: 0, max: 1, step: 0.05, def: 0, trackOnly: true,
+      help: 'With a depth map: 0 = a flat zoom; 1 = the camera moves in (what is near grows more than what is far)' },
     react('bass'),
   ] },
   { id: 'shake', group: 'Background effects', label: 'Camera shake', icon: 'move', fields: [
@@ -75,6 +89,7 @@ export const TRACKS = [
     { key: 'max_shift', label: 'Shift (px)', type: 'num', min: 0, max: 40, step: 0.5 },
     { key: 'mode', label: 'Mode', type: 'enum', def: 'radial', options: [['radial', 'Radial'], ['horizontal', 'Horizontal']] },
     react('bass'),
+    ...DEPTH_RANGE,
   ] },
   { id: 'ripple', group: 'Background effects', label: 'Ripple', icon: 'waves', fields: [
     { key: 'enabled', label: 'Enabled', type: 'bool' },
@@ -82,18 +97,21 @@ export const TRACKS = [
     { key: 'frequency', label: 'Frequency', type: 'num', min: 0.002, max: 0.2, step: 0.001 },
     { key: 'speed', label: 'Speed', type: 'num', min: 0, max: 6, step: 0.05 },
     react('mid'),
+    ...DEPTH_RANGE,
   ] },
   { id: 'glitch', group: 'Background effects', label: 'Glitch', icon: 'scan-line', fields: [
     { key: 'enabled', label: 'Enabled', type: 'bool' },
     { key: 'intensity', label: 'Intensity', type: 'num', min: 0, max: 1, step: 0.01 },
     { key: 'threshold', label: 'Threshold', type: 'num', min: 0, max: 1, step: 0.01, help: 'Triggers above this value' },
     { key: 'react_to', label: 'Triggered by', type: 'enum', def: '', options: [['', 'Beats / transients'], ...BANDS] },
+    ...DEPTH_RANGE,
   ] },
   { id: 'color_flash', group: 'Background effects', label: 'Color flash', icon: 'sun', fields: [
     { key: 'enabled', label: 'Enabled', type: 'bool' },
     { key: 'brightness_boost', label: 'Extra brightness', type: 'num', min: 0, max: 0.8, step: 0.01 },
     { key: 'contrast_boost', label: 'Extra contrast', type: 'num', min: 0, max: 0.8, step: 0.01 },
     react('bass'),
+    ...DEPTH_RANGE,
   ] },
   { id: 'parallax', group: 'Background effects', label: 'Parallax 2.5D', icon: 'focus', fields: [
     { key: 'enabled', label: 'Enabled', type: 'bool',
@@ -108,6 +126,22 @@ export const TRACKS = [
       help: 'The depth that stays still (0 far … 1 near): nearer things move one way, farther ones the other' },
     { key: 'speed', label: 'Speed', type: 'num', min: 0.05, max: 5, step: 0.05, showIf: (c) => c.motion !== 'still' && c.motion !== 'beat' },
     { ...react('bass'), showIf: (c) => c.motion === 'beat' },
+  ] },
+  { id: 'depth_of_field', group: 'Background effects', label: 'Depth of field', icon: 'aperture', fields: [
+    { key: 'enabled', label: 'Enabled', type: 'bool',
+      help: 'With a depth map: only a range of depths in focus, the rest blurred the farther it is, as a lens' },
+    { key: 'from', label: 'In focus from (near)', type: 'num', min: 0, max: 1, step: 0.005, def: 1, adjust: 'range', rangeKeys: ['from', 'to', 'soft'],
+      help: '1 = the nearest. While you adjust it the preview shows the depth map with what is out of focus in black' },
+    { key: 'to', label: 'In focus up to (far)', type: 'num', min: 0, max: 1, step: 0.005, def: 0.5, adjust: 'range', rangeKeys: ['from', 'to', 'soft'],
+      help: '0 = the farthest' },
+    { key: 'soft', label: 'Blurs over (depth)', type: 'num', min: 0.01, max: 1, step: 0.005, def: 0.2,
+      help: 'How far past the focus it reaches its full blur' },
+    { key: 'blur', label: 'Blur (px)', type: 'num', min: 0, max: 40, step: 0.5, def: 8, help: 'Clips and emitters with a depth blur with it too' },
+    { key: 'react', label: 'Blur with the music', type: 'num', min: 0, max: 1, step: 0.01, def: 0,
+      help: '0 = always all of it; 1 = all of it only at full band' },
+    { key: 'focus_move', label: 'Focus moves with the music', type: 'num', min: -0.5, max: 0.5, step: 0.005, def: 0,
+      help: 'How far the focus moves at full band (+ nearer, - farther)' },
+    react('bass'),
   ] },
   { id: 'visualizer', group: 'Visualizer', label: 'Spectrum', icon: 'chart-column', fields: [
     { key: 'enabled', label: 'Enabled', type: 'bool' },
@@ -298,7 +332,7 @@ const EFFECT_MODES = [['inherit', 'Like the background'], ['own', 'Own'], ['off'
 const layerEffect = (key, label) => ({ key, label, type: 'group', fields: [
   { key: 'mode', label: 'Mode', type: 'enum', def: 'inherit', options: EFFECT_MODES, anim: false },
   { key: 'own', label: 'Own settings', type: 'group', showIf: (c) => c.mode === 'own',
-    fields: trackById[key].fields },
+    fields: trackById[key].fields.filter((f) => !f.trackOnly) },
 ] });
 export const BLENDS = [['normal', 'Normal'], ['add', 'Add (light)'], ['multiply', 'Multiply (darken)'], ['screen', 'Screen'],
   ['overlay', 'Overlay'], ['lighten', 'Lighten'], ['darken', 'Darken']];

@@ -162,6 +162,7 @@ func ProjectToJSON(c *config.ProjectConfig) *ProjectJSON {
 			"glitch":               segsToJSON(tl.Glitch),
 			"color_flash":          segsToJSON(tl.ColorFlash),
 			"parallax":             segsToJSON(tl.Parallax),
+			"depth_of_field":       segsToJSON(tl.DoF),
 			"visualizer":           segsToJSON(tl.Visualizer),
 			"particles":            segsToJSON(tl.Particles),
 			"lyrics":               segsToJSON(tl.Lyrics),
@@ -227,6 +228,9 @@ func ProjectFromJSON(p *ProjectJSON, dir string) (*config.ProjectConfig, error) 
 		return nil, err
 	}
 	if tl.Parallax, err = segsFromJSON("parallax", p.Tracks["parallax"], be.Parallax, noFix[config.ParallaxConfig]); err != nil {
+		return nil, err
+	}
+	if tl.DoF, err = segsFromJSON("depth_of_field", p.Tracks["depth_of_field"], be.DepthOfField, noFix[config.DepthOfFieldConfig]); err != nil {
 		return nil, err
 	}
 	if tl.ColorFlash, err = segsFromJSON("color_flash", p.Tracks["color_flash"], be.ColorFlash, noFix[config.ColorFlashConfig]); err != nil {

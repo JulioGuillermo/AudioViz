@@ -38,6 +38,10 @@ type frameFX struct {
 	shakeX, shakeY              float64
 	bright, contrast            float64
 	par                         effects.Parallax // the 2.5D camera (with a depth map)
+	zoomDolly                   float64          // the zoom's share that is a camera moving in
+	dof                         effects.DoF      // depth of field
+	// background effects only on a depth range: from, to, soft, on
+	rFlash, rChroma, rRipple, rGlitch [4]float64
 }
 
 // RenderOptions are CLI options for preview or partial rendering
@@ -733,20 +737,35 @@ func (s *Session) cpuFrame(fs *FrameState) *image.RGBA {
 	}
 	fx := fs.FX
 	frame = effects.ApplyBassZoom(frame, fx.zoom, fx.shakeX, fx.shakeY)
-	if fx.rippleAmp > 0 {
-		frame = effects.ApplyRipple(frame, fx.rippleAmp, fx.rippleFreq, fx.rTim)
+	// the scene's depth at each pixel, for the effects on a depth range and the depth of field
+	var z []float32
+	if fs.Scene.On() && (fx.dof.On() || fx.rFlash[3] > 0 || fx.rChroma[3] > 0 || fx.rRipple[3] > 0 || fx.rGlitch[3] > 0) {
+		z = effects.DepthField(fs.Scene, s.W, s.H)
 	}
+	if fx.rippleAmp > 0 {
+		frame = effects.MaskedBlend(frame, effects.ApplyRipple(frame, fx.rippleAmp, fx.rippleFreq, fx.rTim), effects.RangeMaskField(z, fx.rRipple))
+	}
+	frame = effects.ApplyDoF(frame, z, fx.dof)
 	if fx.chromaMode != 0 {
 		mode := "horizontal"
 		if fx.chromaMode == 2 {
 			mode = "radial"
 		}
-		frame = effects.ApplyChromaticAberration(frame, fx.chromaShift, mode)
+		frame = effects.MaskedBlend(frame, effects.ApplyChromaticAberration(frame, fx.chromaShift, mode), effects.RangeMaskField(z, fx.rChroma))
 	}
 	if fx.glitch {
-		frame = effects.ApplyGlitch(frame, fs.GlitchAmount, int64(fs.Idx))
+		frame = effects.MaskedBlend(frame, effects.ApplyGlitch(frame, fs.GlitchAmount, int64(fs.Idx)), effects.RangeMaskField(z, fx.rGlitch))
 	}
-	effects.ApplyColorAndContrast(frame, fx.bright, fx.contrast, fs.BG.Darken, fs.BG.Opacity, fs.BG.Vignette)
+	if m := effects.RangeMaskField(z, fx.rFlash); m != nil {
+		// the flash only on its depths: the colors without it, then with it, mixed
+		base := image.NewRGBA(frame.Bounds())
+		copy(base.Pix, frame.Pix)
+		effects.ApplyColorAndContrast(base, 0, 0, fs.BG.Darken, fs.BG.Opacity, fs.BG.Vignette)
+		effects.ApplyColorAndContrast(frame, fx.bright, fx.contrast, fs.BG.Darken, fs.BG.Opacity, fs.BG.Vignette)
+		frame = effects.MaskedBlend(base, frame, m)
+	} else {
+		effects.ApplyColorAndContrast(frame, fx.bright, fx.contrast, fs.BG.Darken, fs.BG.Opacity, fs.BG.Vignette)
+	}
 
 	// Overlay clips in their order; the particles, the visualizer and the texts go at their stage
 	items, styles := fs.TextItems, fs.TextStyles
@@ -856,6 +875,13 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 	p.ZoomRipple = [4]float32{float32(fx.zoom), float32(fx.rippleAmp), float32(fx.rippleFreq), float32(fx.rTim)}
 	// the 2.5D camera (with a depth map; the fluid transitions don't move)
 	p.Parallax, p.ParallaxN = [4]float32{}, [4]int32{}
+	p.Dof = [4]float32{float32(fx.dof.From), float32(fx.dof.To), float32(fx.dof.Soft), float32(fx.dof.Blur)}
+	if fx.dof.On() {
+		p.ParallaxN[1] = effects.DoFTaps // the gather's samples
+	}
+	for i, r := range [4][4]float64{fx.rFlash, fx.rChroma, fx.rRipple, fx.rGlitch} {
+		p.Ranges[i] = [4]float32{float32(r[0]), float32(r[1]), float32(r[2]), float32(r[3])}
+	}
 	if par := fx.par; par.On() && (fs.DepthA != nil || fs.DepthB != nil) && fs.Trans.Fluid == nil {
 		p.Parallax = [4]float32{float32(par.SX), float32(par.SY), float32(par.Dolly), float32(par.Focus)}
 		p.ParallaxN[0] = int32(par.Steps(s.W, s.H))

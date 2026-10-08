@@ -14,6 +14,7 @@ type Scene struct {
 	W, H                            int
 	Par                             Parallax // the 2.5D camera
 	N                               int      // its search steps (Parallax.Steps)
+	DoF                             DoF      // the depth of field (clips in the depth blur with it)
 }
 
 // On: there is a depth to look at

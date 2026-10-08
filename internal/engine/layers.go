@@ -454,6 +454,10 @@ func (s *Session) placeInDepth(lf *effects.LayerFrame, d *config.ClipDepth, scen
 		lf.InDepth, lf.DepthZ, lf.DepthSoft = true, float32(z), float32(math.Max(d.Soft, 0.005))
 		lf.Behind = d.Behind
 	}
+	if ok && scene.On() && scene.DoF.On() {
+		// out of focus as its depth is
+		lf.Blur += float64(scene.DoF.CoC(float32(z)))
+	}
 	if ok && scene.On() && scene.Par.On() {
 		// the 2.5D camera moves it as its depth
 		dx, dy := scene.Par.Disp(z, x, y, s.W, s.H)
