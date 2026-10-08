@@ -543,22 +543,13 @@ func (s *Server) hFrame(w http.ResponseWriter, r *http.Request) {
 		// an object's depth (?layer=&clip=): what is behind it, tinted
 		var obj *[2]float32
 		if v == "objdepth" {
-			if tx := r.URL.Query().Get("text"); tx != "" {
-				// a fixed text (its index) or the lyrics (-1)
-				ti, _ := strconv.Atoi(tx)
-				for _, st := range fs.TextStyles {
-					if st.Text == ti && st.InDepth {
-						obj = &[2]float32{float32(st.DepthZ), float32(st.DepthSoft)}
-					}
-				}
-			} else {
-				id := r.URL.Query().Get("layer")
-				ci, _ := strconv.Atoi(r.URL.Query().Get("clip"))
-				for _, l := range fs.Layers {
-					if l.LayerID == id && l.Clip == ci && l.InDepth {
-						obj = &[2]float32{l.DepthZ, l.DepthSoft}
-					}
-				}
+			// a clip (?layer=&clip=), a fixed text (?text=its index) or the lyrics (?text=-1)
+			q := r.URL.Query()
+			tx := q.Get("text")
+			ti, _ := strconv.Atoi(tx)
+			ci, _ := strconv.Atoi(q.Get("clip"))
+			if z, soft, ok := sess.ObjectDepth(fs, tx != "", ti, q.Get("layer"), ci); ok {
+				obj = &[2]float32{float32(z), float32(soft)}
 			}
 		}
 		img = depthView(fs.Scene, sess.W/scale, sess.H/scale, scale, rng, obj)

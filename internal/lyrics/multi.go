@@ -248,3 +248,45 @@ func Boxes(items []Item, styles []Style) []TextBox {
 func (m *Multi) DrawCPU(img *image.RGBA, items []Item, styles []Style) {
 	m.draw.DrawCPU(img, items, styles)
 }
+
+// LightSources: how much of the text of style si there is in each cell (div px) of a gw×gh grid
+// over the frame (px² covered by its letters × its opacity): where its light comes from
+func (m *Multi) LightSources(items []Item, si, div, gw, gh int) []float32 {
+	src := make([]float32, gw*gh)
+	const step = 6.0 // px between the samples of its letters
+	for i := range items {
+		it := &items[i]
+		if it.Style != si || it.Alpha <= 0 {
+			continue
+		}
+		sc := float64(it.Scale)
+		hw, hh := float64(it.AW)/2, float64(it.AH)/2
+		rc, rs := 1.0, 0.0
+		if it.Rot != 0 {
+			rc, rs = math.Cos(float64(it.Rot)), math.Sin(float64(it.Rot))
+		}
+		ex := (hw*math.Abs(rc) + hh*math.Abs(rs)) * sc
+		ey := (hw*math.Abs(rs) + hh*math.Abs(rc)) * sc
+		cx, cy := float64(it.CX), float64(it.CY)
+		for y := cy - ey; y <= cy+ey; y += step {
+			for x := cx - ex; x <= cx+ex; x += step {
+				dx, dy := x-cx, y-cy
+				lx, ly := (dx*rc+dy*rs)/sc, (-dx*rs+dy*rc)/sc
+				if math.Abs(lx) > hw || math.Abs(ly) > hh {
+					continue
+				}
+				d := m.draw.sdfAt(float64(it.AX)+hw+lx, float64(it.AY)+hh+ly, it) * sc
+				cov := clampF(0.5-d/3, 0, 1)
+				if cov <= 0 {
+					continue
+				}
+				gx, gy := int(x)/div, int(y)/div
+				if gx < 0 || gy < 0 || gx >= gw || gy >= gh {
+					continue
+				}
+				src[gy*gw+gx] += float32(cov * step * step * float64(it.Alpha))
+			}
+		}
+	}
+	return src
+}

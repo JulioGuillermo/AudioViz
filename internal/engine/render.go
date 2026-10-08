@@ -792,6 +792,12 @@ func (s *Session) cpuFrame(fs *FrameState) *image.RGBA {
 				its = append(its, it)
 			}
 		}
+		// the texts of this stage that light the scene: on what is drawn so far, then the texts
+		for _, tl := range fs.TextLights {
+			if fs.Stage(styles[tl.Style].Z) == st {
+				effects.LightOnto(frame, tl.Light, fs.Scene)
+			}
+		}
 		if len(its) > 0 {
 			fs.Lyr.DrawCPU(frame, its, styles)
 		}
@@ -1087,5 +1093,36 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 			}
 		}
 		p.TextInfo = [4]int32{int32(n), int32(fs.Lyr.Atlas.W), chroma}
+	}
+	// texts lighting the scene
+	for i := range p.TLightI {
+		p.TLightI[i] = [4]int32{}
+	}
+	for i, tl := range fs.TextLights {
+		if i == gpu.MaxTextLights || tl.Style >= gpu.MaxTextStyles {
+			break
+		}
+		l := tl.Light
+		if l.GW*l.GH > 4*gpu.TextLightVec4 {
+			continue
+		}
+		add := float32(0)
+		if l.Add {
+			add = 1
+		}
+		p.TLightI[i] = [4]int32{int32(l.GW), int32(l.GH), int32(l.Div), int32(tl.Style)}
+		p.TLightC[i] = [4]float32{l.Col[0], l.Col[1], l.Col[2], add}
+		p.TLightD[i], p.TLightE[i], p.TLightF[i], p.TLightG[i] = [4]float32{}, [4]float32{}, [4]float32{}, [4]float32{}
+		if l.D3 {
+			p.TLightD[i] = [4]float32{l.CX, l.CY, l.LZ, l.DepthK}
+			p.TLightE[i] = [4]float32{l.Shade, 1, l.From, l.To}
+			p.TLightG[i] = [4]float32{l.RimEdge, l.Soft}
+			if l.Rim {
+				p.TLightF[i] = [4]float32{l.RimFrom, l.RimSoft, l.RimW, l.RimGain}
+			}
+		}
+		for c, v := range l.V {
+			p.TLightV[i*gpu.TextLightVec4+c/4][c%4] = v
+		}
 	}
 }

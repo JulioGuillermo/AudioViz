@@ -793,44 +793,47 @@ void parallaxPixel(vec2 q) {
 vec3 sceneHit(vec2 q) { return gHit; }
 float sceneDepth(vec2 q) { return gHit.z; }
 
-// How much of an emitter's 2.5D light reaches q (as effects.LightField.DepthFactor): less with the
-// difference of depth, more on the side of the surfaces that faces it; the surroundings are
-// looked at around the background point seen there
-float lightDepth(int i, vec2 q) {
-    LayerP L = P.layers[i];
+// How much of a 2.5D light reaches q (as effects.LightField.DepthFactor): less with the difference
+// of depth, more on the side of the surfaces that faces it (the surroundings looked at around the
+// background point seen there), only between "to" and "from" (soft edges), and farther than the
+// rim circle only the edges that face it. L2: where x, y, its depth, fade by depth; L3: shading,
+// -, lit from, to; soft: the range's edge; L4: rim from, soft, width, gain (0 = off); edge: the rim's
+float depthLight(vec2 q, vec4 L2, vec4 L3, float soft, vec4 L4, float edge) {
     vec3 h = sceneHit(q);
     int w = depthWhich();
     float zp = h.z;
-    float dz = (zp - L.light2.z) * L.light2.w;
-    // only between "to" (farther: too far) and "from" (nearer: in front of it), soft edges
-    float e = max(L.light1.w, 1e-4);
-    float f = exp(-dz * dz) * smoothstep(L.light3.w - e, L.light3.w + e, zp) * (1.0 - smoothstep(L.light3.z - e, L.light3.z + e, zp));
-    float shade = L.light3.x;
+    float dz = (zp - L2.z) * L2.w;
+    float e = max(soft, 1e-4);
+    float range = smoothstep(L3.w - e, L3.w + e, zp) * (1.0 - smoothstep(L3.z - e, L3.z + e, zp));
+    float f = exp(-dz * dz) * range;
+    float shade = L3.x;
     if (shade > 0.0) {
         float gx = (layerDepth(w, h.xy + vec2(2.0, 0.0)) - layerDepth(w, h.xy - vec2(2.0, 0.0))) / 4.0 * 800.0;
         float gy = (layerDepth(w, h.xy + vec2(0.0, 2.0)) - layerDepth(w, h.xy - vec2(0.0, 2.0))) / 4.0 * 800.0;
         vec3 n = vec3(-gx, -gy, 1.0);
-        vec3 l = vec3(L.light2.x - q.x, L.light2.y - q.y, (L.light2.z - zp) * 800.0);
+        vec3 l = vec3(L2.x - q.x, L2.y - q.y, (L2.z - zp) * 800.0);
         float lam = max(0.0, dot(n, l) / (length(n) * (length(l) + 1e-3)));
         f *= 1.0 - shade + shade * (0.3 + 1.1 * lam);
     }
-    if (L.light4.w > 0.0) {
-        // rim light: far away only the edges that face it (the scene drops behind them towards it)
-        vec2 dl = L.light2.xy - q;
+    if (L4.w > 0.0) {
+        vec2 dl = L2.xy - q;
         float d = length(dl);
-        float t = smoothstep(L.light4.x - L.light4.y, L.light4.x + L.light4.y + 1e-3, d);
+        float t = smoothstep(L4.x - L4.y, L4.x + L4.y + 1e-3, d);
         if (t > 0.0) {
             vec2 u = dl / max(d, 1e-3);
-            float r = 0.0, edge = L.light5.x;
+            float r = 0.0;
             for (int k = 1; k <= 4; k++) {
-                float dz2 = zp - layerDepth(w, h.xy + u * (L.light4.z * float(k) / 4.0));
+                float dz2 = zp - layerDepth(w, h.xy + u * (L4.z * float(k) / 4.0));
                 r = max(r, smoothstep(edge * 0.35, edge, dz2) * (1.0 - 0.55 * float(k - 1) / 3.0));
             }
-            float range = smoothstep(L.light3.w - e, L.light3.w + e, zp) * (1.0 - smoothstep(L.light3.z - e, L.light3.z + e, zp));
-            f = mix(f, L.light4.w * r * range, t);
+            f = mix(f, L4.w * r * range, t);
         }
     }
     return f;
+}
+float lightDepth(int i, vec2 q) {
+    LayerP L = P.layers[i];
+    return depthLight(q, L.light2, L.light3, L.light1.w, L.light4, L.light5.x);
 }
 
 // An emitter's light on col (what is behind it) at pixel q: its light field (bilinear between the
@@ -942,6 +945,30 @@ vec3 drawTexts(vec3 col, vec2 p, int stage) {
     return drawText(col, p, 0.0, stage);
 }
 
+// A text's light on what is drawn so far at q (as effects.LightOnto): its grid of cells,
+// bilinear; in 2.5D (with depth) as lightDepth, from the text's place and depth (lit range: all)
+vec3 applyTextLight(vec3 col, int i, vec2 q) {
+    ivec4 li = P.tlightI[i];
+    vec2 g = (q + 0.5) / float(li.z) - 0.5;
+    ivec2 i0 = ivec2(floor(g));
+    vec2 f = g - vec2(i0);
+    float v[4];
+    for (int k = 0; k < 4; k++) {
+        ivec2 c = clamp(i0 + ivec2(k & 1, k >> 1), ivec2(0), ivec2(li.x - 1, li.y - 1));
+        int idx = c.y * li.x + c.x;
+        v[k] = P.tlightV[i * TLIGHT_VEC4 + idx / 4][idx % 4];
+    }
+    float a = v[0] + (v[1] - v[0]) * f.x, b = v[2] + (v[3] - v[2]) * f.x;
+    float lt = a + (b - a) * f.y;
+    if (lt > 1e-4 && P.tlightE[i].y > 0.5 && P.depthI.z != 0)
+        lt *= depthLight(q, P.tlightD[i], P.tlightE[i], P.tlightG[i].y, P.tlightF[i], P.tlightG[i].x);
+    if (lt <= 1e-4) return col;
+    vec3 lc = P.tlightC[i].rgb * lt;
+    if (P.tlightC[i].w > 0.5) col += lc * 0.6;
+    else col += lc * (sqrt(max(col, vec3(0.0))) * 0.9 + 0.03);
+    return min(col, vec3(1.0));
+}
+
 // The frame at q: background, then each overlay clip; the particles, the visualizer and the
 // texts at their stage among them (z-index)
 vec3 shade(vec2 q) {
@@ -957,7 +984,14 @@ vec3 shade(vec2 q) {
         if (zv == st) col = drawViz(col, p);
         // texts of this stage (those set beyond the clips drawn go with the last stage)
         bool txt = ((tmask >> st) & 1) != 0 || (st == nl && (tmask >> (nl + 1)) != 0);
-        if (txt) col = drawTexts(col, p, st);
+        if (txt) {
+            // the texts of this stage that light the scene, then the texts
+            for (int l = 0; l < MAX_TLIGHTS; l++) {
+                ivec4 li = P.tlightI[l];
+                if (li.x > 0 && min(P.ts[li.w].gradN.y, P.layerN.x) == st) col = applyTextLight(col, l, q);
+            }
+            col = drawTexts(col, p, st);
+        }
     }
     return col;
 }

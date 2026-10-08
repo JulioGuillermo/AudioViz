@@ -377,6 +377,20 @@ the ripple (`effects.ApplyDoF`, over `DepthField`). Clips with a depth add the b
 Background effects on a depth range (`config.DepthRange`, `Params.ranges`): the effect's result is
 mixed with what was there by the range mask at the pixel's depth (`rangeMask` / `MaskedBlend`).
 The zoom's `depth` share becomes the camera's dolly (focus at the back when the parallax is off).
+Texts and lyrics with a depth (`LyricsConfig.Depth`; `Session.textsInDepth`): their place is a
+fixed text's anchor or the middle of the lyrics' words now; the style gets `TStyle.depth` (behind,
+z, soft, blur): `drawText` multiplies the alpha by the occlusion at the pixel's depth (`gHit`) and
+draws the distance field's edges soft over the depth of field's blur; the camera's move of that
+depth is added to the words' centers.
+
+Text light (`config.TextLight`; `Session.textLights`): the letters of a style are sampled every
+6 px through the atlas' distance field into a grid of cells (`effects.TextLightDiv`: 32 px, at
+most 60 a side) as px² covered × opacity (`Multi.LightSources`); the light of each cell is
+1 − e^(−Σ area·falloff / 1500) with the emitters' falloff (`effects.TextLight`). Up to two such
+grids travel in the params (`Params.tlight*`) and `applyTextLight` lights what is drawn before the
+texts of their stage, as `applyLight` (in 2.5D from the text's place and depth); on the CPU
+`effects.LightOnto` before `DrawCPU`. Its 2.5D part (range, rim light) and the emitters' share one
+function in the shader, `depthLight` (as `LightField.DepthFactor`).
 
 Particle emitters (`config.EmitterConfig`, `effects/emit.go`, `engine/emitters.go`,
 `shaders/emit.comp`): stateless. Per clip the session builds once a **table of births** (one entry

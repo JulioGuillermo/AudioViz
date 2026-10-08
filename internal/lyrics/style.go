@@ -43,6 +43,14 @@ type Style struct {
 	InDepth, Behind             bool
 	DepthZ, DepthSoft, DepthBlur float64
 	Scene                       *effects.Scene
+	// Its light on the scene (config.TextLight): color × strength now (with the band), reach
+	// and end (px of 1080p), add (or soft), fade with depth and shading
+	LightOn                bool
+	LightCol               [3]float64
+	LightR, LightE         float64
+	LightAdd               bool
+	LightDepthK, LightShade float64
+	Light                  config.TextLight // all of it (range and rim light)
 }
 
 // cover: how much of a point at distance d (px, inside < 0) of an edge is covered: a sharp edge,
@@ -110,6 +118,22 @@ func StyleFor(cfg *config.LyricsConfig, t float64, feat *audio.FrameFeatures) St
 		st.ShadowDX, st.ShadowDY, st.ShadowOp, st.Blur = cfg.Shadow.OffsetX, cfg.Shadow.OffsetY, cfg.Shadow.Opacity, cfg.Shadow.Blur
 	}
 	st.Chroma = cfg.React.Chromatic * band
+	if l := cfg.Light; l.Enabled && l.Intensity > 0 && l.Reach > 0 {
+		// its color: the light's, or the text's (its glow's when it glows)
+		c := st.Color
+		if st.GlowI > 0 {
+			c = st.GlowC
+		}
+		c = rgba(l.Color, c)
+		k := l.Intensity * (1 + l.React*band)
+		st.LightOn, st.LightCol = true, [3]float64{c[0] * k, c[1] * k, c[2] * k}
+		st.LightR, st.LightE, st.LightAdd = l.Reach, l.End, l.Mode == "add"
+		if st.LightE <= 0 {
+			st.LightE = 2.5 * l.Reach
+		}
+		st.LightDepthK, st.LightShade = l.Depth, l.Shade
+		st.Light = l
+	}
 
 	// Flash toward another color with the band
 	if cfg.React.Flash > 0 && cfg.React.FlashColor != "" {

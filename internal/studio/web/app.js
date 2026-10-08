@@ -1242,11 +1242,23 @@ function App() {
       const kv = (k, d) => { const ks = selClip.keys && selClip.keys['emitter.light.' + k]; return ks && ks.length ? valueAt(ks, tt) : (l[k] ?? d); };
       return 'lightrange&' + new URLSearchParams({ from: kv('from', 1), to: kv('to', 0), soft: kv('range_soft', 0.05) }).toString();
     }
-    if (adj && adj.kind === 'range' && adj.keys && sel.kind === 'track' && proj.tracks[sel.track]) {
-      // a background effect's depth range (or the depth of field's focus): what is outside, black
-      const c = (proj.tracks[sel.track][sel.seg] || {}).cfg || {};
-      const [kf, kt, ks] = adj.keys;
-      return 'lightrange&' + new URLSearchParams({ from: c[kf] ?? 1, to: c[kt] ?? 0, soft: Math.min(c[ks] ?? 0.05, 0.08) }).toString();
+    if (adj && adj.kind === 'range' && adj.keys) {
+      // a depth range (a background effect's, the depth of field's focus, a text's light): what
+      // is outside, black. Its settings: the selected segment's or fixed text's (keys "a.b")
+      // (with its keyframes: the value now)
+      const seg = sel.kind === 'track' && proj.tracks[sel.track] ? proj.tracks[sel.track][sel.seg] || {} : null;
+      const src = seg ? seg.cfg || {} : sel.kind === 'text' ? (proj.texts || [])[sel.i] || {} : null;
+      const keys = seg ? seg.keys : src && src.keys, t0 = seg ? seg.at || 0 : (src && src.start) || 0;
+      if (src) {
+        const g = (k) => {
+          const ks = keys && keys[k];
+          return ks && ks.length ? valueAt(ks, time - t0) : k.split('.').reduce((o, x) => (o == null ? undefined : o[x]), src);
+        };
+        const [kf, kt, ks] = adj.keys;
+        let from = g(kf), to = g(kt);
+        if (!from && !to) from = 1;
+        return 'lightrange&' + new URLSearchParams({ from: from ?? 1, to: to ?? 0, soft: Math.min(g(ks) ?? 0.05, 0.08) }).toString();
+      }
     }
     if (adj && adj.kind === 'objdepth' && selClip) // adjusting a clip's depth: what is behind it, in red
       return 'objdepth&' + new URLSearchParams({ layer: sel.id, clip: sel.clip }).toString();

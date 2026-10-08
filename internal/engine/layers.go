@@ -465,3 +465,63 @@ func (s *Session) placeInDepth(lf *effects.LayerFrame, d *config.ClipDepth, scen
 		lf.W.ShakeY += dy
 	}
 }
+
+// ObjectDepth: the depth (and its soft edge) of a clip (layerID, clip) or a text (isText: text,
+// -1 = the lyrics) in this frame: where it is drawn, or when it isn't on screen now (entering,
+// out of its time, hidden) from its settings at this time, at its place. false: it has no depth
+// (or the frame none)
+func (s *Session) ObjectDepth(fs *FrameState, isText bool, text int, layerID string, clip int) (float64, float64, bool) {
+	sc := fs.Scene
+	if !sc.On() {
+		return 0, 0, false
+	}
+	soft := func(d *config.ClipDepth) float64 { return math.Max(d.Soft, 0.005) }
+	W, H := float64(s.W), float64(s.H)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if isText {
+		for _, st := range fs.TextStyles {
+			if st.Text == text && st.InDepth {
+				return st.DepthZ, st.DepthSoft, true
+			}
+		}
+		var d config.ClipDepth
+		x, y := W/2, H/2
+		if text >= 0 {
+			if text >= len(s.Cfg.Texts) {
+				return 0, 0, false
+			}
+			tc := &s.Cfg.Texts[text]
+			if len(tc.Keys) > 0 {
+				tc = config.ApplyKeys(tc, tc.Keys, fs.T-tc.Start)
+			}
+			d, x, y = tc.Depth, tc.PositionX*W, tc.PositionY*H
+			if mo := tc.Motion; mo.On() {
+				x, y, _ = effects.PathAt(mo.Path, W, H, mo.Progress)
+			}
+		} else if ly := s.Cfg.Timeline.Lyrics; len(ly) > 0 {
+			c := ly[config.Active(ly, fs.T)].CfgAt(fs.T)
+			d, y = c.Depth, c.PositionY*H
+		}
+		z, ok := clipDepth(&d, sc, x, y)
+		return z, soft(&d), ok
+	}
+	for _, l := range fs.Layers {
+		if l.LayerID == layerID && l.Clip == clip && l.InDepth {
+			return float64(l.DepthZ), float64(l.DepthSoft), true
+		}
+	}
+	for li := range s.Cfg.Layers {
+		ly := &s.Cfg.Layers[li]
+		if ly.ID != layerID || clip < 0 || clip >= len(ly.Clips) {
+			continue
+		}
+		c := &ly.Clips[clip]
+		if len(c.Keys) > 0 {
+			c = config.ApplyKeys(c, c.Keys, fs.T-c.Start)
+		}
+		z, ok := clipDepth(&c.Depth, sc, c.X*W, c.Y*H)
+		return z, soft(&c.Depth), ok
+	}
+	return 0, 0, false
+}

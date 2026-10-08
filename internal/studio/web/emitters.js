@@ -38,6 +38,72 @@ export function PresetPicker({ clip, onPick }) {
       onClick=${() => onPick(k)}><${Icon} name=${icon} size=${13} /> ${t(label)}</button>`)}</div>`;
 }
 
+// The circles of a light around its center (frame px cx, cy) over a view of the frame: its
+// reach (where it is still strong), where it fades out (fainter) and, with rim light, where only
+// the edges are lit (blue); drag a handle to change it. light: the light's settings; prefix: its
+// keys' path in obj ("emitter.light." for an emitter clip, "light." for a text); keys from obj's
+// start; sc: frame px per px of its settings; k: view px per frame px.
+export function LightCircles({ obj, light, prefix, time, cx, cy, sc, k, ox = 0, oy = 0, hs = 1, W, H, toFrame, onChange }) {
+  const [drag, setDrag] = useState(null);
+  if (!light || !light.enabled) return null;
+  const kv = (key, def) => { const l = obj.keys && obj.keys[prefix + key]; return l && l.length ? valueAt(l, time - (obj.start || 0)) : light[key] ?? def; };
+  const dv = (key, def) => (drag && drag[prefix + key] != null ? drag[prefix + key] : def);
+  const reach = dv('reach', kv('reach', 0));
+  const end0 = kv('end', 0);
+  const end = dv('end', end0 > 0 ? end0 : reach * 2.5);
+  const rimR = light.rim ? dv('rim_from', kv('rim_from', 500)) : -1;
+  const c = { x: ox + cx * k, y: oy + cy * k };
+  const lr = reach > 0 ? reach * sc * k : 0;
+  if (lr <= 0) return null;
+  const le = end * sc * k, lrim = rimR >= 0 ? rimR * sc * k : -1;
+  const start = (e0, key, min) => {
+    if (e0.button !== 0) return;
+    e0.preventDefault();
+    e0.stopPropagation();
+    try { e0.currentTarget.setPointerCapture(e0.pointerId); } catch (err) { /* synthetic */ }
+    let cur = {};
+    const mv = (m) => {
+      const p = toFrame(m.clientX, m.clientY);
+      cur = { [prefix + key]: Math.max(min, Math.round(Math.hypot(p.x - cx, p.y - cy) / sc)) };
+      setDrag(cur);
+    };
+    const up = () => {
+      removeEventListener('pointermove', mv); removeEventListener('pointerup', up);
+      setDrag(null);
+      if (Object.keys(cur).length) onChange(cur);
+    };
+    addEventListener('pointermove', mv); addEventListener('pointerup', up);
+  };
+  // a handle on each circle where it is inside the frame: towards the middle of the frame first,
+  // then turning away from it bit by bit (a circle bigger than the frame may cross it elsewhere)
+  const ka = Math.hypot(W / 2 - cx, H / 2 - cy) > 1 ? Math.atan2(H / 2 - cy, W / 2 - cx) : -Math.PI / 4;
+  const onCircle = (r) => {
+    const rf = r / k; // frame px
+    for (let i = 0; i <= 24; i++) {
+      const a = ka + (i % 2 ? 1 : -1) * Math.ceil(i / 2) * (Math.PI / 12);
+      const x = cx + rf * Math.cos(a), y = cy + rf * Math.sin(a);
+      if (x >= 8 && y >= 8 && x <= W - 8 && y <= H - 8) return { x: c.x + r * Math.cos(a), y: c.y + r * Math.sin(a) };
+    }
+    return null;
+  };
+  const knob = onCircle(lr) || { x: c.x + lr * Math.cos(ka), y: c.y + lr * Math.sin(ka) };
+  const knob2 = onCircle(le);
+  const knob3 = lrim >= 0 ? onCircle(Math.max(lrim, 1)) : null;
+  const dot = 12 * hs;
+  const handle = (kn, cls, key, min, value, title) => kn && html`<div class=${'eb-reach' + cls}
+      style=${{ left: kn.x - dot / 2 + 'px', top: kn.y - dot / 2 + 'px', width: dot + 'px', height: dot + 'px' }}
+      onPointerDown=${(m) => start(m, key, min)} title=${t(title)}>
+      ${drag && drag[prefix + key] != null && html`<span class="eb-val">${Math.round(value)} px</span>`}</div>`;
+  return html`<svg class="eb-svg"><g style=${{ strokeWidth: 1.5 * hs }}>
+      <circle class="eb-light" cx=${c.x} cy=${c.y} r=${lr} />
+      <circle class="eb-light far" cx=${c.x} cy=${c.y} r=${le} />
+      ${lrim > 0 && html`<circle class="eb-light rim" cx=${c.x} cy=${c.y} r=${lrim} />`}
+    </g></svg>
+    ${handle(knob, '', 'reach', 20, reach, 'Reach of its light: drag to change it')}
+    ${handle(knob2, ' far', 'end', 20, end, 'Where its light fades out: drag to change it')}
+    ${handle(knob3, ' rim', 'rim_from', 0, rimR, 'Farther than this circle only the edges that face it are lit: drag to change it')}`;
+}
+
 // Handles of the selected emitter over a view of the frame (as ClipHandles): drag the point to
 // move it, the arrow's tip to turn it; its shape is outlined. k: view px per frame px; ox, oy: the
 // frame's origin in the parent; toFrame(clientX, clientY) → frame px; geo: its X-Layers entry
@@ -48,14 +114,6 @@ export function EmitterHandles({ clip, time, meta, k, ox = 0, oy = 0, toFrame, h
   const e = clip.emitter || {};
   const val = (key) => clipValue(clip, key, time);
   const ev = (key) => { const l = clip.keys && clip.keys['emitter.' + key]; return l && l.length ? valueAt(l, time - clip.start) : e[key]; };
-  // the light's reach (keys of emitter.light.reach, or its value)
-  const light = e.light || {};
-  const lk = clip.keys && clip.keys['emitter.light.reach'];
-  const reach0 = lk && lk.length ? valueAt(lk, time - clip.start) : light.reach || 0;
-  const ek = clip.keys && clip.keys['emitter.light.end'];
-  const end0 = ek && ek.length ? valueAt(ek, time - clip.start) : light.end || 0;
-  const rk = clip.keys && clip.keys['emitter.light.rim_from'];
-  const rim0 = !light.rim ? -1 : rk && rk.length ? valueAt(rk, time - clip.start) : light.rim_from ?? 500;
   const own = { x: val('x'), y: val('y'), rotation: val('rotation') || 0 };
   const v = { ...own, ...(drag || {}) };
   // now: the server's place (with its keys, its motion path), moved by the drag
@@ -79,9 +137,6 @@ export function EmitterHandles({ clip, time, meta, k, ox = 0, oy = 0, toFrame, h
     const mv = (m) => {
       const p = toFrame(m.clientX, m.clientY);
       if (mode === 'move') cur = { x: +(v0.x + (p.x - p0.x) / W).toFixed(4), y: +(v0.y + (p.y - p0.y) / H).toFixed(4) };
-      else if (mode === 'reach') cur = { 'emitter.light.reach': Math.max(20, Math.round(Math.hypot(p.x - cx, p.y - cy) / sc)) };
-      else if (mode === 'end') cur = { 'emitter.light.end': Math.max(20, Math.round(Math.hypot(p.x - cx, p.y - cy) / sc)) };
-      else if (mode === 'rim') cur = { 'emitter.light.rim_from': Math.max(0, Math.round(Math.hypot(p.x - cx, p.y - cy) / sc)) };
       else {
         let a = (Math.atan2(p.x - cx, -(p.y - cy)) * 180) / Math.PI - (ev('direction') || 0) - ((grot * 180) / Math.PI - own.rotation);
         a += Math.round((v0.rotation - a) / 360) * 360;
@@ -105,44 +160,9 @@ export function EmitterHandles({ clip, time, meta, k, ox = 0, oy = 0, toFrame, h
   const t1 = S(tip);
   const cone = [-spread, spread].map((s) => S({ x: cx + Math.sin(dir + s) * arrow * 0.8, y: cy - Math.cos(dir + s) * arrow * 0.8 }));
   const dot = 12 * hs;
-  // the light's reach: where it is strong, and (fainter) where it ends
-  const reach = drag && drag['emitter.light.reach'] != null ? drag['emitter.light.reach'] : reach0;
-  const lr = light.enabled && reach > 0 ? reach * sc * k : 0;
-  const end = drag && drag['emitter.light.end'] != null ? drag['emitter.light.end'] : end0 > 0 ? end0 : reach * 2.5;
-  const le = lr > 0 ? end * sc * k : 0;
-  // a handle on each circle where it is inside the frame: towards the middle of the frame first,
-  // then turning away from it bit by bit (a circle bigger than the frame may cross it elsewhere)
-  const ka = Math.hypot(W / 2 - cx, H / 2 - cy) > 1 ? Math.atan2(H / 2 - cy, W / 2 - cx) : -Math.PI / 4;
-  const onCircle = (r) => {
-    const rf = r / k; // frame px
-    for (let i = 0; i <= 24; i++) {
-      const a = ka + (i % 2 ? 1 : -1) * Math.ceil(i / 2) * (Math.PI / 12);
-      const x = cx + rf * Math.cos(a), y = cy + rf * Math.sin(a);
-      if (x >= 8 && y >= 8 && x <= W - 8 && y <= H - 8) return { x: c.x + r * Math.cos(a), y: c.y + r * Math.sin(a) };
-    }
-    return null;
-  };
-  const knob = onCircle(lr) || { x: c.x + lr * Math.cos(ka), y: c.y + lr * Math.sin(ka) };
-  const knob2 = onCircle(le);
-  // rim light: farther than this circle only the edges
-  const rimR = drag && drag['emitter.light.rim_from'] != null ? drag['emitter.light.rim_from'] : rim0;
-  const lrim = lr > 0 && rimR >= 0 ? rimR * sc * k : -1;
-  const knob3 = lrim >= 0 ? onCircle(Math.max(lrim, 1)) : null;
   return html`<div class=${'emitbox' + (drag ? ' drag' : '')}>
-    ${lr > 0 && html`<svg class="eb-svg"><g style=${{ strokeWidth: 1.5 * hs }}>
-      <circle class="eb-light" cx=${c.x} cy=${c.y} r=${lr} />
-      <circle class="eb-light far" cx=${c.x} cy=${c.y} r=${le} />
-      ${lrim > 0 && html`<circle class="eb-light rim" cx=${c.x} cy=${c.y} r=${lrim} />`}
-    </g></svg>
-    <div class="eb-reach" style=${{ left: knob.x - dot / 2 + 'px', top: knob.y - dot / 2 + 'px', width: dot + 'px', height: dot + 'px' }}
-      onPointerDown=${(m) => start(m, 'reach')} title=${t('Reach of its light: drag to change it')}>
-      ${drag && drag['emitter.light.reach'] != null && html`<span class="eb-val">${Math.round(reach)} px</span>`}</div>
-    ${knob2 && html`<div class="eb-reach far" style=${{ left: knob2.x - dot / 2 + 'px', top: knob2.y - dot / 2 + 'px', width: dot + 'px', height: dot + 'px' }}
-      onPointerDown=${(m) => start(m, 'end')} title=${t('Where its light fades out: drag to change it')}>
-      ${drag && drag['emitter.light.end'] != null && html`<span class="eb-val">${Math.round(end)} px</span>`}</div>`}
-    ${knob3 && html`<div class="eb-reach rim" style=${{ left: knob3.x - dot / 2 + 'px', top: knob3.y - dot / 2 + 'px', width: dot + 'px', height: dot + 'px' }}
-      onPointerDown=${(m) => start(m, 'rim')} title=${t('Farther than this circle only the edges that face it are lit: drag to change it')}>
-      ${drag && drag['emitter.light.rim_from'] != null && html`<span class="eb-val">${Math.round(rimR)} px</span>`}</div>`}`}
+    <${LightCircles} obj=${clip} light=${e.light} prefix="emitter.light." time=${time} cx=${cx} cy=${cy} sc=${sc} k=${k} ox=${ox} oy=${oy}
+      hs=${hs} W=${W} H=${H} toFrame=${toFrame} onChange=${onChange} />
     ${(shape === 'circle' || shape === 'ring') && sw > 2 && html`<div class="eb-shape round" style=${{ left: c.x - sw / 2 + 'px', top: c.y - sw / 2 + 'px', width: sw + 'px', height: sw + 'px' }}></div>`}
     ${(shape === 'line' || shape === 'box') && sw > 2 && html`<div class=${'eb-shape' + (shape === 'line' ? ' line' : '')}
       style=${{ left: c.x - sw / 2 + 'px', top: c.y - (shape === 'line' ? 0 : sh / 2) + 'px', width: sw + 'px', height: (shape === 'line' ? 0 : sh) + 'px', transform: `rotate(${deg}deg)`, transformOrigin: `${sw / 2}px ${shape === 'line' ? 0 : sh / 2}px` }}></div>`}

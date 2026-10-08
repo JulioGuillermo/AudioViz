@@ -289,6 +289,8 @@ type LyricsConfig struct {
 	// Its depth in the scene (with a depth map), as a clip's: fixed or the scene's where it is,
 	// behind what is nearer; it moves with the 2.5D camera and blurs with the depth of field
 	Depth  ClipDepth `yaml:"depth,omitempty"`
+	// The light it throws on the scene behind it (what is drawn before it)
+	Light  TextLight `yaml:"light,omitempty"`
 	Path   string  `yaml:"path"`
 	Offset float64 `yaml:"offset"` // seconds added to all timestamps (+ = later)
 
@@ -333,6 +335,34 @@ type LyricsConfig struct {
 // It has every style option of the lyrics (font, size, colors, gradient, outline, glow, shadow,
 // animations, audio reaction); position_x / position_y place it (0..1, center of the block,
 // or its left/right edge with align: left/right). Path, offset, position and mode are not used.
+// TextLight: a text (or the lyrics) lighting the scene behind it, from its letters: strength,
+// reach (px of 1080p where it is still strong; End: where it is gone, 0 = 2.5 × reach), color
+// (empty: the text's own, its glow's if it glows), soft or add, how much the band (the text's
+// react_to) adds to it, and with a depth map how fast it fades with depth (0 = flat) and how
+// much it shades the surfaces by where they face
+type TextLight struct {
+	Enabled   bool    `yaml:"enabled"`
+	Intensity float64 `yaml:"intensity"`
+	Reach     float64 `yaml:"reach"`
+	End       float64 `yaml:"end,omitempty"`
+	Color     string  `yaml:"color,omitempty"`
+	Mode      string  `yaml:"mode,omitempty"`
+	React     float64 `yaml:"react,omitempty"`
+	Depth     float64 `yaml:"depth,omitempty"`
+	Shade     float64 `yaml:"shade,omitempty"`
+	// with depth, as an emitter's light: only from From (near) to To (far), soft edge; rim light
+	// (only the edges facing it farther than RimFrom px)
+	From      float64 `yaml:"from,omitempty"`
+	To        float64 `yaml:"to,omitempty"`
+	RangeSoft float64 `yaml:"range_soft,omitempty"`
+	Rim       bool    `yaml:"rim,omitempty"`
+	RimFrom   float64 `yaml:"rim_from,omitempty"`
+	RimSoft   float64 `yaml:"rim_soft,omitempty"`
+	RimWidth  float64 `yaml:"rim_width,omitempty"`
+	RimGain   float64 `yaml:"rim_gain,omitempty"`
+	RimEdge   float64 `yaml:"rim_edge,omitempty"`
+}
+
 type TextConfig struct {
 	Text         string  `yaml:"text"`  // several rows with line breaks
 	Start        float64 `yaml:"start"` // s: starts entering

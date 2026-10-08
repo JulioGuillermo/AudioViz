@@ -105,6 +105,18 @@ segment, close it...) are the same as for the masks. *Draw again* replaces it.
       motion.progress: [{ t: 0, v: 0, ease: ease_in_out }, { t: 6, v: 1 }]
 ```
 
+## In the depth
+
+With a background that has a [depth map](depth.md), a text can have a **Depth** like a clip (its
+place is its position): it goes **behind what is nearer**, moves with the
+[2.5D camera](background/parallax.md) and blurs with the [depth of field](background/depth_of_field.md);
+see the lyrics' [In the depth](lyrics/README.md#in-the-depth).
+
+## Light on the scene
+
+A text can light the scene behind it from its letters (a warm title lighting the throne): see the
+lyrics' [Light on the scene](lyrics/README.md#light-on-the-scene).
+
 ## Masks
 
 A text (and the [lyrics](lyrics/README.md)) can have masks, like an overlay [clip](layers.md#masks),

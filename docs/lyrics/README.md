@@ -103,6 +103,40 @@ All of them include a fade. `animation` is a shortcut to set the same one for bo
 `masks:` limits where on the screen the lyrics are seen (per segment; drawn in the studio's editor).
 Same as the masks of the [texts](../texts.md#masks).
 
+## In the depth
+
+With a background that has a [depth map](../depth.md), the lyrics can have a **Depth** (as a clip):
+*fixed* (0 far … 1 near) or *auto* (the scene's where its words are, plus nearer / farther), and
+**Behind what is nearer**: the words go behind the throne, the mountain... with a soft edge. They
+move with the [2.5D camera](../background/parallax.md) as their depth does and blur with the
+[depth of field](../background/depth_of_field.md). While you adjust it the preview shows the depth
+map with what is behind them in red.
+
+```yaml
+lyrics:
+  depth: { mode: fixed, z: 0.55, behind: true, soft: 0.03 }
+```
+
+## Light on the scene
+
+The lyrics (and each fixed text) can **light the scene behind them** from their letters, as an
+emitter's light: **Strength**, **Reach** (px, where it is still strong) and where it **fades out**,
+**Color** (empty: the text's own, its glow's if it glows), **soft** (lights and tints what is
+there) or **add** (like neon), and **More with the music** (how much the band in *Reacts to* adds).
+With a depth map: **Fades with depth** (away from the text's depth: its own if it has one, or the
+scene's where it is) and **Surfaces shading** (the side facing it gets more), as an emitter's light
+also **only a range of depths** (*Lights from / up to*, soft edge; while you adjust them the preview
+shows the depth map with what is not lit in black) and **only the edges, far away** (rim light:
+farther than *Edges from* px only the edges of things that face it). A selected fixed text shows its
+light's circles on the preview (its reach, where it fades out and, with rim light, the blue one),
+each with a handle to drag. It lights what is drawn before it (the background and the layers below
+its z-index). At most two texts light at once.
+
+```yaml
+lyrics:
+  light: { enabled: true, intensity: 1.2, reach: 250, color: "#ffb050", mode: soft, react: 0.5 }
+```
+
 ## Audio reactivity (`react`)
 | Field | Default | Description |
 |---|---|---|

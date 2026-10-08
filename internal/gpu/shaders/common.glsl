@@ -11,6 +11,8 @@ const int MAX_TSTYLE = 8;
 
 // One overlay clip (gpu.LayerP); its image is in the Layers buffer (render.comp)
 const int MAX_LAYERS = 16;
+const int MAX_TLIGHTS = 2;    // gpu.MaxTextLights
+const int TLIGHT_VEC4 = 900;  // gpu.TextLightVec4
 struct LayerP {
     ivec4 info;    // image offset (pixels), width, height, flags (blend 0-3, key 4, glitch 5-6: 1 background's / 2 own, own count 8-11)
     vec4 xf;       // center x, y (px), screen px per image px x, y (negative = flipped)
@@ -100,6 +102,15 @@ layout(std430, set = 0, binding = 0) readonly buffer Params {
     ivec4 parallaxN;  // its search steps (0 = off)
     vec4 dof;         // depth of field: in focus from (near), to (far), soft, blur (px)
     vec4 ranges[4];   // flash, chromatic aberration, ripple, glitch only on depths: from, to, soft, on
+    // texts lighting the scene (gpu.Params.TLight*): grid w, h, cell px, style (w 0 = off);
+    // color × strength, add; 2.5D x, y, depth, fade by depth (0 = flat); shading; the cells
+    ivec4 tlightI[MAX_TLIGHTS];
+    vec4 tlightC[MAX_TLIGHTS];
+    vec4 tlightD[MAX_TLIGHTS];
+    vec4 tlightE[MAX_TLIGHTS];
+    vec4 tlightF[MAX_TLIGHTS];
+    vec4 tlightG[MAX_TLIGHTS];
+    vec4 tlightV[MAX_TLIGHTS * TLIGHT_VEC4];
     LayerP layers[MAX_LAYERS];
 } P;
 

@@ -296,6 +296,7 @@ const EmitLightGain = 1.0 / 40
 // cells, its color (× strength × flicker) and how it lights (Add, or soft)
 type LightField struct {
 	GW, GH int
+	Div    int // its cells' side (px; 0 = EmitLightDiv)
 	V      []float32
 	Col    [3]float32
 	Add    bool
@@ -396,8 +397,12 @@ func lightFrom(src []uint32, gw, gh int, R, E float32) []float32 {
 
 // LightAt: the light (0..1) at frame pixel (x, y), bilinear between the cells
 func (l *LightField) LightAt(x, y float32) float32 {
-	qx := (x+0.5)/EmitLightDiv - 0.5
-	qy := (y+0.5)/EmitLightDiv - 0.5
+	div := float32(EmitLightDiv)
+	if l.Div > 0 {
+		div = float32(l.Div)
+	}
+	qx := (x+0.5)/div - 0.5
+	qy := (y+0.5)/div - 0.5
 	ix, iy := int(math.Floor(float64(qx))), int(math.Floor(float64(qy)))
 	fx, fy := qx-float32(ix), qy-float32(iy)
 	at := func(cx, cy int) float32 {
@@ -660,4 +665,58 @@ func resolvePixel(p *EmitParams, T float32, acc []uint32, GW, GH, div int, glow 
 		c[j] = uint8(max(0, min(1, o[j]))*255 + 0.5)
 	}
 	return c
+}
+
+// TextLightDiv: the cell (px) of a text's light grid for a W×H frame: 32, larger on big frames
+// (at most 60 cells a side: the grid travels with each frame's params)
+func TextLightDiv(W, H int) int { return max(EmitLightDiv, (max(W, H)+59)/60) }
+
+// TextLightArea: px² of letters that make a light of 1 − 1/e near them
+const TextLightArea = 1500
+
+// TextLight: the light field (cells of div px) of a text whose letters cover src (px² per cell),
+// reach R (px), gone at E (as lightFrom: the same falloff as the emitters' light)
+func TextLight(src []float32, gw, gh, div int, R, E float32) []float32 {
+	v := make([]float32, gw*gh)
+	d := float32(div)
+	parallelFor(gh, func(y0, y1 int) {
+		for y := y0; y < y1; y++ {
+			for x := 0; x < gw; x++ {
+				var raw float32
+				for c, s := range src {
+					if s == 0 {
+						continue
+					}
+					dx, dy := float32(c%gw-x)*d, float32(c/gw-y)*d
+					raw += s * lightFalloff(float32(math.Sqrt(float64(dx*dx+dy*dy))), R, E)
+				}
+				v[y*gw+x] = 1 - float32(math.Exp(float64(-raw/TextLightArea)))
+			}
+		}
+	})
+	return v
+}
+
+// LightOnto: a light field on what is already in dst (with the scene's depth, if it has one):
+// as applyLight in render.comp
+func LightOnto(dst *image.RGBA, l *LightField, s *Scene) {
+	W, H := dst.Bounds().Dx(), dst.Bounds().Dy()
+	parallelFor(H, func(y0, y1 int) {
+		for y := y0; y < y1; y++ {
+			for x := 0; x < W; x++ {
+				L := l.LightAt(float32(x), float32(y))
+				if L > 1e-4 && l.D3 && s.On() {
+					L *= l.DepthFactor(s, x, y)
+				}
+				if L <= 1e-4 {
+					continue
+				}
+				o := y*dst.Stride + x*4
+				c := l.Lit([3]float64{float64(dst.Pix[o]) / 255, float64(dst.Pix[o+1]) / 255, float64(dst.Pix[o+2]) / 255}, L)
+				for i := 0; i < 3; i++ {
+					dst.Pix[o+i] = uint8(c[i]*255 + 0.5)
+				}
+			}
+		}
+	})
 }

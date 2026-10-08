@@ -1,6 +1,6 @@
 import { html, useEffect, useState } from './vendor/preact-htm.js';
 import { CLIP_FIELDS, EMITTER_CLIP_FIELDS } from './schema.js';
-import { isEmitterLayer, presetLabel, presetIcon, PresetPicker } from './emitters.js';
+import { isEmitterLayer, presetLabel, presetIcon, PresetPicker, LightCircles } from './emitters.js';
 import { fmtTime, parseTime, basename, clone } from './util.js';
 import { Form, Edit, Section } from './fields.js';
 import { Icon } from './icons.js';
@@ -232,7 +232,10 @@ export function TextHandles({ text, box, time, meta, k, ox = 0, oy = 0, toFrame,
       onPointerDown=${(e) => start(e, 'rotate')} title=${t('Drag to rotate (Shift: steps of 15°)')}></div>
   </div>
   <div class="tb-anchor" style=${{ left: ox + ax * k - dot / 2 + 'px', top: oy + ay * k - dot / 2 + 'px', width: dot + 'px', height: dot + 'px' }}
-    title=${t('Its position: it scales and turns around it')}></div>`;
+    title=${t('Its position: it scales and turns around it')}></div>
+  ${text.light && text.light.enabled && html`<div class="emitbox">
+    <${LightCircles} obj=${text} light=${text.light} prefix="light." time=${time} cx=${ax} cy=${ay} sc=${H / 1080} k=${k} ox=${ox} oy=${oy}
+      hs=${hs} W=${W} H=${H} toFrame=${toFrame} onChange=${onChange} /></div>`}`;
 }
 
 // Inspector of a layer: its name, its clips (tabs), the selected clip's times and settings

@@ -84,6 +84,9 @@ const (
 
 	MaxTextItems  = 96
 	MaxTextStyles = 8
+	// texts lighting the scene at once, and the cells of each one's light (at most 60×60, in vec4s)
+	MaxTextLights = 2
+	TextLightVec4 = 900
 )
 
 // Params mirrors exactly the std430 'Params' block in render.comp (all vec4/ivec4)
@@ -144,7 +147,16 @@ type Params struct {
 	// range (flash, chromatic aberration, ripple, glitch: from, to, soft, on)
 	Dof    [4]float32
 	Ranges [4][4]float32
-	Layers [MaxLayers]LayerP
+	// Texts lighting the scene: grid width, height, cell (px), style (width 0 = off); color ×
+	// strength and add; 2.5D: where x, y, depth, fade by depth; shading; the light of each cell
+	TLightI [MaxTextLights][4]int32
+	TLightC [MaxTextLights][4]float32
+	TLightD [MaxTextLights][4]float32
+	TLightE [MaxTextLights][4]float32 // shading, 2.5D on, lit from, to
+	TLightF [MaxTextLights][4]float32 // rim light: from, soft, width (px), gain (0 = off)
+	TLightG [MaxTextLights][4]float32 // rim light's edge, the lit range's soft edge
+	TLightV [MaxTextLights * TextLightVec4][4]float32
+	Layers  [MaxLayers]LayerP
 }
 
 // MaxLayers: overlay clips drawn at once

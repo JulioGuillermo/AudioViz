@@ -12,6 +12,7 @@ import (
 	"audioviz/internal/audio"
 	"audioviz/internal/config"
 	"audioviz/internal/effects"
+	"audioviz/internal/gpu"
 	"audioviz/internal/lyrics"
 	"audioviz/internal/particles"
 	"audioviz/internal/video"
@@ -287,6 +288,8 @@ type FrameState struct {
 	// The texts on screen (lyrics and fixed texts) and their styles, with their masks made
 	TextItems  []lyrics.Item
 	TextStyles []lyrics.Style
+	// The texts that light the scene: their style and light field
+	TextLights []TextLight
 	// The depth of the frame (backgrounds with a depth map; nil without)
 	Scene *effects.Scene
 
@@ -446,6 +449,9 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 	if fs.Scene.On() && len(fs.TextStyles) > 0 {
 		s.textsInDepth(fs)
 	}
+	if fs.Lyr != nil {
+		s.textLights(fs)
+	}
 	if len(cfg.Layers) > 0 {
 		if fs.Layers, fs.layerStack, err = s.layersAt(t, idx, base, fs.FX, fs.GlitchAmount, fs.Scene); err != nil {
 			return nil, err
@@ -455,6 +461,78 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 	fs.ZParts = fs.Stage(tl.Particles[config.Active(tl.Particles, t)].CfgAt(t).ZIndex)
 	fs.ZLyric = fs.Stage(fs.LyrSt.ZIndex)
 	return fs, nil
+}
+
+// TextLight is a text (or the lyrics) lighting the scene: its style and its light field
+type TextLight struct {
+	Style int
+	Light *effects.LightField
+}
+
+// textCenter: where a text style is: a fixed text's anchor, the middle of the lyrics' words now
+func textCenter(fs *FrameState, si int) (float64, float64, bool) {
+	st := &fs.TextStyles[si]
+	if st.Text >= 0 {
+		return float64(st.AnchorX), float64(st.AnchorY), true
+	}
+	ax, ay, n := 0.0, 0.0, 0
+	for _, it := range fs.TextItems {
+		if it.Style == si {
+			ax, ay, n = ax+float64(it.CX), ay+float64(it.CY), n+1
+		}
+	}
+	if n == 0 {
+		return 0, 0, false
+	}
+	return ax / float64(n), ay / float64(n), true
+}
+
+// textLights: the light of the texts that light the scene, from their letters now (at most
+// gpu.MaxTextLights at once); with a depth map in 2.5D from the text's place and depth
+func (s *Session) textLights(fs *FrameState) {
+	div := effects.TextLightDiv(s.W, s.H)
+	gw, gh := (s.W+div-1)/div, (s.H+div-1)/div
+	k := float64(s.H) / 1080
+	for si := range fs.TextStyles {
+		st := &fs.TextStyles[si]
+		if !st.LightOn || len(fs.TextLights) == gpu.MaxTextLights {
+			continue
+		}
+		src := fs.Lyr.LightSources(fs.TextItems, si, div, gw, gh)
+		lf := &effects.LightField{GW: gw, GH: gh, Div: div, Add: st.LightAdd,
+			V:   effects.TextLight(src, gw, gh, div, float32(st.LightR*k), float32(st.LightE*k)),
+			Col: [3]float32{float32(st.LightCol[0]), float32(st.LightCol[1]), float32(st.LightCol[2])}}
+		l := &st.Light
+		from, to, soft := l.From, l.To, l.RangeSoft
+		if from == 0 && to == 0 {
+			from = 1
+		}
+		if soft <= 0 {
+			soft = 0.05
+		}
+		if sc := fs.Scene; sc.On() && (st.LightDepthK > 0 || st.LightShade > 0 || from < 1 || to > 0 || l.Rim) {
+			if cx, cy, ok := textCenter(fs, si); ok {
+				z := float64(sc.Ground(float32(cx), float32(cy)))
+				if st.InDepth {
+					z = st.DepthZ
+				}
+				lf.D3, lf.CX, lf.CY, lf.LZ = true, float32(cx), float32(cy), float32(z)
+				lf.DepthK, lf.Shade = float32(st.LightDepthK), float32(st.LightShade)
+				lf.From, lf.To, lf.Soft = float32(from), float32(to), float32(soft)
+				if l.Rim {
+					pos := func(v, def float64) float64 {
+						if v > 0 {
+							return v
+						}
+						return def
+					}
+					lf.Rim, lf.RimFrom, lf.RimSoft = true, float32(l.RimFrom*k), float32(math.Max(l.RimSoft, 1)*k)
+					lf.RimW, lf.RimGain, lf.RimEdge = float32(pos(l.RimWidth, 10)*k), float32(pos(l.RimGain, 2)), float32(pos(l.RimEdge, 0.04))
+				}
+			}
+		}
+		fs.TextLights = append(fs.TextLights, TextLight{si, lf})
+	}
 }
 
 // textsInDepth: the lyrics and texts that have a depth: where it is (fixed, or the scene's at

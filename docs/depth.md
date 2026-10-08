@@ -70,6 +70,10 @@ A clip or an emitter has a **Depth** section:
 - While you adjust its depth or the soft edge, the preview shows the depth map with **what is
   behind it in red**: what it would hide (or be hidden by, if it goes behind) at a glance.
 
+Texts and lyrics have the same **Depth** section (see [texts](texts.md) and
+[lyrics](lyrics/README.md#in-the-depth)): the words can go behind the scene, move with the camera
+and blur with the focus.
+
 ## The light in 2.5D
 
 With a background that has depth, an emitter's light (see [emitters.md](emitters.md)) fades away
