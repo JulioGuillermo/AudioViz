@@ -198,7 +198,19 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 			}
 		}
 		lp.Info = [4]int32{int32(off), int32(iw), int32(ih), flags}
+		lp.Light0, lp.Light1 = [4]int32{}, [4]float32{}
 		if l.Emit != nil {
+			if P := &l.Emit.P; P.LightOn {
+				// its light field, made by the emitter pass (k-th accumulation)
+				_, _, field, stride := effects.EmitAccLayout(r.s.W, r.s.H)
+				xw, xh := effects.EmitLightGrid(r.s.W, r.s.H)
+				mode := int32(1)
+				if P.LightAdd {
+					mode = 2
+				}
+				lp.Light0 = [4]int32{int32(len(emits)*stride + field), int32(xw), int32(xh), mode}
+				lp.Light1 = [4]float32{float32(P.LightCol[0]), float32(P.LightCol[1]), float32(P.LightCol[2])}
+			}
 			emits = append(emits, emitAt{l.Emit, off})
 		}
 		lp.Xf = [4]float32{float32(l.CX), float32(l.CY), float32(l.SX), float32(l.SY)}
@@ -317,6 +329,12 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		if P.GlowOwn {
 			u[h+63] = 1
 		}
+		u[h+64] = 0
+		if P.LightOn {
+			u[h+64] = 1
+		}
+		f[h+65] = float32(P.LightR)
+		f[h+66] = float32(P.LightEnd)
 		f[h+41] = float32(e.T)
 		for j, b := range bs {
 			o := bo + j*gpu.EmitBirthWords
@@ -697,7 +715,7 @@ func (s *Session) cpuFrame(fs *FrameState) *image.RGBA {
 		if st > 0 {
 			l := &fs.Layers[st-1]
 			if l.Emit != nil && l.Img == nil {
-				l.Img = effects.DrawEmitter(l.Emit, s.W, s.H)
+				l.Img, l.Light = effects.DrawEmitter(l.Emit, s.W, s.H)
 			}
 			effects.DrawLayer(frame, l)
 		}

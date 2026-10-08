@@ -586,3 +586,8 @@ a.btn { text-decoration: none; }
 .masksvg .shape-box { fill: none; stroke: #5aa8ff; stroke-dasharray: 5 4; pointer-events: none; }
 .masksvg .shape-handle { fill: #fff; stroke: #2a6fd0; cursor: nwse-resize; pointer-events: auto; }
 .masksvg .shape-rot { fill: #5aa8ff; stroke: #fff; cursor: grab; pointer-events: auto; }
+.emitbox .eb-light { fill: rgba(255, 190, 90, .05); stroke: rgba(255, 200, 100, .75); stroke-dasharray: 6 4; }
+.emitbox .eb-light.far { fill: none; stroke: rgba(255, 200, 100, .3); stroke-dasharray: 2 5; }
+.emitbox .eb-reach { position: absolute; border-radius: 50%; background: #ffc864; border: 1px solid rgba(0, 0, 0, .6); cursor: ew-resize; pointer-events: auto; }
+.emitbox .eb-val { position: absolute; left: 120%; top: -4px; white-space: nowrap; font-size: 11px; color: #fff; background: rgba(0, 0, 0, .7); padding: 1px 5px; border-radius: 4px; }
+.emitbox .eb-reach.far { background: rgba(255, 200, 100, .45); }

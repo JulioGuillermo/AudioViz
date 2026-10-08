@@ -101,6 +101,10 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx f
 				if c.FadeOut > 0 {
 					op *= math.Min(1, (c.End-t)/c.FadeOut)
 				}
+				// its light fades with it
+				for j := range ef.P.LightCol {
+					ef.P.LightCol[j] *= math.Max(0, math.Min(1, op))
+				}
 				lf := effects.LayerFrame{Emit: ef, Ver: "emit", CX: W / 2, CY: H / 2, SX: 1, SY: 1,
 					Opacity: math.Max(0, math.Min(1, op)), Blend: c.BlendIndex(),
 					Brightness: c.Brightness, Contrast: c.Contrast, Saturate: c.Saturation, Hue: c.Hue * math.Pi / 180, Blur: c.Blur}

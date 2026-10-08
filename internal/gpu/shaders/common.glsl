@@ -23,6 +23,8 @@ struct LayerP {
     vec4 warp2;    // flash contrast factor, brightness
     vec4 glitch[8];
     ivec4 mask;    // offset (words; one byte per mask px), width, height, on
+    ivec4 light0;  // emitter light: field offset (words, in the emitter accumulations), grid w, h, mode (0 off, 1 soft, 2 add)
+    vec4 light1;   // its color × strength
 };
 
 // One entry of the per-frame text style table (lyrics = 0, fixed texts after)

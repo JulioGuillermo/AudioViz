@@ -14,6 +14,8 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 layout(std430, set = 0, binding = 8) readonly buffer FluidImg { uint fimg[]; };
 // Images of the overlay clips (premultiplied RGBA8), at P.layers[i].info.x
 layout(std430, set = 0, binding = 9) readonly buffer Layers { uint lay[]; };
+// The emitters' accumulations (emit.comp): read here for their light fields
+layout(std430, set = 0, binding = 10) readonly buffer EmitAcc { uint eacc[]; };
 #define FLUID_IMG_READ
 #include "common.glsl"
 
@@ -594,8 +596,31 @@ vec3 blendColor(int m, vec3 d, vec3 s) {
     return s;
 }
 
+// An emitter's light on col (what is behind it) at pixel q: its light field (bilinear between the
+// 32 px cells), soft (lights and tints what is there) or add (as effects.LightField.Lit)
+vec3 applyLight(vec3 col, int i, vec2 q) {
+    LayerP L = P.layers[i];
+    ivec4 l0 = L.light0;
+    vec2 g = (q + 0.5) / 32.0 - 0.5;
+    ivec2 i0 = ivec2(floor(g));
+    vec2 f = g - vec2(i0);
+    float v[4];
+    for (int k = 0; k < 4; k++) {
+        ivec2 c = clamp(i0 + ivec2(k & 1, k >> 1), ivec2(0), ivec2(l0.y - 1, l0.z - 1));
+        v[k] = uintBitsToFloat(eacc[uint(l0.x) + uint(c.y * l0.y + c.x)]);
+    }
+    float a = v[0] + (v[1] - v[0]) * f.x, b = v[2] + (v[3] - v[2]) * f.x;
+    float lt = a + (b - a) * f.y;
+    if (lt <= 1e-4) return col;
+    vec3 lc = L.light1.rgb * lt;
+    if (l0.w == 2) col += lc * 0.6;
+    else col += lc * (sqrt(max(col, vec3(0.0))) * 0.9 + 0.03);
+    return min(col, vec3(1.0));
+}
+
 vec3 drawLayer(vec3 col, int i, vec2 q) {
     LayerP L = P.layers[i];
+    if (L.light0.w != 0) col = applyLight(col, i, q);
     vec2 qw = layerWarp(i, q);
     vec4 s = layerSample(i, qw);
     if (L.mask.w != 0) s *= maskAt(i, layerUV(i, qw + 0.5));

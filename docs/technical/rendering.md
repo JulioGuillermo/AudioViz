@@ -348,7 +348,14 @@ rising fbm value noises (whirls twice as tall as wide), heat = 1 − e^(−Σα�
 eats the edges, and the heat picks the color (cool → mid → hot) and the alpha. **Glow**: each
 particle also splats its disc grown by the reach, normalised by the halo's area, into a second
 grid of 8×8 px cells after its accumulation; the resolve adds it bilinearly, saturating like light
-(1 − e^(−glow·strength)). At most `MaxEmitters` = 4 at once (the renderer is sized by
+(1 − e^(−glow·strength)). **Light**: each particle also adds its alpha to its cell of a 32×32 px
+grid (the sources); the light phase (4th of the emitter pass) gives every cell the sum of the
+sources weighted by 1 / (1 + 4(d/R)²), faded out between 0.6E and E (E = `end`, default 2.5R), as 1 − e^(−sum/40) (the
+field, after the sources in the emitter's accumulation). `drawLayer` of the emitter clip first
+lights what is already there with it (bilinear between cells; `LayerP.light0/1`): soft
+c + light·(0.9·√c + 0.03), add c + 0.6·light; the light's color carries strength, flicker (two
+waves) and the clip's opacity. CPU: `DrawEmitter` returns the same `LightField`, `DrawLayer` applies
+it. At most `MaxEmitters` = 4 at once (the renderer is sized by
 `Session.EmitterCount`).
 
 Motion paths (`config.Motion`, `effects.PathAt`): the path's Béziers (the masks' nodes, in frame

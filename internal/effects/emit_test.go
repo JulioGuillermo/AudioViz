@@ -12,9 +12,9 @@ func TestEmitterDeterministic(t *testing.T) {
 			Turb: 10, TurbFreq: 1, Life: 2, LifeVar: 0.3, Size: 20, SizeEnd: 5, SizeVar: 0.3, Softness: 0.8,
 			Col: [3][4]float64{{1, 1, 0.5, 1}, {1, 0.5, 0, 0.8}, {0.5, 0, 0, 0}}, FadeOut: 0.5, Seed: 7, Div: 1}}
 	e.Births = []Birth{{T: 0, N: 0, X: 160, Y: 200, Speed: 1, Size: 1}, {T: 2, N: 400, X: 160, Y: 200, Speed: 1, Size: 1}}
-	a := DrawEmitter(e, 320, 240)
+	a, _ := DrawEmitter(e, 320, 240)
 	for k := 0; k < 3; k++ {
-		if b := DrawEmitter(e, 320, 240); !bytes.Equal(a.Pix, b.Pix) {
+		if b, _ := DrawEmitter(e, 320, 240); !bytes.Equal(a.Pix, b.Pix) {
 			t.Fatal("two draws differ")
 		}
 	}

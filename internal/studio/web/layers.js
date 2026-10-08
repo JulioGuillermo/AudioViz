@@ -5,7 +5,7 @@ import { fmtTime, parseTime, basename, clone } from './util.js';
 import { Form, Edit, Section } from './fields.js';
 import { Icon } from './icons.js';
 import { t } from './i18n.js';
-import { keyApi, valueAt, keyIndexAt, KEY_EPS } from './keys.js';
+import { keyApi, valueAt, keyIndexAt, KEY_EPS, setIn } from './keys.js';
 import { MaskSection } from './masks.js';
 import { MotionSection, hasPath, movePath } from './motion.js';
 
@@ -45,7 +45,8 @@ export function setClipProps(c, props, tt) {
       const i = keyIndexAt(nl, u);
       if (i >= 0) nl[i].v = props[k]; else nl.push({ t: u, v: props[k] });
       c.keys = { ...c.keys, [k]: nl.sort((a, b) => a.t - b.t) };
-    } else c[k] = props[k];
+    } else if (k.includes('.')) setIn(c, k, props[k]); // inside a block ("emitter.light.reach")
+    else c[k] = props[k];
   }
 }
 

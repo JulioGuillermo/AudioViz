@@ -425,9 +425,11 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
     sizes[VKR_BUF_FLUID] = cfg->fluid_size < 16 ? 16 : (cfg->fluid_size + 3) / 4 * 4;
     sizes[VKR_BUF_FIMG] = sizes[VKR_BUF_BG];
     sizes[VKR_BUF_LAYERS] = cfg->layers_size < 16 ? 16 : (cfg->layers_size + 3) / 4 * 4;
-    // per emitter: its particles (4 words per pixel) and its glow (4 words per 8×8 pixels)
+    // per emitter: its particles (4 words per pixel), its glow (4 words per 8×8 pixels), its light
+    // sources and its light field (1 word each per 32×32 pixels)
     sizes[VKR_BUF_EACC] = cfg->emitters > 0 ? (VkDeviceSize)cfg->emitters *
-        ((VkDeviceSize)cfg->width * cfg->height + (VkDeviceSize)((cfg->width + 7) / 8) * ((cfg->height + 7) / 8)) * 16 : 16;
+        (((VkDeviceSize)cfg->width * cfg->height + (VkDeviceSize)((cfg->width + 7) / 8) * ((cfg->height + 7) / 8)) * 16 +
+         (VkDeviceSize)((cfg->width + 31) / 32) * ((cfg->height + 31) / 32) * 8) : 16;
     sizes[VKR_BUF_EDATA] = cfg->edata_size < 16 ? 16 : (cfg->edata_size + 3) / 4 * 4;
     VkMemoryPropertyFlags prefs[VKR_NUM_BUFS] = {
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
@@ -494,7 +496,7 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
             }
             if ((k & 2) && cfg->emitters > 0) {
                 p_vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, r->pipeEmit);
-                for (int phase = 0; phase < 3; phase++) {
+                for (int phase = 0; phase < 4; phase++) {
                     int32_t push[4] = {phase, 0, 0, 0};
                     p_vkCmdPushConstants(cmd, r->layout, VK_SHADER_STAGE_COMPUTE_BIT, 0, 16, push);
                     p_vkCmdDispatch(cmd, VKR_EMIT_THREADS / 64, 1, 1);

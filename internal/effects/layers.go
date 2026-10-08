@@ -44,8 +44,10 @@ type LayerFrame struct {
 	// Mask: where it is seen (the image's space, any size; nil = everywhere)
 	Mask    *image.Alpha
 	MaskVer string
-	// Particles (an emitter clip): Img is made from them (frame-sized, CX, CY at the center)
-	Emit *EmitFrame
+	// Particles (an emitter clip): Img is made from them (frame-sized, CX, CY at the center), and
+	// their light on what is behind (made with Img on the CPU)
+	Emit  *EmitFrame
+	Light *LightField
 }
 
 // screenToImage: position in the clip's image (px, fractional) of the screen point p
@@ -237,6 +239,16 @@ func DrawLayer(dst *image.RGBA, l *LayerFrame) {
 	parallelFor(H, func(y0, y1 int) {
 		for y := y0; y < y1; y++ {
 			for x := 0; x < W; x++ {
+				if l.Light != nil {
+					// the emitter's light on what is already there, before its particles
+					if L := l.Light.LightAt(x, y); L > 1e-4 {
+						o := y*dst.Stride + x*4
+						c := l.Light.Lit([3]float64{float64(dst.Pix[o]) / 255, float64(dst.Pix[o+1]) / 255, float64(dst.Pix[o+2]) / 255}, L)
+						for i := 0; i < 3; i++ {
+							dst.Pix[o+i] = uint8(c[i]*255 + 0.5)
+						}
+					}
+				}
 				s := l.at(float64(x), float64(y), W, H)
 				if s[3] <= 1e-4 {
 					continue

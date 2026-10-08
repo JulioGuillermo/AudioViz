@@ -398,6 +398,16 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
       { key: 'edge', label: 'Eaten edges', type: 'num', min: 0, max: 1, step: 0.01 },
     ] },
   ] },
+  { key: 'light', label: 'Light', type: 'group', fields: [
+    { key: 'enabled', label: 'Lights what is behind', type: 'bool', help: 'The background and the layers below it, from where its particles are' },
+    { key: 'intensity', label: 'Strength', type: 'num', min: 0, max: 4, step: 0.01, showIf: (c) => c.enabled },
+    { key: 'reach', label: 'Reach (px)', type: 'num', min: 20, max: 3000, step: 5, showIf: (c) => c.enabled, help: 'Where it is still strong (or drag the handle of its circle)' },
+    { key: 'end', label: 'Fades out at (px)', type: 'num', min: 0, max: 8000, step: 5, showIf: (c) => c.enabled, help: '0 = 2.5 × the reach (or drag the handle of the outer circle)' },
+    { key: 'color', label: 'Color', type: 'color', optional: true, showIf: (c) => c.enabled, help: 'Empty: the particles\' own (the flame\'s body)' },
+    { key: 'mode', label: 'How it lights', type: 'enum', def: 'soft', anim: false, showIf: (c) => c.enabled,
+      options: [['soft', 'Soft (lights and tints what is there)'], ['add', 'Add (brighter, like neon)']] },
+    { key: 'flicker', label: 'Flicker', type: 'num', min: 0, max: 1, step: 0.01, showIf: (c) => c.enabled },
+  ] },
   { key: 'glow', label: 'Glow', type: 'group', fields: [
     { key: 'intensity', label: 'Strength', type: 'num', min: 0, max: 4, step: 0.01, help: '0 = no glow' },
     { key: 'radius', label: 'Reach (px)', type: 'num', min: 2, max: 400, step: 1 },

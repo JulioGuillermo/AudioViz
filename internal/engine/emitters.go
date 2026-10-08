@@ -164,6 +164,28 @@ func (s *Session) emitFrame(li, ci int, c0, c *config.ClipConfig, idx int, feats
 			p.GlowCol, p.GlowOwn = [3]float64{c[0], c[1], c[2]}, true
 		}
 	}
+	if l := e.Light; l.Enabled && l.Intensity > 0 && l.Reach > 0 {
+		var lc [3]float64
+		switch {
+		case l.Color != "":
+			c := col(l.Color, "#ffffff")
+			lc = [3]float64{c[0], c[1], c[2]}
+		case p.Flame:
+			lc = p.FlameCol[1]
+		default:
+			lc = [3]float64{p.Col[1][0], p.Col[1][1], p.Col[1][2]}
+		}
+		// flicker: two quick waves, like a flame
+		t := float64(idx) / float64(s.FPS)
+		ph := float64(p.Seed%1000) / 159.0
+		k := l.Intensity * math.Max(0, 1+l.Flicker*(0.55*math.Sin(t*11.3+ph)+0.45*math.Sin(t*29.7+2*ph)))
+		end := l.End
+		if end <= 0 {
+			end = 2.5 * l.Reach
+		}
+		p.LightOn, p.LightR, p.LightEnd, p.LightAdd = true, l.Reach*sc, end*sc, l.Mode == "add"
+		p.LightCol = [3]float64{lc[0] * k, lc[1] * k, lc[2] * k}
+	}
 	// big particles are splatted on a coarser grid (they are soft: the same look, far fewer pixels)
 	if big := math.Max(p.Size, p.SizeEnd) * (1 + e.SizeVar) * (1 + e.React.Size); big >= 160 && p.Softness >= 0.5 {
 		p.Div = 4

@@ -70,6 +70,22 @@ type EmitterConfig struct {
 	Look  string    `yaml:"look"`
 	Flame FlameLook `yaml:"flame"`
 	Glow  EmitGlow  `yaml:"glow"`
+	Light EmitLight `yaml:"light"`
+}
+
+// EmitLight: the emitter lights up what is drawn behind it (the background and the layers below
+// it), from where its particles are: how strongly, how far (px), its color (empty = the
+// particles' own; the flame's body with the flame look), how ("soft": it lights and tints what is
+// there, like a real light; "add": it adds its color, brighter, like neon) and how much it
+// flickers (0..1)
+type EmitLight struct {
+	Enabled   bool    `yaml:"enabled"`
+	Intensity float64 `yaml:"intensity"`
+	Reach     float64 `yaml:"reach"`
+	End       float64 `yaml:"end"` // px where it has faded out completely (0 = 2.5 × reach)
+	Color     string  `yaml:"color"`
+	Mode      string  `yaml:"mode"`
+	Flicker   float64 `yaml:"flicker"`
 }
 
 // FlameLook: the colors of the flame from cool (its edges) to hot (its core), how fast it gets
@@ -178,6 +194,12 @@ func init() {
 		}
 		if e.Look == "" {
 			e.Look = "plain"
+		}
+		if e.Light.Reach == 0 {
+			e.Light = EmitLight{Intensity: 0.8, Reach: 450, Mode: "soft", Flicker: 0.25}
+			if k == "fire" || k == "fire_real" || k == "explosion" {
+				e.Light.Enabled = true
+			}
 		}
 		EmitterPresets[k] = e
 	}

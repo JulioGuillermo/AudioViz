@@ -59,6 +59,12 @@ type EmitParams struct {
 	GlowI, GlowR float64
 	GlowCol      [3]float64
 	GlowOwn      bool
+	// Light on what is behind: on, reach (px), color × strength × flicker now, add (or soft)
+	LightOn  bool
+	LightR   float64
+	LightEnd float64 // px where it is gone (fades out from 60 % of it)
+	LightCol [3]float64
+	LightAdd bool
 }
 
 // EmitFrame is one emitter on screen at time T: its settings, the births that can still be
@@ -256,20 +262,110 @@ func emitGrid(W, H, div int) (int, int) { return (W + div - 1) / div, (H + div -
 // EmitGlowDiv: the glow's accumulation has a cell per EmitGlowDiv×EmitGlowDiv pixels (it is blurry)
 const EmitGlowDiv = 8
 
-// EmitAccWords: words of one emitter's accumulations (its particles, then its glow) for W×H
-func EmitAccWords(W, H int) int {
+// EmitAccLayout: the words of one emitter's accumulations for W×H on the GPU (emit.comp): its
+// particles (4 per pixel), its glow (4 per glow cell), its light sources and its light field (1
+// per light cell); the offsets of the glow, the sources and the field, and the whole stride
+func EmitAccLayout(W, H int) (glow, src, field, stride int) {
 	gw, gh := emitGrid(W, H, EmitGlowDiv)
-	return W*H*4 + gw*gh*4
+	xw, xh := emitGrid(W, H, EmitLightDiv)
+	glow = W * H * 4
+	src = glow + gw*gh*4
+	field = src + xw*xh
+	return glow, src, field, field + xw*xh
 }
 
-// DrawEmitter makes the emitter's image (W×H, premultiplied RGBA) on the CPU, exactly as the GPU
-func DrawEmitter(e *EmitFrame, W, H int) *image.RGBA {
+// EmitLightGrid: the size of the light grid for W×H
+func EmitLightGrid(W, H int) (int, int) { return emitGrid(W, H, EmitLightDiv) }
+
+// EmitLightDiv: the light is worked out on cells of EmitLightDiv×EmitLightDiv pixels (it is smooth)
+const EmitLightDiv = 32
+
+// EmitLightGain: how much particle (sum of alpha) makes how much light: 1 − e^(−sum·gain)
+const EmitLightGain = 1.0 / 40
+
+// LightField is an emitter's light over the frame: its strength 0..1 at the centers of the light
+// cells, its color (× strength × flicker) and how it lights (Add, or soft)
+type LightField struct {
+	GW, GH int
+	V      []float32
+	Col    [3]float32
+	Add    bool
+}
+
+// lightFalloff: how much of a source's light reaches a distance d (px) for a reach R, gone at E
+func lightFalloff(d, R, E float32) float32 {
+	k := d / R
+	return 1 / (1 + 4*k*k) * (1 - smooth32(0.6*E, E, d))
+}
+
+// lightFrom: the light at each cell from the particles summed in src (as the light phase of emit.comp)
+func lightFrom(src []uint32, gw, gh int, R, E float32) []float32 {
+	v := make([]float32, gw*gh)
+	d := float32(EmitLightDiv)
+	parallelFor(gh, func(y0, y1 int) {
+		for y := y0; y < y1; y++ {
+			for x := 0; x < gw; x++ {
+				var raw float32
+				for c := range src {
+					if src[c] == 0 {
+						continue
+					}
+					cx, cy := c%gw, c/gw
+					dx, dy := float32(cx-x)*d, float32(cy-y)*d
+					raw += float32(src[c]) / EmitFixed * lightFalloff(float32(math.Sqrt(float64(dx*dx+dy*dy))), R, E)
+				}
+				v[y*gw+x] = 1 - float32(math.Exp(float64(-raw*EmitLightGain)))
+			}
+		}
+	})
+	return v
+}
+
+// LightAt: the light (0..1) at frame pixel (x, y), bilinear between the cells
+func (l *LightField) LightAt(x, y int) float32 {
+	qx := (float32(x)+0.5)/EmitLightDiv - 0.5
+	qy := (float32(y)+0.5)/EmitLightDiv - 0.5
+	ix, iy := int(math.Floor(float64(qx))), int(math.Floor(float64(qy)))
+	fx, fy := qx-float32(ix), qy-float32(iy)
+	at := func(cx, cy int) float32 {
+		cx, cy = max(0, min(l.GW-1, cx)), max(0, min(l.GH-1, cy))
+		return l.V[cy*l.GW+cx]
+	}
+	a := at(ix, iy) + (at(ix+1, iy)-at(ix, iy))*fx
+	b := at(ix, iy+1) + (at(ix+1, iy+1)-at(ix, iy+1))*fx
+	return a + (b-a)*fy
+}
+
+// Lit: color c (0..1) under this light of strength L (as applyLight in render.comp): soft lights
+// and tints what is there (√c brings out what is in the dark, as a light on its surfaces), add
+// adds the light's color
+func (l *LightField) Lit(c [3]float64, L float32) [3]float64 {
+	for j := 0; j < 3; j++ {
+		lc := float64(l.Col[j] * L)
+		if l.Add {
+			c[j] += lc * 0.6
+		} else {
+			c[j] += lc * (math.Sqrt(c[j])*0.9 + 0.03)
+		}
+		c[j] = math.Min(1, c[j])
+	}
+	return c
+}
+
+// DrawEmitter makes the emitter's image (W×H, premultiplied RGBA) on the CPU, exactly as the GPU,
+// and its light (nil if it has none)
+func DrawEmitter(e *EmitFrame, W, H int) (*image.RGBA, *LightField) {
 	p := &e.P
 	div := max(p.Div, 1)
 	GW, GH := emitGrid(W, H, div)
 	LW, LH := emitGrid(W, H, EmitGlowDiv)
 	acc := make([]uint32, GW*GH*4)
 	glow := make([]uint32, LW*LH*4)
+	XW, XH := emitGrid(W, H, EmitLightDiv)
+	var src []uint32
+	if p.LightOn {
+		src = make([]uint32, XW*XH)
+	}
 	n := e.I1 - e.I0
 	if n > 0 {
 		nw := min(16, max(1, n/256))
@@ -287,6 +383,13 @@ func DrawEmitter(e *EmitFrame, W, H int) *image.RGBA {
 					if p.GlowI > 0 && p.GlowR > 0 {
 						splatGlow(&pt, float32(p.GlowR), glow, LW, LH)
 					}
+					if src != nil {
+						// the particle's light source: its cell
+						cx, cy := int(math.Floor(float64(pt.X/EmitLightDiv))), int(math.Floor(float64(pt.Y/EmitLightDiv)))
+						if q := uint32(pt.A*emitTiny(pt.Size)*EmitFixed + 0.5); q > 0 && cx >= 0 && cy >= 0 && cx < XW && cy < XH {
+							atomic.AddUint32(&src[cy*XW+cx], q)
+						}
+					}
 				}
 			}(k)
 		}
@@ -301,7 +404,12 @@ func DrawEmitter(e *EmitFrame, W, H int) *image.RGBA {
 			}
 		}
 	})
-	return img
+	if src == nil {
+		return img, nil
+	}
+	lf := &LightField{GW: XW, GH: XH, V: lightFrom(src, XW, XH, float32(max(p.LightR, 1)), float32(max(p.LightEnd, 1))), Add: p.LightAdd,
+		Col: [3]float32{float32(p.LightCol[0]), float32(p.LightCol[1]), float32(p.LightCol[2])}}
+	return img, lf
 }
 
 // cellAt: the sums of a cell (clamped to the grid)

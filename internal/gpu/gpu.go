@@ -152,6 +152,10 @@ type LayerP struct {
 	Warp2  [4]float32 // flash contrast factor, brightness
 	Glitch [8][4]float32
 	Mask   [4]int32 // mask: offset (words; one byte per mask px), width, height, on
+	// An emitter's light on what is behind it: its light field (offset in the emitter
+	// accumulations, words), grid width, height, mode (0 off, 1 soft, 2 add); its color
+	Light0 [4]int32
+	Light1 [4]float32
 }
 
 // TextStyle mirrors 'TStyle' in render.comp: one entry of the per-frame text style table

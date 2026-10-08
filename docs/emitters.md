@@ -10,7 +10,9 @@ always give the same result: any frame can be seen or rendered directly.
 - **+ Layer** (left panel, Layers zone) → *Particle emitter* → a preset. The new layer has a 10 s
   clip at the cursor.
 - **Place it**: its point on the preview (or in the editor) moves it; the tip of its arrow turns it
-  (Shift: steps of 15°). Its shape (line, circle, rectangle) is outlined. It can also travel along a
+  (Shift: steps of 15°). Its shape (line, circle, rectangle) is outlined. With its light on, a circle
+  shows the light's reach (where it is still strong) and a fainter one where it fades out; drag
+  the handle of either to change it. It can also travel along a
   [motion path](layers.md#motion-path): its particles stay behind as a trail.
 - **More clips**: *Clip at <cursor>* in the inspector (or double-click its lane) copies the last one.
 - **Preset**: the buttons at the top of the inspector start again from another preset.
@@ -30,6 +32,7 @@ always give the same result: any frame can be seen or rendered directly.
 | Color and look | colors at birth, halfway and at the end (their opacity fades them), fade in / out, how they add up (*light* or *matter*), streak (stretched along their motion), soft edge, random seed |
 | Look | *particles* (each as it is) or *flame*: they melt into one flame — the color comes from the heat that piles up (colors of its edges, body and core; heat), and rising noise cuts its edges into long tongues (how far, the size of the whirls, how fast they rise, how much they eat the edges) |
 | Glow | a halo of light around them: strength, reach (px) and color (empty = the particles' own; the flame's body color with the flame look) |
+| Light | it lights up what is behind it (the background and the layers below it), from where its particles are: strength, reach (px, where it is still strong), where it fades out (px; 0 = 2.5 × the reach), color (empty = the particles' own; the flame's body), how (*soft*: lights and tints what is there; *add*: adds its color, like neon) and flicker. On by default for fire, realistic fire and explosion |
 | Audio reaction | the band (bass, mids, treble, volume, transients, beats) makes more of them, faster, bigger, and a burst on each beat |
 
 Lengths are pixels of a 1080-line video (they scale with the output) and with the clip's scale.
@@ -63,7 +66,12 @@ Any emitter can use them:
           look: flame
           flame: { color_cool: "#b8200a", color_mid: "#ff8a1e", color_hot: "#fff4d0", heat: 1, noise: 22, noise_scale: 60, noise_speed: 260, edge: 0.55 }
           glow: { intensity: 0.8, radius: 90, color: "#ff6a1a" }
+          light: { enabled: true, intensity: 0.8, reach: 450, end: 1100, mode: soft, flicker: 0.25 }
 ```
+
+The light follows the particles: when the fire grows with the bass, moves along its path or
+fades out, its light does too. It is 2D for now (it fades with the distance); with a depth map
+(to come) it will respect the volumes of the scene.
 
 Keys of where it is (x, y, rotation, its path) and the music's push count from the moment each
 particle is born; the other settings (forces, colors...) apply to all of them now. At most 4
