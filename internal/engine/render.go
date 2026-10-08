@@ -301,6 +301,22 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		f[h+36], f[h+37], f[h+38], f[h+39] = float32(P.FadeIn), float32(P.FadeOut), float32(P.Streak), float32(P.Softness)
 		u[h+40] = P.Seed
 		u[h+42] = uint32(max(P.Div, 1))
+		u[h+43] = 0
+		if P.Flame {
+			u[h+43] = 1
+		}
+		for c := 0; c < 3; c++ {
+			for j := 0; j < 3; j++ {
+				f[h+44+c*3+j] = float32(P.FlameCol[c][j])
+			}
+		}
+		f[h+53], f[h+54], f[h+55], f[h+56], f[h+57] = float32(P.Heat), float32(P.Noise), float32(P.NoiseScale), float32(P.NoiseSpeed), float32(P.Edge)
+		f[h+58], f[h+59] = float32(P.GlowI), float32(P.GlowR)
+		f[h+60], f[h+61], f[h+62] = float32(P.GlowCol[0]), float32(P.GlowCol[1]), float32(P.GlowCol[2])
+		u[h+63] = 0
+		if P.GlowOwn {
+			u[h+63] = 1
+		}
 		f[h+41] = float32(e.T)
 		for j, b := range bs {
 			o := bo + j*gpu.EmitBirthWords

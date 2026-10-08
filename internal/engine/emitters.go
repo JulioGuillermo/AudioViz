@@ -150,6 +150,20 @@ func (s *Session) emitFrame(li, ci int, c0, c *config.ClipConfig, idx int, feats
 		FadeIn: e.FadeIn, FadeOut: e.FadeOut, Soft: e.Mode == "soft",
 		Streak: e.Streak, Softness: math.Min(math.Max(e.Softness, 0), 1), Seed: uint32(e.Seed)*2654435761 + uint32(li*131+ci),
 	}
+	if e.Look == "flame" {
+		fl := e.Flame
+		rgb := func(h, def string) [3]float64 { c := col(h, def); return [3]float64{c[0], c[1], c[2]} }
+		p.Flame = true
+		p.FlameCol = [3][3]float64{rgb(fl.ColorCool, "#b8200a"), rgb(fl.ColorMid, "#ff8a1e"), rgb(fl.ColorHot, "#fff4d0")}
+		p.Heat, p.Noise, p.NoiseScale, p.NoiseSpeed, p.Edge = math.Max(fl.Heat, 0), fl.Noise*sc, math.Max(fl.NoiseScale*sc, 1), fl.NoiseSpeed*sc, math.Min(math.Max(fl.Edge, 0), 1)
+	}
+	if e.Glow.Intensity > 0 && e.Glow.Radius > 0 {
+		p.GlowI, p.GlowR = e.Glow.Intensity, e.Glow.Radius*sc
+		if e.Glow.Color != "" {
+			c := col(e.Glow.Color, "#ffffff")
+			p.GlowCol, p.GlowOwn = [3]float64{c[0], c[1], c[2]}, true
+		}
+	}
 	// big particles are splatted on a coarser grid (they are soft: the same look, far fewer pixels)
 	if big := math.Max(p.Size, p.SizeEnd) * (1 + e.SizeVar) * (1 + e.React.Size); big >= 160 && p.Softness >= 0.5 {
 		p.Div = 4

@@ -26,6 +26,10 @@ const TOOLS = [
   { sep: true },
   { id: 'shape', icon: 'lasso', label: 'Mask shape: draw it by hand (S)', key: 's', mask: 'vector' },
   { id: 'nodes', icon: 'spline', label: 'Mask nodes: drag them; double-click the line adds one, Alt+click removes one (N)', key: 'n', mask: 'vector' },
+  { id: 'shapes', icon: 'move', label: 'Shapes: select them (Shift: several, or drag a box), move, scale, rotate, group (A)', key: 'a', mask: 'vector' },
+  { id: 'erase_vec', icon: 'erase-line', label: 'Line eraser: rubs out the lines where it passes, whole lines, or only their nodes (X)', key: 'x', mask: 'vector' },
+  { id: 'cut', icon: 'scissors', label: 'Scissors: click a piece of a line to cut it off up to where it crosses other lines (K)', key: 'k', mask: 'vector' },
+  { id: 'fill', icon: 'paint-bucket', label: 'Fill: click inside an area closed by lines to make it a filled shape; on a painted mask, a paint bucket (F)', key: 'f', mask: 'any' },
   { id: 'brush', icon: 'brush', label: 'Paint the mask (B; the pen\'s pressure can set size and opacity)', key: 'b', mask: 'raster' },
   { id: 'eraser', icon: 'eraser', label: 'Erase the painted mask (E)', key: 'e', mask: 'raster' },
   { sep: true },
@@ -118,6 +122,7 @@ export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selCli
   const pts = useRef(new Map());
   const gesture = useRef(null);
   const onPointerDown = (e) => {
+    if (e.button === 2) return; // right button: the menus of what is under it (capturing would take them)
     capture(viewRef.current, e.pointerId);
     pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const s = vRef.current;
@@ -195,6 +200,17 @@ export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selCli
   return html`<div class="editor">
     <div class="ed-top">
       <span class="ed-title"><${Icon} name="pen-tool" size=${15} /> ${t('Editor')}</span>
+      ${tool === 'erase_vec' && html`<div class="ed-opts">
+        <div class="btngroup">
+          <button class=${'btn sm' + (!['points', 'strokes'].includes(brush.eraseMode) ? ' on' : '')} onClick=${() => setBrush('eraseMode', 'spans')}>${t('Where it passes')}</button>
+          <button class=${'btn sm' + (brush.eraseMode === 'strokes' ? ' on' : '')} onClick=${() => setBrush('eraseMode', 'strokes')}>${t('Whole lines')}</button>
+          <button class=${'btn sm' + (brush.eraseMode === 'points' ? ' on' : '')} onClick=${() => setBrush('eraseMode', 'points')}>${t('Only nodes')}</button>
+        </div>
+        <label>${t('Size')}<input type="range" min="2" max="600" step="1" value=${brush.size} onInput=${(e) => setBrush('size', +e.target.value)} /><span class="mono">${brush.size}</span></label>
+      </div>`}
+      ${tool === 'shapes' && html`<div class="ed-opts faint">${t('Click a shape (Shift: add), or drag a box around several · drag them to move · corners: scale (Shift: free) · sides: stretch · round handle: rotate · right-click: group, duplicate, flip, delete · arrows: nudge')}</div>`}
+      ${tool === 'cut' && html`<div class="ed-opts faint">${t('Click a piece of a line: it is cut off up to the lines it crosses (the whole line if it crosses none).')}</div>`}
+      ${tool === 'fill' && html`<div class="ed-opts faint">${t('Click inside an area closed by lines: it becomes a filled shape. On a painted mask it fills the area like a paint bucket.')}</div>`}
       ${(tool === 'brush' || tool === 'eraser') && html`<div class="ed-opts">
         <label>${t('Size')}<input type="range" min="2" max="600" step="1" value=${brush.size} onInput=${(e) => setBrush('size', +e.target.value)} /><span class="mono">${brush.size}</span></label>
         <label>${t('Hardness')}<input type="range" min="0" max="1" step="0.01" value=${brush.hardness} onInput=${(e) => setBrush('hardness', +e.target.value)} /></label>

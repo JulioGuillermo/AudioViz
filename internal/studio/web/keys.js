@@ -62,9 +62,11 @@ export function valueAt(l, u) {
 // element by element (a mask's shapes morph); undefined when they cannot be mixed
 function lerpAny(a, b, k) {
   if (typeof a === 'number' && typeof b === 'number') return a + (b - a) * k;
+  if (typeof a === 'boolean' && a === b) return a; // the same switch on both sides (a shape's open)
   if (typeof a === 'string' && typeof b === 'string') {
     const ca = parseHex(a), cb = parseHex(b);
-    return ca && cb ? formatHex(ca.map((x, j) => x + (cb[j] - x) * k), a.length === 9 || b.length === 9) : undefined;
+    if (ca && cb) return formatHex(ca.map((x, j) => x + (cb[j] - x) * k), a.length === 9 || b.length === 9);
+    return a === b ? a : undefined; // the same text (a shape's group)
   }
   if (Array.isArray(a) && Array.isArray(b)) {
     const n = lerpNode(a, b, k);

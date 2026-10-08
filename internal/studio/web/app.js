@@ -1,7 +1,7 @@
 import { html, render, useState, useEffect, useRef } from './vendor/preact-htm.js';
 import { TRACKS, ZONES, zoneOf, AUDIO_FIELDS, OUTPUT_FIELDS, trackById, TRANSITIONS, SIMPLE_TRANSITIONS, DIRECTED, DIRECTIONS, TEXT_FIELDS } from './schema.js';
 import { api, clone, fmtTime, parseTime, b64u8, basename, debounce } from './util.js';
-import { Form, Select, Edit } from './fields.js';
+import { Form, Select, Edit, Section } from './fields.js';
 import { Icon } from './icons.js';
 import { Timeline, segSummary } from './timeline.js';
 import { keyApi, valueAt, setIn, KEY_EPS } from './keys.js';
@@ -335,16 +335,16 @@ function TrackInspector({ proj, track, segIdx, time, meta, update, setSel, ctx, 
     <div class="insp-b">
       <${SegHeader} segs=${segs} i=${i} set=${setSeg} meta=${meta} track=${track} ctx=${ctx} />
       <${Form} fields=${def.fields} value=${seg.cfg} onChange=${(cfg) => setSeg({ ...seg, cfg })} ctx=${ctx} isFirst=${i === 0} kf=${kf} />
-      ${track === 'background' && html`<div class="section"><div class="sh">${t('Generate an image')}</div><div class="sb">
+      ${track === 'background' && html`<${Section} id="genimg" title=${t('Generate an image')}>
         <p class="faint" style="margin:2px 0 8px;font-size:12px">${t('Create a background from a description, or edit an image, with AI on your GPU.')}</p>
-        <button class="btn" onClick=${onImages}><${Icon} name="wand-sparkles" size=${15} /> ${t('Generate an image…')}</button></div></div>`}
+        <button class="btn" onClick=${onImages}><${Icon} name="wand-sparkles" size=${15} /> ${t('Generate an image…')}</button></${Section}>`}
       ${track === 'lyrics' && html`<${MaskSection} clip=${segMaskOwner(seg)} screen=${true} kf=${kf}
         selMask=${ctx.selMask} setSelMask=${ctx.setSelMask} ctx=${ctx} openEditor=${ctx.openEditor}
         editClip=${(fn) => update((p) => editSegMasks(p.tracks.lyrics[i], fn))} />`}
-      ${track === 'lyrics' && html`<div class="section"><div class="sh">${t('Generate lyrics')}</div><div class="sb">
+      ${track === 'lyrics' && html`<${Section} id="genlyr" title=${t('Generate lyrics')}>
         <p class="faint" style="margin:2px 0 8px;font-size:12px">${t('Creates an .lrc with the timing of every word, from the lyrics as text or transcribing the song.')}</p>
         <div class="row"><button class="btn" onClick=${onGenLyrics}><${Icon} name="wand-sparkles" size=${15} /> ${t('Generate synced lyrics…')}</button>
-        ${hasLines && html`<button class="btn" title=${t('Correct the whole lyrics as text and align it again')} onClick=${onEditText}><${Icon} name="pencil" size=${14} /> ${t('Edit text')}</button>`}</div></div></div>`}
+        ${hasLines && html`<button class="btn" title=${t('Correct the whole lyrics as text and align it again')} onClick=${onEditText}><${Icon} name="pencil" size=${14} /> ${t('Edit text')}</button>`}</div></${Section}>`}
     </div>
   </div>`;
 }
@@ -769,7 +769,7 @@ function App() {
     addEmitter: (tt, preset) => {
       const id = newLayerId();
       const st = Math.max(0, Math.min(meta.duration - 0.5, +tt.toFixed(3)));
-      const names = { fire: t('Fire'), sparks: t('Sparks'), smoke: t('Smoke'), dust: t('Dust'), light: t('Lights (bokeh)'), explosion: t('Explosion'), snow: t('Snow') };
+      const names = { fire: t('Fire'), fire_real: t('Realistic fire'), sparks: t('Sparks'), smoke: t('Smoke'), dust: t('Dust'), light: t('Lights (bokeh)'), explosion: t('Explosion'), snow: t('Snow') };
       update((p) => {
         p.layers = [...(p.layers || []), { id, name: names[preset] || '', kind: 'emitter',
           clips: [newEmitterClip(p, preset, st, Math.min(meta.duration - st, 10))] }];
@@ -1245,6 +1245,8 @@ function App() {
   const needMask = (kind) => {
     if (!maskOwner) return;
     const ms = maskOwner.obj.masks || [];
+    // a tool for either kind (the fill): the selected mask, else a shape mask
+    if (kind === 'any') { if (selMask != null && ms[selMask]) return; kind = 'vector'; }
     if (selMask != null && ms[selMask] && (ms[selMask].kind || 'vector') === kind) return;
     const k = ms.findIndex((m) => (m.kind || 'vector') === kind);
     if (k >= 0) { setSelMask(k); return; }

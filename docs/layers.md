@@ -54,6 +54,18 @@ with its tool.
   own length) and **free handles** (triangle: each handle on its own). **C** goes through them in
   that order. Turning a node into
   handles starts from the curve as it is.
+- **Shapes** (A): click a shape to select it (Shift: add more, or drag a box around several). The
+  selection has a box: drag inside to move, a corner to scale (keeping the proportion; Shift: free),
+  a side to stretch, the round handle to rotate (Shift: steps of 15°); the arrows nudge it (Shift:
+  10 px). Right-click: **group** (Ctrl+G: clicking one then selects them all) / ungroup
+  (Ctrl+Shift+G), duplicate (Ctrl+D), flip, delete (Del).
+- **Line eraser** (X): rubs out the lines **where it passes** (they are cut there), or whole lines,
+  or (*Only nodes*) just the nodes under it: a closed shape opens there, a line splits. Its mode and
+  size are in the bar above.
+- **Scissors** (K): click a piece of a line and it is cut off up to the lines it crosses (the whole
+  line if it crosses none), like Blender's Grease Pencil cutter.
+- **Fill** (F): click inside an area closed by lines (closed or not, of the same mask) and it becomes
+  a filled shape with that outline. On a painted mask it is a paint bucket (with the brush's opacity).
 - **Brush** (B) / **eraser** (E): paint the mask; size, hardness and opacity in the bar above, and
   the pen's **pressure** can set the size and / or the opacity. Saved as a PNG in the project's
   `masks/` folder.
@@ -76,6 +88,7 @@ with its tool.
             shapes:
               - points: [[0.5, 0.05], [0.95, 0.5, 1], [0.5, 0.95, 2, -0.2, 0, 0.2, 0], [0.05, 0.5]]
                 open: false               # true: a line (does not mask)
+                group: g1                 # optional: shapes of a group are selected together
                 # 0..1 of the clip's image: [x, y] smooth · [x, y, 1] corner ·
                 # [x, y, 2 | 4 | 3, in x, in y, out x, out y] symmetric / aligned / free handles (offsets)
           - kind: raster

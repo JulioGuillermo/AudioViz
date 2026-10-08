@@ -93,6 +93,7 @@ type MaskConfig struct {
 type MaskShape struct {
 	Points [][]float64 `yaml:"points"`
 	Open   bool        `yaml:"open,omitempty"`
+	Group  string      `yaml:"group,omitempty"` // shapes with the same group are selected and moved together
 }
 
 // Motion moves a clip or a text along a path drawn on the screen: its center goes to the point at

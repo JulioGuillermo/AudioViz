@@ -65,6 +65,38 @@ type EmitterConfig struct {
 	Softness float64      `yaml:"softness"`
 	Seed     int          `yaml:"seed"`
 	React    EmitterReact `yaml:"react"`
+	// Look: "plain" (each particle as it is) or "flame" (they melt into one flame: the color
+	// comes from how much heat piles up, and rising noise cuts its edges into tongues)
+	Look  string    `yaml:"look"`
+	Flame FlameLook `yaml:"flame"`
+	Glow  EmitGlow  `yaml:"glow"`
+}
+
+// FlameLook: the colors of the flame from cool (its edges) to hot (its core), how fast it gets
+// hot, and its tongues: how far the noise moves it (px), the size of its whirls (px), how fast
+// they rise (px/s) and how much they eat its edges (0..1)
+type FlameLook struct {
+	ColorCool  string  `yaml:"color_cool"`
+	ColorMid   string  `yaml:"color_mid"`
+	ColorHot   string  `yaml:"color_hot"`
+	Heat       float64 `yaml:"heat"`
+	Noise      float64 `yaml:"noise"`
+	NoiseScale float64 `yaml:"noise_scale"`
+	NoiseSpeed float64 `yaml:"noise_speed"`
+	Edge       float64 `yaml:"edge"`
+}
+
+// EmitGlow: a halo of light around the particles: strength (0 = none), reach (px) and its color
+// (empty = the particles' own)
+type EmitGlow struct {
+	Intensity float64 `yaml:"intensity"`
+	Radius    float64 `yaml:"radius"`
+	Color     string  `yaml:"color"`
+}
+
+// DefaultFlame: a natural fire (red edges, orange body, white-yellow core)
+func DefaultFlame() FlameLook {
+	return FlameLook{ColorCool: "#b8200a", ColorMid: "#ff8a1e", ColorHot: "#fff4d0", Heat: 1.1, Noise: 18, NoiseScale: 70, NoiseSpeed: 240, Edge: 0.5}
 }
 
 // EmitterReact: the music drives the emitter (each value: how much at full band)
@@ -82,6 +114,13 @@ var EmitterPresets = map[string]EmitterConfig{
 		Gravity: -430, Drag: 0.9, Turbulence: 26, TurbFreq: 1.7, Life: 1.25, LifeVar: 0.35, Size: 52, SizeEnd: 8, SizeVar: 0.35,
 		ColorStart: "#ffcf7048", ColorMid: "#ff561048", ColorEnd: "#5a060000", FadeIn: 0.12, FadeOut: 0.5, Mode: "add", Softness: 1,
 		React: EmitterReact{ReactTo: "bass", Rate: 1, Speed: 0.6, Size: 0.35}},
+	// fire with the flame look and a glow: one flame instead of single particles
+	"fire_real": {Rate: 480, Max: 9000, Shape: "circle", Width: 120, Direction: 0, Spread: 8, Speed: 200, SpeedVar: 0.4,
+		Gravity: -440, Drag: 0.9, Turbulence: 18, TurbFreq: 1.6, Life: 1.25, LifeVar: 0.35, Size: 56, SizeEnd: 12, SizeVar: 0.35,
+		ColorStart: "#ffffff50", ColorMid: "#ffffff48", ColorEnd: "#ffffff00", FadeIn: 0.25, FadeOut: 0.55, Mode: "add", Softness: 1,
+		React: EmitterReact{ReactTo: "bass", Rate: 0.8, Speed: 0.5, Size: 0.3},
+		Look:  "flame", Flame: FlameLook{ColorCool: "#a8180600", ColorMid: "#ff7616", ColorHot: "#fff1c4", Heat: 0.95, Noise: 24, NoiseScale: 55,
+			NoiseSpeed: 280, Edge: 0.6}, Glow: EmitGlow{Intensity: 0.9, Radius: 110, Color: "#ff5a12"}},
 	"sparks": {Rate: 90, Max: 4000, Shape: "point", Direction: 0, Spread: 70, Speed: 620, SpeedVar: 0.5, Gravity: 520, Drag: 0.4,
 		Turbulence: 6, TurbFreq: 3, Life: 1.6, LifeVar: 0.5, Size: 4, SizeEnd: 1.5, SizeVar: 0.4,
 		ColorStart: "#ffffffff", ColorMid: "#ffc040ff", ColorEnd: "#ff400000", FadeIn: 0, FadeOut: 0.35, Mode: "add", Streak: 0.03, Softness: 0.4,
@@ -126,6 +165,22 @@ func (e *EmitterConfig) UnmarshalYAML(n *yaml.Node) error {
 	}
 	*e = EmitterConfig(pd)
 	return nil
+}
+
+func init() {
+	// every preset can turn on the flame look with sensible colors, and has a glow reach ready
+	for k, e := range EmitterPresets {
+		if e.Flame == (FlameLook{}) {
+			e.Flame = DefaultFlame()
+		}
+		if e.Glow.Radius == 0 {
+			e.Glow.Radius = 60
+		}
+		if e.Look == "" {
+			e.Look = "plain"
+		}
+		EmitterPresets[k] = e
+	}
 }
 
 // DefaultEmitter: the fire preset

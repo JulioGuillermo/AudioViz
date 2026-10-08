@@ -343,7 +343,12 @@ clip. GPU: the emitter pass (`pipeEmit`, push constant = phase: clear / splat / 
 invocations each) before the main pass, in the command buffers with bit 1 of `passes`; buffers
 `EACC` (binding 10, 4 words per pixel per emitter, device-local) and `EDATA` (binding 11: count,
 W, H; per emitter a 128-word header and up to 4096 births of 8 words). CPU: `DrawEmitter`, the
-same math in float32. At most `MaxEmitters` = 4 at once (the renderer is sized by
+same math in float32. **Flame look** (resolve): the sums are read at the pixel moved by two
+rising fbm value noises (whirls twice as tall as wide), heat = 1 − e^(−Σα·heat), a third noise
+eats the edges, and the heat picks the color (cool → mid → hot) and the alpha. **Glow**: each
+particle also splats its disc grown by the reach, normalised by the halo's area, into a second
+grid of 8×8 px cells after its accumulation; the resolve adds it bilinearly, saturating like light
+(1 − e^(−glow·strength)). At most `MaxEmitters` = 4 at once (the renderer is sized by
 `Session.EmitterCount`).
 
 Motion paths (`config.Motion`, `effects.PathAt`): the path's Béziers (the masks' nodes, in frame

@@ -3,8 +3,11 @@
 //   phase 0: clear the accumulations
 //   phase 1: one invocation per particle: its state from its birth and age, splatted into its
 //            emitter's accumulation with integer atomic adds (the sum does not depend on order)
-//   phase 2: one invocation per pixel and emitter: the sums → premultiplied RGBA8, written as the
-//            emitter clip's image in the overlay buffer, which render.comp then composites
+//   phase 2: one invocation per pixel and emitter: the sums → premultiplied RGBA8 (plain, or the
+//            flame look; plus the glow), written as the emitter clip's image in the overlay
+//            buffer, which render.comp then composites
+// Each emitter's accumulation: its particles (4 words per cell of Div×Div px), then its glow
+// (4 words per 8×8 px)
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 layout(push_constant) uniform Push { int phase; } pc;
@@ -32,12 +35,28 @@ int W, H, NE;
 // Emitter e's header: word offset
 int eh(int e) { return 4 + e * ESTRIDE; }
 
+const int GDIV = 8; // the glow's cells
+int LW, LH;         // the glow grid
+// Word offset of emitter e's accumulation, and of its glow
+uint accBase(int e) { return uint(e) * uint(W * H * 4 + LW * LH * 4); }
+uint glowBase(int e) { return accBase(e) + uint(W * H * 4); }
+
 // Every phase runs THREADS invocations (4096 groups of 64); phases 0 and 2 loop over their items
 const uint THREADS = 4096u * 64u;
 
 void clearPhase() {
-    uint n = uint(NE * W * H * 4);
+    uint n = accBase(NE);
     for (uint k = gl_GlobalInvocationID.x; k < n; k += THREADS) acc[k] = 0u;
+}
+
+void addCell(uint o, vec3 c, float w) {
+    if (w <= 0.0) return;
+    uint qr = uint(c.r * w * FIXED + 0.5), qg = uint(c.g * w * FIXED + 0.5);
+    uint qb = uint(c.b * w * FIXED + 0.5), qa = uint(w * FIXED + 0.5);
+    if (qr > 0u) atomicAdd(acc[o], qr);
+    if (qg > 0u) atomicAdd(acc[o + 1u], qg);
+    if (qb > 0u) atomicAdd(acc[o + 2u], qb);
+    if (qa > 0u) atomicAdd(acc[o + 3u], qa);
 }
 
 void splatPhase() {
@@ -144,7 +163,7 @@ void splatPhase() {
     float alpha = col.a * tiny;
     float edge = max(r * fd.w, 0.5);
     float l2 = dot(st, st);
-    uint base = uint(e * W * H);
+    uint base = accBase(e);
     for (int yy = py0; yy <= py1; yy++) {
         for (int xx = px0; xx <= px1; xx++) {
             vec2 q = (vec2(float(xx), float(yy)) + 0.5) * float(dv) - pos;
@@ -154,14 +173,24 @@ void splatPhase() {
             }
             float dd = length(q);
             float w = (1.0 - smoothstep(r - edge, r, dd)) * alpha;
-            if (w <= 0.0) continue;
-            uint o = (base + uint(yy * GW + xx)) * 4u;
-            uint qr = uint(col.r * w * FIXED + 0.5), qg = uint(col.g * w * FIXED + 0.5);
-            uint qb = uint(col.b * w * FIXED + 0.5), qa = uint(w * FIXED + 0.5);
-            if (qr > 0u) atomicAdd(acc[o], qr);
-            if (qg > 0u) atomicAdd(acc[o + 1u], qg);
-            if (qb > 0u) atomicAdd(acc[o + 2u], qb);
-            if (qa > 0u) atomicAdd(acc[o + 3u], qa);
+            addCell(base + uint(yy * GW + xx) * 4u, col.rgb, w);
+        }
+    }
+    // the halo: the disc grown by the glow's reach, fading out, on the coarse glow grid
+    float gI = edf(h + 58), gR = edf(h + 59);
+    if (gI > 0.0 && gR > 0.0) {
+        float rg = size * 0.5 + gR;
+        float gd = float(GDIV);
+        int gx0 = max(int(floor((pos.x - rg) / gd)), 0), gx1 = min(int(ceil((pos.x + rg) / gd)), LW - 1);
+        int gy0 = max(int(floor((pos.y - rg) / gd)), 0), gy1 = min(int(ceil((pos.y + rg) / gd)), LH - 1);
+        uint gb = glowBase(e);
+        float norm = gd * gd / (0.25 * 3.14159265 * rg * rg); // the same light whatever the reach
+        for (int yy = gy0; yy <= gy1; yy++) {
+            for (int xx = gx0; xx <= gx1; xx++) {
+                vec2 q = (vec2(float(xx), float(yy)) + 0.5) * gd - pos;
+                float ff2 = 1.0 - smoothstep(0.0, rg, length(q));
+                addCell(gb + uint(yy * LW + xx) * 4u, col.rgb, alpha * norm * ff2 * ff2);
+            }
         }
     }
 }
@@ -169,8 +198,39 @@ void splatPhase() {
 vec4 cellSum(uint base, int GW, int GH, int cx, int cy) {
     cx = clamp(cx, 0, GW - 1);
     cy = clamp(cy, 0, GH - 1);
-    uint o = (base + uint(cy * GW + cx)) * 4u;
+    uint o = base + uint(cy * GW + cx) * 4u;
     return vec4(float(acc[o]), float(acc[o + 1u]), float(acc[o + 2u]), float(acc[o + 3u])) / FIXED;
+}
+
+// The sums at a point (px), bilinear between the cells of dv px
+vec4 sumAt(uint base, int GW, int GH, int dv, vec2 p) {
+    vec2 q = p / float(dv) - 0.5;
+    ivec2 i0 = ivec2(floor(q));
+    vec2 f = q - vec2(i0);
+    vec4 a = cellSum(base, GW, GH, i0.x, i0.y), b = cellSum(base, GW, GH, i0.x + 1, i0.y);
+    vec4 c = cellSum(base, GW, GH, i0.x, i0.y + 1), d = cellSum(base, GW, GH, i0.x + 1, i0.y + 1);
+    vec4 ab = a + (b - a) * f.x, cd = c + (d - c) * f.x;
+    return ab + (cd - ab) * f.y;
+}
+
+// Value noise (as effects.evnoise)
+float hash2(int ix, int iy, uint seed) {
+    return float(pcg(uint(ix) * 1597334677u ^ uint(iy) * 3812015801u ^ seed)) * (1.0 / 4294967296.0);
+}
+float vnoise(vec2 p, uint seed) {
+    vec2 fl = floor(p);
+    int ix = int(fl.x), iy = int(fl.y);
+    vec2 u = p - fl;
+    u = u * u * (3.0 - 2.0 * u);
+    float a = hash2(ix, iy, seed), b = hash2(ix + 1, iy, seed);
+    float c = hash2(ix, iy + 1, seed), d = hash2(ix + 1, iy + 1, seed);
+    return a + (b - a) * u.x + (c - a) * u.y + (a - b - c + d) * u.x * u.y;
+}
+float fbm(vec2 p, uint seed) {
+    float v = 0.5 * vnoise(p, seed);
+    v += 0.25 * vnoise(vec2(2.0 * p.x + 5.2, 2.0 * p.y + 1.3), seed);
+    v += 0.125 * vnoise(vec2(4.0 * p.x + 1.7, 4.0 * p.y + 9.2), seed);
+    return v / 0.875;
 }
 
 void resolveOne(uint id) {
@@ -180,28 +240,60 @@ void resolveOne(uint id) {
     ivec4 v1 = edi4(h + 4);
     int dv = int(ed[h + 42]);
     int GW = (W + dv - 1) / dv, GH = (H + dv - 1) / dv;
-    uint base = uint(e * n);
+    uint base = accBase(e);
     int x = p % W, y = p / W;
-    vec4 s;
-    if (dv == 1) s = cellSum(base, GW, GH, x, y);
-    else {
-        vec2 q = (vec2(float(x), float(y)) + 0.5) / float(dv) - 0.5;
-        ivec2 i0 = ivec2(floor(q));
-        vec2 f = q - vec2(i0);
-        vec4 a = cellSum(base, GW, GH, i0.x, i0.y), b = cellSum(base, GW, GH, i0.x + 1, i0.y);
-        vec4 c = cellSum(base, GW, GH, i0.x, i0.y + 1), d = cellSum(base, GW, GH, i0.x + 1, i0.y + 1);
-        vec4 ab = a + (b - a) * f.x, cd = c + (d - c) * f.x;
-        s = ab + (cd - ab) * f.y;
-    }
+    vec2 pp = vec2(float(x) + 0.5, float(y) + 0.5);
+    uint seed = ed[h + 40];
+    float T = edf(h + 41);
     vec4 c = vec4(0.0);
-    if ((v1.w & 1) != 0) {
-        if (s.a > 0.0) {
-            float al = 1.0 - exp(-s.a);
-            c = vec4(s.rgb / s.a * al, al);
+    if (ed[h + 43] == 1u) {
+        // the flame: its heat taken a little aside by rising noise, its edges eaten by more noise
+        // the whirls are twice as tall as wide: long tongues
+        float sc = max(edf(h + 55), 1.0);
+        float sy = sc * 2.0;
+        float tt = T * edf(h + 56) / sy;
+        float nx = fbm(vec2(pp.x / sc, pp.y / sy + tt), seed);
+        float ny = fbm(vec2(pp.x / sc + 7.3, pp.y / sy + tt + 3.1), seed);
+        float nz = edf(h + 54);
+        vec4 s = sumAt(base, GW, GH, dv, vec2(pp.x + nz * (nx - 0.5) * 2.0, pp.y + nz * (ny - 0.5) * 2.0));
+        float ht = 1.0 - exp(-s.a * edf(h + 53));
+        float edge = edf(h + 57);
+        if (edge > 0.0) {
+            float k = edge * fbm(vec2(pp.x / (sc * 0.5), pp.y / sc + tt * 1.7), seed + 11u) * 0.6;
+            ht = clamp((ht - k) / (1.0 - k), 0.0, 1.0);
         }
+        vec3 cool = vec3(edf(h + 44), edf(h + 45), edf(h + 46));
+        vec3 mid = vec3(edf(h + 47), edf(h + 48), edf(h + 49));
+        vec3 hot = vec3(edf(h + 50), edf(h + 51), edf(h + 52));
+        vec3 fc;
+        if (ht < 0.35) fc = cool;
+        else if (ht < 0.7) fc = cool + (mid - cool) * ((ht - 0.35) / 0.35);
+        else fc = mid + (hot - mid) * ((ht - 0.7) / 0.3);
+        float al = smoothstep(0.02, 0.3, ht);
+        c = vec4(fc * al, al);
     } else {
-        float al = min(1.0, max(s.a, max(s.r, max(s.g, s.b))));
-        c = vec4(min(s.rgb, vec3(al)), al);
+        vec4 s = dv == 1 ? cellSum(base, GW, GH, x, y) : sumAt(base, GW, GH, dv, pp);
+        if ((v1.w & 1) != 0) {
+            if (s.a > 0.0) {
+                float al = 1.0 - exp(-s.a);
+                c = vec4(s.rgb / s.a * al, al);
+            }
+        } else {
+            float al = min(1.0, max(s.a, max(s.r, max(s.g, s.b))));
+            c = vec4(min(s.rgb, vec3(al)), al);
+        }
+    }
+    float gI = edf(h + 58);
+    if (gI > 0.0) {
+        vec4 g = sumAt(glowBase(e), LW, LH, GDIV, pp);
+        vec3 gc;
+        if (ed[h + 63] == 1u) gc = vec3(edf(h + 60), edf(h + 61), edf(h + 62)) * g.a;
+        else if (ed[h + 43] == 1u) gc = vec3(edf(h + 47), edf(h + 48), edf(h + 49)) * g.a;
+        else gc = g.rgb;
+        // added like light, softly saturating
+        vec3 v = 1.0 - exp(-gc * gI);
+        c.rgb = 1.0 - (1.0 - c.rgb) * (1.0 - v);
+        c.a = max(c.a, max(c.r, max(c.g, c.b)));
     }
     lay[v1.y + p] = packUnorm4x8(clamp(c, 0.0, 1.0));
 }
@@ -214,6 +306,8 @@ void main() {
     NE = int(ed[0]);
     W = int(ed[1]);
     H = int(ed[2]);
+    LW = (W + GDIV - 1) / GDIV;
+    LH = (H + GDIV - 1) / GDIV;
     if (NE <= 0) return;
     if (pc.phase == 0) clearPhase();
     else if (pc.phase == 1) splatPhase();

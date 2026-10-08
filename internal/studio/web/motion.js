@@ -1,5 +1,5 @@
 import { html } from './vendor/preact-htm.js';
-import { Form } from './fields.js';
+import { Form, Section } from './fields.js';
 import { Icon } from './icons.js';
 import { t } from './i18n.js';
 
@@ -49,7 +49,7 @@ export { hasPath };
 // The section of the inspector
 export function MotionSection({ obj, kf, ctx, edit, what = 'clip' }) {
   const on = hasPath(obj);
-  return html`<div class="section"><div class="sh">${t('Motion path')}</div><div class="sb">
+  return html`<${Section} id="motion" title=${t('Motion path')}>
     ${!on && html`<p class="faint" style="margin:2px 0 8px;font-size:12px">${t(what === 'text'
       ? 'The text can travel along a path drawn on the screen: draw it in the editor, then key its progress (it goes from start to end over the text\'s time).'
       : 'The clip can travel along a path drawn on the screen: draw it in the editor, then key its progress (it goes from start to end over the clip\'s time).')}</p>`}
@@ -60,5 +60,5 @@ export function MotionSection({ obj, kf, ctx, edit, what = 'clip' }) {
       ${on && html`<span class="spacer"></span><button class="btn sm ghost danger" title=${t('It stays where it is placed (Position)')}
         onClick=${() => edit((o) => removePath(o))}><${Icon} name="trash-2" size=${13} /> ${t('Remove the path')}</button>`}
     </div>
-  </div></div>`;
+  </${Section}>`;
 }

@@ -205,7 +205,7 @@ keys are marked on it).
 - The selection tool (**V**) has the same handles as the preview (move, scale, rotate a clip or a
   text).
 - **Masks** of the selected clip ([layers.md](layers.md#masks)), text or lyrics segment
-  ([texts.md](texts.md#masks)): shape (**S**), nodes (**N**), brush
+  ([texts.md](texts.md#masks)): shape (**S**), nodes (**N**), shapes (**A**: select, move, scale, rotate, group), line eraser (**X**), scissors (**K**), fill (**F**), brush
   (**B**) and eraser (**E**), with the brush's size, hardness, opacity and pressure options in the
   top bar.
 - **Motion path** (**P**) of the selected clip or text: draw it, then drag its nodes ([layers.md](layers.md#motion-path)).

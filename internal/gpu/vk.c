@@ -425,7 +425,9 @@ int vkr_create(vkr **out, const vkr_config *cfg, char *err, int errlen) {
     sizes[VKR_BUF_FLUID] = cfg->fluid_size < 16 ? 16 : (cfg->fluid_size + 3) / 4 * 4;
     sizes[VKR_BUF_FIMG] = sizes[VKR_BUF_BG];
     sizes[VKR_BUF_LAYERS] = cfg->layers_size < 16 ? 16 : (cfg->layers_size + 3) / 4 * 4;
-    sizes[VKR_BUF_EACC] = cfg->emitters > 0 ? (VkDeviceSize)cfg->emitters * cfg->width * cfg->height * 16 : 16;
+    // per emitter: its particles (4 words per pixel) and its glow (4 words per 8×8 pixels)
+    sizes[VKR_BUF_EACC] = cfg->emitters > 0 ? (VkDeviceSize)cfg->emitters *
+        ((VkDeviceSize)cfg->width * cfg->height + (VkDeviceSize)((cfg->width + 7) / 8) * ((cfg->height + 7) / 8)) * 16 : 16;
     sizes[VKR_BUF_EDATA] = cfg->edata_size < 16 ? 16 : (cfg->edata_size + 3) / 4 * 4;
     VkMemoryPropertyFlags prefs[VKR_NUM_BUFS] = {
         VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,

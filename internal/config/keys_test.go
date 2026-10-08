@@ -156,3 +156,13 @@ func TestShapeKeys(t *testing.T) {
 		t.Fatalf("after halfway the node is smooth: %v", n1)
 	}
 }
+
+// Shapes with the same group and open flag on both keys still morph
+func TestShapeKeysGroup(t *testing.T) {
+	a := []any{map[string]any{"points": []any{[]any{0.0, 0.0}, []any{1.0, 0.0}}, "open": true, "group": "g1"}}
+	b := []any{map[string]any{"points": []any{[]any{1.0, 1.0}, []any{0.0, 1.0}}, "open": true, "group": "g1"}}
+	v := ValueAt([]Key{{T: 0, V: a}, {T: 2, V: b}}, 1).([]any)[0].(map[string]any)
+	if p := v["points"].([]any)[0].([]any); math.Abs(p[0].(float64)-0.5) > 1e-9 || v["group"] != "g1" || v["open"] != true {
+		t.Fatalf("not morphed: %v", v)
+	}
+}

@@ -126,6 +126,13 @@ func ValueAt(l []Key, u float64) any {
 // lerpAny interpolates numbers, and lists / maps of the same shape element by element (e.g.
 // the points of a mask's shapes); false when the two values cannot be mixed
 func lerpAny(a, b any, k float64) (any, bool) {
+	// the same text or switch on both sides (a shape's group, open): kept
+	switch x := a.(type) {
+	case string, bool:
+		if a == b {
+			return x, true
+		}
+	}
 	if fa, ok := toFloat(a); ok {
 		if fb, ok := toFloat(b); ok {
 			return fa + (fb-fa)*k, true

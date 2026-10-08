@@ -9,16 +9,25 @@ import { animatable, valueAt, keyIndexAt } from './keys.js';
 // kf (optional, see keys.js keyApi): keyframes of the edited segment / text; prefix: path of
 // `value` inside it (groups and layers).
 export function Form({ fields, value, onChange, ctx, isFirst = true, kf = null, prefix = '' }) {
-  const set = (key, v) => onChange({ ...value, [key]: v });
+  // a key may be a dotted path (a group that edits a block inside a block)
+  const set = (key, v) => {
+    if (!key.includes('.')) { onChange({ ...value, [key]: v }); return; }
+    const ps = key.split('.'), out = { ...value };
+    let o = out;
+    for (let i = 0; i < ps.length - 1; i++) { o[ps[i]] = { ...(o[ps[i]] || {}) }; o = o[ps[i]]; }
+    o[ps[ps.length - 1]] = v;
+    onChange(out);
+  };
+  const get = (key) => key.split('.').reduce((o, p) => (o == null ? undefined : o[p]), value);
   return html`${fields.map((f) => {
     if (f.showIf && !f.showIf(value)) return null;
     if (f.firstOnly && !isFirst) return null;
     // A section only groups fields of this same object under a title
-    if (f.type === 'section') return html`<${Section} key=${f.key} title=${t(f.label)}><${Form} fields=${f.fields} value=${value}
+    if (f.type === 'section') return html`<${Section} key=${f.key} id=${prefix + '|' + f.key} title=${t(f.label)}><${Form} fields=${f.fields} value=${value}
       onChange=${onChange} ctx=${ctx} isFirst=${isFirst} kf=${kf} prefix=${prefix} /></${Section}>`;
     const path = prefix ? prefix + '.' + f.key : f.key;
     // dia: the keyframe diamond; 'gap' = a form with keyframes, field not animatable (aligned label)
-    let v = value[f.key], setV = (x) => set(f.key, x), dia = kf ? 'gap' : null;
+    let v = get(f.key), setV = (x) => set(f.key, x), dia = kf ? 'gap' : null;
     if (kf && animatable(f)) {
       // Animated: shows the value at the cursor; a change sets a key at the cursor
       const l = kf.keys[path];
@@ -30,7 +39,7 @@ export function Form({ fields, value, onChange, ctx, isFirst = true, kf = null, 
       }
       dia = html`<${KeyButton} kf=${kf} path=${path} list=${l} cur=${v} />`;
     }
-    return html`<${Field} key=${f.key} f=${f} v=${v} set=${setV} ctx=${ctx} isFirst=${isFirst} kf=${kf} path=${path} dia=${dia} />`;
+    return html`<${Field} key=${f.id || f.key} f=${f} v=${v} set=${setV} ctx=${ctx} isFirst=${isFirst} kf=${kf} path=${path} dia=${dia} />`;
   })}`;
 }
 
@@ -194,10 +203,19 @@ function Layers({ f, v, set, ctx, kf, path }) {
   </div>`;
 }
 
-function Section({ title, children, defOpen = true }) {
-  const [open, setOpen] = useState(defOpen);
-  return html`<div class="section">
-    <div class="sh" onClick=${() => setOpen(!open)}><${Icon} name=${open ? 'chevron-down' : 'chevron-right'} size=${13} />${title}</div>
+// A folding section: closed until opened; which ones are open is remembered (by id) while the
+// studio is open, so they stay open when the selection changes
+const openSections = new Set();
+export function Section({ title, children, id, defOpen = false, extra = null }) {
+  const key = id || title;
+  const [open, setOpenState] = useState(() => openSections.has(key) || (defOpen && !openSections.has('!' + key)));
+  const setOpen = (o) => {
+    openSections.delete(key); openSections.delete('!' + key);
+    openSections.add(o ? key : '!' + key);
+    setOpenState(o);
+  };
+  return html`<div class=${'section' + (open ? ' open' : '')}>
+    <div class="sh" onClick=${() => setOpen(!open)}><${Icon} name=${open ? 'chevron-down' : 'chevron-right'} size=${13} />${title}${extra}</div>
     ${open && html`<div class="sb">${children}</div>`}
   </div>`;
 }
@@ -238,9 +256,9 @@ function Field({ f, v, set, ctx, isFirst, kf, path, dia }) {
         ${v && html`<button class="btn icon ghost danger" title=${t('Remove')} onClick=${() => set('')}><${Icon} name="x" size=${15} /></button>`}
       </div></${Row}>`;
     case 'group':
-      return html`<${Section} title=${t(f.label)}><${Form} fields=${f.fields} value=${v || {}} onChange=${set} ctx=${ctx} isFirst=${isFirst} kf=${kf} prefix=${path} /></${Section}>`;
+      return html`<${Section} id=${path + '|' + (f.id || '')} title=${t(f.label)}><${Form} fields=${f.fields} value=${v || {}} onChange=${set} ctx=${ctx} isFirst=${isFirst} kf=${kf} prefix=${path} /></${Section}>`;
     case 'layers':
-      return html`<${Section} title=${t(f.label)}><${Layers} f=${f} v=${v} set=${set} ctx=${ctx} kf=${kf} path=${path} /></${Section}>`;
+      return html`<${Section} id=${path} title=${t(f.label)}><${Layers} f=${f} v=${v} set=${set} ctx=${ctx} kf=${kf} path=${path} /></${Section}>`;
   }
   return null;
 }

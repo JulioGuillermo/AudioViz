@@ -579,3 +579,10 @@ a.btn { text-decoration: none; }
 .presets { display: flex; flex-wrap: wrap; gap: 4px; margin: 2px 0 8px; }
 .seg.clip.emit { background: rgba(255, 130, 50, .18); border-color: rgba(255, 140, 60, .5); }
 .seg.clip.emit.on { background: #33261c; border-color: var(--accent); }
+
+.mask-note { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); background: rgba(20, 20, 24, .9); color: #fff; padding: 6px 12px; border-radius: 6px; font-size: 13px; pointer-events: none; z-index: 5; }
+.masksvg .shape-marquee { fill: rgba(80, 160, 255, .12); stroke: #5aa8ff; stroke-dasharray: 4 3; }
+.masksvg .shape-sel-line { fill: none; stroke: rgba(90, 168, 255, .55); pointer-events: none; }
+.masksvg .shape-box { fill: none; stroke: #5aa8ff; stroke-dasharray: 5 4; pointer-events: none; }
+.masksvg .shape-handle { fill: #fff; stroke: #2a6fd0; cursor: nwse-resize; pointer-events: auto; }
+.masksvg .shape-rot { fill: #5aa8ff; stroke: #fff; cursor: grab; pointer-events: auto; }

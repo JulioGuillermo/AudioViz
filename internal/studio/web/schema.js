@@ -9,6 +9,9 @@ export const BANDS = [
 const react = (def = 'bass') => ({ key: 'react_to', label: 'Reacts to', type: 'enum', options: BANDS, def,
   help: 'Frequency band that drives the effect' });
 
+// A section groups fields of the same object under a title (folded until opened)
+const sec = (key, label, fields) => ({ key: 'sec_' + key, label, type: 'section', fields });
+
 const glow = { key: 'glow', label: 'Glow', type: 'group', fields: [
   { key: 'enabled', label: 'Enabled', type: 'bool' },
   { key: 'radius', label: 'Radius', type: 'num', min: 0, max: 40, step: 0.5 },
@@ -33,10 +36,14 @@ export const TRACKS = [
   { id: 'background', group: 'Background', label: 'Image / video', icon: 'image', fields: [
     { key: 'path', label: 'File', type: 'file', kind: 'bg', help: 'Image, GIF or video (mp4, mov, mkv, webm)' },
     { key: 'fit_mode', label: 'Fit', type: 'enum', def: 'cover', options: [['cover', 'Cover (crops)'], ['contain', 'Contain (bars)'], ['stretch', 'Stretch']] },
-    { key: 'opacity', label: 'Opacity', type: 'num', min: 0, max: 1, step: 0.01 },
-    { key: 'darken', label: 'Darken', type: 'num', min: 0, max: 1, step: 0.01 },
-    { key: 'vignette', label: 'Vignette', type: 'num', min: 0, max: 1, step: 0.01 },
-    { key: 'loop_video', label: 'Loop video / GIF', type: 'bool' },
+    sec('look', 'Look', [
+      { key: 'opacity', label: 'Opacity', type: 'num', min: 0, max: 1, step: 0.01 },
+      { key: 'darken', label: 'Darken', type: 'num', min: 0, max: 1, step: 0.01 },
+      { key: 'vignette', label: 'Vignette', type: 'num', min: 0, max: 1, step: 0.01 },
+    ]),
+    sec('video', 'Video / GIF', [
+      { key: 'loop_video', label: 'Loop video / GIF', type: 'bool' },
+    ]),
     { key: 'motion', label: 'Motion', type: 'group', fields: [
       { key: 'type', label: 'Type', type: 'enum', def: 'none', help: 'Slow camera motion over the image during this segment',
         options: [['none', 'Still'], ['zoom_in', 'Slow zoom in'], ['zoom_out', 'Slow zoom out'], ['pan_left', 'Pan left'],
@@ -91,25 +98,33 @@ export const TRACKS = [
   { id: 'visualizer', group: 'Visualizer', label: 'Spectrum', icon: 'chart-column', fields: [
     { key: 'enabled', label: 'Enabled', type: 'bool' },
     { key: 'type', label: 'Type', type: 'enum', def: 'circular', options: [['circular', 'Circular'], ['horizontal', 'Horizontal'], ['vertical', 'Vertical (edges)'], ['oscilloscope', 'Oscilloscope']] },
-    { key: 'bars', label: 'Bars per channel', type: 'int', min: 4, max: 256, step: 1 },
-    { key: 'min_height', label: 'Min height', type: 'num', min: 0, max: 100, step: 0.5 },
-    { key: 'max_height', label: 'Max height', type: 'num', min: 10, max: 1200, step: 1 },
-    { key: 'bar_width', label: 'Thickness', type: 'num', min: 0.5, max: 60, step: 0.5 },
-    { key: 'bar_gap', label: 'Gap', type: 'num', min: 0, max: 40, step: 0.5, showIf: (c) => c.type === 'horizontal' },
-    { key: 'center_gap', label: 'Center gap (px)', type: 'optnum', min: 0, max: 200, step: 1, showIf: (c) => c.type === 'horizontal', help: 'Off = 2 × gap' },
-    { key: 'roundness', label: 'Roundness', type: 'num', min: 0, max: 30, step: 0.5, showIf: (c) => c.type === 'horizontal' || c.type === 'vertical' },
-    { key: 'radius', label: 'Radius', type: 'num', min: 0, max: 1500, step: 1, showIf: (c) => c.type === 'circular' },
-    { key: 'center_x', label: 'Center X', type: 'num', min: 0, max: 1, step: 0.005, showIf: (c) => c.type === 'circular' },
-    { key: 'center_y', label: 'Center Y', type: 'num', min: 0, max: 1, step: 0.005, showIf: (c) => c.type === 'circular' },
-    { key: 'position_y', label: 'Height (0 top, 1 bottom)', type: 'num', min: 0, max: 1, step: 0.005, showIf: (c) => c.type === 'horizontal' || c.type === 'oscilloscope' },
-    { key: 'mirror_bottom', label: 'Reflection', type: 'bool', showIf: (c) => c.type === 'horizontal' },
-    { key: 'smoothing', label: 'Rise speed', type: 'num', min: 0.05, max: 0.98, step: 0.01 },
-    { key: 'decay_rate', label: 'Fall speed', type: 'num', min: 0.01, max: 0.5, step: 0.005 },
-    { key: 'color_mode', label: 'Color', type: 'enum', def: 'gradient', options: [['gradient', 'Gradient'], ['solid', 'Solid']] },
-    { key: 'solid_color', label: 'Solid color', type: 'color', showIf: (c) => c.color_mode === 'solid' },
-    { key: 'gradient', label: 'Gradient', type: 'gradient', showIf: (c) => c.color_mode !== 'solid' },
-    { key: 'gradient_axis', label: 'Direction', type: 'enum', def: 'index', options: [['index', 'Per bar (across)'], ['length', 'Along each bar']], showIf: (c) => c.color_mode !== 'solid' },
-    { key: 'gradient_fit', label: 'Reference', type: 'enum', def: 'bar', options: [['bar', 'Moves with the bar'], ['max', 'Relative to max height']], showIf: (c) => c.color_mode !== 'solid' && c.gradient_axis === 'length' },
+    sec('bars', 'Bars', [
+      { key: 'bars', label: 'Bars per channel', type: 'int', min: 4, max: 256, step: 1 },
+      { key: 'min_height', label: 'Min height', type: 'num', min: 0, max: 100, step: 0.5 },
+      { key: 'max_height', label: 'Max height', type: 'num', min: 10, max: 1200, step: 1 },
+      { key: 'bar_width', label: 'Thickness', type: 'num', min: 0.5, max: 60, step: 0.5 },
+      { key: 'bar_gap', label: 'Gap', type: 'num', min: 0, max: 40, step: 0.5, showIf: (c) => c.type === 'horizontal' },
+      { key: 'center_gap', label: 'Center gap (px)', type: 'optnum', min: 0, max: 200, step: 1, showIf: (c) => c.type === 'horizontal', help: 'Off = 2 × gap' },
+      { key: 'roundness', label: 'Roundness', type: 'num', min: 0, max: 30, step: 0.5, showIf: (c) => c.type === 'horizontal' || c.type === 'vertical' },
+    ]),
+    sec('place', 'Position', [
+      { key: 'radius', label: 'Radius', type: 'num', min: 0, max: 1500, step: 1, showIf: (c) => c.type === 'circular' },
+      { key: 'center_x', label: 'Center X', type: 'num', min: 0, max: 1, step: 0.005, showIf: (c) => c.type === 'circular' },
+      { key: 'center_y', label: 'Center Y', type: 'num', min: 0, max: 1, step: 0.005, showIf: (c) => c.type === 'circular' },
+      { key: 'position_y', label: 'Height (0 top, 1 bottom)', type: 'num', min: 0, max: 1, step: 0.005, showIf: (c) => c.type === 'horizontal' || c.type === 'oscilloscope' },
+      { key: 'mirror_bottom', label: 'Reflection', type: 'bool', showIf: (c) => c.type === 'horizontal' },
+    ]),
+    sec('motion', 'Movement', [
+      { key: 'smoothing', label: 'Rise speed', type: 'num', min: 0.05, max: 0.98, step: 0.01 },
+      { key: 'decay_rate', label: 'Fall speed', type: 'num', min: 0.01, max: 0.5, step: 0.005 },
+    ]),
+    sec('color', 'Color', [
+      { key: 'color_mode', label: 'Color', type: 'enum', def: 'gradient', options: [['gradient', 'Gradient'], ['solid', 'Solid']] },
+      { key: 'solid_color', label: 'Solid color', type: 'color', showIf: (c) => c.color_mode === 'solid' },
+      { key: 'gradient', label: 'Gradient', type: 'gradient', showIf: (c) => c.color_mode !== 'solid' },
+      { key: 'gradient_axis', label: 'Direction', type: 'enum', def: 'index', options: [['index', 'Per bar (across)'], ['length', 'Along each bar']], showIf: (c) => c.color_mode !== 'solid' },
+      { key: 'gradient_fit', label: 'Reference', type: 'enum', def: 'bar', options: [['bar', 'Moves with the bar'], ['max', 'Relative to max height']], showIf: (c) => c.color_mode !== 'solid' && c.gradient_axis === 'length' },
+    ]),
     glow,
   ] },
   { id: 'particles', group: 'Particles', label: 'Particles', icon: 'sparkles', fields: [
@@ -137,29 +152,37 @@ export const TRACKS = [
     { key: 'enabled', label: 'Visible', type: 'bool' },
     { key: 'path', label: '.lrc / .srt file', type: 'file', kind: 'lyrics', firstOnly: true },
     { key: 'offset', label: 'Offset (s)', type: 'num', min: -5, max: 5, step: 0.01, firstOnly: true },
-    { key: 'font', label: 'Font', type: 'file', kind: 'font', help: 'Empty = built-in font' },
-    { key: 'size', label: 'Size', type: 'num', min: 8, max: 300, step: 1 },
-    { key: 'uppercase', label: 'Uppercase', type: 'bool' },
-    { key: 'position', label: 'Position', type: 'enum', def: 'bottom', options: [['bottom', 'Bottom'], ['top', 'Top'], ['center', 'Center'], ['left', 'Left'], ['right', 'Right'], ['side', 'Alternate left/right'], ['custom', 'Custom']] },
-    { key: 'margin', label: 'Margin (px)', type: 'num', min: 0, max: 1000, step: 1 },
-    { key: 'position_x', label: 'Position X', type: 'num', min: 0, max: 1, step: 0.005, showIf: (c) => c.position === 'custom' },
-    { key: 'position_y', label: 'Position Y', type: 'num', min: 0, max: 1, step: 0.005, showIf: (c) => ['custom', 'left', 'right', 'side'].includes(c.position) },
-    { key: 'max_width', label: 'Max width', type: 'num', min: 0.1, max: 1, step: 0.01 },
-    { key: 'line_spacing', label: 'Line spacing', type: 'num', min: 0.5, max: 3, step: 0.05 },
-    { key: 'word_spacing', label: 'Word spacing', type: 'num', min: 0, max: 1, step: 0.01 },
-    { key: 'align', label: 'Alignment', type: 'enum', def: 'center', options: [['center', 'Center'], ['left', 'Left'], ['right', 'Right']], showIf: (c) => ['top', 'bottom', 'center', 'custom'].includes(c.position) },
-    { key: 'mode', label: 'Mode', type: 'enum', def: 'karaoke', options: [['karaoke', 'Karaoke (fills in)'], ['words', 'Word by word'], ['line', 'Whole line']] },
-    { key: 'word_pop', label: 'Word pop', type: 'num', min: 0, max: 1, step: 0.01 },
-    { key: 'in_animation', label: 'In animation', type: 'enum', def: 'fade', options: ANIMS },
-    { key: 'out_animation', label: 'Out animation', type: 'enum', def: 'fade', options: ANIMS },
-    { key: 'in_duration', label: 'In duration (s)', type: 'num', min: 0.01, max: 3, step: 0.01 },
-    { key: 'out_duration', label: 'Out duration (s)', type: 'num', min: 0.01, max: 3, step: 0.01 },
-    { key: 'slide_distance', label: 'Slide distance', type: 'num', min: 0, max: 600, step: 1 },
-    { key: 'color', label: 'Color', type: 'color' },
-    { key: 'gradient', label: 'Vertical gradient', type: 'gradient', optional: true, help: 'If it has colors, it replaces the color' },
-    { key: 'upcoming_color', label: 'Upcoming color (karaoke)', type: 'color' },
-    { key: 'outline_color', label: 'Outline', type: 'color' },
-    { key: 'outline_width', label: 'Outline width', type: 'num', min: 0, max: 15, step: 0.25 },
+    sec('font', 'Font', [
+      { key: 'font', label: 'Font', type: 'file', kind: 'font', help: 'Empty = built-in font' },
+      { key: 'size', label: 'Size', type: 'num', min: 8, max: 300, step: 1 },
+      { key: 'uppercase', label: 'Uppercase', type: 'bool' },
+    ]),
+    sec('layout', 'Position and layout', [
+      { key: 'position', label: 'Position', type: 'enum', def: 'bottom', options: [['bottom', 'Bottom'], ['top', 'Top'], ['center', 'Center'], ['left', 'Left'], ['right', 'Right'], ['side', 'Alternate left/right'], ['custom', 'Custom']] },
+      { key: 'margin', label: 'Margin (px)', type: 'num', min: 0, max: 1000, step: 1 },
+      { key: 'position_x', label: 'Position X', type: 'num', min: 0, max: 1, step: 0.005, showIf: (c) => c.position === 'custom' },
+      { key: 'position_y', label: 'Position Y', type: 'num', min: 0, max: 1, step: 0.005, showIf: (c) => ['custom', 'left', 'right', 'side'].includes(c.position) },
+      { key: 'max_width', label: 'Max width', type: 'num', min: 0.1, max: 1, step: 0.01 },
+      { key: 'line_spacing', label: 'Line spacing', type: 'num', min: 0.5, max: 3, step: 0.05 },
+      { key: 'word_spacing', label: 'Word spacing', type: 'num', min: 0, max: 1, step: 0.01 },
+      { key: 'align', label: 'Alignment', type: 'enum', def: 'center', options: [['center', 'Center'], ['left', 'Left'], ['right', 'Right']], showIf: (c) => ['top', 'bottom', 'center', 'custom'].includes(c.position) },
+    ]),
+    sec('anim', 'Animation', [
+      { key: 'mode', label: 'Mode', type: 'enum', def: 'karaoke', options: [['karaoke', 'Karaoke (fills in)'], ['words', 'Word by word'], ['line', 'Whole line']] },
+      { key: 'word_pop', label: 'Word pop', type: 'num', min: 0, max: 1, step: 0.01 },
+      { key: 'in_animation', label: 'In animation', type: 'enum', def: 'fade', options: ANIMS },
+      { key: 'out_animation', label: 'Out animation', type: 'enum', def: 'fade', options: ANIMS },
+      { key: 'in_duration', label: 'In duration (s)', type: 'num', min: 0.01, max: 3, step: 0.01 },
+      { key: 'out_duration', label: 'Out duration (s)', type: 'num', min: 0.01, max: 3, step: 0.01 },
+      { key: 'slide_distance', label: 'Slide distance', type: 'num', min: 0, max: 600, step: 1 },
+    ]),
+    sec('colors', 'Colors and outline', [
+      { key: 'color', label: 'Color', type: 'color' },
+      { key: 'gradient', label: 'Vertical gradient', type: 'gradient', optional: true, help: 'If it has colors, it replaces the color' },
+      { key: 'upcoming_color', label: 'Upcoming color (karaoke)', type: 'color' },
+      { key: 'outline_color', label: 'Outline', type: 'color' },
+      { key: 'outline_width', label: 'Outline width', type: 'num', min: 0, max: 15, step: 0.25 },
+    ]),
     { key: 'glow', label: 'Glow', type: 'group', fields: [
       { key: 'enabled', label: 'Enabled', type: 'bool' },
       { key: 'color', label: 'Color', type: 'color', optional: true },
@@ -239,17 +262,21 @@ const onPath = (c) => !!(c.motion && c.motion.path && (c.motion.path.points || [
 
 // Fixed texts (titles): the lyrics style options, positioned by hand
 const TEXT_SKIP = new Set(['enabled', 'path', 'offset', 'position', 'margin', 'mode', 'word_pop', 'upcoming_color']);
+const textField = (f) => {
+  if (f.type === 'section') return { ...f, fields: f.fields.flatMap(textField) };
+  if (TEXT_SKIP.has(f.key)) return [];
+  // A fixed text can move, scale and turn over time (keyframes)
+  if (f.key === 'position_x' || f.key === 'position_y') return [{ ...f, anim: true, showIf: (c) => !onPath(c), help: f.key === 'position_x' ? 'Or drag the text on the preview' : undefined }];
+  if (f.key === 'size') return [{ ...f, anim: true }];
+  if (f.key === 'align') return [{ ...f, showIf: undefined, help: 'Left / right: the text starts / ends at Position X' }];
+  if (f.key === 'max_width') return [f, { key: 'rotation', label: 'Rotation (°)', type: 'num', min: -360, max: 360, step: 1, def: 0, anim: true,
+    help: 'Clockwise, around its position' }];
+  return [f];
+};
 export const TEXT_FIELDS = [
   { key: 'enabled', label: 'Visible', type: 'bool', anim: false },
   { key: 'text', label: 'Text', type: 'textarea', help: 'Enter = new row' },
-  ...trackById.lyrics.fields.filter((f) => !TEXT_SKIP.has(f.key)).map((f) => {
-    // A fixed text can move and scale over time (keyframes)
-    if (f.key === 'position_x' || f.key === 'position_y') return { ...f, anim: true, showIf: (c) => !onPath(c), help: f.key === 'position_x' ? 'Or drag the text on the preview' : undefined };
-    if (f.key === 'size') return { ...f, anim: true };
-    if (f.key === 'align') return { ...f, showIf: undefined, help: 'Left / right: the text starts / ends at Position X' };
-    return f;
-  }).flatMap((f) => (f.key === 'size' ? [f, { key: 'rotation', label: 'Rotation (°)', type: 'num', min: -360, max: 360, step: 1, def: 0, anim: true,
-    help: 'Clockwise, around its position' }] : [f])),
+  ...trackById.lyrics.fields.flatMap(textField),
 ];
 
 // Overlay layers: the clip inspector (config.ClipConfig). Every number and color can have keys.
@@ -265,16 +292,20 @@ export const CLIP_FIELDS = [
   { key: 'path', label: 'File', type: 'file', kind: 'bg', help: 'Image (PNG / WebP with transparency), GIF or video' },
   { key: 'fit', label: 'Base size', type: 'enum', def: 'contain', anim: false, options: [['contain', 'Inside the frame'],
     ['cover', 'Covering the frame'], ['stretch', 'Exactly the frame'], ['none', 'Its own pixels']] },
-  { key: 'x', label: 'Position X', type: 'num', min: -0.5, max: 1.5, step: 0.001, help: 'Or drag it on the preview', showIf: (c) => !onPath(c) },
-  { key: 'y', label: 'Position Y', type: 'num', min: -0.5, max: 1.5, step: 0.001, showIf: (c) => !onPath(c) },
-  { key: 'scale', label: 'Scale', type: 'num', min: 0.01, max: 4, step: 0.005, help: 'Or drag a corner on the preview' },
-  { key: 'rotation', label: 'Rotation (°)', type: 'num', min: -360, max: 360, step: 0.5, help: 'Or drag the round handle on the preview' },
-  { key: 'flip_x', label: 'Flip horizontally', type: 'bool' },
-  { key: 'flip_y', label: 'Flip vertically', type: 'bool' },
-  { key: 'opacity', label: 'Opacity', type: 'num', min: 0, max: 1, step: 0.01 },
-  { key: 'fade_in', label: 'Fade in (s)', type: 'num', min: 0, max: 10, step: 0.05, anim: false },
-  { key: 'fade_out', label: 'Fade out (s)', type: 'num', min: 0, max: 10, step: 0.05, anim: false },
-  { key: 'blend', label: 'Blend', type: 'enum', def: 'normal', options: BLENDS },
+  sec('place', 'Placement', [
+    { key: 'x', label: 'Position X', type: 'num', min: -0.5, max: 1.5, step: 0.001, help: 'Or drag it on the preview', showIf: (c) => !onPath(c) },
+    { key: 'y', label: 'Position Y', type: 'num', min: -0.5, max: 1.5, step: 0.001, showIf: (c) => !onPath(c) },
+    { key: 'scale', label: 'Scale', type: 'num', min: 0.01, max: 4, step: 0.005, help: 'Or drag a corner on the preview' },
+    { key: 'rotation', label: 'Rotation (°)', type: 'num', min: -360, max: 360, step: 0.5, help: 'Or drag the round handle on the preview' },
+    { key: 'flip_x', label: 'Flip horizontally', type: 'bool' },
+    { key: 'flip_y', label: 'Flip vertically', type: 'bool' },
+  ]),
+  sec('show', 'Opacity and blend', [
+    { key: 'opacity', label: 'Opacity', type: 'num', min: 0, max: 1, step: 0.01 },
+    { key: 'fade_in', label: 'Fade in (s)', type: 'num', min: 0, max: 10, step: 0.05, anim: false },
+    { key: 'fade_out', label: 'Fade out (s)', type: 'num', min: 0, max: 10, step: 0.05, anim: false },
+    { key: 'blend', label: 'Blend', type: 'enum', def: 'normal', options: BLENDS },
+  ]),
   { key: 'filters', label: 'Filters', type: 'section', fields: [
     { key: 'brightness', label: 'Brightness', type: 'num', min: -1, max: 1, step: 0.01 },
     { key: 'contrast', label: 'Contrast', type: 'num', min: -1, max: 1, step: 0.01 },
@@ -306,7 +337,7 @@ export const CLIP_FIELDS = [
 
 // Emitter clips (config.EmitterConfig): the clip places the emitter, the emitter block says what
 // it throws. Every number and color can have keys.
-export const EMITTER_PRESETS = [['fire', 'Fire', 'flame'], ['sparks', 'Sparks', 'sparkles'], ['smoke', 'Smoke', 'cloud'],
+export const EMITTER_PRESETS = [['fire', 'Fire', 'flame'], ['fire_real', 'Realistic fire', 'flame'], ['sparks', 'Sparks', 'sparkles'], ['smoke', 'Smoke', 'cloud'],
   ['dust', 'Dust', 'focus'], ['light', 'Lights (bokeh)', 'sun'], ['explosion', 'Explosion', 'zap'], ['snow', 'Snow', 'snowflake']];
 const EMIT_SHAPES = [['point', 'Point'], ['circle', 'Circle (filled)'], ['ring', 'Ring'], ['line', 'Line'], ['box', 'Rectangle']];
 const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', fields: [
@@ -340,7 +371,7 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
     { key: 'size_end', label: 'Size at the end (px)', type: 'num', min: 0, max: 600, step: 0.5 },
     { key: 'size_var', label: 'Size variation', type: 'num', min: 0, max: 1, step: 0.01 },
   ] },
-  { key: 'look', label: 'Color and look', type: 'section', fields: [
+  { key: 'look', label: 'Colors', type: 'section', fields: [
     { key: 'color_start', label: 'Color at birth', type: 'color' },
     { key: 'color_mid', label: 'Color halfway', type: 'color' },
     { key: 'color_end', label: 'Color at the end', type: 'color', help: 'The opacity of each color fades them over their life' },
@@ -352,6 +383,26 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
     { key: 'softness', label: 'Soft edge', type: 'num', min: 0, max: 1, step: 0.01 },
     { key: 'seed', label: 'Random seed', type: 'int', min: 0, max: 99999, step: 1, anim: false, help: 'Another number, another pattern' },
   ] },
+  { key: 'lookgrp', label: 'Look (particles or flame)', type: 'section', fields: [
+    { key: 'look', label: 'Look', type: 'enum', def: 'plain', anim: false,
+      options: [['plain', 'Particles (as they are)'], ['flame', 'Flame (they melt into fire)']],
+      help: 'Flame: the color comes from the heat that piles up, and rising noise cuts its edges into tongues' },
+    { key: 'flame', label: 'Flame', type: 'group', showIf: (c) => c.look === 'flame', fields: [
+      { key: 'color_cool', label: 'Color of its edges', type: 'color' },
+      { key: 'color_mid', label: 'Color of its body', type: 'color' },
+      { key: 'color_hot', label: 'Color of its core', type: 'color' },
+      { key: 'heat', label: 'Heat', type: 'num', min: 0.05, max: 6, step: 0.05, help: 'More: it gets white-hot sooner' },
+      { key: 'noise', label: 'Tongues (px)', type: 'num', min: 0, max: 120, step: 0.5, help: 'How far the rising noise moves it' },
+      { key: 'noise_scale', label: 'Whirl size (px)', type: 'num', min: 4, max: 400, step: 1 },
+      { key: 'noise_speed', label: 'Rising speed (px/s)', type: 'num', min: 0, max: 1500, step: 5 },
+      { key: 'edge', label: 'Eaten edges', type: 'num', min: 0, max: 1, step: 0.01 },
+    ] },
+  ] },
+  { key: 'glow', label: 'Glow', type: 'group', fields: [
+    { key: 'intensity', label: 'Strength', type: 'num', min: 0, max: 4, step: 0.01, help: '0 = no glow' },
+    { key: 'radius', label: 'Reach (px)', type: 'num', min: 2, max: 400, step: 1 },
+    { key: 'color', label: 'Color', type: 'color', optional: true, help: 'Empty: the particles\' own color' },
+  ] },
   { key: 'react', label: 'Audio reaction', type: 'group', fields: [
     react('bass'),
     { key: 'rate', label: 'More particles', type: 'num', min: 0, max: 10, step: 0.05, help: '1 = twice as many at full band' },
@@ -361,14 +412,25 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
   ] },
 ] };
 export const EMITTER_CLIP_FIELDS = [
-  { key: 'x', label: 'Position X', type: 'num', min: -0.5, max: 1.5, step: 0.001, help: 'Or drag its point on the preview', showIf: (c) => !onPath(c) },
-  { key: 'y', label: 'Position Y', type: 'num', min: -0.5, max: 1.5, step: 0.001, showIf: (c) => !onPath(c) },
-  { key: 'rotation', label: 'Rotation (°)', type: 'num', min: -360, max: 360, step: 0.5, help: 'Turns its shape and its direction (or drag the arrow)' },
-  { key: 'scale', label: 'Scale', type: 'num', min: 0.01, max: 8, step: 0.01, help: 'Sizes, speeds and shape together' },
-  { key: 'opacity', label: 'Opacity', type: 'num', min: 0, max: 1, step: 0.01 },
-  { key: 'fade_in', label: 'Fade in (s)', type: 'num', min: 0, max: 10, step: 0.05, anim: false },
-  { key: 'fade_out', label: 'Fade out (s)', type: 'num', min: 0, max: 10, step: 0.05, anim: false },
-  { key: 'blend', label: 'Blend', type: 'enum', def: 'normal', options: BLENDS },
-  EMITTER_BLOCK,
+  sec('place', 'Placement', [
+    { key: 'x', label: 'Position X', type: 'num', min: -0.5, max: 1.5, step: 0.001, help: 'Or drag its point on the preview', showIf: (c) => !onPath(c) },
+    { key: 'y', label: 'Position Y', type: 'num', min: -0.5, max: 1.5, step: 0.001, showIf: (c) => !onPath(c) },
+    { key: 'rotation', label: 'Rotation (°)', type: 'num', min: -360, max: 360, step: 0.5, help: 'Turns its shape and its direction (or drag the arrow)' },
+    { key: 'scale', label: 'Scale', type: 'num', min: 0.01, max: 8, step: 0.01, help: 'Sizes, speeds and shape together' },
+  ]),
+  sec('show', 'Opacity and blend', [
+    { key: 'opacity', label: 'Opacity', type: 'num', min: 0, max: 1, step: 0.01 },
+    { key: 'fade_in', label: 'Fade in (s)', type: 'num', min: 0, max: 10, step: 0.05, anim: false },
+    { key: 'fade_out', label: 'Fade out (s)', type: 'num', min: 0, max: 10, step: 0.05, anim: false },
+    { key: 'blend', label: 'Blend', type: 'enum', def: 'normal', options: BLENDS },
+  ]),
+  // the emitter block, one folding group per part (each edits clip.emitter, or a block inside it)
+  ...EMITTER_BLOCK.fields.flatMap((f) => {
+    if (f.type !== 'section') return [{ ...f, key: 'emitter.' + f.key, id: 'em_' + f.key }];
+    const own = f.fields.filter((x) => x.type !== 'group');
+    const subs = f.fields.filter((x) => x.type === 'group').map((x) => ({ ...x, key: 'emitter.' + x.key, id: 'em_' + x.key,
+      showIf: x.showIf && ((c) => x.showIf(c.emitter || {})) }));
+    return [{ key: 'emitter', id: 'em_' + f.key, label: f.label, type: 'group', fields: own }, ...subs];
+  }),
   ...CLIP_FIELDS.filter((f) => f.key === 'filters' || f.key === 'effects'),
 ];

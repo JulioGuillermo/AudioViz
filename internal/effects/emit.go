@@ -49,6 +49,16 @@ type EmitParams struct {
 	Streak, Softness       float64
 	Seed                   uint32
 	Div                    int // accumulation cells of Div×Div pixels (big soft particles: 2 or 4)
+	// Flame look (config.FlameLook): colors cool, mid, hot; heat; noise (px), its scale (px),
+	// speed (px/s) and how much it eats the edges
+	Flame                               bool
+	FlameCol                            [3][3]float64
+	Heat, Noise, NoiseScale, NoiseSpeed float64
+	Edge                                float64
+	// Glow: strength, reach (px), its own color (GlowOwn) or the particles' (the flame's middle)
+	GlowI, GlowR float64
+	GlowCol      [3]float64
+	GlowOwn      bool
 }
 
 // EmitFrame is one emitter on screen at time T: its settings, the births that can still be
@@ -243,11 +253,23 @@ func emitTiny(size float32) float32 {
 // emitGrid: the accumulation's size for a W×H frame (one cell per Div×Div pixels)
 func emitGrid(W, H, div int) (int, int) { return (W + div - 1) / div, (H + div - 1) / div }
 
+// EmitGlowDiv: the glow's accumulation has a cell per EmitGlowDiv×EmitGlowDiv pixels (it is blurry)
+const EmitGlowDiv = 8
+
+// EmitAccWords: words of one emitter's accumulations (its particles, then its glow) for W×H
+func EmitAccWords(W, H int) int {
+	gw, gh := emitGrid(W, H, EmitGlowDiv)
+	return W*H*4 + gw*gh*4
+}
+
 // DrawEmitter makes the emitter's image (W×H, premultiplied RGBA) on the CPU, exactly as the GPU
 func DrawEmitter(e *EmitFrame, W, H int) *image.RGBA {
-	div := max(e.P.Div, 1)
+	p := &e.P
+	div := max(p.Div, 1)
 	GW, GH := emitGrid(W, H, div)
+	LW, LH := emitGrid(W, H, EmitGlowDiv)
 	acc := make([]uint32, GW*GH*4)
+	glow := make([]uint32, LW*LH*4)
 	n := e.I1 - e.I0
 	if n > 0 {
 		nw := min(16, max(1, n/256))
@@ -261,7 +283,10 @@ func DrawEmitter(e *EmitFrame, W, H int) *image.RGBA {
 					if !ok || pt.A <= 0 {
 						continue
 					}
-					splat(&pt, e.P.Streak, e.P.Softness, acc, GW, GH, div)
+					splat(&pt, p.Streak, p.Softness, acc, GW, GH, div)
+					if p.GlowI > 0 && p.GlowR > 0 {
+						splatGlow(&pt, float32(p.GlowR), glow, LW, LH)
+					}
 				}
 			}(k)
 		}
@@ -271,8 +296,7 @@ func DrawEmitter(e *EmitFrame, W, H int) *image.RGBA {
 	parallelFor(H, func(y0, y1 int) {
 		for y := y0; y < y1; y++ {
 			for x := 0; x < W; x++ {
-				s := emitSum(acc, GW, GH, div, x, y)
-				c := resolveEmit(s, e.P.Soft)
+				c := resolvePixel(p, float32(e.T), acc, GW, GH, div, glow, LW, LH, x, y)
 				copy(img.Pix[(y*W+x)*4:], c[:])
 			}
 		}
@@ -280,23 +304,21 @@ func DrawEmitter(e *EmitFrame, W, H int) *image.RGBA {
 	return img
 }
 
-// emitSum: the sums at pixel (x, y), bilinear between the cells (as resolveOne in emit.comp)
-func emitSum(acc []uint32, GW, GH, div, x, y int) [4]float32 {
-	cell := func(cx, cy, j int) float32 {
-		cx, cy = max(0, min(GW-1, cx)), max(0, min(GH-1, cy))
-		return float32(acc[(cy*GW+cx)*4+j]) / EmitFixed
-	}
-	if div == 1 {
-		return [4]float32{cell(x, y, 0), cell(x, y, 1), cell(x, y, 2), cell(x, y, 3)}
-	}
-	qx := (float32(x)+0.5)/float32(div) - 0.5
-	qy := (float32(y)+0.5)/float32(div) - 0.5
+// cellAt: the sums of a cell (clamped to the grid)
+func cellAt(acc []uint32, GW, GH, cx, cy, j int) float32 {
+	cx, cy = max(0, min(GW-1, cx)), max(0, min(GH-1, cy))
+	return float32(acc[(cy*GW+cx)*4+j]) / EmitFixed
+}
+
+// sumAt: the sums at a point (px), bilinear between the cells of div px
+func sumAt(acc []uint32, GW, GH, div int, px, py float32) [4]float32 {
+	qx, qy := px/float32(div)-0.5, py/float32(div)-0.5
 	ix, iy := int(math.Floor(float64(qx))), int(math.Floor(float64(qy)))
 	fx, fy := qx-float32(ix), qy-float32(iy)
 	var o [4]float32
 	for j := range o {
-		a := cell(ix, iy, j) + (cell(ix+1, iy, j)-cell(ix, iy, j))*fx
-		b := cell(ix, iy+1, j) + (cell(ix+1, iy+1, j)-cell(ix, iy+1, j))*fx
+		a := cellAt(acc, GW, GH, ix, iy, j) + (cellAt(acc, GW, GH, ix+1, iy, j)-cellAt(acc, GW, GH, ix, iy, j))*fx
+		b := cellAt(acc, GW, GH, ix, iy+1, j) + (cellAt(acc, GW, GH, ix+1, iy+1, j)-cellAt(acc, GW, GH, ix, iy+1, j))*fx
 		o[j] = a + (b-a)*fy
 	}
 	return o
@@ -311,36 +333,141 @@ func splat(pt *Particle, streak, softness float64, acc []uint32, GW, GH, div int
 	for y := y0; y <= y1; y++ {
 		for x := x0; x <= x1; x++ {
 			w := pt.weight((float32(x)+0.5)*d, (float32(y)+0.5)*d, r, sx, sy, float32(softness)) * a
-			if w <= 0 {
-				continue
-			}
-			o := (y*GW + x) * 4
-			add := func(j int, v float32) {
-				if q := uint32(v*EmitFixed + 0.5); q > 0 {
-					atomic.AddUint32(&acc[o+j], q)
-				}
-			}
-			add(0, pt.R*w)
-			add(1, pt.G*w)
-			add(2, pt.B*w)
-			add(3, w)
+			addCell(acc, (y*GW+x)*4, pt, w)
 		}
 	}
 }
 
-// resolveEmit turns the sums of a pixel into premultiplied RGBA8 (same as emit.comp): "add" keeps
-// the light (alpha = its strength), "soft" is the mean color with alpha 1 − e^(−coverage)
-func resolveEmit(s [4]float32, soft bool) [4]uint8 {
-	R, G, B, A := s[0], s[1], s[2], s[3]
-	var o [4]float32
-	if soft {
-		if A > 0 {
-			al := 1 - float32(math.Exp(float64(-A)))
-			o = [4]float32{R / A * al, G / A * al, B / A * al, al}
+func addCell(acc []uint32, o int, pt *Particle, w float32) {
+	if w <= 0 {
+		return
+	}
+	add := func(j int, v float32) {
+		if q := uint32(v*EmitFixed + 0.5); q > 0 {
+			atomic.AddUint32(&acc[o+j], q)
 		}
+	}
+	add(0, pt.R*w)
+	add(1, pt.G*w)
+	add(2, pt.B*w)
+	add(3, w)
+}
+
+// splatGlow: the particle's halo (its disc grown by R, fading out) in the coarse glow grid
+func splatGlow(pt *Particle, R float32, glow []uint32, LW, LH int) {
+	rg := pt.Size*0.5 + R
+	d := float32(EmitGlowDiv)
+	x0, x1 := max(int(math.Floor(float64((pt.X-rg)/d))), 0), min(int(math.Ceil(float64((pt.X+rg)/d))), LW-1)
+	y0, y1 := max(int(math.Floor(float64((pt.Y-rg)/d))), 0), min(int(math.Ceil(float64((pt.Y+rg)/d))), LH-1)
+	// the same light whatever the reach: spread over the halo's area (in cells)
+	a := pt.A * emitTiny(pt.Size) * (d * d) / (0.25 * math.Pi * rg * rg)
+	for y := y0; y <= y1; y++ {
+		for x := x0; x <= x1; x++ {
+			dx, dy := (float32(x)+0.5)*d-pt.X, (float32(y)+0.5)*d-pt.Y
+			f := 1 - smooth32(0, rg, float32(math.Sqrt(float64(dx*dx+dy*dy))))
+			addCell(glow, (y*LW+x)*4, pt, a*f*f)
+		}
+	}
+}
+
+// Value noise of the flame (same as emit.comp): a hash per lattice point, smooth between them
+func hash2(ix, iy int32, seed uint32) float32 {
+	return float32(pcg(uint32(ix)*1597334677^uint32(iy)*3812015801^seed)) * (1.0 / 4294967296.0)
+}
+
+func evnoise(x, y float32, seed uint32) float32 {
+	fx, fy := float32(math.Floor(float64(x))), float32(math.Floor(float64(y)))
+	ix, iy := int32(fx), int32(fy)
+	ux, uy := x-fx, y-fy
+	ux, uy = ux*ux*(3-2*ux), uy*uy*(3-2*uy)
+	a, b := hash2(ix, iy, seed), hash2(ix+1, iy, seed)
+	c, d := hash2(ix, iy+1, seed), hash2(ix+1, iy+1, seed)
+	return a + (b-a)*ux + (c-a)*uy + (a-b-c+d)*ux*uy
+}
+
+func efbm(x, y float32, seed uint32) float32 {
+	v := 0.5 * evnoise(x, y, seed)
+	v += 0.25 * evnoise(2*x+5.2, 2*y+1.3, seed)
+	v += 0.125 * evnoise(4*x+1.7, 4*y+9.2, seed)
+	return v / 0.875
+}
+
+func mix3f(a, b [3]float32, t float32) [3]float32 {
+	return [3]float32{a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t, a[2] + (b[2]-a[2])*t}
+}
+
+// flameColor: the flame's color and alpha for a heat 0..1 (cool → mid → hot)
+func flameColor(p *EmitParams, h float32) ([3]float32, float32) {
+	f := func(c [3]float64) [3]float32 { return [3]float32{float32(c[0]), float32(c[1]), float32(c[2])} }
+	cool, mid, hot := f(p.FlameCol[0]), f(p.FlameCol[1]), f(p.FlameCol[2])
+	var c [3]float32
+	switch {
+	case h < 0.35:
+		c = cool
+	case h < 0.7:
+		c = mix3f(cool, mid, (h-0.35)/0.35)
+	default:
+		c = mix3f(mid, hot, (h-0.7)/0.3)
+	}
+	return c, smooth32(0.02, 0.3, h)
+}
+
+// resolvePixel: pixel (x, y) of the emitter's image (premultiplied RGBA8), as resolveOne in emit.comp
+func resolvePixel(p *EmitParams, T float32, acc []uint32, GW, GH, div int, glow []uint32, LW, LH, x, y int) [4]uint8 {
+	px, py := float32(x)+0.5, float32(y)+0.5
+	var o [4]float32
+	if p.Flame {
+		// the flame: its heat taken a little aside by rising noise, its edges eaten by more noise
+		// the whirls are twice as tall as wide: long tongues
+		sc := max(float32(p.NoiseScale), 1)
+		sy := sc * 2
+		tt := T * float32(p.NoiseSpeed) / sy
+		nx := efbm(px/sc, py/sy+tt, p.Seed)
+		ny := efbm(px/sc+7.3, py/sy+tt+3.1, p.Seed)
+		nz := float32(p.Noise)
+		s := sumAt(acc, GW, GH, div, px+nz*(nx-0.5)*2, py+nz*(ny-0.5)*2)
+		h := 1 - float32(math.Exp(float64(-s[3]*float32(p.Heat))))
+		if p.Edge > 0 {
+			k := float32(p.Edge) * efbm(px/(sc*0.5), py/sc+tt*1.7, p.Seed+11) * 0.6
+			h = max(0, min(1, (h-k)/(1-k)))
+		}
+		c, a := flameColor(p, h)
+		o = [4]float32{c[0] * a, c[1] * a, c[2] * a, a}
 	} else {
-		al := min(1, max(A, max(R, max(G, B))))
-		o = [4]float32{min(R, al), min(G, al), min(B, al), al}
+		var s [4]float32
+		if div == 1 {
+			s = [4]float32{cellAt(acc, GW, GH, x, y, 0), cellAt(acc, GW, GH, x, y, 1), cellAt(acc, GW, GH, x, y, 2), cellAt(acc, GW, GH, x, y, 3)}
+		} else {
+			s = sumAt(acc, GW, GH, div, px, py)
+		}
+		R, G, B, A := s[0], s[1], s[2], s[3]
+		if p.Soft {
+			if A > 0 {
+				al := 1 - float32(math.Exp(float64(-A)))
+				o = [4]float32{R / A * al, G / A * al, B / A * al, al}
+			}
+		} else {
+			al := min(1, max(A, max(R, max(G, B))))
+			o = [4]float32{min(R, al), min(G, al), min(B, al), al}
+		}
+	}
+	if p.GlowI > 0 {
+		g := sumAt(glow, LW, LH, EmitGlowDiv, px, py)
+		var gc [3]float32
+		switch {
+		case p.GlowOwn:
+			gc = [3]float32{float32(p.GlowCol[0]) * g[3], float32(p.GlowCol[1]) * g[3], float32(p.GlowCol[2]) * g[3]}
+		case p.Flame:
+			gc = [3]float32{float32(p.FlameCol[1][0]) * g[3], float32(p.FlameCol[1][1]) * g[3], float32(p.FlameCol[1][2]) * g[3]}
+		default:
+			gc = [3]float32{g[0], g[1], g[2]}
+		}
+		// added like light, softly saturating
+		for j := 0; j < 3; j++ {
+			v := 1 - float32(math.Exp(float64(-gc[j]*float32(p.GlowI))))
+			o[j] = 1 - (1-o[j])*(1-v)
+		}
+		o[3] = max(o[3], max(o[0], max(o[1], o[2])))
 	}
 	var c [4]uint8
 	for j := range c {

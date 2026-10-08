@@ -12,14 +12,16 @@ const MASK_PARTS = { shapes: 'Shape', feather: 'Soft edge (px)', opacity: 'Stren
 function find(fields, parts) {
   for (const f of fields || []) {
     if (f.type === 'section' && f.fields) { const r = find(f.fields, parts); if (r) return r; continue; }
-    if (f.key !== parts[0]) continue;
-    if (parts.length === 1) return [f.label];
-    if (f.fields && /^\d+$/.test(parts[1])) {
-      const r = find(f.fields, parts.slice(2));
-      return r ? [f.label + ' ' + (+parts[1] + 1), ...r] : null;
+    const kp = f.key.split('.'); // a group may edit a block inside a block ("emitter.glow")
+    if (kp.some((k, i) => parts[i] !== k)) continue;
+    const rest = parts.slice(kp.length);
+    if (!rest.length) return [f.label];
+    if (f.fields && /^\d+$/.test(rest[0])) {
+      const r = find(f.fields, rest.slice(1));
+      if (r) return [f.label + ' ' + (+rest[0] + 1), ...r];
+      continue;
     }
-    if (f.fields) { const r = find(f.fields, parts.slice(1)); return r ? [f.label, ...r] : null; }
-    return [f.label];
+    if (f.fields) { const r = find(f.fields, rest); if (r) return [f.label, ...r]; continue; }
   }
   return null;
 }

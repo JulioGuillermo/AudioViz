@@ -28,6 +28,8 @@ always give the same result: any frame can be seen or rendered directly.
 | Forces | gravity (negative: they rise), wind, drag (they slow down), turbulence (wandering) and its speed |
 | Life and size | life (s) and its variation; size at birth and at the end, and its variation |
 | Color and look | colors at birth, halfway and at the end (their opacity fades them), fade in / out, how they add up (*light* or *matter*), streak (stretched along their motion), soft edge, random seed |
+| Look | *particles* (each as it is) or *flame*: they melt into one flame — the color comes from the heat that piles up (colors of its edges, body and core; heat), and rising noise cuts its edges into long tongues (how far, the size of the whirls, how fast they rise, how much they eat the edges) |
+| Glow | a halo of light around them: strength, reach (px) and color (empty = the particles' own; the flame's body color with the flame look) |
 | Audio reaction | the band (bass, mids, treble, volume, transients, beats) makes more of them, faster, bigger, and a burst on each beat |
 
 Lengths are pixels of a 1080-line video (they scale with the output) and with the clip's scale.
@@ -45,11 +47,22 @@ layers:
         y: 0.95
         blend: add
         emitter:
-          preset: fire          # fire, sparks, smoke, dust, light, explosion, snow
+          preset: fire          # fire, fire_real, sparks, smoke, dust, light, explosion, snow
           rate: 650             # anything not written comes from the preset
           react: { react_to: bass, rate: 1, size: 0.35 }
         keys:
           emitter.rate: [{ t: 0, v: 100 }, { t: 5, v: 900, ease: ease_in }]
+```
+
+The **Realistic fire** preset (`fire_real`) is the fire with the flame look and an orange glow.
+Any emitter can use them:
+
+```yaml
+        emitter:
+          preset: fire
+          look: flame
+          flame: { color_cool: "#b8200a", color_mid: "#ff8a1e", color_hot: "#fff4d0", heat: 1, noise: 22, noise_scale: 60, noise_speed: 260, edge: 0.55 }
+          glow: { intensity: 0.8, radius: 90, color: "#ff6a1a" }
 ```
 
 Keys of where it is (x, y, rotation, its path) and the music's push count from the moment each

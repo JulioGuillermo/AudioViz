@@ -2,7 +2,7 @@ import { html, useEffect, useState } from './vendor/preact-htm.js';
 import { CLIP_FIELDS, EMITTER_CLIP_FIELDS } from './schema.js';
 import { isEmitterLayer, presetLabel, presetIcon, PresetPicker } from './emitters.js';
 import { fmtTime, parseTime, basename, clone } from './util.js';
-import { Form, Edit } from './fields.js';
+import { Form, Edit, Section } from './fields.js';
 import { Icon } from './icons.js';
 import { t } from './i18n.js';
 import { keyApi, valueAt, keyIndexAt, KEY_EPS } from './keys.js';
@@ -280,23 +280,23 @@ export function LayerInspector({ proj, sel, setSel, update, time, meta, ctx }) {
         <div class="card-note">${t(emit ? 'Drag its point on the preview to move it, the tip of its arrow to turn it.'
           : 'Drag it on the preview to move it; its corners scale it and the round handle rotates it.')}</div>`}
       </div>
-      ${c && emit && html`<div class="section"><div class="sh">${t('Preset')}</div><div class="sb">
+      ${c && emit && html`<${Section} id="preset" title=${t('Preset')}>
         <${PresetPicker} clip=${c} onPick=${(k) => editLayer((l) => { const cc = l.clips[j];
           cc.emitter = { ...JSON.parse(JSON.stringify((ctx.emitterPresets || {})[k] || {})), preset: k };
           cc.blend = cc.emitter.mode === 'soft' ? 'normal' : 'add';
-          if (cc.keys) { for (const p in cc.keys) if (p.startsWith('emitter.')) delete cc.keys[p]; } })} /></div></div>`}
+          if (cc.keys) { for (const p in cc.keys) if (p.startsWith('emitter.')) delete cc.keys[p]; } })} /></${Section}>`}
       ${c ? html`<${Form} fields=${emit ? EMITTER_CLIP_FIELDS : CLIP_FIELDS} value=${c} ctx=${ctx} kf=${kf}
           onChange=${(nc) => editLayer((l) => { l.clips[j] = { ...nc, start: l.clips[j].start, end: l.clips[j].end }; })} />`
         : html`<p class="faint" style="font-size:12px">${t('No clips yet. Add one at the cursor, or double-click the layer\'s track on the timeline.')}</p>`}
       ${c && html`<${MotionSection} obj=${c} kf=${kf} ctx=${ctx} edit=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}
       ${c && html`<${MaskSection} clip=${c} kf=${kf} selMask=${ctx.selMask} setSelMask=${ctx.setSelMask} ctx=${ctx}
         openEditor=${ctx.openEditor} editClip=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}
-      <div class="section"><div class="sh">${t('Layer')}</div><div class="sb">
+      <${Section} id="layer" title=${t('Layer')}>
         <p class="faint" style="margin:2px 0 8px;font-size:12px">${t('Layers higher in the list are drawn in front. Drag them in the left panel to change the order.')}</p>
         <button class="btn sm ghost danger" onClick=${() => { if (confirm(t('Delete the layer “{n}” and its clips?', { n: layerName(layer, li) }))) {
           update((p) => { p.layers = p.layers.filter((l) => l.id !== sel.id); }); setSel({ kind: 'output' }); } }}>
           <${Icon} name="trash-2" size=${14} /> ${t('Delete layer')}</button>
-      </div></div>
+      </${Section}>
     </div>
   </div>`;
 }

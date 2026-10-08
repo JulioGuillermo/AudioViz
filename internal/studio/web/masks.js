@@ -1,9 +1,10 @@
 import { html, useEffect, useRef, useState } from './vendor/preact-htm.js';
-import { Form } from './fields.js';
+import { Form, Section } from './fields.js';
 import { Icon } from './icons.js';
 import { t } from './i18n.js';
 import { valueAt, getIn } from './keys.js';
 import { openMenu } from './menu.js';
+import { eraseStrokes, erasePoints, eraseSpans, cutAt, fillAt, bucketFill, hitShape, withGroup, boxOf, transformShapes } from './gpencil.js';
 import { clipValue, clipSize, useNatural, newLayerId, shownGeom } from './layers.js';
 
 // Masks of a clip (config.MaskConfig): vector (closed smooth shapes, 0..1 of the clip's image)
@@ -189,7 +190,7 @@ export function MaskSection({ clip, kf, selMask, setSelMask, editClip, ctx, open
     setSelMask(masks.length);
     openEditor(kind === 'raster' ? 'brush' : 'shape');
   };
-  return html`<div class="section"><div class="sh">${t('Masks')}</div><div class="sb">
+  return html`<${Section} id="masks" title=${t('Masks')}>
     ${masks.length === 0 && html`<p class="faint" style="margin:2px 0 8px;font-size:12px">${t(screen
       ? 'A mask limits where on the screen the text is seen (it stays still while the text moves). Draw it in the editor: a shape by hand (then its nodes), or paint it with the brush.'
       : 'A mask limits where the clip is seen. Draw it in the editor: a shape by hand (then its nodes), or paint it with the brush.')}</p>`}
@@ -232,7 +233,7 @@ export function MaskSection({ clip, kf, selMask, setSelMask, editClip, ctx, open
       <button class="btn sm" onClick=${() => add('vector')}><${Icon} name="pen-tool" size=${13} /> ${t('Shape mask')}</button>
       <button class="btn sm" onClick=${() => add('raster')}><${Icon} name="brush" size=${13} /> ${t('Painted mask')}</button>
     </div>
-  </div></div>`;
+  </${Section}>`;
 }
 
 // Editor overlay for the masks of the selected clip: shows them and does the mask tools.
@@ -248,6 +249,7 @@ export function MaskOverlay({ clip, k, time, meta, tool, brush, toFrame, z, edit
   const paint = useRef(null); // raster: { canvas, ctx } at the mask's size
   const [paintVer, setPaintVer] = useState(0);
   const [selNodes, setSelNodes] = useState([]); // nodes tool: [{ si, pi }]
+  const [selShapes, setSelShapes] = useState([]); // shapes tool: indices of the selected shapes
   const m = pathMode ? PATH_MASK : clip.masks && clip.masks[k];
   const W = meta.width, H = meta.height;
   // Raster: the painted image in an offscreen canvas (loaded from its file the first time)
@@ -331,6 +333,75 @@ export function MaskOverlay({ clip, k, time, meta, tool, brush, toFrame, z, edit
         cv.toBlob((b) => b && onPainted(b));
       };
       addEventListener('pointermove', mv); addEventListener('pointerup', up);
+    } else if (tool === 'erase_vec') {
+      // vector eraser: whole lines, or only the nodes, under the brush (live, saved at the end)
+      const r = brush.size / 2;
+      let cur = shapes.map((s) => ({ ...s, points: s.points.map((p) => [...p]) }));
+      let changed = false, last = null;
+      const rub = (f) => {
+        // the points along the move since the last event (a fast stroke does not skip lines)
+        const pts = [];
+        if (last) {
+          const d = Math.hypot(f.x - last.x, f.y - last.y), n = Math.max(1, Math.ceil(d / Math.max(1, r * 0.5)));
+          for (let i = 1; i <= n; i++) pts.push({ x: last.x + ((f.x - last.x) * i) / n, y: last.y + ((f.y - last.y) * i) / n });
+        } else pts.push(f);
+        last = f;
+        const next = brush.eraseMode === 'points' ? erasePoints(cur, pts, r, map)
+          : brush.eraseMode === 'strokes' ? eraseStrokes(cur, pts, r, map) : eraseSpans(cur, pts, r, map);
+        if (next.length !== cur.length || next.some((s, i) => s !== cur[i])) { cur = next; changed = true; setLive({ shapes: cur }); }
+      };
+      rub(p0);
+      const mv = (ev) => rub(toFrame(ev.clientX, ev.clientY));
+      const up = () => {
+        removeEventListener('pointermove', mv); removeEventListener('pointerup', up);
+        setLive(null);
+        if (changed) { setSelNodes([]); editMask(() => cur.filter((s) => s.points.length >= (s.open ? 2 : 3))); }
+      };
+      addEventListener('pointermove', mv); addEventListener('pointerup', up);
+    } else if (tool === 'shapes') {
+      // click a shape (its group with it; Shift: add / take out) and drag to move them; on empty
+      // space, drag a box to select
+      const hit = hitShape(shapes, p0, 8 / Math.max(z, 0.2), map);
+      if (hit >= 0) {
+        const grp = withGroup(shapes, hit);
+        let sel = selShapes;
+        if (e.shiftKey) sel = grp.every((i) => sel.includes(i)) ? sel.filter((i) => !grp.includes(i)) : [...new Set([...sel, ...grp])];
+        else if (!sel.includes(hit)) sel = grp;
+        setSelShapes(sel);
+        if (sel.includes(hit)) dragShapes(e, 'move', sel);
+        return;
+      }
+      const base = e.shiftKey ? selShapes : [];
+      let box = null;
+      const mv = (ev) => { const p = toFrame(ev.clientX, ev.clientY); box = { x0: Math.min(p0.x, p.x), y0: Math.min(p0.y, p.y), x1: Math.max(p0.x, p.x), y1: Math.max(p0.y, p.y) }; setLive({ box }); };
+      const up = () => {
+        removeEventListener('pointermove', mv); removeEventListener('pointerup', up);
+        setLive(null);
+        if (!box) { setSelShapes(base); return; }
+        const inBox = shapes.map((_, i) => i).filter((i) => {
+          const b = boxOf(shapes, [i], map);
+          return b && b.x1 >= box.x0 && b.x0 <= box.x1 && b.y1 >= box.y0 && b.y0 <= box.y1;
+        });
+        setSelShapes([...new Set([...base, ...inBox.flatMap((i) => withGroup(shapes, i))])]);
+      };
+      addEventListener('pointermove', mv); addEventListener('pointerup', up);
+    } else if (tool === 'cut') {
+      const res = cutAt(shapes, p0, 14 / Math.max(z, 0.2), map);
+      if (res) { setSelNodes([]); editMask(() => res.filter((s) => s.points.length >= (s.open ? 2 : 3))); }
+    } else if (tool === 'fill') {
+      if (m.kind === 'raster') {
+        const P = paint.current;
+        if (!P) return;
+        const [u, v] = toClipPt(g, p0.x, p0.y);
+        if (bucketFill(P.canvas, u * P.canvas.width, v * P.canvas.height, brush.opacity)) {
+          setPaintVer((x) => x + 1);
+          P.canvas.toBlob((b) => b && onPainted(b));
+        }
+      } else {
+        const pts = fillAt(shapes, p0, W, H, map, (x, y) => toClipPt(g, x, y));
+        if (pts) editMask((cur) => [...cur, { points: pts }]);
+        else { setLive({ note: t('That area is not closed by lines') }); setTimeout(() => setLive(null), 1800); }
+      }
     }
   };
 
@@ -506,10 +577,111 @@ export function MaskOverlay({ clip, k, time, meta, tool, brush, toFrame, z, edit
     addEventListener('pointermove', mv); addEventListener('pointerup', up);
   };
 
-  const drawing = tool === 'shape' || tool === 'brush' || tool === 'eraser';
+  // Shapes tool: the selection, its box, and what can be done with it
+  const back = (x, y) => toClipPt(g, x, y);
+  const sel = selShapes.filter((i) => i < shapes.length);
+  const selBox = sel.length ? boxOf(shapes, sel, map) : null;
+  // drag a handle of the selection (move, scale from a corner / side, rotate around its center)
+  function dragShapes(e, mode, idx, handle) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* synthetic */ }
+    const base = copyShapes(), b = boxOf(base, idx, map);
+    if (!b) return;
+    const p0 = toFrame(e.clientX, e.clientY), cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
+    let fn = null;
+    const mv = (ev) => {
+      const p = toFrame(ev.clientX, ev.clientY);
+      if (mode === 'move') {
+        const dx = p.x - p0.x, dy = p.y - p0.y;
+        fn = (x, y) => ({ x: x + dx, y: y + dy });
+      } else if (mode === 'rotate') {
+        let a = Math.atan2(p.y - cy, p.x - cx) - Math.atan2(p0.y - cy, p0.x - cx);
+        if (ev.shiftKey) a = Math.round(a / (Math.PI / 12)) * (Math.PI / 12);
+        const c = Math.cos(a), s = Math.sin(a);
+        fn = (x, y) => ({ x: cx + (x - cx) * c - (y - cy) * s, y: cy + (x - cx) * s + (y - cy) * c });
+      } else {
+        // from the opposite corner / side; corners keep the proportion (Shift: free)
+        const [fx, fy] = handle, ax = b.x0 + (b.x1 - b.x0) * (1 - fx), ay = b.y0 + (b.y1 - b.y0) * (1 - fy);
+        let sx = fx === 0.5 ? 1 : (p.x - ax) / ((p0.x - ax) || 1), sy = fy === 0.5 ? 1 : (p.y - ay) / ((p0.y - ay) || 1);
+        if (fx !== 0.5 && fy !== 0.5 && !ev.shiftKey) { const k = Math.abs(sx) > Math.abs(sy) ? sx : sy; sx = k; sy = k; }
+        fn = (x, y) => ({ x: ax + (x - ax) * sx, y: ay + (y - ay) * sy });
+      }
+      setLive({ shapes: transformShapes(base, idx, fn, map, back) });
+    };
+    const up = () => {
+      removeEventListener('pointermove', mv); removeEventListener('pointerup', up);
+      setLive(null);
+      if (fn) editMask(() => transformShapes(base, idx, fn, map, back));
+    };
+    addEventListener('pointermove', mv); addEventListener('pointerup', up);
+  }
+  const newGroup = () => 'g' + Math.random().toString(36).slice(2, 8);
+  // each on the shapes S (the selection by default)
+  const shapeOps = {
+    remove: (S = sel) => { editMask(() => shapes.filter((_, i) => !S.includes(i))); setSelShapes([]); },
+    group: (S = sel) => { const gid = newGroup(); editMask(() => shapes.map((s, i) => (S.includes(i) ? { ...s, group: gid } : s))); },
+    ungroup: (S = sel) => editMask(() => shapes.map((s, i) => { if (!S.includes(i)) return s; const c = { ...s }; delete c.group; return c; })),
+    duplicate: (S = sel) => {
+      const ids = {}, off = 20 / Math.max(z, 0.2);
+      const copies = transformShapes(shapes, S, (x, y) => ({ x: x + off, y: y + off }), map, back)
+        .filter((_, i) => S.includes(i)).map((s) => (s.group ? { ...s, group: (ids[s.group] = ids[s.group] || newGroup()) } : s));
+      editMask(() => [...shapes, ...copies]);
+      setSelShapes(copies.map((_, k) => shapes.length + k));
+    },
+    flip: (h, S = sel) => {
+      const b = boxOf(shapes, S, map);
+      if (!b) return;
+      const cx = (b.x0 + b.x1) / 2, cy = (b.y0 + b.y1) / 2;
+      editMask(() => transformShapes(shapes, S, (x, y) => (h ? { x: 2 * cx - x, y } : { x, y: 2 * cy - y }), map, back));
+    },
+    nudge: (dx, dy) => editMask(() => transformShapes(shapes, sel, (x, y) => ({ x: x + dx, y: y + dy }), map, back)),
+  };
+  const shapeMenu = (e) => {
+    const f = toFrame(e.clientX, e.clientY), hit = hitShape(shapes, f, 8 / Math.max(z, 0.2), map);
+    if (hit < 0 && !sel.length) return;
+    if (hit >= 0 && !sel.includes(hit)) setSelShapes(withGroup(shapes, hit));
+    const S = hit >= 0 && !sel.includes(hit) ? withGroup(shapes, hit) : sel;
+    const grouped = S.some((i) => shapes[i] && shapes[i].group);
+    openMenu(e, [
+      { header: t(S.length > 1 ? '{n} shapes' : 'Shape', { n: S.length }) },
+      { label: t('Group (Ctrl+G)'), icon: 'merge', disabled: S.length < 2, onClick: () => shapeOps.group(S) },
+      { label: t('Ungroup (Ctrl+Shift+G)'), icon: 'layout-grid', disabled: !grouped, onClick: () => shapeOps.ungroup(S) },
+      { label: t('Duplicate (Ctrl+D)'), icon: 'copy', onClick: () => shapeOps.duplicate(S) },
+      '-',
+      { label: t('Flip horizontally'), icon: 'arrow-left-right', onClick: () => shapeOps.flip(true, S) },
+      { label: t('Flip vertically'), icon: 'arrow-up', onClick: () => shapeOps.flip(false, S) },
+      '-',
+      { label: t('Delete (Del)'), icon: 'trash-2', danger: true, onClick: () => shapeOps.remove(S) },
+    ]);
+  };
+  // keys of the shapes tool: Del, Ctrl+G / Ctrl+Shift+G, Ctrl+D, arrows (Shift: 10 px)
+  useEffect(() => {
+    if (tool !== 'shapes' || !sel.length) return;
+    const k = (e) => {
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+      const ctrl = e.ctrlKey || e.metaKey;
+      const st = (e.shiftKey ? 10 : 1) / Math.max(z, 0.2);
+      const act = e.key === 'Delete' || e.key === 'Backspace' ? () => shapeOps.remove()
+        : ctrl && (e.key === 'g' || e.key === 'G') ? (e.shiftKey ? () => shapeOps.ungroup() : () => shapeOps.group())
+        : ctrl && (e.key === 'd' || e.key === 'D') ? () => shapeOps.duplicate()
+        : e.key === 'ArrowLeft' ? () => shapeOps.nudge(-st, 0) : e.key === 'ArrowRight' ? () => shapeOps.nudge(st, 0)
+        : e.key === 'ArrowUp' ? () => shapeOps.nudge(0, -st) : e.key === 'ArrowDown' ? () => shapeOps.nudge(0, st) : null;
+      if (!act) return;
+      e.preventDefault();
+      e.stopPropagation();
+      act();
+    };
+    addEventListener('keydown', k, true);
+    return () => removeEventListener('keydown', k, true);
+  });
+
+  const drawing = ['shape', 'brush', 'eraser', 'erase_vec', 'cut', 'fill', 'shapes'].includes(tool);
   const P = paint.current;
   return html`<div class=${'maskov' + (drawing ? ' active' : '')} onPointerDown=${drawing ? down : null}
-      style=${{ cursor: tool === 'shape' ? 'crosshair' : drawing ? 'none' : '' }}>
+      onContextMenu=${tool === 'shapes' ? shapeMenu : null}
+      style=${{ cursor: ['shape', 'cut', 'fill'].includes(tool) ? 'crosshair' : tool === 'shapes' ? 'default' : drawing ? 'none' : '' }}>
     ${m.kind === 'raster' && P && html`<${PaintView} canvas=${P.canvas} g=${g} ver=${paintVer} />`}
     <svg class="masksvg" width=${W} height=${H} viewBox=${`0 0 ${W} ${H}`}>
       ${!pathMode && (clip.masks || []).map((om, ok) => ok !== k && om.kind !== 'raster' && !om.off && maskShapes(clip, ok, time).map((s, si) => html`<path key=${'o' + ok + '-' + si}
@@ -553,8 +725,20 @@ export function MaskOverlay({ clip, k, time, meta, tool, brush, toFrame, z, edit
         </g>`;
       })}
       ${live && live.draw && html`<polyline class="mask-draw" points=${live.draw.map((p) => p.x + ',' + p.y).join(' ')} style=${{ strokeWidth: 1.5 * hs }} />`}
+      ${live && live.box && html`<rect class="shape-marquee" x=${live.box.x0} y=${live.box.y0} width=${live.box.x1 - live.box.x0} height=${live.box.y1 - live.box.y0} style=${{ strokeWidth: hs }} />`}
+      ${tool === 'shapes' && selBox && html`<g class="shape-sel">
+        ${sel.map((i) => shapes[i] && html`<path d=${shapeSVG(shapes[i].points, map, shapes[i].open)} class="shape-sel-line" style=${{ strokeWidth: 2.5 * hs }} />`)}
+        <rect x=${selBox.x0} y=${selBox.y0} width=${selBox.x1 - selBox.x0} height=${selBox.y1 - selBox.y0} class="shape-box" style=${{ strokeWidth: hs }} />
+        <line x1=${(selBox.x0 + selBox.x1) / 2} y1=${selBox.y0} x2=${(selBox.x0 + selBox.x1) / 2} y2=${selBox.y0 - 24 * hs} class="shape-box" style=${{ strokeWidth: hs }} />
+        <circle cx=${(selBox.x0 + selBox.x1) / 2} cy=${selBox.y0 - 24 * hs} r=${6 * hs} class="shape-rot" style=${{ strokeWidth: hs }}
+          onPointerDown=${(e) => dragShapes(e, 'rotate', sel)} />
+        ${[[0, 0], [0.5, 0], [1, 0], [1, 0.5], [1, 1], [0.5, 1], [0, 1], [0, 0.5]].map(([fx, fy]) => html`<rect class="shape-handle"
+          x=${selBox.x0 + (selBox.x1 - selBox.x0) * fx - 5 * hs} y=${selBox.y0 + (selBox.y1 - selBox.y0) * fy - 5 * hs} width=${10 * hs} height=${10 * hs}
+          style=${{ strokeWidth: hs }} onPointerDown=${(e) => dragShapes(e, 'scale', sel, [fx, fy])} />`)}
+      </g>`}
     </svg>
-    ${(tool === 'brush' || tool === 'eraser') && html`<${BrushCursor} size=${brush.size} hs=${hs} toFrame=${toFrame} />`}
+    ${live && live.note && html`<div class="mask-note">${live.note}</div>`}
+    ${(tool === 'brush' || tool === 'eraser' || tool === 'erase_vec') && html`<${BrushCursor} size=${brush.size} hs=${hs} toFrame=${toFrame} />`}
   </div>`;
 }
 
