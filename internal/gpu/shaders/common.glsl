@@ -111,6 +111,9 @@ layout(std430, set = 0, binding = 0) readonly buffer Params {
     vec4 tlightF[MAX_TLIGHTS];
     vec4 tlightG[MAX_TLIGHTS];
     vec4 tlightV[MAX_TLIGHTS * TLIGHT_VEC4];
+    ivec4 viewI;      // studio view instead of the frame: 0 the frame, 1 depth, 2 lit range, 3 object, 4 solid
+    vec4 viewP;       // 2: from, to, soft; 3: its depth, soft; 4: its depth, band
+    vec4 viewQ;       // 4: where it is born: x, y, radius
     LayerP layers[MAX_LAYERS];
 } P;
 

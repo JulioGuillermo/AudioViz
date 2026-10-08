@@ -247,7 +247,8 @@ void splatPhase() {
 
     vec2 pos = vec2(x0, y0) + dp;
     int cgw = int(ed[h + 81]);
-    if (cgw > 0) {
+    for (int pass = 0; pass < 2 && cgw > 0; pass++) {
+        // twice: out of one thing it may land in another close by
         int co = int(ed[h + 80]), cgh = int(ed[h + 82]);
         float cd = float(ed[h + 83]);
         float dd = sdfAt(co, cgw, cgh, cd, pos);
@@ -257,9 +258,16 @@ void splatPhase() {
             float gl = length(g);
             if (gl >= 1e-6) {
                 vec2 n = g / gl;
-                pos += n * (0.5 - dd);
+                float eb = edf(h + 84);
                 float vn = dot(vel, n);
-                if (vn < 0.0) vel -= n * vn;
+                if (eb > 0.0 && n.y > -0.5) {
+                    // off a wall or a ceiling: mirrored across it, keeping eb of the speed in
+                    pos += n * (-dd) * (1.0 + eb);
+                    if (vn < 0.0) vel -= (1.0 + eb) * vn * n;
+                } else {
+                    pos += n * (0.5 - dd);
+                    if (vn < 0.0) vel -= n * vn;
+                }
             }
         }
     }

@@ -103,6 +103,7 @@ type EmitParams struct {
 	// CDiv px cells (nil: nothing)
 	CSDF          []float32
 	CGW, CGH, CDiv int
+	CBounce        float64 // 0 slide off it; more: bounce off walls and ceilings
 }
 
 // MaxCollideCells: cells of an emitter's collision grid (at most 240 a side)
@@ -126,6 +127,9 @@ func (p *EmitParams) sdfAt(x, y float32) float32 {
 	return a + (b-a)*fy
 }
 
+// SDFAt: sdfAt, for tests and tools
+func (p *EmitParams) SDFAt(x, y float32) float32 { return p.sdfAt(x, y) }
+
 // collide: a particle inside what it goes round comes out at its surface, losing the speed that
 // went in (it slides off it)
 func (p *EmitParams) collide(x, y, vx, vy float32) (float32, float32, float32, float32) {
@@ -141,6 +145,14 @@ func (p *EmitParams) collide(x, y, vx, vy float32) (float32, float32, float32, f
 		return x, y, vx, vy
 	}
 	nx, ny := gx/l, gy/l
+	if e := float32(p.CBounce); e > 0 && ny > -0.5 {
+		// off a wall or a ceiling: mirrored across it, keeping e of the speed that went in
+		x, y = x+nx*(-d)*(1+e), y+ny*(-d)*(1+e)
+		if vn := vx*nx + vy*ny; vn < 0 {
+			vx, vy = vx-(1+e)*vn*nx, vy-(1+e)*vn*ny
+		}
+		return x, y, vx, vy
+	}
 	x, y = x+nx*(0.5-d), y+ny*(0.5-d)
 	if vn := vx*nx + vy*ny; vn < 0 {
 		vx, vy = vx-nx*vn, vy-ny*vn
@@ -462,6 +474,8 @@ func (e *EmitFrame) At(i int) (Particle, bool) {
 	}
 	px, py := x0+dx, y0+dy
 	if p.CSDF != nil {
+		// twice: out of one thing it may land in another close by
+		px, py, vx, vy = p.collide(px, py, vx, vy)
 		px, py, vx, vy = p.collide(px, py, vx, vy)
 	}
 	return Particle{px, py, vx, vy, max(size, 0), c[0], c[1], c[2], c[3]}, true

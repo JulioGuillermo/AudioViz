@@ -146,6 +146,8 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx f
 						}
 					}
 					ef.P.CSDF, ef.P.CGW, ef.P.CGH, ef.P.CDiv = effects.CollideField(solid, gw, gh, div), gw, gh, div
+					ef.P.CBounce = math.Min(math.Max(e.CollideBounce, 0), 0.95)
+					lf.Solid = [6]float32{1, float32(zc), float32(band), float32(ox), float32(oy), float32(free)}
 				}
 				if e := c.Emitter; e != nil && e.FloorDepth && scene.On() {
 					// the scene's floor: below the emitter, where the depth comes up to its own

@@ -160,7 +160,13 @@ type Params struct {
 	TLightF [MaxTextLights][4]float32 // rim light: from, soft, width (px), gain (0 = off)
 	TLightG [MaxTextLights][4]float32 // rim light's edge, the lit range's soft edge
 	TLightV [MaxTextLights * TextLightVec4][4]float32
-	Layers  [MaxLayers]LayerP
+	// The studio's views of the scene's depth instead of the frame: mode (0 the frame, 1 the
+	// depth, 2 a lit range: from, to, soft; 3 an object's depth: its depth, soft; 4 what an
+	// emitter goes round: its depth, band, and the circle where it is born x, y, radius)
+	ViewI  [4]int32
+	ViewP  [4]float32
+	ViewQ  [4]float32
+	Layers [MaxLayers]LayerP
 }
 
 // MaxLayers: overlay clips drawn at once

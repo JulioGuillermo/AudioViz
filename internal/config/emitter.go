@@ -48,6 +48,9 @@ type EmitterConfig struct {
 	// of the emitter's depth: nearer things hide them, farther ones are behind), sliding off it
 	Collide     bool    `yaml:"collide,omitempty"`
 	CollideBand float64 `yaml:"collide_band,omitempty"`
+	// how they come off it: 0 slide along it; more, they bounce off walls and ceilings keeping
+	// that much speed (on what faces up they still slide: the floor above bounces them)
+	CollideBounce float64 `yaml:"collide_bounce,omitempty"`
 	// How they leave: direction (degrees, 0 = up, clockwise; turned with the clip), the spread of
 	// the cone around it (degrees; 360 = every way), speed and its random part (0..1)
 	Direction float64 `yaml:"direction"`

@@ -969,11 +969,37 @@ vec3 applyTextLight(vec3 col, int i, vec2 q) {
     return min(col, vec3(1.0));
 }
 
+// A studio view of the scene's depth (white = near) instead of the frame, as studio.depthView: with
+// a lit range (black outside it), an object's depth (what is behind it half red), or what an
+// emitter goes round (the scene at its depth, cyan); a dark red checker without a depth map
+vec3 viewColor(vec2 q) {
+    int m = P.viewI.x;
+    if (P.depthI.z == 0) {
+        ivec2 c = ivec2(q) / 16;
+        float v = (c.x + c.y) % 2 == 0 ? 34.0 : 20.0;
+        return vec3(v + 10.0, v, v) / 255.0;
+    }
+    float z = gHit.z;
+    vec3 c = vec3(z);
+    vec4 vp = P.viewP;
+    if (m == 2) {
+        float e = max(vp.z, 1e-4);
+        c *= smoothstep(vp.y - e, vp.y + e, z) * (1.0 - smoothstep(vp.x - e, vp.x + e, z));
+    } else if (m == 3) {
+        float k = 0.55 * (1.0 - smoothstep(vp.x - vp.y, vp.x + vp.y + 1e-4, z));
+        c = vec3(z + (1.0 - z) * k * 0.75, z * (1.0 - k), z * (1.0 - k));
+    } else if (m == 4) {
+        if (abs(z - vp.x) < vp.y && distance(q, P.viewQ.xy) >= P.viewQ.z) c = mix(c, vec3(0.2, 0.85, 1.0), 0.6);
+    }
+    return c;
+}
+
 // The frame at q: background, then each overlay clip; the particles, the visualizer and the
 // texts at their stage among them (z-index)
 vec3 shade(vec2 q) {
     vec2 p = q + 0.5;
     parallaxPixel(q);
+    if (P.viewI.x != 0) return viewColor(q);
     vec3 col = background(q);
     int nl = P.layerN.x;
     int zp = min(P.zIdx.x, nl), zv = min(P.zIdx.y, nl);

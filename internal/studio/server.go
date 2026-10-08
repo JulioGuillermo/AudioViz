@@ -527,7 +527,7 @@ func (s *Server) hFrame(w http.ResponseWriter, r *http.Request) {
 	t0 := time.Now()
 	fs, err := sess.Prepare(idx)
 	var img *image.RGBA
-	if v := r.URL.Query().Get("view"); err == nil && (v == "depth" || v == "lightrange" || v == "objdepth") {
+	if v := r.URL.Query().Get("view"); err == nil && (v == "depth" || v == "lightrange" || v == "objdepth" || v == "solid") {
 		// the depth of the scene in this frame (white = near), at the preview's size; with a
 		// light's range: black outside it
 		var rng *[3]float32
@@ -552,7 +552,32 @@ func (s *Server) hFrame(w http.ResponseWriter, r *http.Request) {
 				obj = &[2]float32{float32(z), float32(soft)}
 			}
 		}
-		img = depthView(fs.Scene, sess.W/scale, sess.H/scale, scale, rng, obj)
+		// what an emitter goes round (?layer=&clip=): the scene at its depth
+		var sol *[6]float32
+		if v == "solid" {
+			q := r.URL.Query()
+			ci, _ := strconv.Atoi(q.Get("clip"))
+			for _, l := range fs.Layers {
+				if l.LayerID == q.Get("layer") && l.Clip == ci && l.Solid[0] > 0 {
+					s := l.Solid
+					sol = &s
+				}
+			}
+		}
+		// on the GPU (the CPU draws it without one)
+		vw := engine.View{Mode: 1}
+		switch {
+		case rng != nil:
+			vw = engine.View{Mode: 2, P: [4]float32{rng[0], rng[1], rng[2]}}
+		case obj != nil:
+			vw = engine.View{Mode: 3, P: [4]float32{obj[0], obj[1]}}
+		case sol != nil:
+			vw = engine.View{Mode: 4, P: [4]float32{sol[1], sol[2]}, Q: [4]float32{sol[3], sol[4], sol[5]}}
+		}
+		var gpuOK bool
+		if img, gpuOK, err = s.rend.PreviewView(fs, scale, vw); !gpuOK {
+			img, err = depthView(fs.Scene, sess.W/scale, sess.H/scale, scale, rng, obj, sol), nil
+		}
 	} else if err == nil {
 		img, err = s.rend.Preview(fs, scale)
 	}

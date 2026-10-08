@@ -53,6 +53,9 @@ type LayerFrame struct {
 	Behind            bool
 	DepthZ, DepthSoft float32
 	InDepth           bool // it has a depth (DepthZ, DepthSoft), behind things or not
+	// an emitter that goes round the scene: on, its depth, the band, where it is born x, y, the
+	// free radius around it (the studio's view of what it goes round)
+	Solid [6]float32
 	Scene             *Scene
 }
 

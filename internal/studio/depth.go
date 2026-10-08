@@ -121,7 +121,8 @@ func (s *Server) hDepthView(w http.ResponseWriter, r *http.Request) {
 // depthView: the scene's depth as an image (white = near; a dark red grid when there is none);
 // rng (from, to, soft): only what a light lights, black elsewhere (as effects.LightRange);
 // obj (z, soft): where an object is in it, what is behind it half red (as the occlusion's edge)
-func depthView(sc *effects.Scene, w, h, scale int, rng *[3]float32, obj *[2]float32) *image.RGBA {
+// sol (on, depth, band, x, y, free radius): what an emitter goes round, cyan (as viewColor)
+func depthView(sc *effects.Scene, w, h, scale int, rng *[3]float32, obj *[2]float32, sol *[6]float32) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
@@ -144,6 +145,12 @@ func depthView(sc *effects.Scene, w, h, scale int, rng *[3]float32, obj *[2]floa
 				// behind: the scene is farther than the object
 				k := 0.55 * (1 - smooth(obj[0]-obj[1], obj[0]+obj[1]+1e-4, z))
 				r, g, b = d+(255-d)*k*0.75, d*(1-k), d*(1-k)
+			}
+			if sol != nil {
+				fx, fy := float32(x*scale), float32(y*scale)
+				if dz := z - sol[1]; dz < sol[2] && dz > -sol[2] && (fx-sol[3])*(fx-sol[3])+(fy-sol[4])*(fy-sol[4]) >= sol[5]*sol[5] {
+					r, g, b = r+(0.2*255-r)*0.6, g+(0.85*255-g)*0.6, b+(255-b)*0.6
+				}
 			}
 			img.Pix[o], img.Pix[o+1], img.Pix[o+2], img.Pix[o+3] = uint8(r+0.5), uint8(g+0.5), uint8(b+0.5), 255
 		}

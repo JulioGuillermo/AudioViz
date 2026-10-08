@@ -390,7 +390,11 @@ sums at a point moved by rising fbm noise and multiplies the alpha by a finer fb
 the scene's depth is within the band of the emitter's (but around its origin), a signed distance
 is made of them by two chamfer passes each way (`CollideField`), and a particle at a negative
 distance is moved out along its gradient to the surface, its inward speed taken off (`collide`;
-`sdfAt` in emit.comp), after the motion and the turbulence.
+`sdfAt` in emit.comp), after the motion and the turbulence, twice; with a bounce e and a surface
+that doesn't face up (n.y > −0.5) it is mirrored across it instead, keeping e of the speed in.
+The studio's depth views (depth, a lit range, an object's depth in red, what an emitter goes
+round in cyan) are drawn by the GPU (`Params.viewI/viewP/viewQ`, `viewColor` from the pixel's
+`gHit`) instead of the frame; `studio.depthView` draws them on the CPU without a GPU.
 A text bent along its path (`Motion.Bend`) is laid out letter by letter in one row
 (`buildEngine` letters) and each letter is placed at s0 + its x along the sampled path, its y across
 it, turned with its tangent (`Multi.Frame`); up to 256 text pieces per frame.

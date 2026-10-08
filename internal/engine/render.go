@@ -409,6 +409,7 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		// what they go round in the scene: its signed distance grid
 		co := po + effects.MaxPathSamples*3
 		u[h+80], u[h+81], u[h+82], u[h+83] = uint32(co), 0, 0, 0
+		f[h+84] = float32(P.CBounce)
 		if P.CSDF != nil && P.CGW*P.CGH <= effects.MaxCollideCells {
 			copy(f[co:], P.CSDF)
 			u[h+81], u[h+82], u[h+83] = uint32(P.CGW), uint32(P.CGH), uint32(P.CDiv)
@@ -458,6 +459,25 @@ func (r *Renderer) Still(fs *FrameState) (*image.RGBA, error) {
 	out := image.NewRGBA(image.Rect(0, 0, r.G.Width, r.G.Height))
 	copy(out.Pix, r.G.RGBA(0))
 	return out, nil
+}
+
+// View is a studio view of the scene's depth instead of the frame (gpu.Params.ViewI): mode and
+// its values
+type View struct {
+	Mode int
+	P, Q [4]float32
+}
+
+// PreviewView renders a view of the scene's depth on the GPU (false: no GPU; the caller draws it)
+func (r *Renderer) PreviewView(fs *FrameState, scale int, v View) (*image.RGBA, bool, error) {
+	if r.G == nil {
+		return nil, false, nil
+	}
+	p := r.G.Params(0)
+	p.ViewI, p.ViewP, p.ViewQ = [4]int32{int32(v.Mode)}, v.P, v.Q
+	defer func() { p.ViewI = [4]int32{} }()
+	img, err := r.Preview(fs, scale)
+	return img, true, err
 }
 
 // Preview renders a frame at 1/scale resolution directly on the GPU (faster)
