@@ -9,7 +9,7 @@ import { editKeysTimes } from './keymarks.js';
 import { useFrameStream } from './frames.js';
 import { Editor } from './editor.js';
 import { maskShapes, setMaskShapes, MaskSection, segMaskOwner, editSegMasks } from './masks.js';
-import { MotionSection, setPath } from './motion.js';
+import { MotionSection, setPath, setRoute } from './motion.js';
 import { DepthSection } from './depth.js';
 import { StemsSection } from './stems.js';
 import { isEmitterLayer, newEmitterClip, emitterMenuItems, EmitterHandles } from './emitters.js';
@@ -478,6 +478,7 @@ function App() {
   const [layerDrag, setLayerDrag] = useState(null); // reordering layers: { from, to }
   const [editor, setEditor] = useState(false); // the full-screen editor
   const [editorTool, setEditorTool] = useState('select');
+  const [pathWhat, setPathWhat] = useState('motion'); // the path tool edits the motion path or an emitter's route
   const [selMask, setSelMask] = useState(null); // the mask of the selected clip being edited
   useEffect(() => setSelMask(null), [sel.kind, sel.id, sel.clip, sel.i, sel.track, sel.seg]);
   useEffect(() => { setKfFocus(null); setKfSel(null); }, [sel.kind, sel.track, sel.seg, sel.i, sel.id, sel.clip]);
@@ -741,7 +742,7 @@ function App() {
     job, showErr,
     seek,
     selMask, setSelMask,
-    openEditor: (tool) => { setEditorTool(tool || 'select'); setEditor(true); },
+    openEditor: (tool, what) => { setEditorTool(tool || 'select'); setPathWhat(what || 'motion'); setEditor(true); },
     // z_index choices: each layer bottom to top as [z, name]
     get layerChoices() { return (projRef.current.layers || []).map((l, i) => [i + 1, l.name || t('Layer {n}', { n: i + 1 })]); },
     get textChoices() { return (projRef.current.texts || []).map((x, i) => [i, x.label || (x.text || '').split('\n')[0] || t('Text {n}', { n: i + 1 })]); },
@@ -1282,7 +1283,9 @@ function App() {
     : selLyrSeg ? { obj: segMaskOwner(selLyrSeg), screen: true, edit: (fn) => update((p) => editSegMasks(p.tracks.lyrics[sel.seg], fn)) }
     : null;
   // What the path tool works on: the selected clip or fixed text
-  const pathOwner = maskOwner && !selLyrSeg ? maskOwner : null;
+  const onRoute = pathWhat === 'route' && !!selEmit;
+  const pathOwner = maskOwner && !selLyrSeg ? { ...maskOwner, route: onRoute,
+    shape: onRoute ? (maskOwner.obj.emitter && maskOwner.obj.emitter.route) || null : (maskOwner.obj.motion && maskOwner.obj.motion.path) || null } : null;
   // A mask tool was picked: use the selected mask if it is of that kind, else the first of that
   // kind, else a new one
   const needMask = (kind) => {
@@ -1471,9 +1474,9 @@ function App() {
       onSelectLine=${selectLine} onLyrics=${(lines) => editLyrics((all) => { all.splice(0, all.length, ...lines); }, false)}
       onLyricsCommit=${() => { lyrSaveRef.current(); record(); }} />
     ${editor && html`<${Editor} meta=${meta} timeStore=${timeStore} playing=${playing} setPlaying=${setPlaying} seek=${seek} rev=${rev}
-      selClip=${selClip} selEmit=${selEmit} inspector=${inspector} onClose=${() => { setEditor(false); setEditorTool('select'); }} marks=${editorMarks} onKeys=${onKeys} kf=${{ focus: kfFocus, setFocus: setKfFocus, sel: kfSel, setSel: setKfSel }}
+      selClip=${selClip} selEmit=${selEmit} inspector=${inspector} onClose=${() => { setEditor(false); setEditorTool('select'); setPathWhat('motion'); }} marks=${editorMarks} onKeys=${onKeys} kf=${{ focus: kfFocus, setFocus: setKfFocus, sel: kfSel, setSel: setKfSel }}
       tool=${editorTool} selMask=${selMask} onNeedMask=${needMask} selId=${sel.id} selClipIdx=${sel.clip}
-      maskOwner=${maskOwner} pathOwner=${pathOwner} editPath=${(fn) => pathOwner && pathOwner.edit((o) => setPath(o, fn))} editMask=${(fn) => maskOwner && maskOwner.edit((o) => { const tt = timeStore.get();
+      maskOwner=${maskOwner} pathOwner=${pathOwner} editPath=${(fn) => pathOwner && pathOwner.edit((o) => (pathOwner.route ? setRoute : setPath)(o, fn))} editMask=${(fn) => maskOwner && maskOwner.edit((o) => { const tt = timeStore.get();
         setMaskShapes(o, selMask, tt, fn(maskShapes(o, selMask, tt))); })}
       onPainted=${onPainted} selText=${selText} selTextIdx=${selText ? sel.i : null}
       onText=${(props) => update((p) => { const tx = p.texts[sel.i]; if (tx) setClipProps(tx, props, timeStore.get()); })}

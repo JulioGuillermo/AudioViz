@@ -45,11 +45,48 @@ export function removePath(o) {
   }
 }
 
+// The particles' own route of an emitter clip (o.emitter.route), set like the path
+const hasRoute = (o) => !!(o && o.emitter && o.emitter.route && (o.emitter.route.points || []).length >= 2);
+export function setRoute(o, fn) {
+  const ns = fn(hasRoute(o) ? [o.emitter.route] : []);
+  const sh = ns.length ? ns[ns.length - 1] : null;
+  if (!sh) { removeRoute(o); return; }
+  o.emitter = { ...o.emitter, route: sh };
+}
+export function removeRoute(o) {
+  if (!o.emitter) return;
+  const e = { ...o.emitter };
+  delete e.route;
+  delete e.route_fixed;
+  o.emitter = e;
+}
+
+// The inspector's section of an emitter's route
+export function RouteSection({ obj, ctx, edit, kf }) {
+  const on = hasRoute(obj);
+  return html`<${Section} id="route" title=${t('Particles\' route')}>
+    <p class="faint" style="margin:2px 0 8px;font-size:12px">${t('The particles can follow a route of their own while they live (flames licking along a line, a stream that turns): draw it in the editor. They go along it at their speed.')}</p>
+    ${on && html`<${Form} fields=${ROUTE_FIELDS} value=${obj.emitter} ctx=${ctx} kf=${kf} prefix="emitter"
+      onChange=${(ne) => edit((o) => { o.emitter = { ...o.emitter, route_strength: ne.route_strength, route_fixed: ne.route_fixed || undefined }; })} />`}
+    <div class="row" style="margin-top:6px">
+      <button class="btn sm" onClick=${() => ctx.openEditor('path', 'route')}><${Icon} name="route" size=${13} /> ${t(on ? 'Edit the route' : 'Draw the route')}</button>
+      ${on && html`<span class="spacer"></span><button class="btn sm ghost danger"
+        onClick=${() => edit((o) => removeRoute(o))}><${Icon} name="trash-2" size=${13} /> ${t('Remove the route')}</button>`}
+    </div>
+  </${Section}>`;
+}
+const ROUTE_FIELDS = [
+  { key: 'route_strength', label: 'How much they follow it', type: 'num', min: 0, max: 1, step: 0.01, def: 1,
+    help: '0: as if there were no route (their launch, gravity, wind). 1: they go along the route as far as their speed and the forces would take them (gravity pushes them along it, not down; turbulence stays). Between: a mix' },
+  { key: 'route_fixed', label: 'Where it is drawn', type: 'bool', anim: false,
+    help: 'Off: each particle starts the route where it is born (it moves with the emitter). On: they all go along it where it is drawn' },
+];
+
 // Moving an object that follows a path moves the path (dx, dy: 0..1 of the frame)
 export function movePath(o, dx, dy) {
   o.motion = { ...o.motion, path: { ...o.motion.path, points: o.motion.path.points.map((p) => [+(p[0] + dx).toFixed(5), +(p[1] + dy).toFixed(5), ...p.slice(2)]) } };
 }
-export { hasPath };
+export { hasPath, hasRoute };
 
 // The section of the inspector
 export function MotionSection({ obj, kf, ctx, edit, what = 'clip' }) {

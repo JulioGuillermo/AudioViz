@@ -18,7 +18,8 @@ background_effects:
     dolly: 0
     focus: 0.5
     speed: 1.0
-    react_to: bass    # beat motion only
+    react_to: bass    # the band: beat motion, or react > 0
+    react: 0          # sway / still: how much the music pushes it further (0 … 1)
 ```
 
 | Field | Default | Description |
@@ -30,7 +31,8 @@ background_effects:
 | `dolly` | 0 | Moving in: what is near grows more than what is far (−0.3 … 0.3; negative moves out) |
 | `focus` | 0.5 | The depth that stays still: 0 far … 1 near |
 | `speed` | 1.0 | Speed of the sway |
-| `react_to` | bass | [Source](../reactivity.md) of the pushes (beat motion) |
+| `react_to` | bass | [Source](../reactivity.md) of the pushes (beat motion, or with `react`) |
+| `react` | 0 | Sway and still: how much the music pushes the camera further, 0 … 1 (1 = up to twice its movement and moving in on the hits) |
 
 Large moves uncover more of what was hidden: thin near things (text painted in the image,
 branches) may leave a short stretch behind them. A sharp depth map (DA3 Mono Large) gives clean

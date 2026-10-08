@@ -230,16 +230,31 @@ func (s *Session) emitFrame(li, ci int, c0, c *config.ClipConfig, idx int, feats
 		p.FlameCol = [3][3]float64{rgb(fl.ColorCool, "#b8200a"), rgb(fl.ColorMid, "#ff8a1e"), rgb(fl.ColorHot, "#fff4d0")}
 		p.Heat, p.Noise, p.NoiseScale, p.NoiseSpeed, p.Edge = math.Max(fl.Heat, 0), fl.Noise*sc, math.Max(fl.NoiseScale*sc, 1), fl.NoiseSpeed*sc, math.Min(math.Max(fl.Edge, 0), 1)
 	}
+	p.Hidden = e.Hidden
 	if e.Look == "smoke" {
 		sm := e.Smoke
 		p.Smoke = true
 		p.SmokeWisp, p.SmokeScale = math.Min(math.Max(sm.Wisp, 0), 1), math.Max(sm.Scale*sc, 1)
 		p.SmokeSpeed, p.SmokeWarp = sm.Speed*sc, sm.Warp*sc
 	}
+	if e.Look == "water" {
+		w := e.Water
+		p.Water = true
+		p.WaterTh, p.WaterClear, p.WaterShine = math.Max(w.Threshold, 0.01), math.Min(math.Max(w.Clear, 0), 1), math.Max(w.Shine, 0)
+		// the slope of a particle's edge is about 1 / its radius: a bump of 1 tilts it fully
+		p.WaterBump = math.Max(w.Bump, 0) * math.Max(e.Size*sc, 2) * 0.5
+		p.WaterRipple, p.WaterScale, p.WaterSpeed = w.Ripple*sc, math.Max(w.RippleScale*sc, 1), w.RippleSpeed*sc
+		p.WaterLens = math.Max(w.Lens, 0) * sc
+	}
 	if p.Shape == effects.EmitText {
 		p.Pts = s.textPoints(e.Text, e.TextPart == "fill")
 	}
-	if e.FollowPath && c.Motion.On() {
+	if r := e.Route; r != nil && len(r.Points) >= 2 {
+		// their own route
+		p.Follow, p.Route, p.RouteFixed, p.RouteK = true, true, e.RouteFixed, math.Min(math.Max(e.RouteStrength, 0), 1)
+		p.Path, p.PathLen = effects.SamplePath(r, float64(s.W), float64(s.H))
+		p.PathClosed = !r.Open
+	} else if e.FollowPath && c.Motion.On() {
 		p.Follow = true
 		p.Path, p.PathLen = effects.SamplePath(c.Motion.Path, float64(s.W), float64(s.H))
 		p.PathClosed = !c.Motion.Path.Open

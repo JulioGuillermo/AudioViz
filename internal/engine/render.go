@@ -190,6 +190,10 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 			break // no accumulation left for it
 		}
 		px := iw * ih
+		lens := l.Emit != nil && l.Emit.P.Water && l.Emit.P.WaterLens > 0
+		if lens {
+			px *= 2 // its lens after its image (x, y as halves)
+		}
 		mwords := 0
 		if l.Mask != nil {
 			mwords = (len(l.Mask.Pix) + 3) / 4
@@ -202,6 +206,9 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		flags := int32(l.Blend & 15)
 		if l.Key {
 			flags |= 1 << 4
+		}
+		if lens {
+			flags |= 1 << 13
 		}
 		w := &l.W
 		if w.GlitchBG {
@@ -295,7 +302,10 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		for i := 0; i < n; i++ {
 			l := &fs.Layers[i]
 			if l.Emit != nil {
-				off += r.s.W * r.s.H // drawn there by the emitter pass
+				off += r.s.W * r.s.H // drawn there by the emitter pass (and its lens)
+				if l.Emit.P.Water && l.Emit.P.WaterLens > 0 {
+					off += r.s.W * r.s.H
+				}
 			} else {
 				copy(buf[off*4:], l.Img.Pix)
 				off += len(l.Img.Pix) / 4
@@ -358,6 +368,8 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 			u[h+43] = 1
 		} else if P.Smoke {
 			u[h+43] = 2
+		} else if P.Water {
+			u[h+43] = 3
 		}
 		for c := 0; c < 3; c++ {
 			for j := 0; j < 3; j++ {
@@ -403,6 +415,12 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		if P.FloorOn {
 			fl |= 2
 		}
+		if P.Route {
+			fl |= 4
+		}
+		if P.Route && !P.RouteFixed {
+			fl |= 8
+		}
 		u[h+72] = fl
 		f[h+73], f[h+74], f[h+75] = float32(P.Floor), float32(P.Bounce), float32(P.Friction)
 		f[h+76], f[h+77], f[h+78], f[h+79] = float32(P.SmokeWisp), float32(P.SmokeScale), float32(P.SmokeSpeed), float32(P.SmokeWarp)
@@ -410,6 +428,17 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		co := po + effects.MaxPathSamples*3
 		u[h+80], u[h+81], u[h+82], u[h+83] = uint32(co), 0, 0, 0
 		f[h+84] = float32(P.CBounce)
+		f[h+86], f[h+87], f[h+88], f[h+89] = float32(P.WaterTh), float32(P.WaterClear), float32(P.WaterShine), float32(P.WaterBump)
+		f[h+90], f[h+91], f[h+92] = float32(P.WaterRipple), float32(P.WaterScale), float32(P.WaterSpeed)
+		f[h+93] = float32(P.RouteK)
+		f[h+94] = 0
+		if P.Water {
+			f[h+94] = float32(P.WaterLens)
+		}
+		u[h+85] = 0
+		if P.Hidden {
+			u[h+85] = 1
+		}
 		if P.CSDF != nil && P.CGW*P.CGH <= effects.MaxCollideCells {
 			copy(f[co:], P.CSDF)
 			u[h+81], u[h+82], u[h+83] = uint32(P.CGW), uint32(P.CGH), uint32(P.CDiv)

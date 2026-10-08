@@ -7,7 +7,7 @@ import { Icon } from './icons.js';
 import { t } from './i18n.js';
 import { keyApi, valueAt, keyIndexAt, KEY_EPS, setIn } from './keys.js';
 import { MaskSection } from './masks.js';
-import { MotionSection, hasPath, movePath } from './motion.js';
+import { MotionSection, RouteSection, hasPath, movePath } from './motion.js';
 
 // Overlay layers (config.LayerConfig): proj.layers is bottom to top (drawing order); the studio
 // shows them front first, as a stack of cards.
@@ -292,6 +292,7 @@ export function LayerInspector({ proj, sel, setSel, update, time, meta, ctx }) {
       ${c ? html`<${Form} fields=${emit ? EMITTER_CLIP_FIELDS : CLIP_FIELDS} value=${c} ctx=${ctx} kf=${kf}
           onChange=${(nc) => editLayer((l) => { l.clips[j] = { ...nc, start: l.clips[j].start, end: l.clips[j].end }; })} />`
         : html`<p class="faint" style="font-size:12px">${t('No clips yet. Add one at the cursor, or double-click the layer\'s track on the timeline.')}</p>`}
+      ${c && emit && html`<${RouteSection} obj=${c} ctx=${ctx} kf=${kf} edit=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}
       ${c && html`<${MotionSection} obj=${c} kf=${kf} ctx=${ctx} edit=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}
       ${c && html`<${MaskSection} clip=${c} kf=${kf} selMask=${ctx.selMask} setSelMask=${ctx.setSelMask} ctx=${ctx}
         openEditor=${ctx.openEditor} editClip=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}

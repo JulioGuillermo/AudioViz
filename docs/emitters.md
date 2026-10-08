@@ -1,6 +1,6 @@
 # Particle emitters
 
-Fire, sparks, smoke, dust, floating lights, explosions, snow... An emitter is a layer of the
+Fire, sparks, smoke, dust, floating lights, explosions, snow, water, rain, invisible light sources... An emitter is a layer of the
 **Layers** zone (it goes in front of or behind the other layers, like them) whose clips throw
 particles instead of showing a file. They are computed on the GPU (tens of thousands at once) and
 always give the same result: any frame can be seen or rendered directly.
@@ -26,13 +26,13 @@ always give the same result: any frame can be seen or rendered directly.
 | Group | Settings |
 |---|---|
 | Amount | per second, a burst at the start, the most alive at once |
-| Where they are born | shape: point, circle, ring, line or rectangle, and its size (px); or **the letters of a text** (a fixed text: on its outline or all over its letters; they follow it as it moves, turns and grows, and the text can be hidden: letters made of fire). **They travel along the motion path**: with a motion path they go along it at their speed (the shape's width spreads them across it) |
+| Where they are born | shape: point, circle, ring, line or rectangle, and its size (px); or **the letters of a text** (a fixed text: on its outline or all over its letters; they follow it as it moves, turns and grows, and the text can be hidden: letters made of fire). **They travel along the motion path**: with a motion path they go along it at their speed (the shape's width spreads them across it). **Particles' route** (its own section): a route drawn in the editor that each particle follows while it lives, at its speed — flames that lick along a line, a stream that turns. It starts where each one is born (it moves with the emitter) or, with *Where it is drawn*, they all go along it where it is drawn. **How much they follow it** (0..1, it can have keys): 0 as if there were no route; 1 they go along it as far as their launch and the forces would take them (gravity pushes them along the route instead of down; turbulence stays); between, a mix of both |
 | How they leave | direction (0° = up, plus the clip's rotation), spread of the cone (360° = every way), speed and its variation |
 | Forces | gravity (negative: they rise), wind, drag (they slow down), turbulence (wandering) and its speed |
 | Floor and the scene | a floor px below the emitter, or **the scene's** (with a depth map: where the depth below the emitter comes up to its own): with gravity they fall onto it and **bounce**, keeping part of their speed (bounce) and of their sideways speed. **They go round the scene**: with a depth map, what is in the scene at their depth (within *Solid within*, in depth, of the emitter's) is solid and they slide off it — smoke goes round a wing, fire licks a rock; what is nearer hides them and what is farther is behind them. Where they are born is left free. While you adjust it the preview shows what is solid in cyan. **Bounce off it**: 0 they slide along it (flames lick it); more, they bounce off walls and ceilings (sparks) keeping that much speed — on what faces up they still slide (the floor above bounces them) |
 | Life and size | life (s) and its variation; size at birth and at the end, and its variation |
 | Color and look | colors at birth, halfway and at the end (their opacity fades them), fade in / out, how they add up (*light* or *matter*), streak (stretched along their motion), soft edge, random seed |
-| Look | *particles* (each as it is) or *flame*: they melt into one flame — the color comes from the heat that piles up (colors of its edges, body and core; heat), and rising noise cuts its edges into long tongues (how far, the size of the whirls, how fast they rise, how much they eat the edges) — or *smoke*: soft matter torn into wisps by noise (how much, the size of the wisps, how fast the pattern rises, how far it swirls) |
+| Look | *particles* (each as it is) or *flame*: they melt into one flame — the color comes from the heat that piles up (colors of its edges, body and core; heat), and rising noise cuts its edges into long tongues (how far, the size of the whirls, how fast they rise, how much they eat the edges) — or *smoke*: soft matter torn into wisps by noise (how much, the size of the wisps, how fast the pattern rises, how far it swirls) — or *water*: they melt into one liquid with a surface lit from the top left (where it becomes liquid: how much of them must pile up; how see-through its body is, its edges staying; its shine; how rounded it looks; ripples: how far, their size and speed; **lens**, px: what is behind it is seen through it bent like through glass — the drops magnify it, and turn it upside down when strong). **Only its light (and glow)**: the particles are not drawn, only their light on the scene and their glow — an invisible light source (preset *Light source*) |
 | Glow | a halo of light around them: strength, reach (px) and color (empty = the particles' own; the flame's body color with the flame look) |
 | Light | it lights up what is behind it (the background and the layers below it), from where its particles are: strength, reach (px, where it is still strong), where it fades out (px; 0 = 2.5 × the reach), color (empty = the particles' own; the flame's body), how (*soft*: lights and tints what is there; *add*: adds its color, like neon) and flicker. On by default for fire, realistic fire and explosion |
 | Audio reaction | the band (bass, mids, treble, volume, transients, beats) makes more of them, faster, bigger, and a burst on each beat |
@@ -52,7 +52,7 @@ layers:
         y: 0.95
         blend: add
         emitter:
-          preset: fire          # fire, fire_real, sparks, smoke, dust, light, explosion, snow
+          preset: fire          # fire, fire_real, sparks, smoke, dust, light, explosion, lamp, water, water_clear, splash, rain, snow
           rate: 650             # anything not written comes from the preset
           react: { react_to: bass, rate: 1, size: 0.35 }
         keys:
@@ -71,6 +71,21 @@ Any emitter can use them:
           light: { enabled: true, intensity: 0.8, reach: 450, end: 1100, mode: soft, flicker: 0.25,
                    rim: true, rim_from: 500, rim_soft: 120, rim_width: 10, rim_gain: 2, rim_edge: 0.04 }
 ```
+
+The **Water** preset (`water`) is a jet with the water look that falls onto a floor; `splash`
+throws a splash on each beat and `rain` falls across the frame; `water_clear` (*Clear water (lens)*) is almost colorless and bends what is behind it like glass:
+
+```yaml
+        emitter:
+          preset: water
+          water: { threshold: 0.5, clear: 0.7, shine: 1, bump: 1, ripple: 3, ripple_scale: 40, ripple_speed: 50, lens: 0 }
+          route: { points: [[0.5, 0.8], [0.45, 0.6], [0.6, 0.45]], open: true }   # their own route (0..1 of the frame)
+          route_fixed: false     # true: along it where it is drawn, not from where each is born
+          route_strength: 1      # 0 as if there were no route … 1 only the route
+```
+
+The **Light source** preset (`lamp`) is `hidden: true` with its light on and a soft glow: set the
+glow's strength to 0 for a light with nothing visible.
 
 The light follows the particles: when the fire grows with the bass, moves along its path or
 fades out, its light does too. With a background that has a [depth map](depth.md) it lights the

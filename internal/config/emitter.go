@@ -37,6 +37,14 @@ type EmitterConfig struct {
 	TextPart string `yaml:"text_part,omitempty"`
 	// They travel along the clip's motion path (at their speed), from where the emitter is on it
 	FollowPath bool `yaml:"follow_path,omitempty"`
+	// Their own route: they go along it while they live (at their speed), from its start moved to
+	// where they are born (or from where it is drawn: RouteFixed); 0..1 of the frame, as a path
+	Route      *MaskShape `yaml:"route,omitempty"`
+	RouteFixed bool       `yaml:"route_fixed,omitempty"`
+	// how much they follow it: 0 as if there were none (their launch and the forces), 1 only the
+	// route (as far along it as their launch and the forces would take them; turbulence stays),
+	// between a mix of both
+	RouteStrength float64 `yaml:"route_strength"`
 	// A floor they bounce on: px below the emitter (0 = none) or the scene's (FloorDepth: where
 	// the depth below the emitter comes up to its own); how much speed they keep at each bounce
 	// (0..1) and how much of their sideways speed (friction, 0..1)
@@ -85,13 +93,17 @@ type EmitterConfig struct {
 	Softness float64      `yaml:"softness"`
 	Seed     int          `yaml:"seed"`
 	React    EmitterReact `yaml:"react"`
-	// Look: "plain" (each particle as it is) or "flame" (they melt into one flame: the color
-	// comes from how much heat piles up, and rising noise cuts its edges into tongues)
-	Look  string    `yaml:"look"`
-	Flame FlameLook `yaml:"flame"`
-	Smoke SmokeLook `yaml:"smoke,omitempty"`
-	Glow  EmitGlow  `yaml:"glow"`
-	Light EmitLight `yaml:"light"`
+	// Look: "plain" (each particle as it is), "flame" (they melt into one flame: the color
+	// comes from how much heat piles up, and rising noise cuts its edges into tongues), "smoke"
+	// or "water" (they melt into one liquid with a lit surface: WaterLook)
+	Look string `yaml:"look"`
+	// Only its light (and its glow): the particles themselves are not drawn (a light source)
+	Hidden bool      `yaml:"hidden,omitempty"`
+	Flame  FlameLook `yaml:"flame"`
+	Smoke  SmokeLook `yaml:"smoke,omitempty"`
+	Water  WaterLook `yaml:"water,omitempty"`
+	Glow   EmitGlow  `yaml:"glow"`
+	Light  EmitLight `yaml:"light"`
 }
 
 // EmitLight: the emitter lights up what is drawn behind it (the background and the layers below
@@ -137,6 +149,28 @@ type SmokeLook struct {
 	Scale float64 `yaml:"scale"`
 	Speed float64 `yaml:"speed"`
 	Warp  float64 `yaml:"warp"`
+}
+
+// WaterLook (look "water"): the particles melt into one liquid with a surface: where it starts
+// (how much of them piles up, 0.1..2), how clear it is (0 opaque … 1 you see through its body;
+// its edges stay), its shine (highlights), how rounded it looks (bump), and ripples moving it
+// (px, their size in px and speed px/s)
+type WaterLook struct {
+	Threshold   float64 `yaml:"threshold"`
+	Clear       float64 `yaml:"clear"`
+	Shine       float64 `yaml:"shine"`
+	Bump        float64 `yaml:"bump"`
+	Ripple      float64 `yaml:"ripple"`
+	RippleScale float64 `yaml:"ripple_scale"`
+	RippleSpeed float64 `yaml:"ripple_speed"`
+	// a lens: what is under it is seen through it, bent by its surface (px; 0 = none): drops
+	// magnify what is behind them, and turn it upside down when strong
+	Lens float64 `yaml:"lens,omitempty"`
+}
+
+// DefaultWater: the water look's settings
+func DefaultWater() WaterLook {
+	return WaterLook{Threshold: 0.5, Clear: 0.7, Shine: 1, Bump: 1, Ripple: 3, RippleScale: 40, RippleSpeed: 50}
 }
 
 type FlameLook struct {
@@ -205,6 +239,34 @@ var EmitterPresets = map[string]EmitterConfig{
 		Turbulence: 30, TurbFreq: 1.4, Life: 1.6, LifeVar: 0.5, Size: 44, SizeEnd: 8, SizeVar: 0.6,
 		ColorStart: "#ffffe0c0", ColorMid: "#ff8a2090", ColorEnd: "#40100000", FadeIn: 0, FadeOut: 0.6, Mode: "add", Softness: 1,
 		React: EmitterReact{ReactTo: "beat", Burst: 400}},
+	"lamp": {Rate: 60, Max: 300, Shape: "point", Direction: 0, Spread: 360, Speed: 0, Life: 0.5, LifeVar: 0.2,
+		Size: 40, SizeEnd: 40, ColorStart: "#ffd8a0ff", ColorMid: "#ffd8a0ff", ColorEnd: "#ffd8a000", FadeIn: 0.1, FadeOut: 0.3,
+		Mode: "add", Softness: 1, Hidden: true, Glow: EmitGlow{Intensity: 0.7, Radius: 90}},
+	// water: a jet that melts into one liquid, falls and splashes on a floor
+	"water": {Rate: 320, Max: 4000, Shape: "circle", Width: 14, Direction: 0, Spread: 9, Speed: 950, SpeedVar: 0.12, Gravity: 1500, Drag: 0.1,
+		Turbulence: 12, TurbFreq: 1, Life: 1.7, LifeVar: 0.2, Size: 34, SizeEnd: 26, SizeVar: 0.3,
+		ColorStart: "#6cbcffd8", ColorMid: "#4a98ecd8", ColorEnd: "#2f74c800", FadeIn: 0, FadeOut: 0.15, Mode: "soft", Softness: 1,
+		Floor: 320, Bounce: 0.25, Friction: 0.6, Look: "water", Water: DefaultWater(),
+		React: EmitterReact{ReactTo: "bass", Speed: 0.25}},
+	// a splash of water on each beat
+	"splash": {Rate: 0, Burst: 260, Max: 4000, Shape: "point", Direction: 0, Spread: 130, Speed: 720, SpeedVar: 0.45, Gravity: 1700, Drag: 0.3,
+		Turbulence: 8, TurbFreq: 1.5, Life: 1.3, LifeVar: 0.3, Size: 24, SizeEnd: 12, SizeVar: 0.5,
+		ColorStart: "#8ccaffd8", ColorMid: "#5aa4f0d0", ColorEnd: "#3a80d000", FadeIn: 0, FadeOut: 0.3, Mode: "soft", Softness: 1,
+		Look: "water", Water: WaterLook{Threshold: 0.45, Clear: 0.5, Shine: 1.2, Bump: 1, Ripple: 2, RippleScale: 30, RippleSpeed: 40},
+		React: EmitterReact{ReactTo: "beat", Burst: 200}},
+	// clear water: almost no color, it bends what is behind it like glass (a lens)
+	"water_clear": {Rate: 320, Max: 4000, Shape: "circle", Width: 14, Direction: 0, Spread: 9, Speed: 950, SpeedVar: 0.12, Gravity: 1500, Drag: 0.1,
+		Turbulence: 12, TurbFreq: 1, Life: 1.7, LifeVar: 0.2, Size: 38, SizeEnd: 30, SizeVar: 0.3,
+		ColorStart: "#cfe8ffd8", ColorMid: "#c4e2ffd8", ColorEnd: "#b8dcff00", FadeIn: 0, FadeOut: 0.15, Mode: "soft", Softness: 1,
+		Floor: 320, Bounce: 0.25, Friction: 0.6, Look: "water",
+		Water: WaterLook{Threshold: 0.5, Clear: 1, Shine: 1.3, Bump: 0.8, Ripple: 3, RippleScale: 40, RippleSpeed: 50, Lens: 40},
+		React: EmitterReact{ReactTo: "bass", Speed: 0.25}},
+	// rain: fast streaked drops of water
+	"rain": {Rate: 420, Max: 6000, Shape: "line", Width: 2200, Direction: 185, Spread: 2, Speed: 1500, SpeedVar: 0.2, Gravity: 500, Wind: 60,
+		Life: 1.4, LifeVar: 0.2, Size: 7, SizeEnd: 7, SizeVar: 0.4, Streak: 0.025,
+		ColorStart: "#d4eaffb0", ColorMid: "#d4eaffb0", ColorEnd: "#d4eaff00", FadeIn: 0.05, FadeOut: 0.1, Mode: "soft", Softness: 0.8,
+		Look: "water", Water: WaterLook{Threshold: 0.3, Clear: 0.6, Shine: 1.4, Bump: 0.6, Ripple: 0, RippleScale: 40, RippleSpeed: 0},
+		React: EmitterReact{ReactTo: "bass", Rate: 0.5}},
 	"snow": {Rate: 70, Max: 6000, Shape: "line", Width: 2100, Direction: 180, Spread: 20, Speed: 70, SpeedVar: 0.5, Gravity: 20, Wind: 10, Drag: 0.3,
 		Turbulence: 35, TurbFreq: 0.3, Life: 14, LifeVar: 0.2, Size: 5, SizeEnd: 5, SizeVar: 0.6,
 		ColorStart: "#ffffffe0", ColorMid: "#ffffffe0", ColorEnd: "#ffffff00", FadeIn: 0.02, FadeOut: 0.1, Mode: "soft", Softness: 0.6},
@@ -240,12 +302,16 @@ func init() {
 		if e.Glow.Radius == 0 {
 			e.Glow.Radius = 60
 		}
+		e.RouteStrength = 1
+		if e.Water == (WaterLook{}) {
+			e.Water = DefaultWater()
+		}
 		if e.Look == "" {
 			e.Look = "plain"
 		}
 		if e.Light.Reach == 0 {
 			e.Light = EmitLight{Intensity: 0.8, Reach: 450, Mode: "soft", Flicker: 0.25, Depth: 2.5, Shade: 0.6, From: 1, To: 0, RangeSoft: 0.05}
-			if k == "fire" || k == "fire_real" || k == "explosion" {
+			if k == "fire" || k == "fire_real" || k == "explosion" || k == "lamp" {
 				e.Light.Enabled = true
 			}
 		}

@@ -141,7 +141,9 @@ export const TRACKS = [
     { key: 'focus', label: 'Focus', type: 'num', min: 0, max: 1, step: 0.01, def: 0.5,
       help: 'The depth that stays still (0 far … 1 near): nearer things move one way, farther ones the other' },
     { key: 'speed', label: 'Speed', type: 'num', min: 0.05, max: 5, step: 0.05, showIf: (c) => c.motion !== 'still' && c.motion !== 'beat' },
-    { ...react('bass'), showIf: (c) => c.motion === 'beat' },
+    { key: 'react', label: 'Audio reaction', type: 'num', min: 0, max: 1, step: 0.01, def: 0, showIf: (c) => c.motion !== 'beat',
+      help: 'How much the music pushes the camera further (its movement and its moving in): 1 = up to twice on the hits' },
+    { ...react('bass'), showIf: (c) => c.motion === 'beat' || c.react > 0 },
   ] },
   { id: 'depth_of_field', group: 'Background effects', label: 'Depth of field', icon: 'aperture', fields: [
     { key: 'enabled', label: 'Enabled', type: 'bool',
@@ -438,7 +440,8 @@ export const CLIP_FIELDS = [
 // Emitter clips (config.EmitterConfig): the clip places the emitter, the emitter block says what
 // it throws. Every number and color can have keys.
 export const EMITTER_PRESETS = [['fire', 'Fire', 'flame'], ['fire_real', 'Realistic fire', 'flame'], ['sparks', 'Sparks', 'sparkles'], ['smoke', 'Smoke', 'cloud'],
-  ['dust', 'Dust', 'focus'], ['light', 'Lights (bokeh)', 'sun'], ['explosion', 'Explosion', 'zap'], ['snow', 'Snow', 'snowflake']];
+  ['dust', 'Dust', 'focus'], ['light', 'Lights (bokeh)', 'sun'], ['explosion', 'Explosion', 'zap'], ['snow', 'Snow', 'snowflake'],
+  ['lamp', 'Light source (invisible)', 'sun'], ['water', 'Water', 'droplet'], ['water_clear', 'Clear water (lens)', 'droplet'], ['splash', 'Water splash', 'waves'], ['rain', 'Rain', 'cloud-rain']];
 const EMIT_SHAPES = [['point', 'Point'], ['circle', 'Circle (filled)'], ['ring', 'Ring'], ['line', 'Line'], ['box', 'Rectangle'],
   ['text', 'The letters of a text']];
 const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', fields: [
@@ -504,10 +507,12 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
     { key: 'streak', label: 'Streak (s of motion)', type: 'num', min: 0, max: 0.3, step: 0.001, help: 'Stretched along their motion, like sparks' },
     { key: 'softness', label: 'Soft edge', type: 'num', min: 0, max: 1, step: 0.01 },
     { key: 'seed', label: 'Random seed', type: 'int', min: 0, max: 99999, step: 1, anim: false, help: 'Another number, another pattern' },
+    { key: 'hidden', label: 'Only its light (and glow)', type: 'bool', anim: false,
+      help: 'The particles are not drawn: it only lights the scene (Light) and glows, if it has a glow. A light source' },
   ] },
   { key: 'lookgrp', label: 'Look (particles or flame)', type: 'section', fields: [
     { key: 'look', label: 'Look', type: 'enum', def: 'plain', anim: false,
-      options: [['plain', 'Particles (as they are)'], ['flame', 'Flame (they melt into fire)'], ['smoke', 'Smoke (torn into wisps)']],
+      options: [['plain', 'Particles (as they are)'], ['flame', 'Flame (they melt into fire)'], ['smoke', 'Smoke (torn into wisps)'], ['water', 'Water (they melt into a liquid)']],
       help: 'Flame: the color comes from the heat that piles up, and rising noise cuts its edges into tongues' },
     { key: 'flame', label: 'Flame', type: 'group', showIf: (c) => c.look === 'flame', fields: [
       { key: 'color_cool', label: 'Color of its edges', type: 'color' },
@@ -524,6 +529,18 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
       { key: 'scale', label: 'Wisp size (px)', type: 'num', min: 4, max: 600, step: 1, def: 70 },
       { key: 'speed', label: 'Rising speed (px/s)', type: 'num', min: 0, max: 600, step: 1, def: 30 },
       { key: 'warp', label: 'Swirl (px)', type: 'num', min: 0, max: 200, step: 0.5, def: 25, help: 'How far the noise moves it' },
+    ] },
+    { key: 'water', label: 'Water', type: 'group', showIf: (c) => c.look === 'water', fields: [
+      { key: 'threshold', label: 'Where it becomes liquid', type: 'num', min: 0.05, max: 2, step: 0.01, def: 0.5,
+        help: 'How much of the particles must pile up: less, fatter water that joins sooner; more, thinner and in drops' },
+      { key: 'clear', label: 'See-through', type: 'num', min: 0, max: 1, step: 0.01, def: 0.7, help: 'How much you see through its body (its edges stay)' },
+      { key: 'shine', label: 'Shine', type: 'num', min: 0, max: 3, step: 0.01, def: 1, help: 'Its highlights' },
+      { key: 'bump', label: 'Rounded', type: 'num', min: 0, max: 3, step: 0.01, def: 1, help: 'How round and deep its surface looks' },
+      { key: 'ripple', label: 'Ripples (px)', type: 'num', min: 0, max: 40, step: 0.1, def: 3, help: 'How far the ripples move it' },
+      { key: 'ripple_scale', label: 'Ripple size (px)', type: 'num', min: 4, max: 400, step: 1, def: 40 },
+      { key: 'ripple_speed', label: 'Ripple speed (px/s)', type: 'num', min: 0, max: 600, step: 1, def: 50 },
+      { key: 'lens', label: 'Lens (px)', type: 'num', min: 0, max: 200, step: 0.5, def: 0,
+        help: 'What is behind it is seen through it, bent like through glass: the drops magnify it (and turn it upside down when strong). 0 = none' },
     ] },
   ] },
   { key: 'light', label: 'Light', type: 'group', fields: [

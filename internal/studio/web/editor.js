@@ -70,7 +70,7 @@ export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selCli
   const pathRef = useRef(pathOwner); // what the path tool works on (a clip or a text)
   pathRef.current = pathOwner;
   const [pathDraw, setPathDraw] = useState(false); // drawing the path again (the nodes otherwise)
-  const curPath = pathOwner && pathOwner.obj.motion && pathOwner.obj.motion.path && pathOwner.obj.motion.path.points ? pathOwner.obj.motion.path : null;
+  const curPath = pathOwner && pathOwner.shape && pathOwner.shape.points ? pathOwner.shape : null;
   const setBrush = (k, v) => setBrushState((b) => {
     const n = { ...b, [k]: v };
     try { localStorage.setItem('audioviz.brush', JSON.stringify(n)); } catch (e) { /* ignore */ }
@@ -219,7 +219,9 @@ export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selCli
         <button class=${'btn sm' + (brush.pSize ? ' on' : '')} onClick=${() => setBrush('pSize', !brush.pSize)}>${t('size')}</button>
         <button class=${'btn sm' + (brush.pOpacity ? ' on' : '')} onClick=${() => setBrush('pOpacity', !brush.pOpacity)}>${t('opacity')}</button>
       </div>`}
-      ${tool === 'path' && html`<div class="ed-opts faint">${t(curPath && !pathDraw
+      ${tool === 'path' && html`<div class="ed-opts faint">${t(pathOwner && pathOwner.route
+        ? (curPath && !pathDraw ? 'The particles\' route (start: the ring). Drag its nodes; right-click a node or the line: menu.' : 'Draw the particles\' route by hand, from where they start.')
+        : curPath && !pathDraw
         ? 'The path it follows (start: the ring). Drag its nodes; right-click a node or the line: menu. Its progress over time is in the inspector.'
         : 'Draw the path by hand, from where it starts to where it ends.')}
         ${curPath && html`<button class=${'btn sm' + (pathDraw ? ' on' : '')} onClick=${() => setPathDraw(!pathDraw)}><${Icon} name="pencil" size=${13} /> ${t('Draw again')}</button>`}</div>`}
@@ -253,7 +255,7 @@ export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selCli
             time=${time} meta=${meta} k=${1} hs=${1 / v.z} toFrame=${toFrame} onChange=${onText} />`}
           ${showClip && tool === 'select' && html`<${selEmit ? EmitterHandles : ClipHandles} clip=${selClip} time=${time} meta=${meta} k=${1} hs=${1 / v.z}
             toFrame=${toFrame} onChange=${onClip} geo=${geoOf(info.layers, selId, selClipIdx)} />`}
-          ${tool === 'path' && pathOwner && html`<${MaskOverlay} clip=${pathOwner.obj} k=${0} pathShape=${(pathOwner.obj.motion && pathOwner.obj.motion.path) || null}
+          ${tool === 'path' && pathOwner && html`<${MaskOverlay} clip=${pathOwner.obj} k=${0} pathShape=${pathOwner.shape}
             time=${time} meta=${meta} tool=${curPath && !pathDraw ? 'nodes' : 'shape'} brush=${brush} toFrame=${toFrame} z=${v.z}
             editMask=${(fn) => { setPathDraw(false); editPath(fn); }} />`}
           ${tool !== 'path' && maskOwner && (maskOwner.screen || showClip) && selMask != null && maskOwner.obj.masks && maskOwner.obj.masks[selMask] && html`<${MaskOverlay}

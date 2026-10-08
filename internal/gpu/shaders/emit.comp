@@ -181,7 +181,7 @@ void splatPhase() {
     vec2 dp = mv.xy, vel = mv.zw;
     int nsamp = int(ed[h + 70]);
     uint flg = ed[h + 72];
-    if (nsamp >= 2) {
+    if (nsamp >= 2 && (flg & 4u) == 0u) {
         // along the motion path: as far as its speed takes it, its shape's cross offset, the forces
         float along = spd * age, sv = spd;
         if (k > 1e-3) {
@@ -222,6 +222,24 @@ void splatPhase() {
         }
         dp = vec2(m1.x + m1.z * fr * (age - t1), fl - y0 - ry);
         vel = vec2(m1.z * fr, -rvy);
+    }
+    float rk = edf(h + 93);
+    if (nsamp >= 2 && (flg & 4u) != 0u && rk > 0.0) {
+        // their own route, from its start (moved to where they are born unless fixed): as far
+        // along it as they would have gone free (Simpson over their speed), mixed with their
+        // free motion
+        float hs = age / 8.0;
+        float along = length(v0l) + length(motionAt(age, v0l, acc2, k).zw);
+        for (int j = 1; j < 8; j++) along += float(2 + 2 * (j & 1)) * length(motionAt(float(j) * hs, v0l, acc2, k).zw);
+        along *= hs / 3.0;
+        float sv = length(motionAt(age, v0l, acc2, k).zw);
+        int po = int(ed[h + 69]);
+        vec4 pt = pathPoint(po, nsamp, edf(h + 71), (flg & 1u) != 0u, along);
+        if ((flg & 8u) != 0u) pt.xy += vec2(bX, bY) - vec2(edf(po), edf(po + 1));
+        vec2 rp = vec2(pt.x - pt.w * ox, pt.y + pt.z * ox);
+        float m = min(rk, 1.0);
+        dp += m * (rp - (vec2(x0, y0) + dp));
+        vel += m * (pt.zw * sv - vel);
     }
     if (ph.y > 0.0) {
         float wv = 6.2831855 * ph.z;
@@ -358,6 +376,37 @@ float fbm(vec2 p, uint seed) {
     return v / 0.875;
 }
 
+// The water look (as effects.waterPixel): the particles' weight piled up is a height; past the
+// threshold it is liquid, its slope a surface lit from the top left, see through in its body and
+// denser at its edges, moved by ripples
+// (gLens: where what is under it is seen from, moved px)
+vec2 gLens = vec2(0.0);
+vec4 waterPixel(int h, uint base, int GW, int GH, int dv, vec2 pp, float T, uint seed) {
+    float sc = max(edf(h + 91), 1.0);
+    float tt = T * edf(h + 92) / sc;
+    float rp = edf(h + 90);
+    vec2 q = pp + rp * (vec2(fbm(vec2(pp.x / sc + tt, pp.y / sc), seed + 31u),
+                             fbm(vec2(pp.x / sc + 3.7, pp.y / sc - tt + 5.3), seed + 31u)) - 0.5) * 2.0;
+    vec4 s = sumAt(base, GW, GH, dv, q);
+    float th = max(edf(h + 86), 0.01);
+    if (s.a < th * 0.7) return vec4(0.0);
+    float al = smoothstep(th * 0.8, th * 1.15, s.a);
+    float e = float(max(dv, 2));
+    float gx = (sumAt(base, GW, GH, dv, q + vec2(e, 0.0)).a - sumAt(base, GW, GH, dv, q - vec2(e, 0.0)).a) / (2.0 * e);
+    float gy = (sumAt(base, GW, GH, dv, q + vec2(0.0, e)).a - sumAt(base, GW, GH, dv, q - vec2(0.0, e)).a) / (2.0 * e);
+    float k = edf(h + 89);
+    vec3 n = normalize(vec3(-gx * k, -gy * k, 1.0));
+    float ndl = max(0.0, dot(n, vec3(-0.4319, -0.5758, 0.6943)));
+    float spec = pow(max(0.0, dot(n, vec3(-0.2357, -0.3143, 0.9196))), 48.0) * edf(h + 88);
+    float fr = (1.0 - n.z) * (1.0 - n.z);
+    float clr = clamp(edf(h + 87), 0.0, 1.0);
+    float body = (1.0 - clr) + clr * min(1.0, fr * 1.2) * 0.6;
+    vec3 b = s.rgb / s.a;
+    vec3 col = (b * (0.55 + 0.6 * ndl) * body + (b * 0.5 + 0.5) * fr * 0.4 * (1.0 - 0.85 * clr) + spec) * al;
+    gLens = -n.xy * edf(h + 94) * al; // a lens: seen from towards its middle
+    return vec4(col, max(al * body, max(col.r, max(col.g, col.b))));
+}
+
 void resolveOne(uint id) {
     int n = W * H;
     int e = int(id) / n, p = int(id) - e * n;
@@ -371,6 +420,7 @@ void resolveOne(uint id) {
     uint seed = ed[h + 40];
     float T = edf(h + 41);
     vec4 c = vec4(0.0);
+    gLens = vec2(0.0);
     if (ed[h + 43] == 1u) {
         // the flame: its heat taken a little aside by rising noise, its edges eaten by more noise
         // the whirls are twice as tall as wide: long tongues
@@ -410,6 +460,8 @@ void resolveOne(uint id) {
             al *= 1.0 - edf(h + 76) * (1.0 - smoothstep(0.35, 0.75, m));
             c = vec4(s.rgb / s.a * al, al);
         }
+    } else if (ed[h + 43] == 3u) {
+        c = waterPixel(h, base, GW, GH, dv, pp, T, seed);
     } else {
         vec4 s = dv == 1 ? cellSum(base, GW, GH, x, y) : sumAt(base, GW, GH, dv, pp);
         if ((v1.w & 1) != 0) {
@@ -422,6 +474,7 @@ void resolveOne(uint id) {
             c = vec4(min(s.rgb, vec3(al)), al);
         }
     }
+    if (ed[h + 85] != 0u) { c = vec4(0.0); gLens = vec2(0.0); } // a light source: only its glow shows
     float gI = edf(h + 58);
     if (gI > 0.0) {
         vec4 g = sumAt(glowBase(e), LW, LH, GDIV, pp);
@@ -435,6 +488,7 @@ void resolveOne(uint id) {
         c.a = max(c.a, max(c.r, max(c.g, c.b)));
     }
     lay[v1.y + p] = packUnorm4x8(clamp(c, 0.0, 1.0));
+    if (ed[h + 43] == 3u && edf(h + 94) > 0.0) lay[v1.y + n + p] = packHalf2x16(gLens); // its lens, after its image
 }
 // The light at each light cell from all the sources (as effects.lightFrom)
 float lightFalloff(float d, float R, float E) {

@@ -81,10 +81,10 @@ type EmitParams struct {
 	LightFrom, LightTo       float64 // only lit between these depths (soft by LightSoft)
 	LightSoft                float64
 	// rim light: on, from (px), soft (px), width (px), gain, edge (depth step)
-	LightRim                                                bool
+	LightRim                                                          bool
 	LightRimFrom, LightRimSoft, LightRimW, LightRimGain, LightRimEdge float64
-	LightCol                 [3]float64
-	LightAdd                 bool
+	LightCol                                                          [3]float64
+	LightAdd                                                          bool
 	// Text shape: points on its letters (x, y pairs, px around its anchor, before its rotation)
 	Pts []float32
 	// Along the motion path: the path sampled (x, y, length so far: px), its length, closed
@@ -92,16 +92,28 @@ type EmitParams struct {
 	Path       []float32
 	PathLen    float32
 	PathClosed bool
+	// their own route (Path): from its start (not the emitter's place on it), moved to where
+	// they are born unless RouteFixed
+	Route, RouteFixed bool
+	RouteK            float64 // how much they follow their route (0..1): mixed with their free motion
 	// A floor (y px) they bounce on: how much speed they keep (bounce) and sideways (friction)
 	FloorOn                 bool
 	Floor, Bounce, Friction float64
+	// only its light and glow: the particles themselves are not drawn
+	Hidden bool
 	// Smoke look: soft matter torn into wisps by noise: how much, its scale (px), how fast it
 	// rises (px/s), how far it moves the smoke (px)
-	Smoke                                     bool
+	Smoke                                        bool
 	SmokeWisp, SmokeScale, SmokeSpeed, SmokeWarp float64
+	// Water look: where the liquid starts (piled up weight), how clear, its shine, how rounded
+	// (bump: px of tilt per unit of slope), ripples (px, their size px, speed px/s)
+	Water                                      bool
+	WaterTh, WaterClear, WaterShine, WaterBump float64
+	WaterRipple, WaterScale, WaterSpeed        float64
+	WaterLens                                  float64 // px: what is under it is seen bent through it
 	// What they go round in the scene: a signed distance (px; < 0 inside) on a CGW×CGH grid of
 	// CDiv px cells (nil: nothing)
-	CSDF          []float32
+	CSDF           []float32
 	CGW, CGH, CDiv int
 	CBounce        float64 // 0 slide off it; more: bounce off walls and ceilings
 }
@@ -273,6 +285,8 @@ type EmitFrame struct {
 	Births []Birth
 	I0, I1 int
 	T      float64
+	// the water's lens (DrawEmitter): where what is under each pixel is seen from, moved (x, y px; nil = none)
+	Lens []float32
 }
 
 // pcg hash (same as emit.comp)
@@ -392,7 +406,7 @@ func (e *EmitFrame) At(i int) (Particle, bool) {
 		return vx0*tt + 0.5*ax*tt*tt, vy0*tt + 0.5*ay*tt*tt, vx0 + ax*tt, vy0 + ay*tt
 	}
 	dx, dy, vx, vy := motion(age)
-	if p.Follow && len(p.Path) >= 6 {
+	if p.Follow && !p.Route && len(p.Path) >= 6 {
 		// along the path: as far as its speed takes it, the cross offset of its shape, the forces
 		along, sv := sp*age, sp
 		if k > 1e-3 {
@@ -442,6 +456,33 @@ func (e *EmitFrame) At(i int) (Particle, bool) {
 		}
 		dx, dy = x1+vx1*fr*(age-t1), fl-y0-ry
 		vx, vy = vx1*fr, -rvy
+	}
+	if p.Route && p.RouteK > 0 && len(p.Path) >= 6 {
+		// their own route, from its start (moved to where they are born unless fixed): as far
+		// along it as they would have gone free (their launch and the forces push them along it,
+		// the way they would have taken: Simpson over their speed), mixed with their free motion
+		// by RouteK
+		spd := func(t float32) float32 {
+			_, _, ux, uy := motion(t)
+			return float32(math.Hypot(float64(ux), float64(uy)))
+		}
+		hs := age / 8
+		along := spd(0) + spd(age)
+		for j := 1; j < 8; j++ {
+			along += float32(2+2*(j&1)) * spd(float32(j)*hs)
+		}
+		along *= hs / 3
+		sv := spd(age)
+		px, py, tx, ty := pathPoint(p.Path, p.PathLen, p.PathClosed, along)
+		if !p.RouteFixed {
+			px, py = px+float32(bt.X)-p.Path[0], py+float32(bt.Y)-p.Path[1]
+		}
+		px, py = px-ty*ox, py+tx*ox
+		m := float32(min(p.RouteK, 1))
+		dx += m * (px - (x0 + dx))
+		dy += m * (py - (y0 + dy))
+		vx += m * (tx*sv - vx)
+		vy += m * (ty*sv - vy)
 	}
 	// wandering: two waves per axis with random phases, zero at birth
 	if p.Turb > 0 {
@@ -567,7 +608,7 @@ type LightField struct {
 	From, To      float32 // lit between these depths, soft edge Soft
 	Soft          float32
 	// rim light: farther than RimFrom (soft RimSoft) only the edges that face it, RimW px wide
-	Rim                                     bool
+	Rim                                      bool
 	RimFrom, RimSoft, RimW, RimGain, RimEdge float32
 }
 
@@ -733,11 +774,19 @@ func DrawEmitter(e *EmitFrame, W, H int) (*image.RGBA, *LightField) {
 		wg.Wait()
 	}
 	img := image.NewRGBA(image.Rect(0, 0, W, H))
+	e.Lens = nil
+	if p.Water && p.WaterLens > 0 {
+		e.Lens = make([]float32, W*H*2)
+	}
 	parallelFor(H, func(y0, y1 int) {
 		for y := y0; y < y1; y++ {
 			for x := 0; x < W; x++ {
-				c := resolvePixel(p, float32(e.T), acc, GW, GH, div, glow, LW, LH, x, y)
+				var ln [2]float32
+				c := resolvePixel(p, float32(e.T), acc, GW, GH, div, glow, LW, LH, x, y, &ln)
 				copy(img.Pix[(y*W+x)*4:], c[:])
+				if e.Lens != nil {
+					e.Lens[(y*W+x)*2], e.Lens[(y*W+x)*2+1] = ln[0], ln[1]
+				}
 			}
 		}
 	})
@@ -862,8 +911,51 @@ func flameColor(p *EmitParams, h float32) ([3]float32, float32) {
 	return c, smooth32(0.02, 0.3, h)
 }
 
+// waterPixel: the water look at (px, py), as in emit.comp: the particles' weight piled up is a
+// height; past the threshold it is liquid, its slope a surface lit from the top left (shine), see
+// through in its body and denser at its edges (Fresnel), moved by ripples
+// (and the lens: where what is under it is seen from, moved px)
+func waterPixel(p *EmitParams, T float32, acc []uint32, GW, GH, div int, px, py float32) ([4]float32, [2]float32) {
+	sc := max(float32(p.WaterScale), 1)
+	tt := T * float32(p.WaterSpeed) / sc
+	rp := float32(p.WaterRipple)
+	qx := px + rp*(efbm(px/sc+tt, py/sc, p.Seed+31)-0.5)*2
+	qy := py + rp*(efbm(px/sc+3.7, py/sc-tt+5.3, p.Seed+31)-0.5)*2
+	s := sumAt(acc, GW, GH, div, qx, qy)
+	th := max(float32(p.WaterTh), 0.01)
+	if s[3] < th*0.7 {
+		return [4]float32{}, [2]float32{}
+	}
+	al := smooth32(th*0.8, th*1.15, s[3])
+	e := float32(max(div, 2))
+	gx := (sumAt(acc, GW, GH, div, qx+e, qy)[3] - sumAt(acc, GW, GH, div, qx-e, qy)[3]) / (2 * e)
+	gy := (sumAt(acc, GW, GH, div, qx, qy+e)[3] - sumAt(acc, GW, GH, div, qx, qy-e)[3]) / (2 * e)
+	k := float32(p.WaterBump)
+	nx, ny, nz := -gx*k, -gy*k, float32(1)
+	nl := float32(math.Sqrt(float64(nx*nx + ny*ny + nz*nz)))
+	nx, ny, nz = nx/nl, ny/nl, nz/nl
+	// the light from the top left, the eye in front
+	const lx, ly, lz = -0.4319, -0.5758, 0.6943
+	const hx, hy, hz = -0.2357, -0.3143, 0.9196 // halfway between the light and the eye
+	ndl := max(0, nx*lx+ny*ly+nz*lz)
+	spec := float32(math.Pow(float64(max(0, nx*hx+ny*hy+nz*hz)), 48)) * float32(p.WaterShine)
+	fr := float32(math.Pow(float64(1-nz), 2))
+	clear := float32(math.Min(math.Max(p.WaterClear, 0), 1))
+	body := (1 - clear) + clear*min(1, fr*1.2)*0.6 // see through its middle, denser at its edges
+	var o [4]float32
+	for j := 0; j < 3; j++ {
+		b := s[j] / s[3]
+		c := b*(0.55+0.6*ndl)*body + (b*0.5+0.5)*fr*0.4*(1-0.85*clear) + spec
+		o[j] = c * al
+	}
+	o[3] = max(al*body, max(o[0], max(o[1], o[2])))
+	// a lens: seen from towards its middle (what is behind is magnified)
+	lk := float32(p.WaterLens) * al
+	return o, [2]float32{-nx * lk, -ny * lk}
+}
+
 // resolvePixel: pixel (x, y) of the emitter's image (premultiplied RGBA8), as resolveOne in emit.comp
-func resolvePixel(p *EmitParams, T float32, acc []uint32, GW, GH, div int, glow []uint32, LW, LH, x, y int) [4]uint8 {
+func resolvePixel(p *EmitParams, T float32, acc []uint32, GW, GH, div int, glow []uint32, LW, LH, x, y int, lens *[2]float32) [4]uint8 {
 	px, py := float32(x)+0.5, float32(y)+0.5
 	var o [4]float32
 	if p.Flame {
@@ -897,6 +989,8 @@ func resolvePixel(p *EmitParams, T float32, acc []uint32, GW, GH, div int, glow 
 			al *= 1 - float32(p.SmokeWisp)*(1-smooth32(0.35, 0.75, m))
 			o = [4]float32{s[0] / s[3] * al, s[1] / s[3] * al, s[2] / s[3] * al, al}
 		}
+	} else if p.Water {
+		o, *lens = waterPixel(p, T, acc, GW, GH, div, px, py)
 	} else {
 		var s [4]float32
 		if div == 1 {
@@ -914,6 +1008,10 @@ func resolvePixel(p *EmitParams, T float32, acc []uint32, GW, GH, div int, glow 
 			al := min(1, max(A, max(R, max(G, B))))
 			o = [4]float32{min(R, al), min(G, al), min(B, al), al}
 		}
+	}
+	if p.Hidden {
+		o = [4]float32{} // a light source: only its glow shows
+		*lens = [2]float32{}
 	}
 	if p.GlowI > 0 {
 		g := sumAt(glow, LW, LH, EmitGlowDiv, px, py)

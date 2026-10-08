@@ -997,15 +997,56 @@ vec3 viewColor(vec2 q) {
 // The frame at q: background, then each overlay clip; the particles, the visualizer and the
 // texts at their stage among them (z-index)
 vec3 shade(vec2 q) {
-    vec2 p = q + 0.5;
-    parallaxPixel(q);
-    if (P.viewI.x != 0) return viewColor(q);
-    vec3 col = background(q);
     int nl = P.layerN.x;
+    // water that bends the light (a lens: an emitter's lens after its image): what is under the
+    // first one is seen from qb (as effects.refract)
+    vec2 lo = vec2(0.0);
+    int lensAt = nl + 1;
+    for (int i = 0; i < nl; i++) {
+        ivec4 inf = P.layers[i].info;
+        if ((inf.w & 8192) == 0) continue;
+        ivec2 c = ivec2(q);
+        if (c.x < 0 || c.y < 0 || c.x >= inf.y || c.y >= inf.z) continue;
+        vec2 o = unpackHalf2x16(lay[inf.x + inf.y * inf.z + c.y * inf.y + c.x]) * P.layers[i].xf2.y;
+        if (o.x != 0.0 || o.y != 0.0) {
+            lo += o;
+            lensAt = min(lensAt, i + 1);
+        }
+    }
+    vec2 qb = clamp(q + lo, vec2(0.0), vec2(float(W - 1), float(H - 1)));
+    // the scene seen here (and under the water, from qb: once per point, one call)
+    vec2 paQ = vec2(0.0), pbQ = vec2(0.0);
+    vec3 hitQ = vec3(0.0);
+    for (int k = 0; k < 2; k++) {
+        if (k == 1 && lensAt > nl) break;
+        parallaxPixel(k == 0 ? q : qb);
+        if (k == 0) {
+            paQ = gParA;
+            pbQ = gParB;
+            hitQ = gHit;
+        }
+    }
+    if (P.viewI.x != 0) {
+        gParA = paQ;
+        gParB = pbQ;
+        gHit = hitQ;
+        return viewColor(q);
+    }
+    vec2 qs = lensAt <= nl ? qb : q;
+    vec2 p = qs + 0.5;
+    vec3 col = background(qs);
     int zp = min(P.zIdx.x, nl), zv = min(P.zIdx.y, nl);
     int tmask = P.zIdx.z;
     for (int st = 0; st <= nl; st++) {
-        if (st > 0) col = drawLayer(col, st - 1, q);
+        if (st == lensAt) {
+            // the water and what is above it: here
+            qs = q;
+            p = q + 0.5;
+            gParA = paQ;
+            gParB = pbQ;
+            gHit = hitQ;
+        }
+        if (st > 0) col = drawLayer(col, st - 1, qs);
         if (zp == st) col = drawParticles(col, p);
         if (zv == st) col = drawViz(col, p);
         // texts of this stage (those set beyond the clips drawn go with the last stage)

@@ -56,7 +56,7 @@ type LayerFrame struct {
 	// an emitter that goes round the scene: on, its depth, the band, where it is born x, y, the
 	// free radius around it (the studio's view of what it goes round)
 	Solid [6]float32
-	Scene             *Scene
+	Scene *Scene
 }
 
 // screenToImage: position in the clip's image (px, fractional) of the screen point p
@@ -245,6 +245,9 @@ func blendColor(mode int, dst, src [3]float64) [3]float64 {
 // DrawLayer composites the clip onto the frame (CPU render)
 func DrawLayer(dst *image.RGBA, l *LayerFrame) {
 	W, H := dst.Bounds().Dx(), dst.Bounds().Dy()
+	if l.Emit != nil && l.Emit.Lens != nil {
+		refract(dst, l.Emit.Lens, float32(l.Opacity))
+	}
 	parallelFor(H, func(y0, y1 int) {
 		for y := y0; y < y1; y++ {
 			for x := 0; x < W; x++ {
@@ -285,6 +288,35 @@ func DrawLayer(dst *image.RGBA, l *LayerFrame) {
 				b := blendColor(l.Blend, d, c)
 				for i := 0; i < 3; i++ {
 					dst.Pix[o+i] = uint8(math.Max(0, math.Min(255, (d[i]+(b[i]-d[i])*a)*255+0.5)))
+				}
+			}
+		}
+	})
+}
+
+// refract: water that bends the light (a lens): what is under each pixel is seen from where its
+// lens says (x, y px per pixel, times k), as render.comp does before drawing what is above it
+func refract(dst *image.RGBA, lens []float32, k float32) {
+	W, H := dst.Bounds().Dx(), dst.Bounds().Dy()
+	src := append([]uint8(nil), dst.Pix...)
+	parallelFor(H, func(y0, y1 int) {
+		for y := y0; y < y1; y++ {
+			for x := 0; x < W; x++ {
+				ox, oy := lens[(y*W+x)*2]*k, lens[(y*W+x)*2+1]*k
+				if ox == 0 && oy == 0 {
+					continue
+				}
+				fx := max(0, min(float32(W-1), float32(x)+ox))
+				fy := max(0, min(float32(H-1), float32(y)+oy))
+				x0, y0 := int(fx), int(fy)
+				x1, y1 := min(x0+1, W-1), min(y0+1, H-1)
+				ax, ay := fx-float32(x0), fy-float32(y0)
+				o := y*dst.Stride + x*4
+				for j := 0; j < 3; j++ {
+					p := func(xx, yy int) float32 { return float32(src[yy*dst.Stride+xx*4+j]) }
+					a := p(x0, y0) + (p(x1, y0)-p(x0, y0))*ax
+					b := p(x0, y1) + (p(x1, y1)-p(x0, y1))*ax
+					dst.Pix[o+j] = uint8(max(0, min(255, a+(b-a)*ay+0.5)))
 				}
 			}
 		}

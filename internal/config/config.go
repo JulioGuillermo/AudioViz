@@ -144,6 +144,9 @@ type ParallaxConfig struct {
 	Dolly   float64 `yaml:"dolly"` // moving in: what is near grows more than what is far (0 … 0.3)
 	Focus   float64 `yaml:"focus"` // the depth that stays still: 0 far … 1 near
 	ReactTo string  `yaml:"react_to"`
+	// sway and still: how much the music (ReactTo) pushes it further, 0 … 1 (1: up to twice
+	// its movement and its moving in on the hits)
+	React float64 `yaml:"react,omitempty"`
 }
 
 type BassZoomConfig struct {

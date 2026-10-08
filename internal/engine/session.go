@@ -658,6 +658,11 @@ func parallaxOf(c *config.ParallaxConfig, t float64, feat *audio.FrameFeatures) 
 		my += 0.45*math.Sin(tt*0.31+1.1) + 0.1*math.Sin(tt*0.9+2)
 		dolly *= 0.5 + 0.5*math.Sin(tt*0.23)
 	}
+	if c.Motion != "beat" && c.React > 0 {
+		// the music pushes it further
+		k := 1 + math.Min(c.React, 1)*feat.Band(c.ReactTo, "bass")
+		mx, my, dolly = mx*k, my*k, dolly*k
+	}
 	return effects.Parallax{SX: -mx * c.Amount, SY: -my * c.Amount, Dolly: dolly, Focus: c.Focus}
 }
 
