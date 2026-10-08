@@ -58,7 +58,7 @@ func contrastFactor(contrast float64) float64 {
 
 // layersAt resolves the overlay clips visible at t, bottom to top, and the stack position of each
 // (its layer's index + 1), to place the visualizer, particles and texts among them
-func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx frameFX, glitchAmt float64) ([]effects.LayerFrame, []int, error) {
+func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx frameFX, glitchAmt float64, scene *effects.Scene) ([]effects.LayerFrame, []int, error) {
 	feat := &feats[idx]
 	nEmit := 0
 	var out []effects.LayerFrame
@@ -112,6 +112,25 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx f
 				lf.W = s.clipWarp(&c.Effects, bg, t, idx, li, feat, minDim)
 				if len(c.Masks) > 0 {
 					lf.Mask, lf.MaskVer = s.maskFor(c.Masks, s.W, s.H)
+				}
+				// where it is in the scene's depth: its origin now
+				ox, oy := W/2, H/2
+				if n := len(ef.Births); n > 0 {
+					ox, oy = ef.Births[n-1].X, ef.Births[n-1].Y
+				}
+				z, ok := clipDepth(&c.Depth, scene, ox, oy)
+				s.placeInDepth(&lf, &c.Depth, scene, z, ok)
+				if P := &ef.P; P.LightOn && scene.On() {
+					// its light in 2.5D: from its origin, at its depth (the scene's there when it has none)
+					if !ok {
+						z = float64(scene.At(float32(ox), float32(oy)))
+					}
+					e := c.Emitter
+					P.LightD3, P.LightCX, P.LightCY, P.LightZ = true, ox, oy, z
+					if e != nil {
+						P.LightDepthK, P.LightShade = e.Light.Depth, e.Light.Shade
+						P.LightFrom, P.LightTo, P.LightSoft = e.Light.From, e.Light.To, e.Light.RangeSoft
+					}
 				}
 				out = append(out, lf)
 				stack = append(stack, li+1)
@@ -178,6 +197,8 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx f
 			if len(c.Masks) > 0 {
 				lf.Mask, lf.MaskVer = s.maskFor(c.Masks, int(tw), int(th))
 			}
+			z, ok := clipDepth(&c.Depth, scene, cx, cy)
+			s.placeInDepth(&lf, &c.Depth, scene, z, ok)
 			out = append(out, lf)
 			stack = append(stack, li+1)
 		}
@@ -300,7 +321,18 @@ func (s *Session) LayerPixels() int {
 		cur += e.d
 		best = max(best, cur)
 	}
-	return best + s.textMaskWords() + s.emitterWords()
+	return best + s.textMaskWords() + s.emitterWords() + s.depthWords()
+}
+
+// depthWords: room for the depth of the backgrounds A and B (16 bits per pixel) when some
+// segment has a depth map
+func (s *Session) depthWords() int {
+	for _, sg := range s.Cfg.Timeline.Background {
+		if d := sg.Cfg.Depth.Source; d != "" && d != "none" {
+			return 2 * ((s.W*s.H + 1) / 2)
+		}
+	}
+	return 0
 }
 
 // emitterWords: room for the images of the emitters (one frame each, and its mask)
@@ -399,4 +431,25 @@ func loadMaskFile(path string) image.Image {
 		return nil
 	}
 	return img
+}
+
+// clipDepth: the depth of a clip at (x, y) of the frame (ok = false if it has none)
+func clipDepth(d *config.ClipDepth, scene *effects.Scene, x, y float64) (float64, bool) {
+	switch d.Mode {
+	case "fixed":
+		return d.Z, true
+	case "auto":
+		if scene.On() {
+			return float64(scene.At(float32(x), float32(y))) + d.Z, true
+		}
+	}
+	return 0, false
+}
+
+// placeInDepth: a clip at depth z is hidden where the scene is nearer (if it asks to)
+func (s *Session) placeInDepth(lf *effects.LayerFrame, d *config.ClipDepth, scene *effects.Scene, z float64, ok bool) {
+	lf.Scene = scene
+	if ok && d.Behind && scene.On() {
+		lf.Behind, lf.DepthZ, lf.DepthSoft = true, float32(z), float32(math.Max(d.Soft, 0.005))
+	}
 }

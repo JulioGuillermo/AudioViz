@@ -70,6 +70,8 @@ type ClipConfig struct {
 	Motion Motion `yaml:"motion,omitempty"`
 	// Particles (clips of an emitter layer; Path is not used)
 	Emitter *EmitterConfig `yaml:"emitter,omitempty"`
+	// Where it is in the depth of the scene (with a background that has a depth map)
+	Depth ClipDepth `yaml:"depth,omitempty"`
 	// Keyframes (times from Start): any of the numbers and colors above, e.g. x, scale, opacity
 	Keys Keys `yaml:"keys,omitempty"`
 }
@@ -108,6 +110,17 @@ type Motion struct {
 
 // On: it has a path to follow
 func (m *Motion) On() bool { return m.Path != nil && len(m.Path.Points) >= 2 }
+
+// ClipDepth places a clip (or an emitter) in the depth of the scene, which needs a background
+// with a depth map (config.DepthConfig): its depth is fixed (Z: 0 far … 1 near) or "auto" (the
+// scene's depth where it is, plus Z); Behind hides it where the scene is nearer than it (it goes
+// behind what is in front), with a soft edge
+type ClipDepth struct {
+	Mode   string  `yaml:"mode,omitempty"` // off (default), fixed, auto
+	Z      float64 `yaml:"z"`
+	Behind bool    `yaml:"behind"`
+	Soft   float64 `yaml:"soft"` // depth units (0..1)
+}
 
 // ChromaKey makes a color (green screen) transparent
 type ChromaKey struct {

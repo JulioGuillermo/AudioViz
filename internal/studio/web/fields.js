@@ -2,6 +2,7 @@ import { html, useState, Component } from './vendor/preact-htm.js';
 import { basename, splitHex, joinHex, gradientCSS, clone } from './util.js';
 import { Icon } from './icons.js';
 import { t } from './i18n.js';
+import { createStore } from './store.js';
 import { openMenu } from './menu.js';
 import { animatable, valueAt, keyIndexAt } from './keys.js';
 
@@ -84,9 +85,28 @@ export function Edit({ tag = 'input', value, onKeyDown, ...rest }) {
     }} />`;
 }
 
+// The field being adjusted right now, for the ones that show something while they are
+// (f.adjust: e.g. 'lightrange' shows the depth a light reaches): { kind } or null
+export const adjusting = createStore(null);
+
 function Row({ f, children, dia }) {
   const btn = dia && dia !== 'gap';
-  return html`<div class=${'fld' + (dia ? ' kfable' : '')}>
+  // f.adjust: say so while the pointer is down on it or it has the focus
+  const adj = f.adjust ? {
+    onPointerDown: () => {
+      adjusting.set({ kind: f.adjust });
+      // released: back to normal, unless typing a number in it
+      const up = () => {
+        removeEventListener('pointerup', up);
+        const el = document.activeElement;
+        if (!(el && el.closest('.fld.adjust') && el.tagName === 'INPUT' && el.type !== 'range')) adjusting.set(null);
+      };
+      addEventListener('pointerup', up);
+    },
+    onFocusIn: (e) => { if (e.target.type !== 'range') adjusting.set({ kind: f.adjust }); },
+    onFocusOut: (e) => { if (e.target.type !== 'range') adjusting.set(null); },
+  } : {};
+  return html`<div class=${'fld' + (dia ? ' kfable' : '') + (f.adjust ? ' adjust' : '')} ...${adj}>
     <label title=${f.help ? t(f.help) : ''} for=${btn ? 'kf-none' : undefined}>${btn && dia}${t(f.label)}</label>
     <div class="ctl">${children}</div>
     ${f.help && html`<div class="help">${t(f.help)}</div>`}

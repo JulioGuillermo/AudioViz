@@ -288,6 +288,15 @@ const layerEffect = (key, label) => ({ key, label, type: 'group', fields: [
 ] });
 export const BLENDS = [['normal', 'Normal'], ['add', 'Add (light)'], ['multiply', 'Multiply (darken)'], ['screen', 'Screen'],
   ['overlay', 'Overlay'], ['lighten', 'Lighten'], ['darken', 'Darken']];
+const CLIP_DEPTH = { key: 'depth', label: 'Depth', type: 'group', fields: [
+  { key: 'mode', label: 'Its depth', type: 'enum', def: 'off', anim: false, options: [['off', 'None'],
+    ['fixed', 'Fixed'], ['auto', 'Auto: the scene\'s, where it is']], help: 'Needs a background with a depth map (Image / video → Depth)' },
+  { key: 'z', label: 'Depth (0 far, 1 near)', type: 'num', min: 0, max: 1, step: 0.005, showIf: (c) => c.mode === 'fixed' },
+  { key: 'z', label: 'Nearer / farther than the scene', type: 'num', min: -0.5, max: 0.5, step: 0.005, showIf: (c) => c.mode === 'auto' },
+  { key: 'behind', label: 'Behind what is nearer', type: 'bool', anim: false, showIf: (c) => c.mode === 'fixed' || c.mode === 'auto',
+    help: 'Hidden where the scene is nearer than it (it goes behind things)' },
+  { key: 'soft', label: 'Soft edge', type: 'num', min: 0, max: 0.3, step: 0.005, showIf: (c) => c.behind && c.mode && c.mode !== 'off' },
+] };
 export const CLIP_FIELDS = [
   { key: 'path', label: 'File', type: 'file', kind: 'bg', help: 'Image (PNG / WebP with transparency), GIF or video' },
   { key: 'fit', label: 'Base size', type: 'enum', def: 'contain', anim: false, options: [['contain', 'Inside the frame'],
@@ -306,6 +315,7 @@ export const CLIP_FIELDS = [
     { key: 'fade_out', label: 'Fade out (s)', type: 'num', min: 0, max: 10, step: 0.05, anim: false },
     { key: 'blend', label: 'Blend', type: 'enum', def: 'normal', options: BLENDS },
   ]),
+  CLIP_DEPTH,
   { key: 'filters', label: 'Filters', type: 'section', fields: [
     { key: 'brightness', label: 'Brightness', type: 'num', min: -1, max: 1, step: 0.01 },
     { key: 'contrast', label: 'Contrast', type: 'num', min: -1, max: 1, step: 0.01 },
@@ -407,6 +417,16 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
     { key: 'mode', label: 'How it lights', type: 'enum', def: 'soft', anim: false, showIf: (c) => c.enabled,
       options: [['soft', 'Soft (lights and tints what is there)'], ['add', 'Add (brighter, like neon)']] },
     { key: 'flicker', label: 'Flicker', type: 'num', min: 0, max: 1, step: 0.01, showIf: (c) => c.enabled },
+    { key: 'depth', label: 'Fades with depth', type: 'num', min: 0, max: 10, step: 0.1, showIf: (c) => c.enabled,
+      help: 'With a background that has depth: how fast it fades away from its own depth (0 = flat, as in 2D)' },
+    { key: 'shade', label: 'Surfaces shading', type: 'num', min: 0, max: 1, step: 0.01, showIf: (c) => c.enabled,
+      help: 'With depth: the side of the surfaces that faces it gets more light' },
+    { key: 'from', label: 'Lights from (near)', type: 'num', min: 0, max: 1, step: 0.005, def: 1, showIf: (c) => c.enabled, adjust: 'lightrange',
+      help: 'With depth: what is nearer than this is in front of it and is not lit (1 = white in the depth map, the nearest)' },
+    { key: 'to', label: 'Lights up to (far)', type: 'num', min: 0, max: 1, step: 0.005, def: 0, showIf: (c) => c.enabled, adjust: 'lightrange',
+      help: 'What is farther than this is too far and is not lit (0 = black in the depth map, the farthest)' },
+    { key: 'range_soft', label: 'Soft edge of that', type: 'num', min: 0, max: 0.5, step: 0.005, def: 0.05, showIf: (c) => c.enabled, adjust: 'lightrange',
+      help: 'While you adjust these three, the preview shows the depth map with what is not lit in black' },
   ] },
   { key: 'glow', label: 'Glow', type: 'group', fields: [
     { key: 'intensity', label: 'Strength', type: 'num', min: 0, max: 4, step: 0.01, help: '0 = no glow' },
@@ -434,6 +454,7 @@ export const EMITTER_CLIP_FIELDS = [
     { key: 'fade_out', label: 'Fade out (s)', type: 'num', min: 0, max: 10, step: 0.05, anim: false },
     { key: 'blend', label: 'Blend', type: 'enum', def: 'normal', options: BLENDS },
   ]),
+  CLIP_DEPTH,
   // the emitter block, one folding group per part (each edits clip.emitter, or a block inside it)
   ...EMITTER_BLOCK.fields.flatMap((f) => {
     if (f.type !== 'section') return [{ ...f, key: 'emitter.' + f.key, id: 'em_' + f.key }];

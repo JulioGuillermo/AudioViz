@@ -32,6 +32,10 @@ func main() {
 		runImage(os.Args[2:])
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "depth" {
+		runDepth(os.Args[2:])
+		return
+	}
 	var (
 		flagOutput   string
 		flagAudio    string

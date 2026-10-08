@@ -9,6 +9,7 @@ and lossless FLAC audio inside an MP4.
 - **[Generating images](images.md)**: backgrounds from a prompt, or editing images, with AI inside the binary (Z-Image, FLUX.2 klein, Qwen Image)
 - [Timeline in the YAML](timeline.md): change effects, background, visualizer or lyrics in each section; keyframes
 - **[Overlay layers](layers.md)**: images, GIFs and videos over the background, with blend modes, chroma key, filters and their own effects
+- **[Depth](depth.md)**: depth maps of the backgrounds (AI on the GPU): 2.5D light, things behind what is nearer
 - **[Particle emitters](emitters.md)**: fire, sparks, smoke, dust, lights, explosions, snow, on the GPU and driven by the music
 - [Command line](cli.md) — rendering, previews, single frames, GPU selection
 - [Building](build.md)

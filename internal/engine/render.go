@@ -157,6 +157,19 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 	buf := g.LayerData(slot)
 	var vers []string
 	off := 0
+	// first the depth of the backgrounds A and B (a byte per pixel), then the clips
+	dw := (r.s.W*r.s.H + 1) / 2 // 16 bits per pixel
+	p.DepthI = [4]int32{}
+	var depths [2][]uint16
+	for k, d := range [2][]uint16{fs.DepthA, fs.DepthB} {
+		if d != nil && off+dw <= g.LayerWords {
+			depths[k] = d
+			p.DepthI[k] = int32(off)
+			p.DepthI[2] |= 1 << k
+			off += dw
+		}
+	}
+	vers = append(vers, "dA"+fs.VerDA, "dB"+fs.VerDB)
 	type emitAt struct {
 		e   *effects.EmitFrame
 		off int
@@ -199,6 +212,10 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		}
 		lp.Info = [4]int32{int32(off), int32(iw), int32(ih), flags}
 		lp.Light0, lp.Light1 = [4]int32{}, [4]float32{}
+		lp.Depth, lp.Light2, lp.Light3 = [4]float32{}, [4]float32{}, [4]float32{}
+		if l.Behind {
+			lp.Depth = [4]float32{1, l.DepthZ, l.DepthSoft}
+		}
 		if l.Emit != nil {
 			if P := &l.Emit.P; P.LightOn {
 				// its light field, made by the emitter pass (k-th accumulation)
@@ -210,6 +227,11 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 				}
 				lp.Light0 = [4]int32{int32(len(emits)*stride + field), int32(xw), int32(xh), mode}
 				lp.Light1 = [4]float32{float32(P.LightCol[0]), float32(P.LightCol[1]), float32(P.LightCol[2])}
+				if P.LightD3 {
+					lp.Light2 = [4]float32{float32(P.LightCX), float32(P.LightCY), float32(P.LightZ), float32(P.LightDepthK)}
+					lp.Light3 = [4]float32{float32(P.LightShade), 1, float32(P.LightFrom), float32(P.LightTo)}
+					lp.Light1[3] = float32(P.LightSoft)
+				}
 			}
 			emits = append(emits, emitAt{l.Emit, off})
 		}
@@ -252,6 +274,15 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 	}
 	if !slices.Equal(vers, r.layerVer[slot]) {
 		off = 0
+		for _, d := range depths {
+			if d != nil {
+				b := buf[off*4:]
+				for i, v := range d {
+					b[2*i], b[2*i+1] = byte(v), byte(v>>8)
+				}
+				off += dw
+			}
+		}
 		for i := 0; i < n; i++ {
 			l := &fs.Layers[i]
 			if l.Emit != nil {

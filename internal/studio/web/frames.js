@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from './vendor/preact-htm.js';
 // requested ahead by the measured latency with several in flight; when still, the exact frame
 // (one request at a time). Returns { ms, fps } for the info line. Shared by the preview and the
 // editor.
-export function useFrameStream(canvas, { meta, time, scale, rev, playing }) {
+export function useFrameStream(canvas, { meta, time, scale, rev, playing, view = '' }) {
   // inflight: requests in progress; lat: average latency (ms); shownF: last drawn frame
   const st = useRef({ inflight: 0, lat: 40, shownKey: null, shownF: -1, shownSeq: 0, seq: 0, lastReq: '', lastT: 0 });
   const [info, setInfo] = useState({ ms: 0, fps: 0, layers: [], texts: [] });
@@ -26,7 +26,7 @@ export function useFrameStream(canvas, { meta, time, scale, rev, playing }) {
     s.inflight++;
     s.lastReq = key;
     const t0 = performance.now();
-    fetch(`/api/frame?f=${f}&scale=${scale}`)
+    fetch(`/api/frame?f=${f}&scale=${scale}${view ? '&view=' + view : ''}`)
       .then((r) => {
         if (!r.ok) throw new Error(r.statusText);
         const xl = r.headers.get('X-Layers'), xt = r.headers.get('X-Texts');
@@ -58,12 +58,12 @@ export function useFrameStream(canvas, { meta, time, scale, rev, playing }) {
     if (playing) {
       // Request ahead by the measured latency, with several requests in flight
       const f = Math.min(meta.frames - 1, Math.round((time + s.lat / 1000) * fps));
-      const key = `${f}|${scale}|${rev}`;
+      const key = `${f}|${scale}|${rev}|${view}`;
       if (s.inflight < 3 && key !== s.lastReq && f > s.shownF) request(f, key);
       return;
     }
     const f = Math.min(meta.frames - 1, Math.max(0, Math.round(time * fps)));
-    const key = `${f}|${scale}|${rev}`;
+    const key = `${f}|${scale}|${rev}|${view}`;
     if (key === s.shownKey) return;
     if (s.inflight === 0) { request(f, key); return; }
     // One in progress: retry when it finishes
@@ -71,7 +71,7 @@ export function useFrameStream(canvas, { meta, time, scale, rev, playing }) {
       if (st.current.inflight === 0) { clearInterval(id); if (st.current.shownKey !== key) request(f, key); }
     }, 15);
     return () => clearInterval(id);
-  }, [time, scale, rev, meta.frames, playing]);
+  }, [time, scale, rev, meta.frames, playing, view]);
 
   useEffect(() => { if (!playing) st.current.shownF = -1; }, [playing]);
   return info;

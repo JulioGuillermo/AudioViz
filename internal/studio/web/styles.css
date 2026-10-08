@@ -591,3 +591,6 @@ a.btn { text-decoration: none; }
 .emitbox .eb-reach { position: absolute; border-radius: 50%; background: #ffc864; border: 1px solid rgba(0, 0, 0, .6); cursor: ew-resize; pointer-events: auto; }
 .emitbox .eb-val { position: absolute; left: 120%; top: -4px; white-space: nowrap; font-size: 11px; color: #fff; background: rgba(0, 0, 0, .7); padding: 1px 5px; border-radius: 4px; }
 .emitbox .eb-reach.far { background: rgba(255, 200, 100, .45); }
+.depth-box { margin-top: 6px; }
+.depth-img { display: block; width: 100%; border-radius: 6px; border: 1px solid var(--line, rgba(255,255,255,.1)); background: #000; }
+.depth-none { padding: 18px; text-align: center; border: 1px dashed rgba(255, 255, 255, .15); border-radius: 6px; font-size: 12px; }

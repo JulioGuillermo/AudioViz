@@ -25,6 +25,9 @@ struct LayerP {
     ivec4 mask;    // offset (words; one byte per mask px), width, height, on
     ivec4 light0;  // emitter light: field offset (words, in the emitter accumulations), grid w, h, mode (0 off, 1 soft, 2 add)
     vec4 light1;   // its color × strength
+    vec4 depth;    // behind what is nearer: on, its depth, soft edge
+    vec4 light2;   // 2.5D light: where it is x, y (px), its depth, fade by depth
+    vec4 light3;   // shading of the surfaces, 2.5D on, lit from, to (soft edge in light1.w)
 };
 
 // One entry of the per-frame text style table (lyrics = 0, fixed texts after)
@@ -89,6 +92,7 @@ layout(std430, set = 0, binding = 0) readonly buffer Params {
     ivec4 layerN;
     ivec4 zIdx;
     vec4 fxFlash;
+    ivec4 depthI;  // backgrounds' depth in lay: word offsets of A, B; which are there (bit 0 A, bit 1 B)
     LayerP layers[MAX_LAYERS];
 } P;
 

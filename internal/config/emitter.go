@@ -86,6 +86,15 @@ type EmitLight struct {
 	Color     string  `yaml:"color"`
 	Mode      string  `yaml:"mode"`
 	Flicker   float64 `yaml:"flicker"`
+	// With a background that has depth: how fast it fades with the difference of depth (0 = not
+	// at all, flat as in 2D) and how much the surfaces are shaded by where they face (0..1)
+	Depth float64 `yaml:"depth"`
+	Shade float64 `yaml:"shade"`
+	// With depth: it only lights from From (what is nearer is in front of it) to To (what is
+	// farther is too far), 0 = the farthest of the scene … 1 = the nearest, with a soft edge
+	From      float64 `yaml:"from"`
+	To        float64 `yaml:"to"`
+	RangeSoft float64 `yaml:"range_soft"`
 }
 
 // FlameLook: the colors of the flame from cool (its edges) to hot (its core), how fast it gets
@@ -196,7 +205,7 @@ func init() {
 			e.Look = "plain"
 		}
 		if e.Light.Reach == 0 {
-			e.Light = EmitLight{Intensity: 0.8, Reach: 450, Mode: "soft", Flicker: 0.25}
+			e.Light = EmitLight{Intensity: 0.8, Reach: 450, Mode: "soft", Flicker: 0.25, Depth: 2.5, Shade: 0.6, From: 1, To: 0, RangeSoft: 0.05}
 			if k == "fire" || k == "fire_real" || k == "explosion" {
 				e.Light.Enabled = true
 			}

@@ -63,8 +63,14 @@ type EmitParams struct {
 	LightOn  bool
 	LightR   float64
 	LightEnd float64 // px where it is gone (fades out from 60 % of it)
-	LightCol [3]float64
-	LightAdd bool
+	// 2.5D light (see LightField): on, where it is (px), its depth, fade by depth, shading
+	LightD3                  bool
+	LightCX, LightCY, LightZ float64
+	LightDepthK, LightShade  float64
+	LightFrom, LightTo       float64 // only lit between these depths (soft by LightSoft)
+	LightSoft                float64
+	LightCol                 [3]float64
+	LightAdd                 bool
 }
 
 // EmitFrame is one emitter on screen at time T: its settings, the births that can still be
@@ -290,6 +296,45 @@ type LightField struct {
 	V      []float32
 	Col    [3]float32
 	Add    bool
+	// 2.5D (a background with depth): where the light is (px) and its depth, how fast it fades
+	// with the difference of depth, how much the surfaces are shaded by where they face
+	D3            bool
+	CX, CY, LZ    float32
+	DepthK, Shade float32
+	From, To      float32 // lit between these depths, soft edge Soft
+	Soft          float32
+}
+
+// LightRange: how much a point at depth z is inside the lit range [to, from] (soft edges), as
+// lightRange in render.comp
+func LightRange(z, from, to, soft float32) float32 {
+	e := max(soft, 1e-4)
+	return smooth32(to-e, to+e, z) * (1 - smooth32(from-e, from+e, z))
+}
+
+// DepthZ: depth units → px, to compare depths with distances on the frame (the scene is about
+// this deep)
+const DepthPx = 800
+
+// DepthFactor: how much of the light reaches frame pixel (x, y) given the scene's depth there
+// (as lightDepth in render.comp): less with the difference of depth, and the surface's side that
+// faces the light gets more (its normal from the depth's slope)
+func (l *LightField) DepthFactor(s *Scene, x, y int) float32 {
+	qx, qy := float32(x), float32(y)
+	zp := s.At(qx, qy)
+	dz := (zp - l.LZ) * l.DepthK
+	f := float32(math.Exp(float64(-dz*dz))) * LightRange(zp, l.From, l.To, l.Soft)
+	if l.Shade > 0 {
+		gx := (s.At(qx+2, qy) - s.At(qx-2, qy)) / 4 * DepthPx
+		gy := (s.At(qx, qy+2) - s.At(qx, qy-2)) / 4 * DepthPx
+		nx, ny, nz := -gx, -gy, float32(1)
+		nl := float32(math.Sqrt(float64(nx*nx + ny*ny + nz*nz)))
+		lx, ly, lz := l.CX-qx, l.CY-qy, (l.LZ-zp)*DepthPx
+		ll := float32(math.Sqrt(float64(lx*lx+ly*ly+lz*lz))) + 1e-3
+		lam := max(0, (nx*lx+ny*ly+nz*lz)/(nl*ll))
+		f *= 1 - l.Shade + l.Shade*(0.3+1.1*lam)
+	}
+	return f
 }
 
 // lightFalloff: how much of a source's light reaches a distance d (px) for a reach R, gone at E
@@ -408,7 +453,10 @@ func DrawEmitter(e *EmitFrame, W, H int) (*image.RGBA, *LightField) {
 		return img, nil
 	}
 	lf := &LightField{GW: XW, GH: XH, V: lightFrom(src, XW, XH, float32(max(p.LightR, 1)), float32(max(p.LightEnd, 1))), Add: p.LightAdd,
-		Col: [3]float32{float32(p.LightCol[0]), float32(p.LightCol[1]), float32(p.LightCol[2])}}
+		Col: [3]float32{float32(p.LightCol[0]), float32(p.LightCol[1]), float32(p.LightCol[2])},
+		D3:  p.LightD3, CX: float32(p.LightCX), CY: float32(p.LightCY), LZ: float32(p.LightZ),
+		DepthK: float32(p.LightDepthK), Shade: float32(p.LightShade),
+		From: float32(p.LightFrom), To: float32(p.LightTo), Soft: float32(p.LightSoft)}
 	return img, lf
 }
 

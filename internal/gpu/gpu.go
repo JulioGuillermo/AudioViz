@@ -133,7 +133,10 @@ type Params struct {
 	LayerN  [4]int32
 	ZIdx    [4]int32
 	FxFlash [4]float32
-	Layers  [MaxLayers]LayerP
+	// Depth of the backgrounds A and B (16 bits per pixel, 65535 = near) in the overlay buffer:
+	// word offsets of A and B, which are there (bit 0 A, bit 1 B)
+	DepthI [4]int32
+	Layers [MaxLayers]LayerP
 }
 
 // MaxLayers: overlay clips drawn at once
@@ -156,6 +159,12 @@ type LayerP struct {
 	// accumulations, words), grid width, height, mode (0 off, 1 soft, 2 add); its color
 	Light0 [4]int32
 	Light1 [4]float32
+	// Depth: hidden where the scene is nearer (on, its depth, soft edge); its light in 2.5D
+	// (where it is x, y, its depth, fade by depth) and (shading, 2.5D on, lit from, to; the soft
+	// edge of that in Light1[3])
+	Depth  [4]float32
+	Light2 [4]float32
+	Light3 [4]float32
 }
 
 // TextStyle mirrors 'TStyle' in render.comp: one entry of the per-frame text style table

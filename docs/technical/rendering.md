@@ -325,6 +325,21 @@ unpremultiply, key alpha = smoothstep(tol, tol + soft, |rgb − key|), brightnes
 saturation / hue (rotation about the gray axis), flash (contrast factor, brightness), blend mode,
 `mix(frame, blended, alpha·key·opacity)`.
 
+Depth (`config.DepthConfig`, `internal/depth`, `engine/depth.go`, `effects/scene.go`): the map of
+a background is made by depth-anything.cpp (Depth Anything 3, built on the same ggml as
+stable-diffusion.cpp and whisper.cpp; `da_capi_depth_dense`: DA3's own resize, ~504 px long side, or for more detail the image resized
+to 1008 / 1512 px — sides multiples of 14 — through `da_capi_depth_path`, which works at the size
+it is given; then a joint bilateral upsampling guided by the image's colors), by the brightness, or read from a
+file; nearness 0..1, kept as a 16-bit PNG in `cache/depth` (key: file, size, date, source, model).
+The session fits it to the frame like its image (`fitDepth`, 16 bits per pixel) for the segments
+A and B; the GPU gets them first in `LAYERS` (`Params.depthI`) and `sceneDepth(q)` samples them
+through the background's ripple, zoom, shake, layer transform (motion) and transition (B from
+halfway), as `effects.Scene.At` on the CPU. Uses: a clip with `depth.behind` multiplies its alpha by
+1 − smoothstep(z − soft, z + soft, sceneDepth) (`LayerP.depth`); an emitter's light is multiplied by
+`lightDepth`: e^(−((zp − zl)·k)²) and a shading 1 − s + s·(0.3 + 1.1·max(0, n·l)), the normal from
+the depth's slope and the light's direction with depths scaled by 800 px, times the lit range
+smoothstep(to ± soft) · (1 − smoothstep(from ± soft)) (`LayerP.light2/3`, soft in `light1.w`).
+
 Particle emitters (`config.EmitterConfig`, `effects/emit.go`, `engine/emitters.go`,
 `shaders/emit.comp`): stateless. Per clip the session builds once a **table of births** (one entry
 per frame: cumulative count N, origin and rotation from the clip's keys / motion path, the music's

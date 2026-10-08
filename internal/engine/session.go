@@ -38,7 +38,8 @@ type Session struct {
 	// layerMedia: the files of the overlay clips (layers.go); masks: their combined masks
 	layerMedia map[string]*layerMedia
 	masks      map[string]maskEntry
-	emitTabs   map[string]*emitTable // births of the emitter clips (emitters.go)
+	emitTabs   map[string]*emitTable  // births of the emitter clips (emitters.go)
+	depths     map[string]*depthEntry // depth maps of the backgrounds, fitted to the frame (depth.go)
 	maskSeq    int
 	lyr        *lyrics.Multi
 	lyrKey     string
@@ -267,8 +268,11 @@ type FrameState struct {
 	// Background images: A always (the previous one during a transition), B the new one during
 	// a transition. Ver* identifies the image so it isn't re-uploaded to the GPU if unchanged.
 	// Layer* place each image (segment motion); Trans says how B replaces A.
-	BgA, BgB       *image.RGBA
-	VerA, VerB     string
+	BgA, BgB   *image.RGBA
+	VerA, VerB string
+	// Depth of the backgrounds A and B (fitted to the frame, 16-bit nearness; nil = none)
+	DepthA, DepthB []uint16
+	VerDA, VerDB   string
 	LayerA, LayerB effects.Layer
 	Trans          effects.Trans
 	GlitchAmount   float64
@@ -283,6 +287,8 @@ type FrameState struct {
 	// The texts on screen (lyrics and fixed texts) and their styles, with their masks made
 	TextItems  []lyrics.Item
 	TextStyles []lyrics.Style
+	// The depth of the frame (backgrounds with a depth map; nil without)
+	Scene *effects.Scene
 
 	// Overlay clips on screen, bottom to top, and where the fixed elements go among them: stage
 	// k = right above the k-th of them (0 = above the background; len(Layers) = above all)
@@ -338,6 +344,7 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 		img, ver := ra.FrameAt(t - tl.Background[bi].At)
 		fs.BgA, fs.VerA = img, fmt.Sprintf("%p:%d", ra, ver)
 	}
+	fs.DepthA, fs.VerDA = s.depthFor(cbg)
 	fs.LayerA = s.motionAt(bi, t)
 	fs.Trans = effects.Trans{HasA: fs.BgA != nil}
 	if k < 1 {
@@ -347,6 +354,8 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 		}
 		fs.BgB, fs.VerB, fs.LayerB = fs.BgA, fs.VerA, fs.LayerA
 		fs.BgA, fs.VerA = nil, ""
+		fs.DepthB, fs.VerDB = fs.DepthA, fs.VerDA
+		fs.DepthA, fs.VerDA = s.depthFor(pbg)
 		if rb != nil {
 			img, ver := rb.FrameAt(t - tl.Background[bi-1].At)
 			fs.BgA, fs.VerA = img, fmt.Sprintf("%p:%d", rb, ver)
@@ -413,8 +422,14 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 	}
 
 	// Overlay layers, and the place of the visualizer, particles and lyrics among them
+	if fs.DepthA != nil || fs.DepthB != nil {
+		fx := fs.FX
+		fs.Scene = &effects.Scene{A: fs.DepthA, B: fs.DepthB, LA: fs.LayerA, LB: fs.LayerB, K: fs.Trans.K,
+			Zoom: fx.zoom, ShakeX: fx.shakeX, ShakeY: fx.shakeY, RippleAmp: fx.rippleAmp, RippleFreq: fx.rippleFreq, RippleTm: fx.rTim,
+			W: s.W, H: s.H}
+	}
 	if len(cfg.Layers) > 0 {
-		if fs.Layers, fs.layerStack, err = s.layersAt(t, idx, base, fs.FX, fs.GlitchAmount); err != nil {
+		if fs.Layers, fs.layerStack, err = s.layersAt(t, idx, base, fs.FX, fs.GlitchAmount, fs.Scene); err != nil {
 			return nil, err
 		}
 	}

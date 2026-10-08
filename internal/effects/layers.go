@@ -48,6 +48,11 @@ type LayerFrame struct {
 	// their light on what is behind (made with Img on the CPU)
 	Emit  *EmitFrame
 	Light *LightField
+	// Depth (with a background that has one): hidden where the scene is nearer than DepthZ
+	// (soft by DepthSoft), and the scene the light and that look at
+	Behind            bool
+	DepthZ, DepthSoft float32
+	Scene             *Scene
 }
 
 // screenToImage: position in the clip's image (px, fractional) of the screen point p
@@ -241,7 +246,11 @@ func DrawLayer(dst *image.RGBA, l *LayerFrame) {
 			for x := 0; x < W; x++ {
 				if l.Light != nil {
 					// the emitter's light on what is already there, before its particles
-					if L := l.Light.LightAt(x, y); L > 1e-4 {
+					L := l.Light.LightAt(x, y)
+					if L > 1e-4 && l.Light.D3 && l.Scene.On() {
+						L *= l.Light.DepthFactor(l.Scene, x, y)
+					}
+					if L > 1e-4 {
 						o := y*dst.Stride + x*4
 						c := l.Light.Lit([3]float64{float64(dst.Pix[o]) / 255, float64(dst.Pix[o+1]) / 255, float64(dst.Pix[o+2]) / 255}, L)
 						for i := 0; i < 3; i++ {
@@ -255,6 +264,11 @@ func DrawLayer(dst *image.RGBA, l *LayerFrame) {
 				}
 				c, key := l.shade([3]float64{s[0] / s[3], s[1] / s[3], s[2] / s[3]})
 				a := math.Max(0, math.Min(1, s[3]*key*l.Opacity))
+				if l.Behind && l.Scene.On() {
+					// behind what is nearer than it
+					d := l.Scene.At(float32(x), float32(y))
+					a *= float64(1 - smooth32(l.DepthZ-l.DepthSoft, l.DepthZ+l.DepthSoft+1e-4, d))
+				}
 				if a <= 0 {
 					continue
 				}

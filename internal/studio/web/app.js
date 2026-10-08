@@ -1,7 +1,7 @@
 import { html, render, useState, useEffect, useRef } from './vendor/preact-htm.js';
 import { TRACKS, ZONES, zoneOf, AUDIO_FIELDS, OUTPUT_FIELDS, trackById, TRANSITIONS, SIMPLE_TRANSITIONS, DIRECTED, DIRECTIONS, TEXT_FIELDS } from './schema.js';
 import { api, clone, fmtTime, parseTime, b64u8, basename, debounce } from './util.js';
-import { Form, Select, Edit, Section } from './fields.js';
+import { Form, Select, Edit, Section, adjusting } from './fields.js';
 import { Icon } from './icons.js';
 import { Timeline, segSummary } from './timeline.js';
 import { keyApi, valueAt, setIn, KEY_EPS } from './keys.js';
@@ -10,6 +10,7 @@ import { useFrameStream } from './frames.js';
 import { Editor } from './editor.js';
 import { maskShapes, setMaskShapes, MaskSection, segMaskOwner, editSegMasks } from './masks.js';
 import { MotionSection, setPath } from './motion.js';
+import { DepthSection } from './depth.js';
 import { isEmitterLayer, newEmitterClip, emitterMenuItems, EmitterHandles } from './emitters.js';
 import { ContextMenu, openMenu } from './menu.js';
 import { LayerInspector, ClipHandles, TextHandles, textBoxOf, geoOf, frontFirst, layerName, newLayerId, setClipProps, duplicateClip } from './layers.js';
@@ -21,7 +22,7 @@ import { createScrubber } from './scrub.js';
 
 // ------------------------------------------------------------------ preview
 
-function Preview({ meta, timeStore, scale, rev, playing, pin, onPin, points, onPoints, clip, clipRef, onClip, text, textIdx, onText, emitter }) {
+function Preview({ meta, timeStore, scale, rev, playing, pin, onPin, points, onPoints, clip, clipRef, onClip, text, textIdx, onText, emitter, view }) {
   const time = useStore(timeStore);
   const canvas = useRef();
   const stage = useRef();
@@ -92,7 +93,7 @@ function Preview({ meta, timeStore, scale, rev, playing, pin, onPin, points, onP
     const cr = canvas.current.getBoundingClientRect(), sr = stage.current.getBoundingClientRect();
     ptsStyle = shownPts.map((q) => ({ left: cr.left - sr.left + q.x * cr.width + 'px', top: cr.top - sr.top + q.y * cr.height + 'px' }));
   }
-  const info = useFrameStream(canvas, { meta, time, scale, rev, playing });
+  const info = useFrameStream(canvas, { meta, time, scale, rev, playing, view });
   // The selected text on screen: handles; otherwise (not shown now) the pin places it
   const tbox = text && textIdx != null ? textBoxOf(info.texts, textIdx) : null;
   if (tbox) pin = null;
@@ -335,6 +336,7 @@ function TrackInspector({ proj, track, segIdx, time, meta, update, setSel, ctx, 
     <div class="insp-b">
       <${SegHeader} segs=${segs} i=${i} set=${setSeg} meta=${meta} track=${track} ctx=${ctx} />
       <${Form} fields=${def.fields} value=${seg.cfg} onChange=${(cfg) => setSeg({ ...seg, cfg })} ctx=${ctx} isFirst=${i === 0} kf=${kf} />
+      ${track === 'background' && html`<${DepthSection} cfg=${seg.cfg} ctx=${ctx} onChange=${(cfg) => setSeg({ ...seg, cfg })} />`}
       ${track === 'background' && html`<${Section} id="genimg" title=${t('Generate an image')}>
         <p class="faint" style="margin:2px 0 8px;font-size:12px">${t('Create a background from a description, or edit an image, with AI on your GPU.')}</p>
         <button class="btn" onClick=${onImages}><${Icon} name="wand-sparkles" size=${15} /> ${t('Generate an image…')}</button></${Section}>`}
@@ -469,7 +471,9 @@ function App() {
   const [wordEdit, setWordEdit] = useState(false); // word blocks of the selected line on the timeline
   // Keyframes: the property whose keys the timeline shows alone (set by its diamond), per selection
   const [kfFocus, setKfFocus] = useState(null);
-  const [kfSel, setKfSel] = useState(null); // selected keys: { key: the target's id, ts: their times }
+  const [kfSel, setKfSel] = useState(null);
+  const [depthView, setDepthView] = useState(false); // the preview shows the depth of the scene
+  const adj = useStore(adjusting); // a field being adjusted that shows something on the preview // selected keys: { key: the target's id, ts: their times }
   const [layerDrag, setLayerDrag] = useState(null); // reordering layers: { from, to }
   const [editor, setEditor] = useState(false); // the full-screen editor
   const [editorTool, setEditorTool] = useState('select');
@@ -731,6 +735,7 @@ function App() {
 
   // --- actions
   const ctx = {
+    job, showErr,
     seek,
     selMask, setSelMask,
     openEditor: (tool) => { setEditorTool(tool || 'select'); setEditor(true); },
@@ -1230,6 +1235,15 @@ function App() {
   });
   const selClip = sel.kind === 'layer' && layerById_(sel.id) ? layerById_(sel.id).clips[sel.clip] : null;
   const selEmit = sel.kind === 'layer' && isEmitterLayer(layerById_(sel.id)); // the selected clip throws particles
+  // the preview: the image, the scene's depth, or (adjusting a light's range) what it lights
+  const previewView = (() => {
+    if (adj && adj.kind === 'lightrange' && selClip && selClip.emitter) {
+      const l = selClip.emitter.light || {}, tt = time - selClip.start;
+      const kv = (k, d) => { const ks = selClip.keys && selClip.keys['emitter.light.' + k]; return ks && ks.length ? valueAt(ks, tt) : (l[k] ?? d); };
+      return 'lightrange&' + new URLSearchParams({ from: kv('from', 1), to: kv('to', 0), soft: kv('range_soft', 0.05) }).toString();
+    }
+    return depthView ? 'depth' : '';
+  })();
   const selText = sel.kind === 'text' ? (proj.texts || [])[sel.i] : null;
   // What the mask tools work on: the selected clip (its image space), fixed text or lyrics segment
   // (the screen). { obj: { masks, keys, start }, screen, edit(fn(obj)) inside an update }
@@ -1320,7 +1334,7 @@ function App() {
       <span class="projname" title=${meta.path}>${meta.name}</span>
       <span class=${'save' + (save.kind === 'error' ? ' err' : '')}>${saveText && html`<${Icon} name=${save.kind === 'error' ? 'triangle-alert' : save.kind === 'saving' ? 'loader-circle' : 'check'} size=${13} />`}${saveText}</span>
       <span class="spacer"></span>
-      ${job && html`<div class="jobbar" title=${job.message} onClick=${() => setDlg({ type: { lyrics: 'genlyrics', image: 'images' }[job.kind] || 'export' })}>
+      ${job && html`<div class="jobbar" title=${job.message} onClick=${() => job.kind !== 'depth' && setDlg({ type: { lyrics: 'genlyrics', image: 'images' }[job.kind] || 'export' })}>
         <${Icon} name=${job.status === 'running' ? (job.kind === 'export' ? 'film' : 'wand-sparkles') : job.status === 'done' ? 'check' : 'triangle-alert'} size=${14}
           cls=${{ done: 'st-ok', error: 'st-err', canceled: 'st-warn' }[job.status] || 'muted'} />
         <div class="progress"><i style=${{ width: (job.progress * 100).toFixed(1) + '%' }}></i></div>
@@ -1377,7 +1391,7 @@ function App() {
 
     <div class="preview">
       <div class="stage-wrap">
-        <${Preview} meta=${meta} timeStore=${timeStore} scale=${scale} rev=${rev} playing=${playing}
+        <${Preview} meta=${meta} timeStore=${timeStore} scale=${scale} rev=${rev} playing=${playing} view=${previewView}
           pin=${selText ? { x: selText.position_x, y: selText.position_y } : null}
           points=${burnSel ? (burnSel.points || []).map((q) => ({ x: q[0], y: q[1] })) : null}
           onPoints=${(pts) => update((p) => { const tr = p.tracks.background[sel.seg].transition; tr.burn = { ...(tr.burn || {}), points: pts.map((q) => [q.x, q.y]) }; })}
@@ -1403,6 +1417,8 @@ function App() {
         <${Clock} timeStore=${timeStore} meta=${meta} />
         <button class=${'btn icon' + (scrub ? ' on' : '')} title=${t(scrub ? 'Audio while scrubbing: on (S)' : 'Audio while scrubbing: off (S)')}
           onClick=${() => setScrub(!scrub)}><${Icon} name=${scrub ? 'volume-2' : 'volume-x'} size=${15} /></button>
+        <button class=${'btn sm icon' + (depthView ? ' on' : '')} title=${t('See the depth of the scene (white = near): to place clips and emitters in it')}
+          onClick=${() => setDepthView(!depthView)}><${Icon} name="layers" size=${14} /></button>
         <button class="btn sm" title=${t('Editor: the preview over the whole window, with zoom, rotation, pen and touch (E)')} onClick=${() => setEditor(true)}>
           <${Icon} name="pen-tool" size=${14} /> ${t('Editor')}</button>
         <span class="spacer"></span>

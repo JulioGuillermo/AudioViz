@@ -3,6 +3,7 @@
 #   - whisper.cpp (speech recognition) and stable-diffusion.cpp (image generation), sharing one
 #     ggml (scripts/ml/CMakeLists.txt): Vulkan GPU backend on Linux/Windows, Metal on macOS,
 #     plus the CPU backend everywhere
+#   - depth-anything.cpp (depth maps), on the same ggml
 #   - demucs.cpp (vocal separation, CPU)
 # They end up inside the binary: no Python or anything else needed at runtime.
 # Build-time requirements only: git, cmake, a C++ compiler, and (Linux/Windows) glslc + Vulkan headers.
@@ -11,12 +12,13 @@ source "$(dirname "$0")/target.sh"
 WHISPER_REV=60c0be6ac8fa71b1a2ae2dd938a31a34a508e774
 DEMUCS_REV=f1206e9adeea103aef4a636b9e62297cf1f8e34e
 SD_REV=3f8527a46c54ecf4cb4ed6003da8e8982283c73c
+DA_REV=14f7461d1f704761a038ac9f50dbde8fdb7275e2
 
 # What the whisper + stable-diffusion libraries are built from: the revisions, the superproject
 # and our ggml patches. When it changes (e.g. a new patch), they are rebuilt.
-ML_STAMP="$WHISPER_REV $SD_REV $(cat "$ROOT/scripts/ml/CMakeLists.txt" "$ROOT"/scripts/ml/patches/*.patch 2>/dev/null | cksum)"
+ML_STAMP="$WHISPER_REV $SD_REV $DA_REV $(cat "$ROOT/scripts/ml/CMakeLists.txt" "$ROOT"/scripts/ml/patches/*.patch 2>/dev/null | cksum)"
 
-if [ ! -f "$OUT/lib/libwhisper.a" ] || [ ! -f "$OUT/lib/libstable-diffusion.a" ] ||
+if [ ! -f "$OUT/lib/libwhisper.a" ] || [ ! -f "$OUT/lib/libstable-diffusion.a" ] || [ ! -f "$OUT/lib/libdepthanything.a" ] ||
    [ "$(cat "$OUT/lib/.ml-stamp" 2>/dev/null)" != "$ML_STAMP" ]; then
   if [ ! -d "$TP/whisper.cpp" ]; then
     git clone https://github.com/ggml-org/whisper.cpp "$TP/whisper.cpp"
@@ -27,6 +29,11 @@ if [ ! -f "$OUT/lib/libwhisper.a" ] || [ ! -f "$OUT/lib/libstable-diffusion.a" ]
   fi
   git -C "$TP/stable-diffusion.cpp" checkout -q "$SD_REV"
   git -C "$TP/stable-diffusion.cpp" submodule update --init --depth 1 ggml
+  if [ ! -d "$TP/depth-anything.cpp" ]; then
+    git clone https://github.com/mudler/depth-anything.cpp "$TP/depth-anything.cpp"
+  fi
+  git -C "$TP/depth-anything.cpp" fetch -q --depth 1 origin "$DA_REV" 2>/dev/null || true
+  git -C "$TP/depth-anything.cpp" checkout -q "$DA_REV"
   # Our patches to ggml (scripts/ml/patches), applied to a clean checkout
   git -C "$TP/stable-diffusion.cpp/ggml" checkout -q -- .
   for p in "$ROOT"/scripts/ml/patches/*.patch; do
@@ -34,7 +41,7 @@ if [ ! -f "$OUT/lib/libwhisper.a" ] || [ ! -f "$OUT/lib/libstable-diffusion.a" ]
   done
   B="$OBJDIR/ml"
   args=(-DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DGGML_OPENMP=OFF -DGGML_NATIVE=OFF
-    -DSD_SRC="$TP/stable-diffusion.cpp" -DWHISPER_SRC="$TP/whisper.cpp"
+    -DSD_SRC="$TP/stable-diffusion.cpp" -DWHISPER_SRC="$TP/whisper.cpp" -DDA_SRC="$TP/depth-anything.cpp"
     -DSD_BUILD_EXAMPLES=OFF -DSD_WEBP=OFF -DSD_WEBM=OFF
     -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=OFF -DWHISPER_BUILD_SERVER=OFF)
   if [ "$TARGET_ARCH" = amd64 ]; then
@@ -67,14 +74,14 @@ EOF
       args+=(-DSD_VULKAN=ON -DGGML_VULKAN=ON) ;;
   esac
   cmake -S "$ROOT/scripts/ml" -B "$B" "${args[@]}"
-  cmake --build "$B" -j"$NPROC" --target whisper stable-diffusion
+  cmake --build "$B" -j"$NPROC" --target whisper stable-diffusion depthanything
   # Every static library produced (whisper, stable-diffusion, ggml, ggml-base, ggml-cpu and the GPU backend)
   # (on Windows CMake names them without the "lib" prefix: normalize so the cgo flags are the same)
   while IFS= read -r f; do
     n=$(basename "$f"); [[ $n == lib* ]] || n="lib$n"
     cp "$f" "$OUT/lib/$n"
-  done < <(find "$B" -name '*.a' \( -name '*whisper.a' -o -name '*stable-diffusion.a' -o -name '*ggml*.a' \))
-  cp "$TP/whisper.cpp/include/whisper.h" "$TP/stable-diffusion.cpp/include/stable-diffusion.h" \
+  done < <(find "$B" -name '*.a' \( -name '*whisper.a' -o -name '*stable-diffusion.a' -o -name '*depthanything.a' -o -name '*ggml*.a' \))
+  cp "$TP/whisper.cpp/include/whisper.h" "$TP/stable-diffusion.cpp/include/stable-diffusion.h" "$TP/depth-anything.cpp/include/da_capi.h" \
     "$TP/stable-diffusion.cpp/ggml/include/"*.h "$OUT/include/"
   echo "$ML_STAMP" > "$OUT/lib/.ml-stamp"
 fi

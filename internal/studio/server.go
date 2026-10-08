@@ -122,6 +122,8 @@ func Run(opt Options, ready func(url string)) error {
 	mux.HandleFunc("GET /api/images/preview", s.hImagePreview)
 	mux.HandleFunc("DELETE /api/images", s.hDeleteImage)
 	mux.HandleFunc("POST /api/job/cancel", s.hCancel)
+	mux.HandleFunc("POST /api/depth", s.hDepth)
+	mux.HandleFunc("GET /api/depth/view", s.hDepthView)
 	mux.HandleFunc("GET /api/events", s.hub.serve)
 
 	ln, err := net.Listen("tcp", opt.Addr)
@@ -525,7 +527,21 @@ func (s *Server) hFrame(w http.ResponseWriter, r *http.Request) {
 	t0 := time.Now()
 	fs, err := sess.Prepare(idx)
 	var img *image.RGBA
-	if err == nil {
+	if v := r.URL.Query().Get("view"); err == nil && (v == "depth" || v == "lightrange") {
+		// the depth of the scene in this frame (white = near), at the preview's size; with a
+		// light's range: black outside it
+		var rng *[3]float32
+		if v == "lightrange" {
+			num := func(k string, def float64) float32 {
+				if f, e := strconv.ParseFloat(r.URL.Query().Get(k), 64); e == nil {
+					return float32(f)
+				}
+				return float32(def)
+			}
+			rng = &[3]float32{num("from", 1), num("to", 0), num("soft", 0.05)}
+		}
+		img = depthView(fs.Scene, sess.W/scale, sess.H/scale, scale, rng)
+	} else if err == nil {
 		img, err = s.rend.Preview(fs, scale)
 	}
 	renderMs := time.Since(t0).Milliseconds()

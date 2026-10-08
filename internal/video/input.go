@@ -63,6 +63,10 @@ func ProbeMedia(filePath string) (*ProbeResult, error) {
 	return &ProbeResult{IsAnimated: format == "gif", Width: cfg.Width / 2 * 2, Height: cfg.Height / 2 * 2}, nil
 }
 
+// Fit scales src to (w, h) as a background is placed (cover/contain/stretch), over black: a
+// depth map lines up with its image this way
+func Fit(src image.Image, w, h int, mode string) *image.RGBA { return fit(src, w, h, mode) }
+
 // fit scales src to (w, h) according to the cover/contain/stretch mode, over black
 func fit(src image.Image, w, h int, mode string) *image.RGBA {
 	return fitOn(src, w, h, mode, image.Black)
