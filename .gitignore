@@ -11,6 +11,7 @@ tools/lyrics/cache/
 /third_party/whisper.cpp/
 /third_party/demucs.cpp/
 /third_party/stable-diffusion.cpp/
+/third_party/depth-anything.cpp/
 /audioviz.exe
 /third_party/build-*/
 /third_party/obj-*/
