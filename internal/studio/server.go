@@ -527,7 +527,7 @@ func (s *Server) hFrame(w http.ResponseWriter, r *http.Request) {
 	t0 := time.Now()
 	fs, err := sess.Prepare(idx)
 	var img *image.RGBA
-	if v := r.URL.Query().Get("view"); err == nil && (v == "depth" || v == "lightrange") {
+	if v := r.URL.Query().Get("view"); err == nil && (v == "depth" || v == "lightrange" || v == "objdepth") {
 		// the depth of the scene in this frame (white = near), at the preview's size; with a
 		// light's range: black outside it
 		var rng *[3]float32
@@ -540,7 +540,18 @@ func (s *Server) hFrame(w http.ResponseWriter, r *http.Request) {
 			}
 			rng = &[3]float32{num("from", 1), num("to", 0), num("soft", 0.05)}
 		}
-		img = depthView(fs.Scene, sess.W/scale, sess.H/scale, scale, rng)
+		// an object's depth (?layer=&clip=): what is behind it, tinted
+		var obj *[2]float32
+		if v == "objdepth" {
+			id := r.URL.Query().Get("layer")
+			ci, _ := strconv.Atoi(r.URL.Query().Get("clip"))
+			for _, l := range fs.Layers {
+				if l.LayerID == id && l.Clip == ci && l.InDepth {
+					obj = &[2]float32{l.DepthZ, l.DepthSoft}
+				}
+			}
+		}
+		img = depthView(fs.Scene, sess.W/scale, sess.H/scale, scale, rng, obj)
 	} else if err == nil {
 		img, err = s.rend.Preview(fs, scale)
 	}

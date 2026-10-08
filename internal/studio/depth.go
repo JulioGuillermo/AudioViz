@@ -70,7 +70,7 @@ func (s *Server) hDepth(w http.ResponseWriter, r *http.Request) {
 					j.Message = fmt.Sprintf("%s · %d %%", l, int(p*100))
 				}
 			}
-			j.Progress = map[string]float64{"download": 0.6 * p, "estimate": 0.65, "refine": 0.85, "brightness": 0.5, "file": 0.5, "done": 1}[st]
+			j.Progress = map[string]float64{"download": 0.5 * p, "estimate": 0.5 + 0.4*p, "refine": 0.92, "brightness": 0.5, "file": 0.5, "done": 1}[st]
 			j.mu.Unlock()
 			s.hub.send("job", j.snapshot())
 		})
@@ -119,8 +119,9 @@ func (s *Server) hDepthView(w http.ResponseWriter, r *http.Request) {
 }
 
 // depthView: the scene's depth as an image (white = near; a dark red grid when there is none);
-// rng (from, to, soft): only what a light lights, black elsewhere (as effects.LightRange)
-func depthView(sc *effects.Scene, w, h, scale int, rng *[3]float32) *image.RGBA {
+// rng (from, to, soft): only what a light lights, black elsewhere (as effects.LightRange);
+// obj (z, soft): where an object is in it, what is behind it half red (as the occlusion's edge)
+func depthView(sc *effects.Scene, w, h, scale int, rng *[3]float32, obj *[2]float32) *image.RGBA {
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	for y := 0; y < h; y++ {
 		for x := 0; x < w; x++ {
@@ -137,9 +138,21 @@ func depthView(sc *effects.Scene, w, h, scale int, rng *[3]float32) *image.RGBA 
 			if rng != nil {
 				z *= effects.LightRange(z, rng[0], rng[1], rng[2])
 			}
-			d := uint8(z*255 + 0.5)
-			img.Pix[o], img.Pix[o+1], img.Pix[o+2], img.Pix[o+3] = d, d, d, 255
+			d := z * 255
+			r, g, b := d, d, d
+			if obj != nil {
+				// behind: the scene is farther than the object
+				k := 0.55 * (1 - smooth(obj[0]-obj[1], obj[0]+obj[1]+1e-4, z))
+				r, g, b = d+(255-d)*k*0.75, d*(1-k), d*(1-k)
+			}
+			img.Pix[o], img.Pix[o+1], img.Pix[o+2], img.Pix[o+3] = uint8(r+0.5), uint8(g+0.5), uint8(b+0.5), 255
 		}
 	}
 	return img
+}
+
+// smooth: smoothstep
+func smooth(a, b, x float32) float32 {
+	t := max(0, min(1, (x-a)/(b-a)))
+	return t * t * (3 - 2*t)
 }

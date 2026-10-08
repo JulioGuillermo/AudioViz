@@ -12,6 +12,8 @@ type Scene struct {
 	Zoom, ShakeX, ShakeY            float64
 	RippleAmp, RippleFreq, RippleTm float64
 	W, H                            int
+	Par                             Parallax // the 2.5D camera
+	N                               int      // its search steps (Parallax.Steps)
 }
 
 // On: there is a depth to look at
@@ -43,11 +45,8 @@ func layerDepth(g []uint16, L Layer, qx, qy float32, W, H int) float32 {
 	return a + (b-a)*fy
 }
 
-// At: the nearness at frame point q (pixel coordinates, as the GPU's q)
-func (s *Scene) At(qx, qy float32) float32 {
-	if !s.On() {
-		return 0
-	}
+// bgPoint: frame point q through the background's ripple, zoom and shake
+func (s *Scene) bgPoint(qx, qy float32) (float32, float32) {
 	cx, cy := float32(s.W)*0.5, float32(s.H)*0.5
 	if amp := float32(s.RippleAmp); amp > 0.2 {
 		ph := float64(qy)*s.RippleFreq + s.RippleTm
@@ -58,10 +57,41 @@ func (s *Scene) At(qx, qy float32) float32 {
 	if z := float32(s.Zoom); z > 1.001 {
 		qx, qy = cx+(qx-cx)/z, cy+(qy-cy)/z
 	}
-	qx, qy = qx-float32(s.ShakeX), qy-float32(s.ShakeY)
-	useB := s.B != nil && (s.A == nil || s.K >= 0.5)
-	if useB {
-		return layerDepth(s.B, s.LB, qx, qy, s.W, s.H)
+	return qx - float32(s.ShakeX), qy - float32(s.ShakeY)
+}
+
+// Near: the nearness at background point (x, y) (as Hit gives; no camera)
+func (s *Scene) Near(x, y float32) float32 {
+	if s.B != nil && (s.A == nil || s.K >= 0.5) {
+		return layerDepth(s.B, s.LB, x, y, s.W, s.H)
 	}
-	return layerDepth(s.A, s.LA, qx, qy, s.W, s.H)
+	return layerDepth(s.A, s.LA, x, y, s.W, s.H)
+}
+
+// Hit: the background point seen at frame point q (pixel coordinates, as the GPU's q), through
+// the camera, and its nearness
+func (s *Scene) Hit(qx, qy float32) (float32, float32, float32) {
+	if !s.On() {
+		return qx, qy, 0
+	}
+	x, y := s.bgPoint(qx, qy)
+	if s.Par.On() {
+		return s.Par.Find(x, y, s.N, s.W, s.H, s.Near)
+	}
+	return x, y, s.Near(x, y)
+}
+
+// Ground: the nearness of the background at frame point q before the camera (where something
+// placed there stands: it then moves with the camera as that depth does)
+func (s *Scene) Ground(qx, qy float32) float32 {
+	if !s.On() {
+		return 0
+	}
+	return s.Near(s.bgPoint(qx, qy))
+}
+
+// At: the nearness at frame point q
+func (s *Scene) At(qx, qy float32) float32 {
+	_, _, z := s.Hit(qx, qy)
+	return z
 }

@@ -54,6 +54,8 @@ export function EmitterHandles({ clip, time, meta, k, ox = 0, oy = 0, toFrame, h
   const reach0 = lk && lk.length ? valueAt(lk, time - clip.start) : light.reach || 0;
   const ek = clip.keys && clip.keys['emitter.light.end'];
   const end0 = ek && ek.length ? valueAt(ek, time - clip.start) : light.end || 0;
+  const rk = clip.keys && clip.keys['emitter.light.rim_from'];
+  const rim0 = !light.rim ? -1 : rk && rk.length ? valueAt(rk, time - clip.start) : light.rim_from ?? 500;
   const own = { x: val('x'), y: val('y'), rotation: val('rotation') || 0 };
   const v = { ...own, ...(drag || {}) };
   // now: the server's place (with its keys, its motion path), moved by the drag
@@ -79,6 +81,7 @@ export function EmitterHandles({ clip, time, meta, k, ox = 0, oy = 0, toFrame, h
       if (mode === 'move') cur = { x: +(v0.x + (p.x - p0.x) / W).toFixed(4), y: +(v0.y + (p.y - p0.y) / H).toFixed(4) };
       else if (mode === 'reach') cur = { 'emitter.light.reach': Math.max(20, Math.round(Math.hypot(p.x - cx, p.y - cy) / sc)) };
       else if (mode === 'end') cur = { 'emitter.light.end': Math.max(20, Math.round(Math.hypot(p.x - cx, p.y - cy) / sc)) };
+      else if (mode === 'rim') cur = { 'emitter.light.rim_from': Math.max(0, Math.round(Math.hypot(p.x - cx, p.y - cy) / sc)) };
       else {
         let a = (Math.atan2(p.x - cx, -(p.y - cy)) * 180) / Math.PI - (ev('direction') || 0) - ((grot * 180) / Math.PI - own.rotation);
         a += Math.round((v0.rotation - a) / 360) * 360;
@@ -121,17 +124,25 @@ export function EmitterHandles({ clip, time, meta, k, ox = 0, oy = 0, toFrame, h
   };
   const knob = onCircle(lr) || { x: c.x + lr * Math.cos(ka), y: c.y + lr * Math.sin(ka) };
   const knob2 = onCircle(le);
+  // rim light: farther than this circle only the edges
+  const rimR = drag && drag['emitter.light.rim_from'] != null ? drag['emitter.light.rim_from'] : rim0;
+  const lrim = lr > 0 && rimR >= 0 ? rimR * sc * k : -1;
+  const knob3 = lrim >= 0 ? onCircle(Math.max(lrim, 1)) : null;
   return html`<div class=${'emitbox' + (drag ? ' drag' : '')}>
     ${lr > 0 && html`<svg class="eb-svg"><g style=${{ strokeWidth: 1.5 * hs }}>
       <circle class="eb-light" cx=${c.x} cy=${c.y} r=${lr} />
       <circle class="eb-light far" cx=${c.x} cy=${c.y} r=${le} />
+      ${lrim > 0 && html`<circle class="eb-light rim" cx=${c.x} cy=${c.y} r=${lrim} />`}
     </g></svg>
     <div class="eb-reach" style=${{ left: knob.x - dot / 2 + 'px', top: knob.y - dot / 2 + 'px', width: dot + 'px', height: dot + 'px' }}
       onPointerDown=${(m) => start(m, 'reach')} title=${t('Reach of its light: drag to change it')}>
       ${drag && drag['emitter.light.reach'] != null && html`<span class="eb-val">${Math.round(reach)} px</span>`}</div>
     ${knob2 && html`<div class="eb-reach far" style=${{ left: knob2.x - dot / 2 + 'px', top: knob2.y - dot / 2 + 'px', width: dot + 'px', height: dot + 'px' }}
       onPointerDown=${(m) => start(m, 'end')} title=${t('Where its light fades out: drag to change it')}>
-      ${drag && drag['emitter.light.end'] != null && html`<span class="eb-val">${Math.round(end)} px</span>`}</div>`}`}
+      ${drag && drag['emitter.light.end'] != null && html`<span class="eb-val">${Math.round(end)} px</span>`}</div>`}
+    ${knob3 && html`<div class="eb-reach rim" style=${{ left: knob3.x - dot / 2 + 'px', top: knob3.y - dot / 2 + 'px', width: dot + 'px', height: dot + 'px' }}
+      onPointerDown=${(m) => start(m, 'rim')} title=${t('Farther than this circle only the edges that face it are lit: drag to change it')}>
+      ${drag && drag['emitter.light.rim_from'] != null && html`<span class="eb-val">${Math.round(rimR)} px</span>`}</div>`}`}
     ${(shape === 'circle' || shape === 'ring') && sw > 2 && html`<div class="eb-shape round" style=${{ left: c.x - sw / 2 + 'px', top: c.y - sw / 2 + 'px', width: sw + 'px', height: sw + 'px' }}></div>`}
     ${(shape === 'line' || shape === 'box') && sw > 2 && html`<div class=${'eb-shape' + (shape === 'line' ? ' line' : '')}
       style=${{ left: c.x - sw / 2 + 'px', top: c.y - (shape === 'line' ? 0 : sh / 2) + 'px', width: sw + 'px', height: (shape === 'line' ? 0 : sh) + 'px', transform: `rotate(${deg}deg)`, transformOrigin: `${sw / 2}px ${shape === 'line' ? 0 : sh / 2}px` }}></div>`}

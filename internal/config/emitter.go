@@ -95,6 +95,15 @@ type EmitLight struct {
 	From      float64 `yaml:"from"`
 	To        float64 `yaml:"to"`
 	RangeSoft float64 `yaml:"range_soft"`
+	// With depth, rim light: farther than RimFrom px (soft by RimSoft px) it no longer lights the
+	// surfaces but only the edges of things that face it (where the scene drops behind them
+	// towards the light by RimEdge or more), RimWidth px wide, RimGain times as bright
+	Rim      bool    `yaml:"rim,omitempty"`
+	RimFrom  float64 `yaml:"rim_from,omitempty"`
+	RimSoft  float64 `yaml:"rim_soft,omitempty"`
+	RimWidth float64 `yaml:"rim_width,omitempty"`
+	RimGain  float64 `yaml:"rim_gain,omitempty"`
+	RimEdge  float64 `yaml:"rim_edge,omitempty"`
 }
 
 // FlameLook: the colors of the flame from cool (its edges) to hot (its core), how fast it gets
@@ -209,6 +218,9 @@ func init() {
 			if k == "fire" || k == "fire_real" || k == "explosion" {
 				e.Light.Enabled = true
 			}
+		}
+		if e.Light.RimWidth == 0 {
+			e.Light.RimFrom, e.Light.RimSoft, e.Light.RimWidth, e.Light.RimGain, e.Light.RimEdge = 500, 120, 10, 2, 0.04
 		}
 		EmitterPresets[k] = e
 	}

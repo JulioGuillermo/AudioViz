@@ -37,6 +37,7 @@ type frameFX struct {
 	glitch                      bool
 	shakeX, shakeY              float64
 	bright, contrast            float64
+	par                         effects.Parallax // the 2.5D camera (with a depth map)
 }
 
 // RenderOptions are CLI options for preview or partial rendering
@@ -212,7 +213,7 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		}
 		lp.Info = [4]int32{int32(off), int32(iw), int32(ih), flags}
 		lp.Light0, lp.Light1 = [4]int32{}, [4]float32{}
-		lp.Depth, lp.Light2, lp.Light3 = [4]float32{}, [4]float32{}, [4]float32{}
+		lp.Depth, lp.Light2, lp.Light3, lp.Light4, lp.Light5 = [4]float32{}, [4]float32{}, [4]float32{}, [4]float32{}, [4]float32{}
 		if l.Behind {
 			lp.Depth = [4]float32{1, l.DepthZ, l.DepthSoft}
 		}
@@ -231,6 +232,10 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 					lp.Light2 = [4]float32{float32(P.LightCX), float32(P.LightCY), float32(P.LightZ), float32(P.LightDepthK)}
 					lp.Light3 = [4]float32{float32(P.LightShade), 1, float32(P.LightFrom), float32(P.LightTo)}
 					lp.Light1[3] = float32(P.LightSoft)
+					if P.LightRim {
+						lp.Light4 = [4]float32{float32(P.LightRimFrom), float32(P.LightRimSoft), float32(P.LightRimW), float32(P.LightRimGain)}
+						lp.Light5 = [4]float32{float32(P.LightRimEdge)}
+					}
 				}
 			}
 			emits = append(emits, emitAt{l.Emit, off})
@@ -715,12 +720,16 @@ func (s *Session) drawVizCPU(frame *image.RGBA, dc *gg.Context, fs *FrameState) 
 
 func (s *Session) cpuFrame(fs *FrameState) *image.RGBA {
 	frame := image.NewRGBA(image.Rect(0, 0, s.W, s.H))
-	if fs.Trans.Mode == 0 && fs.LayerA == effects.Identity {
+	par := fs.FX.par
+	if !par.On() || (fs.DepthA == nil && fs.DepthB == nil) {
+		par = effects.Parallax{}
+	}
+	if fs.Trans.Mode == 0 && fs.LayerA == effects.Identity && !par.On() {
 		if fs.BgA != nil {
 			copy(frame.Pix, fs.BgA.Pix)
 		}
 	} else {
-		effects.Compose(frame, fs.BgA, fs.BgB, fs.LayerA, fs.LayerB, fs.Trans)
+		effects.ComposeParallax(frame, fs.BgA, fs.BgB, fs.LayerA, fs.LayerB, fs.Trans, par, fs.DepthA, fs.DepthB)
 	}
 	fx := fs.FX
 	frame = effects.ApplyBassZoom(frame, fx.zoom, fx.shakeX, fx.shakeY)
@@ -845,6 +854,12 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 	c := fx.contrast * 128.0
 	cf := (259.0 * (c + 255.0)) / (255.0 * (259.0 - c))
 	p.ZoomRipple = [4]float32{float32(fx.zoom), float32(fx.rippleAmp), float32(fx.rippleFreq), float32(fx.rTim)}
+	// the 2.5D camera (with a depth map; the fluid transitions don't move)
+	p.Parallax, p.ParallaxN = [4]float32{}, [4]int32{}
+	if par := fx.par; par.On() && (fs.DepthA != nil || fs.DepthB != nil) && fs.Trans.Fluid == nil {
+		p.Parallax = [4]float32{float32(par.SX), float32(par.SY), float32(par.Dolly), float32(par.Focus)}
+		p.ParallaxN[0] = int32(par.Steps(s.W, s.H))
+	}
 	p.ColorAdj = [4]float32{float32(cf), float32(-fs.BG.Darken + fx.bright), float32(fs.BG.Opacity), float32(fs.BG.Vignette)}
 	if fs.BgA == nil && fs.BgB == nil {
 		p.ColorAdj[2] = 0 // no background: black

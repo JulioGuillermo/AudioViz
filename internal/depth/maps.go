@@ -16,7 +16,6 @@ import (
 
 	"audioviz/internal/video"
 
-	xdraw "golang.org/x/image/draw"
 )
 
 // Sources of a depth map (config.DepthConfig.Source)
@@ -266,7 +265,7 @@ func CachePath(cacheDir string, r Request) string {
 	} else {
 		model += "|" + fmt.Sprint(DetailSize(r.Detail))
 	}
-	fmt.Fprintf(h, "%s|%s|v1", r.Source, model)
+	fmt.Fprintf(h, "%s|%s|v2", r.Source, model)
 	return filepath.Join(cacheDir, "depth", hex.EncodeToString(h.Sum(nil))[:20]+".png")
 }
 
@@ -298,43 +297,9 @@ func Make(ctx context.Context, cacheDir string, r Request, stage func(string, fl
 			return nil, err
 		}
 	default:
-		mod := ModelFor(r.Model)
-		path, err := mod.Ensure(ctx, func(done, total int64, rate float64) {
-			if total > 0 {
-				stage("download", float64(done)/float64(total))
-			}
-		})
-		if err != nil {
+		if m, err = aiMap(ctx, img, r, stage); err != nil {
 			return nil, err
 		}
-		stage("estimate", 0)
-		// the model reads a file: the frame as a PNG, at the working size for more detail (both
-		// sides multiples of the model's 14 px patches)
-		size := DetailSize(r.Detail)
-		in := image.Image(img)
-		if size > 504 && max(W, H) > size {
-			k := float64(size) / float64(max(W, H))
-			rw, rh := max(14, int(math.Round(float64(W)*k/14))*14), max(14, int(math.Round(float64(H)*k/14))*14)
-			small := image.NewRGBA(image.Rect(0, 0, rw, rh))
-			xdraw.CatmullRom.Scale(small, small.Bounds(), img, img.Bounds(), xdraw.Src, nil)
-			in = small
-		}
-		tmp, err := os.CreateTemp("", "audioviz-depth-*.png")
-		if err != nil {
-			return nil, err
-		}
-		defer os.Remove(tmp.Name())
-		if err := png.Encode(tmp, in); err != nil {
-			tmp.Close()
-			return nil, err
-		}
-		tmp.Close()
-		coarse, err := Estimate(path, tmp.Name(), size)
-		if err != nil {
-			return nil, err
-		}
-		stage("refine", 0)
-		m = Guided(coarse, img)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err

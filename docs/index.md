@@ -29,6 +29,7 @@ and lossless FLAC audio inside an MP4.
 | [ripple](background/ripple.md) | Water / heat-haze ripple | mids |
 | [glitch](background/glitch.md) | Displaced stripes (VHS) | beats |
 | [color_flash](background/color_flash.md) | Brightness and contrast flash | bass |
+| [parallax](background/parallax.md) | 2.5D camera through the depth map | bass (beat motion) |
 
 ## Visualizer — [overview](visualizer/README.md)
 | Type | Description |

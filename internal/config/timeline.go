@@ -110,6 +110,7 @@ type Timeline struct {
 	Ripple     []Seg[RippleConfig]
 	Glitch     []Seg[GlitchConfig]
 	ColorFlash []Seg[ColorFlashConfig]
+	Parallax   []Seg[ParallaxConfig]
 	Visualizer []Seg[VisualizerConfig]
 	Particles  []Seg[ParticlesConfig]
 	Lyrics     []Seg[LyricsConfig]
@@ -117,7 +118,7 @@ type Timeline struct {
 
 // TrackNames are the track keys in `timeline:` (and in the studio API)
 var TrackNames = []string{"background", "bass_zoom", "shake", "chromatic_aberration", "ripple",
-	"glitch", "color_flash", "visualizer", "particles", "lyrics"}
+	"glitch", "color_flash", "parallax", "visualizer", "particles", "lyrics"}
 
 // Active returns the index of the segment active at t (the last one with At <= t)
 func Active[T any](segs []Seg[T], t float64) int {
@@ -255,6 +256,9 @@ func (c *ProjectConfig) BuildTimeline() error {
 	if tl.Glitch, err = buildTrack(be.Glitch, raw["glitch"], noFix[GlitchConfig]); err != nil {
 		return err
 	}
+	if tl.Parallax, err = buildTrack(be.Parallax, raw["parallax"], noFix[ParallaxConfig]); err != nil {
+		return err
+	}
 	if tl.ColorFlash, err = buildTrack(be.ColorFlash, raw["color_flash"], noFix[ColorFlashConfig]); err != nil {
 		return err
 	}
@@ -378,6 +382,9 @@ func (c *ProjectConfig) SyncFromTimeline() error {
 	if len(tl.ColorFlash) > 0 {
 		be.ColorFlash = tl.ColorFlash[0].Cfg
 	}
+	if len(tl.Parallax) > 0 {
+		be.Parallax = tl.Parallax[0].Cfg
+	}
 	if len(tl.Visualizer) > 0 {
 		c.Visualizer = tl.Visualizer[0].Cfg
 	}
@@ -408,6 +415,7 @@ func (c *ProjectConfig) SyncFromTimeline() error {
 		func() error { n, e := trackNodes(tl.Ripple); return put("ripple", n, e) },
 		func() error { n, e := trackNodes(tl.Glitch); return put("glitch", n, e) },
 		func() error { n, e := trackNodes(tl.ColorFlash); return put("color_flash", n, e) },
+		func() error { n, e := trackNodes(tl.Parallax); return put("parallax", n, e) },
 		func() error { n, e := trackNodes(tl.Visualizer); return put("visualizer", n, e) },
 		func() error { n, e := trackNodes(tl.Particles); return put("particles", n, e) },
 		func() error { n, e := trackNodes(tl.Lyrics); return put("lyrics", n, e) },

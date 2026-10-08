@@ -28,6 +28,8 @@ struct LayerP {
     vec4 depth;    // behind what is nearer: on, its depth, soft edge
     vec4 light2;   // 2.5D light: where it is x, y (px), its depth, fade by depth
     vec4 light3;   // shading of the surfaces, 2.5D on, lit from, to (soft edge in light1.w)
+    vec4 light4;   // rim light: from (px), soft (px), width (px), gain (0 = off)
+    vec4 light5;   // rim light: edge (depth step)
 };
 
 // One entry of the per-frame text style table (lyrics = 0, fixed texts after)
@@ -93,6 +95,8 @@ layout(std430, set = 0, binding = 0) readonly buffer Params {
     ivec4 zIdx;
     vec4 fxFlash;
     ivec4 depthI;  // backgrounds' depth in lay: word offsets of A, B; which are there (bit 0 A, bit 1 B)
+    vec4 parallax;    // the 2.5D camera: shift x, y (px), dolly, focus
+    ivec4 parallaxN;  // its search steps (0 = off)
     LayerP layers[MAX_LAYERS];
 } P;
 
@@ -127,6 +131,9 @@ vec3 bilinearImg(int img, vec2 q) {
 // Image img (0 = A, 1 = B) at output point q: source = c + rotate(q - c, -rot) / scale + off
 vec3 layerAt(int img, vec2 q) {
     if ((P.trans.z & (img == 0 ? 1 : 2)) == 0) return vec3(0.0);
+#ifdef BG_PARALLAX
+    q -= img == 0 ? gParA : gParB; // seen by the 2.5D camera (render.comp: parallaxPixel)
+#endif
     vec4 L = img == 0 ? P.layerA : P.layerB;
     vec2 c = vec2(float(W), float(H)) * 0.5;
     vec2 d = q - c;

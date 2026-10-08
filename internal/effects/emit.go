@@ -69,6 +69,9 @@ type EmitParams struct {
 	LightDepthK, LightShade  float64
 	LightFrom, LightTo       float64 // only lit between these depths (soft by LightSoft)
 	LightSoft                float64
+	// rim light: on, from (px), soft (px), width (px), gain, edge (depth step)
+	LightRim                                                bool
+	LightRimFrom, LightRimSoft, LightRimW, LightRimGain, LightRimEdge float64
 	LightCol                 [3]float64
 	LightAdd                 bool
 }
@@ -303,6 +306,9 @@ type LightField struct {
 	DepthK, Shade float32
 	From, To      float32 // lit between these depths, soft edge Soft
 	Soft          float32
+	// rim light: farther than RimFrom (soft RimSoft) only the edges that face it, RimW px wide
+	Rim                                     bool
+	RimFrom, RimSoft, RimW, RimGain, RimEdge float32
 }
 
 // LightRange: how much a point at depth z is inside the lit range [to, from] (soft edges), as
@@ -321,12 +327,13 @@ const DepthPx = 800
 // faces the light gets more (its normal from the depth's slope)
 func (l *LightField) DepthFactor(s *Scene, x, y int) float32 {
 	qx, qy := float32(x), float32(y)
-	zp := s.At(qx, qy)
+	// the background point seen there; its surroundings around that point
+	hx, hy, zp := s.Hit(qx, qy)
 	dz := (zp - l.LZ) * l.DepthK
 	f := float32(math.Exp(float64(-dz*dz))) * LightRange(zp, l.From, l.To, l.Soft)
 	if l.Shade > 0 {
-		gx := (s.At(qx+2, qy) - s.At(qx-2, qy)) / 4 * DepthPx
-		gy := (s.At(qx, qy+2) - s.At(qx, qy-2)) / 4 * DepthPx
+		gx := (s.Near(hx+2, hy) - s.Near(hx-2, hy)) / 4 * DepthPx
+		gy := (s.Near(hx, hy+2) - s.Near(hx, hy-2)) / 4 * DepthPx
 		nx, ny, nz := -gx, -gy, float32(1)
 		nl := float32(math.Sqrt(float64(nx*nx + ny*ny + nz*nz)))
 		lx, ly, lz := l.CX-qx, l.CY-qy, (l.LZ-zp)*DepthPx
@@ -334,7 +341,28 @@ func (l *LightField) DepthFactor(s *Scene, x, y int) float32 {
 		lam := max(0, (nx*lx+ny*ly+nz*lz)/(nl*ll))
 		f *= 1 - l.Shade + l.Shade*(0.3+1.1*lam)
 	}
+	if l.Rim {
+		// far away: only the edges that face it (the scene drops behind them towards the light)
+		dx, dy := l.CX-qx, l.CY-qy
+		d := float32(math.Sqrt(float64(dx*dx + dy*dy)))
+		if t := smooth32(l.RimFrom-l.RimSoft, l.RimFrom+l.RimSoft+1e-3, d); t > 0 {
+			f = f*(1-t) + t*l.RimGain*l.rimAt(s, hx, hy, zp, dx/max(d, 1e-3), dy/max(d, 1e-3))*LightRange(zp, l.From, l.To, l.Soft)
+		}
+	}
 	return f
+}
+
+// rimAt: how much background point h is on an edge facing the light (direction ux, uy): the
+// scene farther than it within RimW px towards the light, brighter right at the edge (as in
+// lightDepth in render.comp)
+func (l *LightField) rimAt(s *Scene, hx, hy, zp, ux, uy float32) float32 {
+	var r float32
+	for k := 1; k <= 4; k++ {
+		st := l.RimW * float32(k) / 4
+		dz := zp - s.Near(hx+ux*st, hy+uy*st)
+		r = max(r, smooth32(l.RimEdge*0.35, l.RimEdge, dz)*(1-0.55*float32(k-1)/3))
+	}
+	return r
 }
 
 // lightFalloff: how much of a source's light reaches a distance d (px) for a reach R, gone at E
@@ -367,9 +395,9 @@ func lightFrom(src []uint32, gw, gh int, R, E float32) []float32 {
 }
 
 // LightAt: the light (0..1) at frame pixel (x, y), bilinear between the cells
-func (l *LightField) LightAt(x, y int) float32 {
-	qx := (float32(x)+0.5)/EmitLightDiv - 0.5
-	qy := (float32(y)+0.5)/EmitLightDiv - 0.5
+func (l *LightField) LightAt(x, y float32) float32 {
+	qx := (x+0.5)/EmitLightDiv - 0.5
+	qy := (y+0.5)/EmitLightDiv - 0.5
 	ix, iy := int(math.Floor(float64(qx))), int(math.Floor(float64(qy)))
 	fx, fy := qx-float32(ix), qy-float32(iy)
 	at := func(cx, cy int) float32 {
@@ -456,7 +484,9 @@ func DrawEmitter(e *EmitFrame, W, H int) (*image.RGBA, *LightField) {
 		Col: [3]float32{float32(p.LightCol[0]), float32(p.LightCol[1]), float32(p.LightCol[2])},
 		D3:  p.LightD3, CX: float32(p.LightCX), CY: float32(p.LightCY), LZ: float32(p.LightZ),
 		DepthK: float32(p.LightDepthK), Shade: float32(p.LightShade),
-		From: float32(p.LightFrom), To: float32(p.LightTo), Soft: float32(p.LightSoft)}
+		From: float32(p.LightFrom), To: float32(p.LightTo), Soft: float32(p.LightSoft),
+		Rim: p.LightRim, RimFrom: float32(p.LightRimFrom), RimSoft: float32(p.LightRimSoft), RimW: float32(p.LightRimW),
+		RimGain: float32(p.LightRimGain), RimEdge: float32(p.LightRimEdge)}
 	return img, lf
 }
 

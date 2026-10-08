@@ -90,6 +90,23 @@ type BackgroundEffectsConfig struct {
 	Ripple              RippleConfig              `yaml:"ripple"`
 	Glitch              GlitchConfig              `yaml:"glitch"`
 	ColorFlash          ColorFlashConfig          `yaml:"color_flash"`
+	Parallax            ParallaxConfig            `yaml:"parallax"`
+}
+
+// ParallaxConfig: the background seen by a camera that moves, with its depth map: what is near
+// moves more than what is far (2.5D)
+type ParallaxConfig struct {
+	Enabled bool    `yaml:"enabled"`
+	Amount  float64 `yaml:"amount"` // how far (px) the nearest things move against the focus
+	// sway (a slow drift around X, Y), beat (towards X, Y and in with the music), still (at X, Y:
+	// moved by its segments)
+	Motion  string  `yaml:"motion"`
+	Speed   float64 `yaml:"speed"`
+	X       float64 `yaml:"x"`     // where the camera is, -1 … 1 (left / up … right / down)
+	Y       float64 `yaml:"y"`
+	Dolly   float64 `yaml:"dolly"` // moving in: what is near grows more than what is far (0 … 0.3)
+	Focus   float64 `yaml:"focus"` // the depth that stays still: 0 far … 1 near
+	ReactTo string  `yaml:"react_to"`
 }
 
 type BassZoomConfig struct {
@@ -418,6 +435,7 @@ func DefaultConfig() ProjectConfig {
 				BrightnessBoost: 0.15,
 				ContrastBoost:   0.10,
 			},
+			Parallax: ParallaxConfig{Amount: 30, Motion: "sway", Speed: 1, Focus: 0.5, ReactTo: "bass"},
 		},
 		Visualizer: VisualizerConfig{
 			Enabled:         true,

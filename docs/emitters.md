@@ -11,8 +11,9 @@ always give the same result: any frame can be seen or rendered directly.
   clip at the cursor.
 - **Place it**: its point on the preview (or in the editor) moves it; the tip of its arrow turns it
   (Shift: steps of 15°). Its shape (line, circle, rectangle) is outlined. With its light on, a circle
-  shows the light's reach (where it is still strong) and a fainter one where it fades out; drag
-  the handle of either to change it. It can also travel along a
+  shows the light's reach (where it is still strong) and a fainter one where it fades out; with
+  *only the edges, far away*, a blue one where it switches to lighting only the edges; drag the
+  handle of any of them to change it. It can also travel along a
   [motion path](layers.md#motion-path): its particles stay behind as a trail.
 - **More clips**: *Clip at <cursor>* in the inspector (or double-click its lane) copies the last one.
 - **Preset**: the buttons at the top of the inspector start again from another preset.
@@ -66,12 +67,18 @@ Any emitter can use them:
           look: flame
           flame: { color_cool: "#b8200a", color_mid: "#ff8a1e", color_hot: "#fff4d0", heat: 1, noise: 22, noise_scale: 60, noise_speed: 260, edge: 0.55 }
           glow: { intensity: 0.8, radius: 90, color: "#ff6a1a" }
-          light: { enabled: true, intensity: 0.8, reach: 450, end: 1100, mode: soft, flicker: 0.25 }
+          light: { enabled: true, intensity: 0.8, reach: 450, end: 1100, mode: soft, flicker: 0.25,
+                   rim: true, rim_from: 500, rim_soft: 120, rim_width: 10, rim_gain: 2, rim_edge: 0.04 }
 ```
 
 The light follows the particles: when the fire grows with the bass, moves along its path or
-fades out, its light does too. It is 2D for now (it fades with the distance); with a depth map
-(to come) it will respect the volumes of the scene.
+fades out, its light does too. With a background that has a [depth map](depth.md) it lights the
+scene in 2.5D (see there), and it can light **only the edges** of things far away (rim light):
+*Only the edges, far away* — farther than **Edges from** (px, its blue circle; 0 = everywhere),
+changing over **Change over** px, it no longer lights the surfaces but the edges of things that face
+it: where the scene drops behind them towards the light by **What counts as an edge** (a depth
+step; less = more edges), **Edge width** px wide, **Edge strength** times as bright. It still ends
+where the light fades out. A sharp depth map (DA3 Mono Large) gives crisp edges.
 
 Keys of where it is (x, y, rotation, its path) and the music's push count from the moment each
 particle is born; the other settings (forces, colors...) apply to all of them now. At most 4

@@ -137,6 +137,24 @@ type sampler struct {
 	w, h int
 	cs   float64
 	sn   float64
+	// the 2.5D camera with this image's depth (nil: none), and how far it moves the image at
+	// the pixel being drawn (as gParA / gParB in render.comp: found at the pixel, applied to
+	// whatever point of the image the transition looks at)
+	par      *Parallax
+	depth    []uint16
+	n        int
+	pdx, pdy float64
+}
+
+// moveAt: the camera's move of this image at frame pixel (x, y)
+func (s *sampler) moveAt(x, y float64) {
+	if s.par == nil || s.img == nil {
+		return
+	}
+	px, py, _ := s.par.Find(float32(x), float32(y), s.n, s.w, s.h, func(x, y float32) float32 {
+		return layerDepth(s.depth, s.l, x, y, s.w, s.h)
+	})
+	s.pdx, s.pdy = x-float64(px), y-float64(py)
 }
 
 func newSampler(img *image.RGBA, l Layer, w, h int) sampler {
@@ -147,6 +165,7 @@ func (s *sampler) at(x, y float64) rgb {
 	if s.img == nil {
 		return rgb{}
 	}
+	x, y = x-s.pdx, y-s.pdy
 	cx, cy := float64(s.w)/2, float64(s.h)/2
 	dx, dy := x-cx, y-cy
 	if s.l.Rot != 0 {
@@ -174,6 +193,12 @@ func (s *sampler) at(x, y float64) rgb {
 // Compose draws the background into dst: image a with layer la, and during a transition the
 // new image b with layer lb mixed in by tr. It mirrors composite() in render.comp.
 func Compose(dst, a, b *image.RGBA, la, lb Layer, tr Trans) {
+	ComposeParallax(dst, a, b, la, lb, tr, Parallax{}, nil, nil)
+}
+
+// ComposeParallax is Compose seen by the 2.5D camera par, each image with its depth (da, db; nil:
+// that one doesn't move). The fluid transitions don't move (as in fluid.comp).
+func ComposeParallax(dst, a, b *image.RGBA, la, lb Layer, tr Trans, par Parallax, da, db []uint16) {
 	w, h := dst.Bounds().Dx(), dst.Bounds().Dy()
 	if !tr.HasA {
 		a = nil
@@ -182,14 +207,26 @@ func Compose(dst, a, b *image.RGBA, la, lb Layer, tr Trans) {
 		b = nil
 	}
 	sa, sb := newSampler(a, la, w, h), newSampler(b, lb, w, h)
+	if par.On() && tr.Fluid == nil {
+		n := par.Steps(w, h)
+		if da != nil {
+			sa.par, sa.depth, sa.n = &par, da, n
+		}
+		if db != nil {
+			sb.par, sb.depth, sb.n = &par, db, n
+		}
+	}
 	if tr.Fluid != nil {
 		tr.Fluid.Render(dst, &sa, &sb)
 		return
 	}
 	parallelFor(h, func(y0, y1 int) {
+		sa, sb := sa, sb // each block moves its own copies
 		for y := y0; y < y1; y++ {
 			for x := 0; x < w; x++ {
 				var c rgb
+				sa.moveAt(float64(x), float64(y))
+				sb.moveAt(float64(x), float64(y))
 				if tr.Mode == 0 {
 					c = sa.at(float64(x), float64(y))
 				} else {

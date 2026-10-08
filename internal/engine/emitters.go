@@ -185,6 +185,17 @@ func (s *Session) emitFrame(li, ci int, c0, c *config.ClipConfig, idx int, feats
 		}
 		p.LightOn, p.LightR, p.LightEnd, p.LightAdd = true, l.Reach*sc, end*sc, l.Mode == "add"
 		p.LightCol = [3]float64{lc[0] * k, lc[1] * k, lc[2] * k}
+		if l.Rim {
+			// rim light (used with depth): its sizes scale as the reach
+			pos := func(v, def float64) float64 {
+				if v > 0 {
+					return v
+				}
+				return def
+			}
+			p.LightRim, p.LightRimFrom, p.LightRimSoft = true, l.RimFrom*sc, math.Max(l.RimSoft, 1)*sc
+			p.LightRimW, p.LightRimGain, p.LightRimEdge = pos(l.RimWidth, 10)*sc, pos(l.RimGain, 2), pos(l.RimEdge, 0.04)
+		}
 	}
 	// big particles are splatted on a coarser grid (they are soft: the same look, far fewer pixels)
 	if big := math.Max(p.Size, p.SizeEnd) * (1 + e.SizeVar) * (1 + e.React.Size); big >= 160 && p.Softness >= 0.5 {

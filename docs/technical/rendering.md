@@ -326,11 +326,18 @@ saturation / hue (rotation about the gray axis), flash (contrast factor, brightn
 `mix(frame, blended, alpha·key·opacity)`.
 
 Depth (`config.DepthConfig`, `internal/depth`, `engine/depth.go`, `effects/scene.go`): the map of
-a background is made by depth-anything.cpp (Depth Anything 3, built on the same ggml as
-stable-diffusion.cpp and whisper.cpp; `da_capi_depth_dense`: DA3's own resize, ~504 px long side, or for more detail the image resized
-to 1008 / 1512 px — sides multiples of 14 — through `da_capi_depth_path`, which works at the size
-it is given; then a joint bilateral upsampling guided by the image's colors), by the brightness, or read from a
-file; nearness 0..1, kept as a 16-bit PNG in `cache/depth` (key: file, size, date, source, model).
+a background is made by depth-anything.cpp (Depth Anything 3 and 2, built on the same ggml as
+stable-diffusion.cpp and whisper.cpp; `depth.Spec` per model: DA3 DualDPT, Mono / Metric with a sky
+mask, Nested (two files, `da_capi_load_nested`), DA2 relative (inverse depth) or metric), by the
+brightness, or read from a file. The model's output becomes −log(depth) (DA2: of 1/disparity, its
+zeros the sky), stretched between its 0.2 % and 99.8 % with the sky at 0. `da_capi_depth_dense` runs
+the model's own resize (~504 px; DA2 518). More detail: DA3 DualDPT models run the image resized to
+1008 / 1512 px (sides multiples of 14) through `da_capi_depth_path`; the others, and the *native*
+detail, go by tiles of the model's size overlapping by a third (`depth/tiles.go`): each tile is fitted
+by least squares (a·v + b, the sky left out) to the whole-image pass, blended with smoothstep seams,
+and the blend's low frequencies (box blur of r = tile/6, twice) replaced by the whole pass's. Below
+the image's size, a joint bilateral upsampling guided by the image's colors. Nearness 0..1, kept as a
+16-bit PNG in `cache/depth` (key: file, size, date, source, model, detail size, `v2`).
 The session fits it to the frame like its image (`fitDepth`, 16 bits per pixel) for the segments
 A and B; the GPU gets them first in `LAYERS` (`Params.depthI`) and `sceneDepth(q)` samples them
 through the background's ripple, zoom, shake, layer transform (motion) and transition (B from
@@ -338,7 +345,24 @@ halfway), as `effects.Scene.At` on the CPU. Uses: a clip with `depth.behind` mul
 1 − smoothstep(z − soft, z + soft, sceneDepth) (`LayerP.depth`); an emitter's light is multiplied by
 `lightDepth`: e^(−((zp − zl)·k)²) and a shading 1 − s + s·(0.3 + 1.1·max(0, n·l)), the normal from
 the depth's slope and the light's direction with depths scaled by 800 px, times the lit range
-smoothstep(to ± soft) · (1 − smoothstep(from ± soft)) (`LayerP.light2/3`, soft in `light1.w`).
+smoothstep(to ± soft) · (1 − smoothstep(from ± soft)) (`LayerP.light2/3`, soft in `light1.w`). Rim light
+(`LayerP.light4/5`): t = smoothstep(rimFrom ± soft, distance to the light) mixes that towards
+gain · rim · range, rim = max over k = 1..4 of smoothstep(0.35·edge, edge, zp − sceneDepth(q + u·width·k/4))
+· (1 − 0.55·(k−1)/3), u the direction to the light: the scene dropping behind q towards it. The studio's
+`/api/frame?view=depth|lightrange|objdepth` draws the scene's depth instead (`studio.depthView`): with
+a light's range, black outside it; with a clip's depth (`LayerFrame.InDepth`, `DepthZ`), what is
+behind it tinted red.
+
+2.5D camera (`config.ParallaxConfig` → `effects.Parallax`, `Params.parallax/parallaxN`): a point of
+a background at nearness z seen at u is moved by (z − focus)·(shift + dolly·(u − c)). Once per
+pixel (`parallaxPixel` in render.comp; `sampler.moveAt` on the CPU) the point seen at u =
+bgPoint(q) is searched from the nearest depth to the farthest in N steps (N from the largest move,
+6–32), refined by a secant, a refined hit deeper than 1.5/N + 0.02 past its depth being the side
+of something nearer (the search goes on behind it). The move found is then subtracted from
+whatever point of each image the transition samples (`layerAt`), and the hit is the scene's depth
+for the lights and the occlusion (`gHit`; `Scene.Hit` / `Scene.Near` on the CPU). Clips with a
+depth add the move of their depth at their place to their own shake. The search is written once
+per pixel on purpose: inlined at every `layerAt` it made the shader too big to compile in time.
 
 Particle emitters (`config.EmitterConfig`, `effects/emit.go`, `engine/emitters.go`,
 `shaders/emit.comp`): stateless. Per clip the session builds once a **table of births** (one entry

@@ -1242,6 +1242,8 @@ function App() {
       const kv = (k, d) => { const ks = selClip.keys && selClip.keys['emitter.light.' + k]; return ks && ks.length ? valueAt(ks, tt) : (l[k] ?? d); };
       return 'lightrange&' + new URLSearchParams({ from: kv('from', 1), to: kv('to', 0), soft: kv('range_soft', 0.05) }).toString();
     }
+    if (adj && adj.kind === 'objdepth' && selClip) // adjusting a clip's depth: what is behind it, in red
+      return 'objdepth&' + new URLSearchParams({ layer: sel.id, clip: sel.clip }).toString();
     return depthView ? 'depth' : '';
   })();
   const selText = sel.kind === 'text' ? (proj.texts || [])[sel.i] : null;

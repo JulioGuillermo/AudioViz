@@ -588,9 +588,11 @@ a.btn { text-decoration: none; }
 .masksvg .shape-rot { fill: #5aa8ff; stroke: #fff; cursor: grab; pointer-events: auto; }
 .emitbox .eb-light { fill: rgba(255, 190, 90, .05); stroke: rgba(255, 200, 100, .75); stroke-dasharray: 6 4; }
 .emitbox .eb-light.far { fill: none; stroke: rgba(255, 200, 100, .3); stroke-dasharray: 2 5; }
+.emitbox .eb-light.rim { fill: none; stroke: rgba(150, 215, 255, .8); stroke-dasharray: 10 4 2 4; }
 .emitbox .eb-reach { position: absolute; border-radius: 50%; background: #ffc864; border: 1px solid rgba(0, 0, 0, .6); cursor: ew-resize; pointer-events: auto; }
 .emitbox .eb-val { position: absolute; left: 120%; top: -4px; white-space: nowrap; font-size: 11px; color: #fff; background: rgba(0, 0, 0, .7); padding: 1px 5px; border-radius: 4px; }
 .emitbox .eb-reach.far { background: rgba(255, 200, 100, .45); }
+.emitbox .eb-reach.rim { background: #96d7ff; }
 .depth-box { margin-top: 6px; }
 .depth-img { display: block; width: 100%; border-radius: 6px; border: 1px solid var(--line, rgba(255,255,255,.1)); background: #000; }
 .depth-none { padding: 18px; text-align: center; border: 1px dashed rgba(255, 255, 255, .15); border-radius: 6px; font-size: 12px; }

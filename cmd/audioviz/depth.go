@@ -5,22 +5,24 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"slices"
+	"strings"
 	"time"
 
 	"audioviz/internal/depth"
 )
 
-// runDepth: audioviz depth [-source ai|brightness] [-model small|base] [-detail ...] [-o out.png] <image>:
+// runDepth: audioviz depth [-source ai|brightness] [-model name] [-detail ...] [-o out.png] <image>:
 // the depth map of an image (white = near), as the studio makes it
 func runDepth(args []string) {
 	fs := flag.NewFlagSet("depth", flag.ExitOnError)
 	src := fs.String("source", depth.SourceAI, "ai or brightness")
-	model := fs.String("model", "small", "ai model: small or base")
-	detail := fs.String("detail", "high", "ai detail: normal (504 px), high (1008), max (1512)")
+	model := fs.String("model", "small", "ai model: "+strings.Join(names(), ", "))
+	detail := fs.String("detail", "high", "ai detail: normal (504 px), high (1008), max (1512), native (the image's size, by tiles)")
 	out := fs.String("o", "depth.png", "output PNG (16-bit grey, white = near)")
 	fs.Parse(args)
 	if fs.NArg() < 1 {
-		fmt.Fprintln(os.Stderr, "usage: audioviz depth [-source ai|brightness] [-model small|base] [-detail normal|high|max] [-o out.png] <image>")
+		fmt.Fprintln(os.Stderr, "usage: audioviz depth [-source ai|brightness] [-model name] [-detail normal|high|max|native] [-o out.png] <image>")
 		os.Exit(2)
 	}
 	dir, err := os.MkdirTemp("", "audioviz-depth-cache-")
@@ -44,4 +46,14 @@ func runDepth(args []string) {
 		fail(err)
 	}
 	fmt.Printf("✅ %dx%d depth map in %.2fs: %s\n", m.W, m.H, time.Since(t0).Seconds(), *out)
+}
+
+// names: the depth models, sorted
+func names() []string {
+	var n []string
+	for k := range depth.Models {
+		n = append(n, k)
+	}
+	slices.Sort(n)
+	return n
 }

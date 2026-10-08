@@ -136,7 +136,10 @@ type Params struct {
 	// Depth of the backgrounds A and B (16 bits per pixel, 65535 = near) in the overlay buffer:
 	// word offsets of A and B, which are there (bit 0 A, bit 1 B)
 	DepthI [4]int32
-	Layers [MaxLayers]LayerP
+	// The 2.5D camera (effects.Parallax): shift x, y (px), dolly, focus; search steps (0 = off)
+	Parallax  [4]float32
+	ParallaxN [4]int32
+	Layers    [MaxLayers]LayerP
 }
 
 // MaxLayers: overlay clips drawn at once
@@ -165,6 +168,9 @@ type LayerP struct {
 	Depth  [4]float32
 	Light2 [4]float32
 	Light3 [4]float32
+	// rim light: from (px), soft (px), width (px), gain (0 = off); its edge (depth step)
+	Light4 [4]float32
+	Light5 [4]float32
 }
 
 // TextStyle mirrors 'TStyle' in render.comp: one entry of the per-frame text style table

@@ -119,14 +119,15 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx f
 					ox, oy = ef.Births[n-1].X, ef.Births[n-1].Y
 				}
 				z, ok := clipDepth(&c.Depth, scene, ox, oy)
-				s.placeInDepth(&lf, &c.Depth, scene, z, ok)
+				s.placeInDepth(&lf, &c.Depth, scene, z, ox, oy, ok)
 				if P := &ef.P; P.LightOn && scene.On() {
-					// its light in 2.5D: from its origin, at its depth (the scene's there when it has none)
+					// its light in 2.5D: from its origin (as moved), at its depth (the scene's there
+					// when it has none)
 					if !ok {
-						z = float64(scene.At(float32(ox), float32(oy)))
+						z = float64(scene.Ground(float32(ox), float32(oy)))
 					}
 					e := c.Emitter
-					P.LightD3, P.LightCX, P.LightCY, P.LightZ = true, ox, oy, z
+					P.LightD3, P.LightCX, P.LightCY, P.LightZ = true, ox+lf.W.ShakeX, oy+lf.W.ShakeY, z
 					if e != nil {
 						P.LightDepthK, P.LightShade = e.Light.Depth, e.Light.Shade
 						P.LightFrom, P.LightTo, P.LightSoft = e.Light.From, e.Light.To, e.Light.RangeSoft
@@ -198,7 +199,7 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx f
 				lf.Mask, lf.MaskVer = s.maskFor(c.Masks, int(tw), int(th))
 			}
 			z, ok := clipDepth(&c.Depth, scene, cx, cy)
-			s.placeInDepth(&lf, &c.Depth, scene, z, ok)
+			s.placeInDepth(&lf, &c.Depth, scene, z, cx, cy, ok)
 			out = append(out, lf)
 			stack = append(stack, li+1)
 		}
@@ -440,16 +441,23 @@ func clipDepth(d *config.ClipDepth, scene *effects.Scene, x, y float64) (float64
 		return d.Z, true
 	case "auto":
 		if scene.On() {
-			return float64(scene.At(float32(x), float32(y))) + d.Z, true
+			return float64(scene.Ground(float32(x), float32(y))) + d.Z, true
 		}
 	}
 	return 0, false
 }
 
 // placeInDepth: a clip at depth z is hidden where the scene is nearer (if it asks to)
-func (s *Session) placeInDepth(lf *effects.LayerFrame, d *config.ClipDepth, scene *effects.Scene, z float64, ok bool) {
+func (s *Session) placeInDepth(lf *effects.LayerFrame, d *config.ClipDepth, scene *effects.Scene, z, x, y float64, ok bool) {
 	lf.Scene = scene
-	if ok && d.Behind && scene.On() {
-		lf.Behind, lf.DepthZ, lf.DepthSoft = true, float32(z), float32(math.Max(d.Soft, 0.005))
+	if ok && scene.On() {
+		lf.InDepth, lf.DepthZ, lf.DepthSoft = true, float32(z), float32(math.Max(d.Soft, 0.005))
+		lf.Behind = d.Behind
+	}
+	if ok && scene.On() && scene.Par.On() {
+		// the 2.5D camera moves it as its depth
+		dx, dy := scene.Par.Disp(z, x, y, s.W, s.H)
+		lf.W.ShakeX += dx
+		lf.W.ShakeY += dy
 	}
 }

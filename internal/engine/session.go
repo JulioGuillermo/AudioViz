@@ -424,9 +424,12 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 	// Overlay layers, and the place of the visualizer, particles and lyrics among them
 	if fs.DepthA != nil || fs.DepthB != nil {
 		fx := fs.FX
+		if fs.Trans.Fluid != nil {
+			fx.par = effects.Parallax{} // the fluid transitions don't move
+		}
 		fs.Scene = &effects.Scene{A: fs.DepthA, B: fs.DepthB, LA: fs.LayerA, LB: fs.LayerB, K: fs.Trans.K,
 			Zoom: fx.zoom, ShakeX: fx.shakeX, ShakeY: fx.shakeY, RippleAmp: fx.rippleAmp, RippleFreq: fx.rippleFreq, RippleTm: fx.rTim,
-			W: s.W, H: s.H}
+			W: s.W, H: s.H, Par: fx.par, N: fx.par.Steps(s.W, s.H)}
 	}
 	if len(cfg.Layers) > 0 {
 		if fs.Layers, fs.layerStack, err = s.layersAt(t, idx, base, fs.FX, fs.GlitchAmount, fs.Scene); err != nil {
@@ -468,6 +471,31 @@ func shakeOf(c *config.ShakeConfig, t float64, feat *audio.FrameFeatures, minDim
 	return amp * (0.6*math.Sin(tt*7.3) + 0.4*math.Sin(tt*13.1+1.7)),
 		amp * (0.6*math.Sin(tt*8.9+0.5) + 0.4*math.Sin(tt*11.7+2.3)),
 		1 + 2*c.Amplitude/minDim
+}
+
+// parallaxOf: the 2.5D camera now: how far the nearest things move (px), moving in, focus
+func parallaxOf(c *config.ParallaxConfig, t float64, feat *audio.FrameFeatures) effects.Parallax {
+	if !c.Enabled || (c.Amount == 0 && c.Dolly == 0) {
+		return effects.Parallax{Focus: c.Focus}
+	}
+	sp := c.Speed
+	if sp <= 0 {
+		sp = 1
+	}
+	tt := t * sp
+	mx, my, dolly := c.X, c.Y, c.Dolly
+	switch c.Motion {
+	case "beat":
+		// towards X, Y and in, with the music; back at rest
+		b := feat.Band(c.ReactTo, "bass")
+		mx, my, dolly = mx*b, my*b, dolly*b
+	case "still":
+	default: // sway: a slow drift around X, Y, moving in and out a little
+		mx += 0.8*math.Sin(tt*0.45+0.3) + 0.2*math.Sin(tt*1.1)
+		my += 0.45*math.Sin(tt*0.31+1.1) + 0.1*math.Sin(tt*0.9+2)
+		dolly *= 0.5 + 0.5*math.Sin(tt*0.23)
+	}
+	return effects.Parallax{SX: -mx * c.Amount, SY: -my * c.Amount, Dolly: dolly, Focus: c.Focus}
 }
 
 // rippleOf: amplitude, frequency and phase
@@ -560,6 +588,19 @@ func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures) (fram
 		ab, ac := flashOf(a, feat)
 		bb, bc := flashOf(b, feat)
 		fx.bright, fx.contrast = lerp(ab, bb, k), lerp(ac, bc, k)
+	}
+	{
+		a, b, k := config.Blend(tl.Parallax, t)
+		pa, pb := parallaxOf(a, t, feat), parallaxOf(b, t, feat)
+		fx.par = effects.Parallax{SX: lerp(pa.SX, pb.SX, k), SY: lerp(pa.SY, pb.SY, k), Dolly: lerp(pa.Dolly, pb.Dolly, k),
+			Focus: lerp(pa.Focus, pb.Focus, k)}
+		if !a.Enabled {
+			fx.par.Focus = pb.Focus
+		} else if !b.Enabled {
+			fx.par.Focus = pa.Focus
+		}
+		// a little zoom so that what moves doesn't show the frame's edges
+		fx.zoom *= fx.par.EdgeZoom(s.W, s.H)
 	}
 	return fx, glitchAmt
 }

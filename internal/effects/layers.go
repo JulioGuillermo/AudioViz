@@ -52,6 +52,7 @@ type LayerFrame struct {
 	// (soft by DepthSoft), and the scene the light and that look at
 	Behind            bool
 	DepthZ, DepthSoft float32
+	InDepth           bool // it has a depth (DepthZ, DepthSoft), behind things or not
 	Scene             *Scene
 }
 
@@ -245,8 +246,9 @@ func DrawLayer(dst *image.RGBA, l *LayerFrame) {
 		for y := y0; y < y1; y++ {
 			for x := 0; x < W; x++ {
 				if l.Light != nil {
-					// the emitter's light on what is already there, before its particles
-					L := l.Light.LightAt(x, y)
+					// the emitter's light on what is already there, before its particles (moved
+					// with them)
+					L := l.Light.LightAt(float32(x)-float32(l.W.ShakeX), float32(y)-float32(l.W.ShakeY))
 					if L > 1e-4 && l.Light.D3 && l.Scene.On() {
 						L *= l.Light.DepthFactor(l.Scene, x, y)
 					}
