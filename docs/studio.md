@@ -14,6 +14,24 @@ same engine as the export, so what you see is what gets exported.
 > `--addr 0.0.0.0:...` allows access from the network, and anyone on it could browse your folders.
 > Only use it on trusted networks.
 
+## Working together
+
+Several people — and agents through the [MCP server](mcp.md) — can have the same project open
+(open the studio to the network: `audioviz studio --addr 0.0.0.0:8787`). Each change travels on
+its own (*this property of this element*, never the whole project) and everyone sees it at once,
+without losing what they are doing: if someone adds or removes an element meanwhile, your changes
+still land on the right one. If two people change the same property at the same time, the last
+one wins.
+
+- **Who is here**: their initials in the top bar (🤖 an agent). Click yours to set your name (asked
+  the first time).
+- **Their cursors** on the preview and the timeline, with their names; the arrow button next to
+  the initials hides or shows them.
+- **What they have selected**: a dot of their color next to that row of the timeline (an agent's:
+  where it changed something last).
+- **Undo** (Ctrl+Z) undoes only your own changes.
+- What you hide or fold on the timeline is yours alone (it stays in this browser).
+
 ## Projects and the workspace
 The **workspace** is the folder holding your projects (`~/AudioViz` unless you pass
 `--workspace`). The start screen and **Projects** (top bar) show its projects as cards with the

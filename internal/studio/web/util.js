@@ -7,7 +7,11 @@ export async function api(method, url, body) {
   const r = await fetch(url, opt);
   const ct = r.headers.get('Content-Type') || '';
   const data = ct.includes('json') ? await r.json() : await r.text();
-  if (!r.ok) throw new Error((data && data.error) || r.statusText);
+  if (!r.ok) {
+    const e = new Error((data && data.error) || r.statusText);
+    e.status = r.status;
+    throw e;
+  }
   return data;
 }
 

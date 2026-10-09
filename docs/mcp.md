@@ -2,8 +2,9 @@
 
 The studio is also an **MCP server** (Model Context Protocol): an AI agent — Claude Code, Claude
 Desktop or any MCP client — can open projects, change them, look at frames, read the song's
-analysis, generate images and lyrics, and export. Whatever it changes is saved and shows in the
-open studio at once, as a step that **Ctrl+Z** undoes.
+analysis, generate images and lyrics, and export. Whatever it changes is saved and shows at once
+in every studio with the project open, where the agent appears among those connected (see
+[Working together](studio.md#working-together)).
 
 It runs on the studio's own address:
 

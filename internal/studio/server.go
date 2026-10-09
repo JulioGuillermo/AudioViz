@@ -47,6 +47,7 @@ type Server struct {
 	rend     *engine.Renderer
 	hub      *hub
 	job      *job
+	collab   *collab // the project's versions and who is connected (collab.go)
 	startDir string
 	// Folder holding the projects (New creates them there, Import unpacks there)
 	workspace string
@@ -65,7 +66,7 @@ type Options struct {
 
 // Run starts the studio and blocks until the server is closed
 func Run(opt Options, ready func(url string)) error {
-	s := &Server{hub: newHub(), version: opt.Version}
+	s := &Server{hub: newHub(), version: opt.Version, collab: &collab{peers: map[string]*peer{}}}
 	s.workspace = opt.Workspace
 	if s.workspace == "" {
 		s.workspace = DefaultWorkspace()
@@ -130,7 +131,10 @@ func Run(opt Options, ready func(url string)) error {
 	mux.HandleFunc("POST /api/stems/open", s.hStemsOpen)
 	mux.HandleFunc("GET /api/depth/view", s.hDepthView)
 	mux.HandleFunc("POST /api/expr", s.hExpr)
-	mux.HandleFunc("GET /api/events", s.hub.serve)
+	mux.HandleFunc("GET /api/events", s.hEvents)
+	mux.HandleFunc("POST /api/project/ops", s.hOps)
+	mux.HandleFunc("GET /api/project/ops", s.hOpsSince)
+	mux.HandleFunc("POST /api/presence", s.hPresence)
 	s.mountMCP(mux, opt.MCPToken)
 
 	ln, err := net.Listen("tcp", opt.Addr)
@@ -192,6 +196,7 @@ func (s *Server) open(path string) error {
 	old := s.sess
 	s.projPath, s.cfg, s.sess = abs, cfg, sess
 	s.mu.Unlock()
+	s.collabReset()
 	s.renderMu.Lock()
 	if s.rend != nil {
 		s.rend.Close()
@@ -299,13 +304,15 @@ func (s *Server) hOpen(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hGetProject(w http.ResponseWriter, r *http.Request) {
+	s.collab.mu.Lock() // (its version and the project together)
+	defer s.collab.mu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.cfg == nil {
 		fail(w, 404, errors.New("no project is open"))
 		return
 	}
-	writeJSON(w, map[string]any{"meta": s.meta(), "project": ProjectToJSON(s.cfg)})
+	writeJSON(w, map[string]any{"meta": s.meta(), "project": ProjectToJSON(s.cfg), "v": s.collab.ver, "epoch": s.collab.epoch})
 }
 
 // hPutProject receives the edited project, applies it to the session and saves it
@@ -353,7 +360,22 @@ func (s *Server) hPutProject(w http.ResponseWriter, r *http.Request) {
 	s.cfg = cfg
 	m := s.meta()
 	s.mu.Unlock()
+	// (all of it at once: the studios take it again; collab.go changes it by parts)
+	s.collabReset()
+	s.hub.send("project", map[string]any{"kind": "reload"})
 	writeJSON(w, map[string]any{"meta": m, "saved": time.Now().Format("15:04:05")})
+}
+
+// hEvents: a studio's stream of events; its client id, name and color (query) make it a peer
+func (s *Server) hEvents(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	id := q.Get("client")
+	if id != "" {
+		s.peerJoin(id, q.Get("name"), q.Get("color"), false)
+		defer s.peerLeave(id)
+		time.AfterFunc(400*time.Millisecond, s.sendPresence) // (once its stream is listening)
+	}
+	s.hub.serve(w, r)
 }
 
 // ---------------------------------------------------------------- analysis and lyrics
@@ -521,6 +543,20 @@ func (s *Server) hPutLyrics(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, err)
 		return
 	}
+	// the session reads them again; the other studios too
+	s.mu.Lock()
+	sess, cfg := s.sess, s.cfg
+	s.mu.Unlock()
+	if sess != nil && cfg != nil {
+		s.renderMu.Lock()
+		err := sess.Update(cfg)
+		s.renderMu.Unlock()
+		if err != nil {
+			fail(w, 500, err)
+			return
+		}
+	}
+	s.hub.send("lyrics", map[string]any{"client": r.URL.Query().Get("client"), "path": path})
 	writeJSON(w, map[string]any{"path": path})
 }
 

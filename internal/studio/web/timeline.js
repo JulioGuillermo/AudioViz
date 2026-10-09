@@ -240,7 +240,8 @@ export function Timeline(props) {
 function TimelineInner({ openStems, toggleStems,  proj, meta, ana, lyr, timeStore, slowTime, playing, sel, lineSel, onSeek, onSelect, onMoveSeg,
   onAddSeg, onSelectLine, onLyrics, onLyricsCommit, onMarker, height, setHeight, wordEdit,
   texts = [], onSelectText, onMoveText, onAddText, view = { hidden: [], collapsed: [] }, onToggleZone,
-  kfFocus = null, setKfFocus = () => {}, kfSel = null, setKfSel = () => {}, onKeys, onContext, layers = [], onSelectLayer, onMoveClip, onAddClip, onAddLayer }) {
+  kfFocus = null, setKfFocus = () => {}, kfSel = null, setKfSel = () => {}, onKeys, onContext, layers = [], onSelectLayer, onMoveClip, onAddClip, onAddLayer,
+  remote = [], marks = {}, onPointer }) {
   const scroller = useRef();
   const namesRef = useRef();
   const [pps, setPps] = useState(null); // pixels per second
@@ -679,9 +680,10 @@ function TimelineInner({ openStems, toggleStems,  proj, meta, ana, lyr, timeStor
     <div class="tl-body">
       <div class="tl-names" ref=${namesRef}>
         ${rows.map((r) => html`<div key=${r.key} class=${'nm ' + (r.cls || '') + (r.on ? ' on' : '')} style=${{ '--h': r.h + 'px', top: r.top }}
-            onClick=${r.onName} onContextMenu=${r.onNameCtx} title=${r.title || ''}>${r.name}</div>`)}
+            onClick=${r.onName} onContextMenu=${r.onNameCtx} title=${r.title || ''}>${r.name}${(marks[r.key] || []).map((p) => html`<i class="pmark" style=${{ '--c': p.color || '#888' }} title=${p.name}></i>`)}</div>`)}
       </div>
-      <div class="tl-scroll" ref=${scroller} onWheel=${wheel} onScroll=${onScroll}>
+      <div class="tl-scroll" ref=${scroller} onWheel=${wheel} onScroll=${onScroll}
+        onMouseMove=${(e) => onPointer && onPointer({ area: 'timeline', t: +xToT(e.clientX).toFixed(3) })} onMouseLeave=${() => onPointer && onPointer(null)}>
         <div class="tl-inner" style=${{ width: width + 'px' }}>
           ${rows.map((r) => html`<div key=${r.key} class=${'lane ' + (r.cls || '') + (r.sel ? ' sel' : '')} style=${{ '--h': r.h + 'px', top: r.top }}
               onMouseDown=${r.onDown} onDblClick=${r.onDbl} onContextMenu=${r.onCtx} title=${r.laneTitle || null}>${r.lane}</div>`)}
@@ -692,6 +694,7 @@ function TimelineInner({ openStems, toggleStems,  proj, meta, ana, lyr, timeStor
               onContextMenu=${(e) => onContext(e, { kind: 'marker', i })}><${Icon} name="flag" size=${11} /> ${m.label}</b>
           </div>`)}
           <${Playhead} timeStore=${timeStore} pps=${effPps} scroller=${scroller} follow=${playing} />
+          ${remote.map(({ p, c }) => html`<div key=${p.id} class="rtime" style=${{ left: c.t * effPps + 'px', '--c': p.color || '#888' }}><span>${p.name}</span></div>`)}
         </div>
       </div>
     </div>

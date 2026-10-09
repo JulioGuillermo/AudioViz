@@ -670,3 +670,18 @@ a.btn { text-decoration: none; }
 .xeach { display: flex; align-items: center; gap: 8px; margin: 8px 0 2px; font-size: 12px; flex-wrap: wrap; }
 .xeach select { width: auto; }
 .xeach .muted { font-size: 11px; }
+
+/* presence: those connected, the others' cursors and selections */
+.peers { display: flex; align-items: center; gap: 4px; margin-right: 8px; }
+.peer { width: 24px; height: 24px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 10px;
+  font-weight: 700; color: #111; background: var(--c); border: 2px solid var(--bg, #15161a); box-shadow: 0 0 0 1px var(--c); cursor: default; }
+.peer.agent { font-size: 12px; background: color-mix(in srgb, var(--c) 35%, #1d1e24); }
+.peer.me { cursor: pointer; opacity: .9; }
+.peers .btn.off { opacity: .5; }
+.rcursor { position: absolute; pointer-events: none; z-index: 20; transform: translate(-1px, -1px); transition: left .08s linear, top .08s linear; }
+.rcursor svg path { fill: var(--c); stroke: #000; stroke-width: 1; }
+.rcursor span { position: absolute; left: 12px; top: 14px; background: var(--c); color: #111; font-size: 11px; font-weight: 600; padding: 1px 6px;
+  border-radius: 4px; white-space: nowrap; }
+.rtime { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px dashed var(--c); pointer-events: none; z-index: 5; }
+.rtime span { position: absolute; top: 2px; left: 3px; background: var(--c); color: #111; font-size: 10px; font-weight: 600; padding: 0 5px; border-radius: 3px; white-space: nowrap; }
+.pmark { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c); margin-left: 5px; vertical-align: middle; box-shadow: 0 0 0 1px rgba(0,0,0,.4); }

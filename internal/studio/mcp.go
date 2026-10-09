@@ -30,8 +30,8 @@ import (
 // The MCP server (Model Context Protocol): agents (Claude Code, Claude Desktop, any MCP client)
 // drive the studio remotely over HTTP — Streamable HTTP at /mcp, and the older SSE transport at
 // /sse (+ /messages). Its tools go through the studio's own API (the same handlers the web app
-// calls): what they change is saved and shows in the open studio at once, as a step that Ctrl+Z
-// undoes. With a token (studio --mcp-token, or AUDIOVIZ_MCP_TOKEN) every request must carry it
+// calls; its edits are operations, as everyone's: collab.go): what they change is saved and
+// shows at once in every studio with the project open. With a token (studio --mcp-token, or AUDIOVIZ_MCP_TOKEN) every request must carry it
 // (Authorization: Bearer …, or ?token=…); without one, only requests from no web page or from
 // the studio's own origin are taken (a page elsewhere can't drive it).
 
@@ -136,14 +136,22 @@ func (m *mcpServer) hPost(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var out []rpcResp
+	sid := r.Header.Get("Mcp-Session-Id")
+	for _, q := range msgs {
+		if q.Method == "initialize" && sid == "" {
+			sid = newID()
+			w.Header().Set("Mcp-Session-Id", sid)
+		}
+	}
+	if sid == "" {
+		sid = "agent" // (a client without sessions)
+	}
+	ctx := context.WithValue(r.Context(), mcpSession{}, sid)
 	for _, q := range msgs {
 		if q.Method == "" {
 			continue // a response of the client's
 		}
-		if q.Method == "initialize" && r.Header.Get("Mcp-Session-Id") == "" {
-			w.Header().Set("Mcp-Session-Id", newID())
-		}
-		if res, ok := m.handle(r.Context(), q); ok {
+		if res, ok := m.handle(ctx, q); ok {
 			out = append(out, res)
 		}
 	}
@@ -203,8 +211,9 @@ func (m *mcpServer) hSSE(w http.ResponseWriter, r *http.Request) {
 
 // hMessages: a message for an SSE session: taken (202), its answer goes down its stream
 func (m *mcpServer) hMessages(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("sessionId")
 	m.mu.Lock()
-	c := m.sse[r.URL.Query().Get("sessionId")]
+	c := m.sse[id]
 	m.mu.Unlock()
 	if c == nil {
 		http.Error(w, "no such session (open /sse first)", http.StatusNotFound)
@@ -226,7 +235,7 @@ func (m *mcpServer) hMessages(w http.ResponseWriter, r *http.Request) {
 			if q.Method == "" {
 				continue
 			}
-			if res, ok := m.handle(context.Background(), q); ok {
+			if res, ok := m.handle(context.WithValue(context.Background(), mcpSession{}, id), q); ok {
 				b, _ := json.Marshal(res)
 				select {
 				case c <- b:
@@ -245,8 +254,17 @@ func (m *mcpServer) handle(ctx context.Context, q rpcMsg) (rpcResp, bool) {
 	case "initialize":
 		var p struct {
 			ProtocolVersion string `json:"protocolVersion"`
+			ClientInfo      struct {
+				Name string `json:"name"`
+			} `json:"clientInfo"`
 		}
 		_ = json.Unmarshal(q.Params, &p)
+		// it shows among those connected to the studio
+		name := p.ClientInfo.Name
+		if name == "" {
+			name = "Agent"
+		}
+		m.s.peerJoin(sessionOf(ctx), "🤖 "+name, "#a78bfa", true)
 		v := mcpProtocols[0]
 		if slices.Contains(mcpProtocols, p.ProtocolVersion) {
 			v = p.ProtocolVersion
@@ -277,6 +295,7 @@ func (m *mcpServer) handle(ctx context.Context, q rpcMsg) (rpcResp, bool) {
 			r.Error = &rpcErr{-32602, "invalid params: " + err.Error()}
 			break
 		}
+		m.s.peerJoin(sessionOf(ctx), "", "", true) // (still here)
 		r.Result = m.callTool(ctx, p.Name, p.Arguments)
 	case "resources/list":
 		r.Result = map[string]any{"resources": docResources()}
@@ -303,6 +322,16 @@ func (m *mcpServer) handle(ctx context.Context, q rpcMsg) (rpcResp, bool) {
 		r.Error = &rpcErr{-32601, "method not found: " + q.Method}
 	}
 	return r, !notif
+}
+
+// mcpSession: the context key of the MCP session (its id: the agent's peer id)
+type mcpSession struct{}
+
+func sessionOf(ctx context.Context) string {
+	if s, ok := ctx.Value(mcpSession{}).(string); ok {
+		return s
+	}
+	return "agent"
 }
 
 // docResources: the documentation, as resources
@@ -487,39 +516,31 @@ func init() {
 				return jsonOut(v), nil
 			}},
 		{Name: "edit_project", Title: "Change the project",
-			Desc: "Changes the open project: a list of operations on its JSON (see get_project), applied in order and saved together (all or nothing). The studio shows the change at once (Ctrl+Z undoes it). op: \"set\" (the value at path, creating missing objects), \"merge\" (an object's keys into the object at path), \"insert\" (into an array: at index, or \"-\" at the end), \"remove\". Paths are JSON Pointers, e.g. {op:\"set\", path:\"/texts/0/color\", value:\"#ff0000\"}; {op:\"insert\", path:\"/texts/-\", value:{text:\"Hello\", start:2, end:6}}; keyframes: {op:\"set\", path:\"/texts/0/keys/size\", value:[{t:0,v:80},{t:2,v:140,ease:\"ease_out\"}]} (t: seconds from the element's start); expressions: {op:\"set\", path:\"/texts/0/exprs/glow.intensity\", value:\"0.5 + bass\"} (see the docs: expressions.md). Times are seconds; colors \"#rrggbb\" or \"#rrggbbaa\".",
+			Desc: "Changes the open project: a list of operations on its JSON (see get_project), applied in order and saved together (all or nothing). Everyone with the project open sees the change at once. op: \"set\" (the value at path, creating missing objects), \"merge\" (an object's keys into the object at path), \"insert\" (into an array: at index, or \"-\" at the end), \"remove\". Paths are JSON Pointers, e.g. {op:\"set\", path:\"/texts/0/color\", value:\"#ff0000\"}; {op:\"insert\", path:\"/texts/-\", value:{text:\"Hello\", start:2, end:6}}; keyframes: {op:\"set\", path:\"/texts/0/keys/size\", value:[{t:0,v:80},{t:2,v:140,ease:\"ease_out\"}]} (t: seconds from the element's start); expressions: {op:\"set\", path:\"/texts/0/exprs/glow.intensity\", value:\"0.5 + bass\"} (see the docs: expressions.md). Times are seconds; colors \"#rrggbb\" or \"#rrggbbaa\".",
 			Schema: obj(map[string]any{"ops": map[string]any{"type": "array", "description": "the operations, in order",
 				"items": obj(map[string]any{
 					"op":    map[string]any{"type": "string", "enum": []string{"set", "merge", "insert", "remove"}},
 					"path":  prop("string", "JSON Pointer"),
 					"value": map[string]any{"description": "the value (set, merge, insert)"},
 				}, "op", "path")}}, "ops"),
-			Run: func(m *mcpServer, _ context.Context, a args) ([]any, error) {
-				ops, _ := a["ops"].([]any)
-				if len(ops) == 0 {
+			Run: func(m *mcpServer, ctx context.Context, a args) ([]any, error) {
+				raw, _ := a["ops"].([]any)
+				if len(raw) == 0 {
 					return nil, errors.New("no operations")
 				}
-				p, err := m.project()
-				if err != nil {
-					return nil, err
-				}
-				var root any = p
-				for i, o := range ops {
+				var ops []jsonOp
+				for _, o := range raw {
 					op, _ := o.(map[string]any)
-					if root, err = ptrApply(root, args(op).str("op"), args(op).str("path"), op["value"]); err != nil {
-						return nil, fmt.Errorf("operation %d (%v %v): %w", i+1, op["op"], op["path"], err)
-					}
+					ops = append(ops, jsonOp{Op: args(op).str("op"), Path: args(op).str("path"), Value: op["value"]})
 				}
-				v, err := m.apiJSON("PUT", "/api/project", root)
+				sid := sessionOf(ctx)
+				bt, err := m.s.applyOps("", -1, ops, sid, "", m.s.peerName(sid), true)
 				if err != nil {
 					return nil, fmt.Errorf("the project was not changed: %w", err)
 				}
-				m.changed("changed")
-				saved := ""
-				if r, ok := v.(map[string]any); ok {
-					saved, _ = r["saved"].(string)
-				}
-				return textOut(fmt.Sprintf("Done: %d change(s), saved at %s.", len(ops), saved)), nil
+				// where it changed it: the studios show it (as its selection)
+				m.s.hub.send("cursor", map[string]any{"id": sid, "sel": map[string]any{"path": ops[0].Path}})
+				return textOut(fmt.Sprintf("Done: %d change(s) (version %d).", len(bt.Ops), bt.V)), nil
 			}},
 		{Name: "render_frame", Title: "See a frame",
 			Desc: "Renders the frame at a time of the song (as the studio's preview) and returns it as an image, to see what the project looks like. scale divides its size (1 full, 2 half: default, 4 a quarter). view: \"depth\" for the scene's depth (white near) instead.",
@@ -644,7 +665,6 @@ func init() {
 				if err != nil {
 					return nil, err
 				}
-				m.changed("changed")
 				return jsonOut(v), nil
 			}},
 		{Name: "generate_lyrics", Title: "Sync the lyrics",
@@ -737,7 +757,7 @@ func init() {
 	}
 }
 
-const mcpInstructions = `AudioViz makes audio-reactive music videos. This server drives its studio (the open project shows the agent's changes live; Ctrl+Z undoes them).
+const mcpInstructions = `AudioViz makes audio-reactive music videos. This server drives its studio (everyone with the project open sees the agent's changes live; they show the agent among those connected).
 Start with studio_state (is a project open?) and get_project. The project: audio (the song), output (size, fps, file), tracks (background, lyrics, visualizer, particles and the effects: lists of segments; the first, at 0, is the base), texts (fixed texts: titles), layers (overlay clips: images, videos; or particle emitters), markers.
 Change it with edit_project (JSON Pointer operations); any number, color or switch can have keyframes (keys) or an expression (exprs: the language in expressions.md: audio bands like bass, kick; time; per letter / pixel …). Check visually with render_frame, and place things on the music with audio_analysis. Read the documentation with get_docs (index.md first).
 Long work (export_video, generate_image, generate_lyrics, separate_stems, compute_depth) runs as one job at a time: follow it with job_status.`

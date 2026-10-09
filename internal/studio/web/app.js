@@ -22,10 +22,12 @@ import { FilePicker, NewProject, ExportDialog, GenLyricsDialog, LyricsTextDialog
 import { createStore, useStore, useThrottledStore } from './store.js';
 import { t, setLang, langStore, LANGS } from './i18n.js';
 import { createScrubber } from './scrub.js';
+import { diff, applyOps, transformPair, deepEqual, me as whoAmI, saveMe } from './collab.js';
+import { PeersBar, RemoteCursors, peerCursors, peerMarks } from './peers.js';
 
 // ------------------------------------------------------------------ preview
 
-function Preview({ meta, timeStore, scale, rev, playing, pin, onPin, points, onPoints, clip, clipRef, onClip, text, textIdx, onText, emitter, view }) {
+function Preview({ meta, timeStore, scale, rev, playing, pin, onPin, points, onPoints, clip, clipRef, onClip, text, textIdx, onText, emitter, view, cursors = [], onPointer }) {
   const time = useStore(timeStore);
   const canvas = useRef();
   const stage = useRef();
@@ -107,7 +109,19 @@ function Preview({ meta, timeStore, scale, rev, playing, pin, onPin, points, onP
     pinStyle = { left: cr.left - sr.left + shownPin.x * cr.width + 'px', top: cr.top - sr.top + shownPin.y * cr.height + 'px' };
   }
 
-  return html`<div class="stage" ref=${stage}>
+  // my pointer on the frame (0..1), for the others; theirs drawn over it
+  const pointer = (e) => {
+    if (!onPointer || !canvas.current) return;
+    const r = canvas.current.getBoundingClientRect();
+    onPointer({ area: 'preview', x: +((e.clientX - r.left) / r.width).toFixed(4), y: +((e.clientY - r.top) / r.height).toFixed(4) });
+  };
+  const placeCursor = (c) => {
+    if (!canvas.current || !stage.current) return null;
+    const cr = canvas.current.getBoundingClientRect(), sr = stage.current.getBoundingClientRect();
+    return { x: cr.left - sr.left + c.x * cr.width, y: cr.top - sr.top + c.y * cr.height };
+  };
+  return html`<div class="stage" ref=${stage} onMouseMove=${pointer} onMouseLeave=${() => onPointer && onPointer(null)}>
+    <${RemoteCursors} list=${cursors} place=${placeCursor} />
     <canvas ref=${canvas} width=${Math.round(meta.width / scale)} height=${Math.round(meta.height / scale)}
       style=${{ width: box ? box.w + 'px' : '', height: box ? box.h + 'px' : '', cursor: pin || points ? 'crosshair' : '' }} onMouseDown=${pinDown}
       title=${points ? t('Click to add an ignition point, drag one to move it, Shift+click to remove it') : pin ? t('Drag to place the selected text') : ''}></canvas>
@@ -554,13 +568,22 @@ function App() {
     const snap = { proj: projRef.current, lyr: lyrRef.current };
     if (!h.cur) { h.cur = snap; return; }
     if (snap.proj === h.cur.proj && snap.lyr === h.cur.lyr) return;
+    // an entry: what changed (and back), and the lyrics before / after
+    const fwd = diff(h.cur.proj, snap.proj), inv = diff(snap.proj, h.cur.proj);
+    const lyr = snap.lyr !== h.cur.lyr ? { before: h.cur.lyr, after: snap.lyr } : null;
+    h.cur = snap;
+    if (!fwd.length && !lyr) return;
     const now = performance.now();
-    if (now - h.at > 600) {
-      h.past.push(h.cur);
-      if (h.past.length > 32) h.past.shift();
+    const last = h.past[h.past.length - 1];
+    if (now - h.at > 600 || !last) {
+      h.past.push({ fwd, inv, lyr });
+      if (h.past.length > 64) h.past.shift();
+    } else {
+      last.fwd = [...last.fwd, ...fwd];
+      last.inv = [...inv, ...last.inv];
+      if (lyr) last.lyr = { before: last.lyr ? last.lyr.before : lyr.before, after: lyr.after };
     }
     h.at = now;
-    h.cur = snap;
     h.future = [];
     setHistTick((x) => x + 1);
   };
@@ -574,8 +597,11 @@ function App() {
     if (s.job) setJob(s.job);
     if (!s.project) { setProj(null); return; }
     const d = await api('GET', '/api/project');
-    projRef.current = d.project;
-    setProj(d.project);
+    sync.current = { conf: d.project, v: d.v || 0, epoch: d.epoch || '', shadow: d.project, inflight: null };
+    metaRef.current = d.meta;
+    const p0 = localView(d.project);
+    projRef.current = p0;
+    setProj(p0);
     hist.current = { past: [], future: [], cur: null, at: 0 }; // a (re)opened project starts a new history
     setHistTick((x) => x + 1);
     setMeta(d.meta);
@@ -609,52 +635,167 @@ function App() {
     if (scrubRef.current && src) scrubber.current.preload();
   };
 
-  useEffect(() => {
-    loadAll().catch(showErr);
-    const es = new EventSource('/api/events');
-    es.onmessage = (ev) => {
-      const m = JSON.parse(ev.data);
-      if (m.type === 'job') {
-        setJob(m.data);
-        if (m.data.kind === 'lyrics' && m.data.status === 'done') onLyricsGenerated(m.data.output);
-      }
-      // an agent (the MCP server) opened or changed the project: taken as it is now
-      if (m.type === 'project' && m.data && m.data.by === 'mcp') {
-        if (m.data.kind === 'opened') loadAll().catch(showErr);
-        else externalRef.current().catch(showErr);
-      }
-    };
-    return () => es.close();
-  }, []);
-
-  // The project as the server has it now (an agent changed it): an undoable step, already saved
-  const externalRef = useRef();
-  externalRef.current = async () => {
-    const r = await api('GET', '/api/project');
-    const old = projRef.current;
-    histBase();
-    setProj(r.project);
-    projRef.current = r.project;
-    setMeta(r.meta);
-    record();
-    if (old && r.project.audio.path !== old.audio.path) { loadAna(); loadAudio(r.project); }
-    if (old && r.project.tracks.lyrics[0].cfg.path !== old.tracks.lyrics[0].cfg.path) loadLyrics();
-    else if (old) loadLyrics();
-    setRev((x) => x + 1);
+  // --- collaboration: who I am, who else is here, their cursors (collab.js, peers.js)
+  const meRef = useRef(null);
+  if (!meRef.current) meRef.current = whoAmI();
+  const [peers, setPeers] = useState([]);
+  const [cursors, setCursors] = useState({});
+  const [showCursors, setShowCursorsState] = useState(() => { try { return localStorage.getItem('audioviz.cursors') !== '0'; } catch (e) { return true; } });
+  const setShowCursors = (on) => { setShowCursorsState(on); try { localStorage.setItem('audioviz.cursors', on ? '1' : '0'); } catch (e) { /* ignore */ } };
+  const presence = useRef({ cursor: null, sel: null, timer: 0 });
+  const sendPresence = (patch) => {
+    Object.assign(presence.current, patch);
+    if (presence.current.timer) return;
+    presence.current.timer = setTimeout(() => {
+      presence.current.timer = 0;
+      const m = meRef.current;
+      fetch('/api/presence', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client: m.id, name: m.name, color: m.color, cursor: presence.current.cursor, sel: presence.current.sel }) }).catch(() => {});
+    }, 70);
+  };
+  const renameMe = () => {
+    const n = prompt(t('Your name (the others see it):'), meRef.current.name || '');
+    if (n == null) return;
+    meRef.current = { ...meRef.current, name: n.trim().slice(0, 40) };
+    saveMe(meRef.current);
+    sendPresence({});
   };
 
-  // --- saving the project (debounced to group fast changes)
-  const pushRef = useRef(debounce(async (p, oldAudio, oldLyr) => {
+  useEffect(() => { sendPresence({ sel }); }, [sel]);
+
+  // --- the project's sync: conf = as the server has it (version v); inflight = my batch on its
+  // way (one at a time); shadow = conf + inflight; what is on screen (projRef) may have more of
+  // mine not sent yet
+  const sync = useRef({ conf: null, v: 0, epoch: '', shadow: null, inflight: null });
+  const viewKey = () => 'audioviz.view:' + ((metaRef.current && metaRef.current.path) || '');
+  const metaRef = useRef(null);
+  metaRef.current = meta;
+  const localView = (p) => {
+    try { const v = JSON.parse(localStorage.getItem(viewKey())); if (v) return { ...p, view: v }; } catch (e) { /* none */ }
+    return p;
+  };
+  // (the paths the song and the lyrics come from: when they change, they are loaded again)
+  const watchPaths = (before, after) => {
+    if (!before || !after) return;
+    if (after.audio.path !== before.audio.path) { loadAna(); loadAudio(after); }
+    if (after.tracks.lyrics[0].cfg.path !== before.tracks.lyrics[0].cfg.path) loadLyrics();
+  };
+  // a batch applied by the server (mine acknowledged, or someone else's)
+  const receive = (b) => {
+    const S = sync.current;
+    if (!S.conf || !projRef.current) return;
+    const mine = S.inflight && b.client === meRef.current.id && b.id === S.inflight.id;
+    if (b.v <= S.v) {
+      if (mine && !(b.ops || []).length) { S.inflight = null; S.shadow = S.conf; flushRef.current(); }
+      return;
+    }
+    if (b.v > S.v + 1) { catchUp(); return; }
+    const unsent = diff(S.shadow, projRef.current);
+    const before = S.conf;
+    S.conf = applyOps(S.conf, b.ops);
+    S.v = b.v;
+    let inflight = S.inflight ? S.inflight.ops : [];
+    let un = unsent, remote = null;
+    if (mine) { S.inflight = null; inflight = []; }
+    else {
+      remote = b.ops;
+      if (inflight.length) { [inflight, remote] = transformPair(inflight, remote); S.inflight.ops = inflight; }
+      if (un.length) { let r2; [un, r2] = transformPair(un, remote); remote = r2; }
+    }
+    S.shadow = applyOps(S.conf, inflight);
+    const disp = applyOps(S.shadow, un);
+    disp.view = projRef.current.view;
+    for (const k of ['clipDefaults', 'textDefaults', 'emitterPresets']) disp[k] = projRef.current[k];
+    if (!deepEqual(disp, projRef.current)) { projRef.current = disp; setProj(disp); setRev((x) => x + 1); }
+    if (remote && remote.length) { histRemote(remote); selRemote(remote); }
+    watchPaths(before, S.conf);
+    if (!S.inflight) flushRef.current();
+  };
+  // what I have selected moves with others' inserts and removals (a text, a segment, a clip)
+  const selRemote = (ops) => {
+    const mv = (path) => { const r = transformPair([{ op: 'set', path }], ops)[0][0]; return r ? r.path.split('/') : null; };
+    setSel((s) => {
+      if (s.kind === 'text' && s.i != null) { const p = mv('/texts/' + s.i); return p ? { ...s, i: +p[2] } : { ...s, i: 0 }; }
+      if (s.kind === 'track' && s.seg != null) { const p = mv('/tracks/' + s.track + '/' + s.seg); return p ? { ...s, seg: +p[3] } : { ...s, seg: 0 }; }
+      if (s.kind === 'layer' && s.clip != null) {
+        const li = projRef.current.layers.findIndex((l) => l.id === s.id);
+        if (li < 0) return s;
+        const p = mv('/layers/' + li + '/clips/' + s.clip);
+        return p ? { ...s, clip: +p[4] } : { ...s, clip: null };
+      }
+      return s;
+    });
+  };
+  // missed batches (an event lost): fetched; too many: the project taken again
+  const catchUp = async () => {
+    const S = sync.current;
+    try {
+      const r = await api('GET', '/api/project/ops?v=' + S.v + '&epoch=' + encodeURIComponent(S.epoch));
+      for (const b of r.batches) receive(b);
+    } catch (e) { resyncProject(); }
+  };
+  // the project taken again from the server, keeping what is mine and not sent
+  const resyncProject = async () => {
+    const S = sync.current;
+    const unsent = S.shadow && projRef.current ? diff(S.shadow, projRef.current) : [];
+    const r = await api('GET', '/api/project');
+    S.conf = r.project; S.v = r.v; S.epoch = r.epoch; S.inflight = null; S.shadow = r.project;
+    const disp = applyOps(r.project, unsent);
+    disp.view = projRef.current ? projRef.current.view : r.project.view;
+    projRef.current = disp; setProj(disp); setMeta(r.meta); setRev((x) => x + 1);
+    flushRef.current();
+  };
+  // my changes not sent yet → one batch (when none is on its way)
+  const flushRef = useRef(null);
+  const flushNow = async () => {
+    const S = sync.current;
+    if (!S.conf || S.inflight || !projRef.current) return;
+    const ops = diff(S.shadow, projRef.current);
+    if (!ops.length) return;
+    const id = Math.random().toString(36).slice(2, 10);
+    S.inflight = { id, ops };
+    S.shadow = applyOps(S.shadow, ops);
     setSave({ kind: 'saving' });
     try {
-      const r = await api('PUT', '/api/project', p);
+      const r = await api('POST', '/api/project/ops', { epoch: S.epoch, base: S.v, ops, client: meRef.current.id, id });
       setMeta(r.meta);
       setSave({ kind: 'saved', at: r.saved });
-      if (p.audio.path !== oldAudio) { loadAna(); loadAudio(p); }
-      if (p.tracks.lyrics[0].cfg.path !== oldLyr) loadLyrics();
-      setRev((x) => x + 1);
-    } catch (e) { setSave({ kind: 'error' }); showErr(e); }
-  }, 250));
+      receive(r.batch);
+    } catch (e) {
+      if (e.status === 409) { S.inflight = null; resyncProject().catch(showErr); return; }
+      // not taken (not valid): what is on screen goes back to what the server has
+      setSave({ kind: 'error' }); showErr(e);
+      S.inflight = null; S.shadow = S.conf;
+      const disp = { ...clone(S.conf), view: projRef.current.view };
+      projRef.current = disp; setProj(disp);
+    }
+  };
+  if (!flushRef.current) flushRef.current = debounce(() => flushNow(), 120);
+
+  useEffect(() => {
+    loadAll().catch(showErr);
+    const m = meRef.current;
+    if (!m.name) setTimeout(renameMe, 600);
+    const es = new EventSource('/api/events?' + new URLSearchParams({ client: m.id, name: m.name || '', color: m.color }));
+    es.onmessage = (ev) => {
+      const msg = JSON.parse(ev.data);
+      if (msg.type === 'job') {
+        setJob(msg.data);
+        if (msg.data.kind === 'lyrics' && msg.data.status === 'done') onLyricsGenerated(msg.data.output);
+      }
+      if (msg.type === 'ops') receive(msg.data);
+      if (msg.type === 'presence') setPeers(msg.data || []);
+      if (msg.type === 'cursor' && msg.data.id !== meRef.current.id) setCursors((c) => ({ ...c, [msg.data.id]: { ...msg.data, at: Date.now() } }));
+      if (msg.type === 'lyrics' && msg.data.client !== meRef.current.id) loadLyrics();
+      // an agent opened a project, or someone saved all of it at once: taken again
+      if (msg.type === 'project' && msg.data && msg.data.kind === 'opened') loadAll().catch(showErr);
+      if (msg.type === 'project' && msg.data && msg.data.kind === 'reload') resyncProject().catch(showErr);
+    };
+    es.onerror = () => { /* (it reconnects by itself) */ };
+    // when the stream comes back, what was missed meanwhile
+    es.onopen = () => { if (sync.current.conf) catchUp(); };
+    return () => es.close();
+  }, []);
 
   // history = false: saved with the project but not an undo step (e.g. the view of the tracks)
   const update = (fn, history = true) => {
@@ -664,7 +805,8 @@ function App() {
     fn(p);
     setProj(p);
     projRef.current = p;
-    pushRef.current(p, old.audio.path, old.tracks.lyrics[0].cfg.path);
+    flushRef.current();
+    if (!deepEqual(p.view, old.view)) { try { localStorage.setItem(viewKey(), JSON.stringify(p.view)); } catch (e) { /* ignore */ } }
     if (history) record();
   };
   // Studio view stored in the project: hidden timeline tracks and folded zones
@@ -675,52 +817,62 @@ function App() {
     if (i >= 0) a.splice(i, 1); else a.push(id);
   }, false);
 
-  // Restores a snapshot (undo/redo): saves the project, and the lyrics if they differ
-  const applySnap = (snap) => {
+  // Undo / redo: mine only. An entry's operations (and its inverse) are applied on the project as
+  // it is now (others' changes stay); the lyrics as a whole
+  const applyEntry = (ops, lyrTo) => {
     const old = projRef.current;
-    // The view of the tracks is not part of the history: it stays as it is now
-    const np = { ...snap.proj, view: old.view };
+    const np = applyOps(old, ops);
+    np.view = old.view;
     projRef.current = np;
     setProj(np);
-    pushRef.current(np, old.audio.path, old.tracks.lyrics[0].cfg.path);
-    if (snap.lyr !== lyrRef.current) {
-      lyrRef.current = snap.lyr;
-      setLyr(snap.lyr);
+    flushRef.current();
+    if (lyrTo && lyrTo !== lyrRef.current) {
+      lyrRef.current = lyrTo;
+      setLyr(lyrTo);
       lyrSaveRef.current();
     }
+    hist.current.cur = { proj: np, lyr: lyrRef.current };
     // Keep the selection valid
     setSel((s) => {
-      if (s.kind === 'track') { const n = snap.proj.tracks[s.track].length; return s.seg >= n ? { ...s, seg: n - 1 } : s; }
-      if (s.kind === 'text') return s.i >= snap.proj.texts.length ? { ...s, i: snap.proj.texts.length - 1 } : s;
+      if (s.kind === 'track') { const n = np.tracks[s.track].length; return s.seg >= n ? { ...s, seg: n - 1 } : s; }
+      if (s.kind === 'text') return s.i >= np.texts.length ? { ...s, i: np.texts.length - 1 } : s;
       return s;
     });
-    setLineSel((ls) => ls.filter((i) => i < snap.lyr.lines.length));
+    setLineSel((ls) => ls.filter((i) => i < lyrRef.current.lines.length));
   };
   const undo = () => {
     const h = hist.current;
     if (!h.past.length) return;
-    h.future.push(h.cur);
-    h.cur = h.past.pop();
+    const e = h.past.pop();
+    h.future.push(e);
     h.at = 0;
-    applySnap(h.cur);
+    applyEntry(e.inv, e.lyr && e.lyr.before);
     setHistTick((x) => x + 1);
   };
   const redo = () => {
     const h = hist.current;
     if (!h.future.length) return;
-    h.past.push(h.cur);
-    h.cur = h.future.pop();
+    const e = h.future.pop();
+    h.past.push(e);
     h.at = 0;
-    applySnap(h.cur);
+    applyEntry(e.fwd, e.lyr && e.lyr.after);
     setHistTick((x) => x + 1);
+  };
+  // someone else's change: my history moves past it (its places), and so does its base
+  const histRemote = (ops) => {
+    const h = hist.current;
+    const mv = (e) => ({ ...e, fwd: transformPair(e.fwd, ops)[0], inv: transformPair(e.inv, ops)[0] });
+    h.past = h.past.map(mv);
+    h.future = h.future.map(mv);
+    if (h.cur) h.cur = { ...h.cur, proj: applyOps(h.cur.proj, ops) };
   };
 
   // --- saving the lyrics (edits on the timeline / inspector are saved automatically)
   const lyrSaveRef = useRef(debounce(async () => {
     setLyrSave('saving');
     try {
-      await api('PUT', '/api/lyrics', { lines: lyrRef.current.lines, path: lyrRef.current.path });
-      await api('PUT', '/api/project', projRef.current); // reloads the lyrics in the session
+      // (the session reads them again; the other studios too)
+      await api('PUT', '/api/lyrics?client=' + meRef.current.id, { lines: lyrRef.current.lines, path: lyrRef.current.path });
       setLyrSave('saved');
       setRev((x) => x + 1);
     } catch (e) { setLyrSave('error'); showErr(e); }
@@ -1406,6 +1558,7 @@ function App() {
       <span class="projname" title=${meta.path}>${meta.name}</span>
       <span class=${'save' + (save.kind === 'error' ? ' err' : '')}>${saveText && html`<${Icon} name=${save.kind === 'error' ? 'triangle-alert' : save.kind === 'saving' ? 'loader-circle' : 'check'} size=${13} />`}${saveText}</span>
       <span class="spacer"></span>
+      <${PeersBar} peers=${peers} me=${meRef.current} show=${showCursors} setShow=${setShowCursors} onRename=${renameMe} />
       ${job && html`<div class="jobbar" title=${job.message} onClick=${() => job.kind !== 'depth' && job.kind !== 'stems' && setDlg({ type: { lyrics: 'genlyrics', image: 'images' }[job.kind] || 'export' })}>
         <${Icon} name=${job.status === 'running' ? (job.kind === 'export' ? 'film' : 'wand-sparkles') : job.status === 'done' ? 'check' : 'triangle-alert'} size=${14}
           cls=${{ done: 'st-ok', error: 'st-err', canceled: 'st-warn' }[job.status] || 'muted'} />
@@ -1464,6 +1617,7 @@ function App() {
     <div class="preview">
       <div class="stage-wrap">
         <${Preview} meta=${meta} timeStore=${timeStore} scale=${scale} rev=${rev} playing=${playing} view=${previewView}
+          cursors=${showCursors ? peerCursors(peers, cursors, 'preview', meRef.current) : []} onPointer=${(c) => sendPresence({ cursor: c })}
           pin=${selText ? { x: selText.position_x, y: selText.position_y } : null}
           points=${burnSel ? (burnSel.points || []).map((q) => ({ x: q[0], y: q[1] })) : null}
           onPoints=${(pts) => update((p) => { const tr = p.tracks.background[sel.seg].transition; tr.burn = { ...(tr.burn || {}), points: pts.map((q) => [q.x, q.y]) }; })}
@@ -1504,6 +1658,8 @@ function App() {
     <div class="inspector">${inspector}</div>
 
     <${Timeline} proj=${proj} meta=${meta} ana=${ana} lyr=${lyr} timeStore=${timeStore} slowTime=${time} playing=${playing}
+      remote=${showCursors ? peerCursors(peers, cursors, 'timeline', meRef.current) : []} marks=${peerMarks(peers, cursors, proj, meRef.current)}
+      onPointer=${(c) => sendPresence({ cursor: c })}
       texts=${proj.texts || []} onSelectText=${(i) => ctx.selectText(i)} onMoveText=${onMoveText} onAddText=${(tt) => ctx.addText(tt)}
       sel=${sel} lineSel=${lineSel} wordEdit=${wordEdit} height=${tlH} setHeight=${setTlH}
       onSeek=${seek} onSelect=${selTrack} onMoveSeg=${onMoveSeg} onAddSeg=${ctx.addSeg} onMarker=${onMarker}
