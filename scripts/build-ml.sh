@@ -15,8 +15,8 @@ SD_REV=3f8527a46c54ecf4cb4ed6003da8e8982283c73c
 DA_REV=14f7461d1f704761a038ac9f50dbde8fdb7275e2
 
 # What the whisper + stable-diffusion libraries are built from: the revisions, the superproject
-# and our ggml patches. When it changes (e.g. a new patch), they are rebuilt.
-ML_STAMP="$WHISPER_REV $SD_REV $DA_REV $(cat "$ROOT/scripts/ml/CMakeLists.txt" "$ROOT"/scripts/ml/patches/*.patch 2>/dev/null | cksum)"
+# and our patches (ggml, depth-anything.cpp). When it changes (e.g. a new patch), they are rebuilt.
+ML_STAMP="$WHISPER_REV $SD_REV $DA_REV $(cat "$ROOT/scripts/ml/CMakeLists.txt" "$ROOT"/scripts/ml/patches/*.patch "$ROOT"/scripts/ml/patches-da/*.patch 2>/dev/null | cksum)"
 
 if [ ! -f "$OUT/lib/libwhisper.a" ] || [ ! -f "$OUT/lib/libstable-diffusion.a" ] || [ ! -f "$OUT/lib/libdepthanything.a" ] ||
    [ "$(cat "$OUT/lib/.ml-stamp" 2>/dev/null)" != "$ML_STAMP" ]; then
@@ -34,6 +34,11 @@ if [ ! -f "$OUT/lib/libwhisper.a" ] || [ ! -f "$OUT/lib/libstable-diffusion.a" ]
   fi
   git -C "$TP/depth-anything.cpp" fetch -q --depth 1 origin "$DA_REV" 2>/dev/null || true
   git -C "$TP/depth-anything.cpp" checkout -q "$DA_REV"
+  # and to depth-anything.cpp (scripts/ml/patches-da)
+  git -C "$TP/depth-anything.cpp" checkout -q -- .
+  for p in "$ROOT"/scripts/ml/patches-da/*.patch; do
+    [ -f "$p" ] && git -C "$TP/depth-anything.cpp" apply "$p"
+  done
   # Our patches to ggml (scripts/ml/patches), applied to a clean checkout
   git -C "$TP/stable-diffusion.cpp/ggml" checkout -q -- .
   for p in "$ROOT"/scripts/ml/patches/*.patch; do

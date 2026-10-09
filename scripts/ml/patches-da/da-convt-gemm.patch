@@ -1,0 +1,28 @@
+--- a/src/dpt_blocks.cpp
++++ b/src/dpt_blocks.cpp
+@@ -55,7 +55,24 @@
+     // ggml_conv_transpose_2d_p0 expects kernel layout (KW,KH,Cout,Cin) == [KW,KH,OC,IC],
+     // which is exactly the straight dim-reversal of torch ConvTranspose2d (IC,OC,KH,KW).
+     // x:[W,H,IC,N] -> [W_out,H_out,OC,N]
+-    ggml_tensor* y = ggml_conv_transpose_2d_p0(ctx, w, x, stride);
++    const int64_t KW = w->ne[0], KH = w->ne[1], OC = w->ne[2], IC = w->ne[3];
++    ggml_tensor* y;
++    if (da::gpu_mode() && KW == stride && KH == stride && x->ne[3] == 1) {
++        // Kernel == stride (the DPT head's reassemble upsamplers): the patches don't overlap, so
++        // it is one GEMM (each input pixel's IC -> its KW*KH*OC outputs) and a pixel shuffle.
++        // GPU backends run that far faster than ggml's conv_transpose_2d (on Metal: one tiny
++        // threadgroup per output value, ~5x slower than the CPU for the whole model).
++        const int64_t W = x->ne[0], H = x->ne[1];
++        ggml_tensor* a = ggml_cont(ctx, ggml_transpose(ctx, ggml_reshape_2d(ctx, w, KW * KH * OC, IC))); // [IC, KW*KH*OC]
++        ggml_tensor* xb = ggml_reshape_2d(ctx, ggml_cont(ctx, ggml_permute(ctx, x, 1, 2, 0, 3)), IC, W * H); // [IC, W*H]
++        ggml_tensor* m = ggml_mul_mat(ctx, a, xb);                                            // [KW*KH*OC, W*H]
++        // (kw, kh, oc, x, y) -> (kw, x, kh, oc, y) -> (kw, x, kh, y, oc)
++        m = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, m, KW, KH * OC, W, H), 0, 2, 1, 3));
++        m = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_4d(ctx, m, KW * W, KH, OC, H), 0, 1, 3, 2));
++        y = ggml_reshape_4d(ctx, m, KW * W, KH * H, OC, 1);
++    } else {
++        y = ggml_conv_transpose_2d_p0(ctx, w, x, stride);
++    }
+     if (b) y = ggml_add(ctx, y, bias_chw(ctx, b));
+     return y;
+ }
