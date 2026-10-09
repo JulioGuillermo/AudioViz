@@ -600,6 +600,14 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 			effects.PackEmitExprs(u, f, eo, P.Exprs)
 			u[h+96] = uint32(eo + 1)
 		}
+		// the scene's depth on screen: each particle hidden where it is nearer (after the expressions)
+		oo := eo + gpu.EmitExprWords
+		u[h+99] = 0
+		if P.Occl != nil && P.OGW*P.OGH <= effects.MaxCollideCells && P.OGW >= 2 && P.OGH >= 2 {
+			copy(f[oo:], P.Occl)
+			u[h+99], u[h+100], u[h+101], u[h+102] = uint32(oo+1), uint32(P.OGW), uint32(P.OGH), uint32(P.ODiv)
+			f[h+103] = P.OSoft
+		}
 		u[h+85] = 0
 		if P.Hidden {
 			u[h+85] = 1

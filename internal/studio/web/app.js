@@ -786,6 +786,7 @@ function App() {
       setMeta(r.meta);
       setSave({ kind: 'saved', at: r.saved });
       receive(r.batch);
+      setRev((x) => x + 1); // the server has it: the preview shows it (also paused)
     } catch (e) {
       if (e.status === 409) { S.inflight = null; resyncProject().catch(showErr); return; }
       // not taken (not valid): what is on screen goes back to what the server has

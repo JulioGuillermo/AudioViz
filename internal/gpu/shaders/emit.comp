@@ -120,6 +120,24 @@ vec4 pathPoint(int o, int n, float L, bool closed, float s) {
     return vec4(pa + (pb - pa) * f, (pb - pa) / dl);
 }
 
+// how much of a particle at p with depth z is seen: the scene's depth on screen (a grid at
+// ed[h+99]-1: OGW×OGH cells of ODiv px, 0…1 near) nearer than it hides it, with the soft edge
+// f[h+103] (as EmitParams.occl)
+float occlAt(int h, vec2 p, float z) {
+    uint o = ed[h + 99];
+    if (o == 0u || z < 0.0) return 1.0;
+    int gw = int(ed[h + 100]), gh = int(ed[h + 101]);
+    float d = float(ed[h + 102]), soft = edf(h + 103);
+    vec2 q = clamp(p / d - 0.5, vec2(0.0), vec2(float(gw - 1), float(gh - 1)));
+    ivec2 i = max(min(ivec2(q), ivec2(gw - 2, gh - 2)), ivec2(0));
+    vec2 f = q - vec2(i);
+    int b = int(o) - 1;
+    float a00 = edf(b + i.y * gw + i.x), a10 = edf(b + i.y * gw + min(i.x + 1, gw - 1));
+    float a01 = edf(b + min(i.y + 1, gh - 1) * gw + i.x), a11 = edf(b + min(i.y + 1, gh - 1) * gw + min(i.x + 1, gw - 1));
+    float s = mix(mix(a00, a10, f.x), mix(a01, a11, f.x), f.y);
+    return 1.0 - smoothstep(z - soft, z + soft + 1e-4, s);
+}
+
 // what they go round: the signed distance (px, < 0 inside) at p, bilinear on the grid at word o
 // (gw×gh cells of dv px); a particle inside comes out at the surface, losing the speed that went
 // in (as EmitParams.collide)
@@ -390,6 +408,9 @@ void splatPhase() {
             }
         }
     }
+    // hidden where the scene is nearer than it (its own depth: each particle by itself)
+    col.a *= occlAt(h, pos, pz);
+    if (col.a <= 0.0) return;
     float r = size * 0.5;
     float tiny = r >= 0.7 ? 1.0 : (r * r) / (0.7 * 0.7);
     if (r < 0.7) r = 0.7;
@@ -597,7 +618,8 @@ void resolveOne(uint id) {
     if (lensOn) lay[v1.y + n + p] = packHalf2x16(gLens); // its lens, after its image
     if (ed[h + 95] != 0u) {
         // its particles' depth here (weighted as their alpha, in this pixel's cell; -1 without any),
-        // after its image (and lens), as effects.zPlaneAt
+        // after its image (and lens), as effects.zPlaneAt: how the 2.5D camera moves them and the
+        // depth of field blurs them (what hides them is worked out per particle: occlAt)
         int cx = min(x / dv, GW - 1), cy = min(y / dv, GH - 1);
         uint ca = acc[base + uint(cy * GW + cx) * 4u + 3u];
         float zv = ca == 0u ? -1.0 : float(acc[zBase(e) + uint(cy * GW + cx)]) / float(ca);

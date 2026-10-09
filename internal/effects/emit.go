@@ -127,6 +127,27 @@ type EmitParams struct {
 	CSDF           []float32
 	CGW, CGH, CDiv int
 	CBounce        float64 // 0 slide off it; more: bounce off walls and ceilings
+	// Each particle hidden where the scene is nearer than it (its own depth: ZTrack): the scene's
+	// depth on screen (0…1, nearer is more) at the centers of OGW×OGH cells of ODiv px, the soft
+	// edge (nil: not behind things, or one depth for all of it: the clip's own test)
+	Occl           []float32
+	OGW, OGH, ODiv int
+	OSoft          float32
+}
+
+// occl: how much of a particle at (x, y) with depth z is seen (the scene nearer hides it), as
+// occlAt in emit.comp
+func (p *EmitParams) occl(x, y, z float32) float32 {
+	if p.Occl == nil || z < 0 || p.OGW < 2 || p.OGH < 2 {
+		return 1
+	}
+	d := float32(p.ODiv)
+	qx, qy := max(0, min(float32(p.OGW-1), x/d-0.5)), max(0, min(float32(p.OGH-1), y/d-0.5))
+	ix, iy := max(min(int(qx), p.OGW-2), 0), max(min(int(qy), p.OGH-2), 0)
+	fx, fy := qx-float32(ix), qy-float32(iy)
+	at := func(cx, cy int) float32 { return p.Occl[min(cy, p.OGH-1)*p.OGW+min(cx, p.OGW-1)] }
+	s := (at(ix, iy)*(1-fx)+at(ix+1, iy)*fx)*(1-fy) + (at(ix, iy+1)*(1-fx)+at(ix+1, iy+1)*fx)*fy
+	return 1 - smooth32(z-p.OSoft, z+p.OSoft+1e-4, s)
 }
 
 // MaxCollideCells: cells of an emitter's collision grid (at most 240 a side)
@@ -795,6 +816,10 @@ func DrawEmitter(e *EmitFrame, W, H int) (*image.RGBA, *LightField) {
 					if !ok || pt.A <= 0 {
 						continue
 					}
+					// hidden where the scene is nearer than it (its own depth)
+					if pt.A *= p.occl(pt.X, pt.Y, pt.Z); pt.A <= 0 {
+						continue
+					}
 					splat(&pt, p.Streak, p.Softness, acc, GW, GH, div, zacc)
 					if p.GlowI > 0 && p.GlowR > 0 {
 						splatGlow(&pt, float32(p.GlowR), glow, LW, LH)
@@ -1143,7 +1168,8 @@ func LightOnto(dst *image.RGBA, l *LightField, s *Scene) {
 }
 
 // zPlaneAt: the depth of the particles at pixel (x, y): their depths weighted as their alpha, in
-// the pixel's cell (-1 without any), as resolveOne in emit.comp
+// the pixel's cell (-1 without any), as resolveOne in emit.comp. (Only for how the 2.5D camera
+// moves them and the depth of field blurs them: what hides them is worked out per particle, occl.)
 func zPlaneAt(acc, zacc []uint32, GW, GH, div, x, y int) float32 {
 	cx, cy := min(x/div, GW-1), min(y/div, GH-1)
 	a := acc[(cy*GW+cx)*4+3]
@@ -1275,8 +1301,8 @@ type particleEnv struct {
 	sRoute, sPath  float32
 	shiftX, shiftY float32 // its route moved to where it was born
 	W, H           int
-	keys          []EmitExprKey
-	prog          *expr.Program
+	keys           []EmitExprKey
+	prog           *expr.Program
 }
 
 func (e *particleEnv) Var(v int) float64 {

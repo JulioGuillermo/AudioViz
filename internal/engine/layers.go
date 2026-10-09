@@ -5,8 +5,8 @@ import (
 	"image"
 	_ "image/png"
 	"math"
-	"slices"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 
@@ -127,6 +127,20 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx f
 					z, ok, d = float64(t.At(0)), true, pathDepthSettings(d)
 				}
 				s.placeInDepth(&lf, &d, scene, z, ox, oy, ok)
+				if ef.P.ZTrack != nil && lf.Behind && scene.On() {
+					// each particle at its own depth: hidden by the scene where it is nearer than that
+					// particle (emit.comp's occlAt), not the whole image by one depth per pixel
+					div := effects.CollideDiv(s.W, s.H)
+					gw, gh := (s.W+div-1)/div, (s.H+div-1)/div
+					g := make([]float32, gw*gh)
+					for cy := 0; cy < gh; cy++ {
+						for cx := 0; cx < gw; cx++ {
+							g[cy*gw+cx] = scene.At((float32(cx)+0.5)*float32(div), (float32(cy)+0.5)*float32(div))
+						}
+					}
+					ef.P.Occl, ef.P.OGW, ef.P.OGH, ef.P.ODiv, ef.P.OSoft = g, gw, gh, div, lf.DepthSoft
+					lf.Behind = false // (done per particle)
+				}
 				if e := c.Emitter; e != nil && e.Collide && scene.On() {
 					// what they go round: the scene at their depth (within the band), but where
 					// they are born
