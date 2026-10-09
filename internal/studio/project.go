@@ -56,6 +56,8 @@ type ProjectJSON struct {
 	Layers  []LayerJSON          `json:"layers"` // overlay layers, bottom to top (config.LayerConfig)
 	// the project's own constants and functions for the expressions
 	Expressions config.ExprLibrary `json:"expressions"`
+	// where its ComfyUI is
+	Comfy config.ComfyConfig `json:"comfy"`
 	// Values of a new clip (read-only for the UI)
 	ClipDefaults map[string]any `json:"clipDefaults,omitempty"`
 	// The emitter presets (read-only for the UI)
@@ -186,6 +188,7 @@ func ProjectToJSON(c *config.ProjectConfig) *ProjectJSON {
 	}
 	p.View = ViewJSON{Hidden: append([]string{}, c.Studio.Hidden...), Collapsed: append([]string{}, c.Studio.Collapsed...)}
 	p.Expressions = c.Expressions
+	p.Comfy = c.Comfy
 	p.TextDefaults = toMap(config.DefaultText())
 	p.ClipDefaults = toMap(config.DefaultClip())
 	p.EmitterPresets = map[string]map[string]any{}
@@ -274,6 +277,7 @@ func ProjectFromJSON(p *ProjectJSON, dir string) (*config.ProjectConfig, error) 
 	}
 	c.Studio = config.StudioView{Hidden: p.View.Hidden, Collapsed: p.View.Collapsed}
 	c.Expressions = p.Expressions
+	c.Comfy = p.Comfy
 	for i, m := range p.Texts {
 		t := config.DefaultText()
 		if err := fromMap(m, &t); err != nil {

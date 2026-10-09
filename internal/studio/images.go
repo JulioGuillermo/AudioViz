@@ -307,7 +307,7 @@ func (s *Server) hImagePreview(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Content-Type", http.DetectContentType(b)) // (ComfyUI's may be PNG)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Write(b)
 }

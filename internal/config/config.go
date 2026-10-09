@@ -22,6 +22,9 @@ type ProjectConfig struct {
 	Output            OutputConfig            `yaml:"output"`
 	// The project's own constants and functions for the expressions (exprs.go)
 	Expressions ExprLibrary `yaml:"expressions,omitempty"`
+	// Comfy: the ComfyUI server the project's flows run on (the user starts it); the flows live in
+	// <project>/comfy/
+	Comfy ComfyConfig `yaml:"comfy,omitempty"`
 	// How the studio shows the project (no effect on the video)
 	Studio StudioView `yaml:"studio,omitempty"`
 
@@ -31,6 +34,11 @@ type ProjectConfig struct {
 	Markers     []Marker  `yaml:"-"`
 	// Project folder (relative paths in the YAML are resolved against it)
 	Dir string `yaml:"-"`
+}
+
+// ComfyConfig: where ComfyUI is (e.g. http://127.0.0.1:8188)
+type ComfyConfig struct {
+	URL string `yaml:"url,omitempty" json:"url"`
 }
 
 // StudioView: the studio's view of the project. Hidden: entries whose timeline track is hidden

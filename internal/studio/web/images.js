@@ -1,3 +1,5 @@
+import { flowsStore, loadFlows, FlowForm } from './comfy.js';
+import { useStore } from './store.js';
 import { html, useEffect, useRef, useState } from './vendor/preact-htm.js';
 import { api, basename } from './util.js';
 import { Icon } from './icons.js';
@@ -38,7 +40,7 @@ const advChanged = (a) => Object.keys(ADV0).filter((k) => k !== 'strength' && a[
 const remember = (k, v) => { try { localStorage.setItem('audioviz.img.' + k, v); } catch (e) { /* ignore */ } };
 const recall = (k, d) => { try { return localStorage.getItem('audioviz.img.' + k) || d; } catch (e) { return d; } };
 
-export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onUseBackground, pickFile }) {
+export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onRun, onUseBackground, pickFile }) {
   const [data, setData] = useState(null);
   const [err, setErr] = useState('');
   const [model, setModel] = useState(() => recall('model', 'zimage'));
@@ -51,13 +53,20 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onUseBackg
   const [cur, setCur] = useState(null); // image shown big (list view)
   // Views: 'list' (all the images, the default), 'create' (the generator). A running
   // generation opens on the generator.
-  const [view, setView] = useState(() => (job && job.kind === 'image' && job.status === 'running' ? 'create' : 'list'));
+  const [view, setView] = useState(() => (job && (job.kind === 'image' || job.kind === 'comfy') && job.status === 'running' ? 'create' : 'list'));
   const [filter, setFilterState] = useState(() => recall('filter', 'all'));
   const setFilter = (v) => { setFilterState(v); remember('filter', v); };
   const [picking, setPicking] = useState(false); // choosing images from the project: 'refs' | 'init' | false
   const [adv, setAdvState] = useState(loadAdv);
   const setAdv = (k, v) => setAdvState((a) => { const n = { ...a, [k]: v }; remember('adv', JSON.stringify({ ...n, init: '' })); return n; });
-  const mine = job && job.kind === 'image' ? job : null;
+  const mine = job && (job.kind === 'image' || job.kind === 'comfy') ? job : null;
+  // the project's ComfyUI flows that make images: models too ("comfy:<id>")
+  const allFlows = useStore(flowsStore);
+  useEffect(() => { loadFlows(); }, []);
+  const flows = allFlows.filter((f) => f.kind === 'image' || f.kind === 'edit');
+  const flow = model.startsWith('comfy:') ? flows.find((f) => 'comfy:' + f.id === model) : null;
+  const [cvals, setCvals] = useState(() => ({ prompt: recall('prompt', '') }));
+  const [cimgs, setCimgs] = useState([]);
   const running = mine && mine.status === 'running';
 
   const load = () => api('GET', '/api/images').then((d) => { setData(d); return d; }).catch((e) => setErr(e.message));
@@ -82,10 +91,21 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onUseBackg
   const slow = data && data.intel && tokens > 8500;
   const faMem = adv.fa === 'off' && tokens > 5000; // the plain attention needs heads × tokens² × 4 bytes
   const set = (k, setter) => (v) => { setter(v); remember(k, v); };
-  const pickImage = (p) => { if (picking === 'init') { setAdv('init', p); setPicking(false); } else addRef(p); };
+  const pickImage = (p) => {
+    if (picking && picking.comfy != null) { const a = [...cimgs]; a[picking.comfy] = p; setCimgs(a); setPicking(false); return; }
+    if (picking === 'init') { setAdv('init', p); setPicking(false); } else addRef(p);
+  };
   const addRef = (p) => setRefs((r) => (r.includes(p) || r.length >= Math.max(maxRefs, 1) ? r : [...r, p]));
   const start = () => {
     setErr('');
+    if (flow) {
+      // a ComfyUI flow: what its roles take
+      const v = { prompt: cvals.prompt ?? '', negative: cvals.negative ?? '', width: w, height: h, params: cvals.params || {} };
+      if (cvals.seed !== undefined && cvals.seed !== '') v.seed = +cvals.seed;
+      remember('prompt', cvals.prompt || '');
+      onRun({ id: flow.id, values: v, images: cimgs }).catch((e) => setErr(e.message));
+      return;
+    }
     remember('prompt', prompt);
     onStart({ model, prompt, refs: refs.slice(0, maxRefs), width: w, height: h, steps: +steps || 0, seed: seed === '' ? -1 : +seed,
       flashAttn: adv.fa, cfg: +adv.cfg || 0, sampler: adv.sampler, scheduler: adv.scheduler, negative: adv.negative.trim(),
@@ -131,11 +151,20 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onUseBackg
     load();
   };
 
-  const modelOpts = data ? data.models.map((m) => [m.id, m.name + (m.missing > 0 ? ' · ' + t('{s} to download', { s: fmtSize(m.missing) }) : '')]) : [[model, model]];
+  const modelOpts = [...(data ? data.models.map((m) => [m.id, m.name + (m.missing > 0 ? ' · ' + t('{s} to download', { s: fmtSize(m.missing) }) : '')]) : [[model, model]]),
+    ...flows.map((f) => ['comfy:' + f.id, 'ComfyUI · ' + f.name])];
   const toDownload = fam ? (refs.length && maxRefs ? fam.missingRefs : fam.missing) : 0;
 
   // ---- left: the request
-  const form = html`<div class="ig-form">
+  const sizeFields = html`<div class="fld"><label>${t('Shape')}</label><div class="ctl"><${Select} value=${aspect} options=${ASPECTS} onChange=${set('aspect', setAspect)} /></div></div>
+    <div class="fld"><label>${t('Size')}</label><div class="ctl"><${Select} value=${quality} options=${QUALITY} onChange=${set('quality', setQuality)} />
+      <span class="faint mono" style="font-size:11px;white-space:nowrap">${w}×${h}</span></div></div>`;
+  const form = flow ? html`<div class="ig-form">
+    <div class="fld"><label>${t('Model')}</label><div class="ctl"><${Select} value=${model} options=${modelOpts} translate=${false} onChange=${set('model', setModel)} /></div></div>
+    <p class="faint ig-desc">${t('A ComfyUI flow of the project: it runs in ComfyUI (it must be started).')}</p>
+    <${FlowForm} flow=${flow} values=${cvals} setValues=${setCvals} images=${cimgs} size=${sizeFields}
+      pickImage=${(i, p) => { if (p === null) setPicking({ comfy: i }); else { const a = [...cimgs]; a[i] = p; setCimgs(a); } }} />
+  </div>` : html`<div class="ig-form">
     <div class="fld"><label>${t('Model')}</label><div class="ctl"><${Select} value=${model} options=${modelOpts} translate=${false} onChange=${set('model', setModel)} /></div></div>
     ${fam && html`<p class="faint ig-desc">${t(fam.desc)}${fam.heavy ? html` <span class="st-warn">${t('Heavy model.')}</span>` : ''}</p>`}
     <label class="ig-l">${t('Prompt')}</label>
@@ -263,11 +292,15 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onUseBackg
         </div>`}
       </div>`;
     } else if (mine && mine.status !== 'done') {
-      const pv = mine.gen && mine.gen.preview;
+      const pv = (mine.gen && mine.gen.preview) || mine.preview;
       side = html`<div class="ig-side">
         <div class="ig-stage">${pv ? html`<img class="pv" src=${pv} alt="" style=${{ aspectRatio: w / h }} />` : html`<div class="faint ig-wait"><${Icon} name=${running ? 'loader-circle' : 'image'} size=${28} cls=${running ? 'spin' : ''} />
           ${running ? t('The image appears here as it forms…') : ''}</div>`}</div>
-        <${GenSteps} gen=${mine.gen} status=${mine.status} />
+        ${mine.gen ? html`<${GenSteps} gen=${mine.gen} status=${mine.status} />` : html`<div class="gen">
+          <div class="gen-row"><span class="gen-l">${t('Total')}</span>
+            <div class="progress"><i style=${{ width: ((mine.progress || 0) * 100).toFixed(1) + '%' }}></i></div>
+            <span class="gen-v mono">${Math.round((mine.progress || 0) * 100)}%</span><span class="gen-t mono">${fmtDur(mine.elapsed || 0)}</span></div>
+          ${running && html`<div class="faint" style="font-size:12px;margin-top:6px">${mine.message}</div>`}</div>`}
         ${mine.status !== 'running' && html`<p class=${'row ' + (mine.status === 'error' ? 'st-err' : 'st-warn')} style="font-size:12.5px">
           <${Icon} name=${mine.status === 'error' ? 'triangle-alert' : 'x'} size=${15} />${mine.message}</p>`}
       </div>`;
@@ -287,7 +320,7 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onUseBackg
       <button class="btn" onClick=${onClose}>${t(running ? 'Keep running in the background' : 'Close')}</button>
       ${view === 'create'
         ? (running ? html`<button class="btn danger" onClick=${onCancel}><${Icon} name="x" size=${15} /> ${t('Cancel')}</button>`
-          : html`<button class="btn primary" disabled=${!prompt.trim() || !data || (job && job.status === 'running')} onClick=${start} title="Ctrl+Enter">
+          : html`<button class="btn primary" disabled=${(flow ? false : !prompt.trim()) || !data || (job && job.status === 'running')} onClick=${start} title="Ctrl+Enter">
               <${Icon} name="wand-sparkles" size=${15} /> ${t('Generate')}</button>`)
         : html`<button class="btn primary" onClick=${() => { setCur(null); setRefs([]); setAdv('init', ''); setView('create'); }}><${Icon} name="plus" size=${15} /> ${t('New image')}</button>`}`}>
     ${err && html`<div class="alert err" style="margin-bottom:10px"><${Icon} name="triangle-alert" size=${15} />${err}</div>`}

@@ -138,6 +138,13 @@ func Run(opt Options, ready func(url string)) error {
 	mux.HandleFunc("GET /api/project/ops", s.hOpsSince)
 	mux.HandleFunc("POST /api/presence", s.hPresence)
 	mux.HandleFunc("GET /api/project/changes", s.hChanges)
+	mux.HandleFunc("GET /api/comfy/status", s.hComfyStatus)
+	mux.HandleFunc("GET /api/comfy/browse", s.hComfyBrowse)
+	mux.HandleFunc("GET /api/comfy/thumb", s.hComfyThumb)
+	mux.HandleFunc("POST /api/comfy/import", s.hComfyImport)
+	mux.HandleFunc("GET /api/comfy/flows", s.hComfyFlows)
+	mux.HandleFunc("/api/comfy/flow", s.hComfyFlow)
+	mux.HandleFunc("POST /api/comfy/run", s.hComfyRun)
 	mux.HandleFunc("POST /api/project/review", s.hReview)
 	mux.HandleFunc("GET /api/chat", s.hChat)
 	mux.HandleFunc("POST /api/chat", s.hChatPost)
@@ -951,7 +958,7 @@ func (j *job) snapshot() map[string]any {
 	}
 	return map[string]any{"id": j.ID, "kind": j.Kind, "status": j.Status, "progress": j.Progress,
 		"message": j.Message, "output": j.Output, "log": log, "elapsed": time.Since(j.Started).Seconds(), "gen": j.Gen,
-		"export": exp}
+		"export": exp, "preview": j.preview()}
 }
 
 func (s *Server) startJob(kind string, run func(ctx context.Context, j *job) error) (*job, error) {
