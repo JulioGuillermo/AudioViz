@@ -271,7 +271,18 @@ func (c *Client) Run(ctx context.Context, p Prompt, outNode string, progress Pro
 			if e.err != nil {
 				return nil, e.err
 			}
-			return c.Outputs(ctx, id, outNode)
+			// (its history is written a moment after it says it ended)
+			for k := 0; ; k++ {
+				fs, err := c.Outputs(ctx, id, outNode)
+				if !errors.Is(err, ErrNoHistory) || k >= 50 {
+					return fs, err
+				}
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-time.After(200 * time.Millisecond):
+				}
+			}
 		case <-tick.C:
 			if fs, err := c.Outputs(ctx, id, outNode); err == nil && len(fs) > 0 {
 				return fs, nil

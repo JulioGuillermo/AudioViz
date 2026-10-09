@@ -212,7 +212,7 @@ func (s *Server) hComfyImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.hub.send("comfy", map[string]any{"flow": f.ID})
-	writeJSON(w, flowView(f, true))
+	writeJSON(w, flowView(f, true, info))
 }
 
 func firstNonEmptyS(xs ...string) string {
@@ -224,15 +224,20 @@ func firstNonEmptyS(xs ...string) string {
 	return ""
 }
 
-// flowView: a flow for the studio (its nodes in brief for editing its roles, with full)
-func flowView(f *comfy.Flow, full bool) map[string]any {
+// flowView: a flow for the studio (its nodes in brief for editing its roles, with full); with
+// ComfyUI's nodes (info), what keeps it from running there ("issues"; none: it can)
+func flowView(f *comfy.Flow, full bool, info comfy.ObjectInfo) map[string]any {
 	v := map[string]any{"id": f.ID, "name": f.Name, "kind": f.Kind, "source": f.Source, "roles": f.Roles, "warnings": f.Warnings}
+	if info != nil {
+		v["issues"] = append([]comfy.Issue{}, f.Check(info)...)
+	}
 	if full {
 		type nodeView struct {
 			ID     string         `json:"id"`
 			Class  string         `json:"class"`
 			Title  string         `json:"title"`
 			Inputs map[string]any `json:"inputs"` // its values (links left out)
+			Output bool           `json:"output,omitempty"` // it saves or shows a result
 		}
 		var ns []nodeView
 		for id, n := range f.API {
@@ -242,7 +247,11 @@ func flowView(f *comfy.Flow, full bool) map[string]any {
 					in[k] = x
 				}
 			}
-			ns = append(ns, nodeView{id, n.Class, n.Title(), in})
+			out := strings.HasPrefix(n.Class, "Save") || strings.HasPrefix(n.Class, "Preview") || strings.Contains(n.Class, "VideoCombine")
+			if d := info[n.Class]; d != nil && d.OutputNode {
+				out = true
+			}
+			ns = append(ns, nodeView{id, n.Class, n.Title(), in, out})
 		}
 		sort.Slice(ns, func(i, j int) bool { return ns[i].Title < ns[j].Title })
 		v["nodes"] = ns
@@ -250,8 +259,19 @@ func flowView(f *comfy.Flow, full bool) map[string]any {
 	return v
 }
 
-// hComfyFlows: the project's flows
+// comfyInfoNow: ComfyUI's nodes to check flows against (nil: it isn't answering); fresh: asked
+// again (a model installed since shows up)
+func (s *Server) comfyInfoNow(r *http.Request, fresh bool) comfy.ObjectInfo {
+	c, _ := s.comfyClient()
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	info, _ := comfyObjectInfo(ctx, c, fresh)
+	return info
+}
+
+// hComfyFlows: the project's flows (?fresh=1: checked against ComfyUI asked again)
 func (s *Server) hComfyFlows(w http.ResponseWriter, r *http.Request) {
+	info := s.comfyInfoNow(r, r.URL.Query().Get("fresh") != "")
 	d := s.comfyDir()
 	out := []map[string]any{}
 	if d != "" {
@@ -261,7 +281,7 @@ func (s *Server) hComfyFlows(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if f, err := s.loadFlow(strings.TrimSuffix(e.Name(), ".json")); err == nil {
-				out = append(out, flowView(f, false))
+				out = append(out, flowView(f, false, info))
 			}
 		}
 	}
@@ -277,7 +297,7 @@ func (s *Server) hComfyFlow(w http.ResponseWriter, r *http.Request) {
 			fail(w, 404, err)
 			return
 		}
-		writeJSON(w, flowView(f, true))
+		writeJSON(w, flowView(f, true, s.comfyInfoNow(r, false)))
 	case "PUT":
 		var req struct {
 			ID    string       `json:"id"`
@@ -314,7 +334,7 @@ func (s *Server) hComfyFlow(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.hub.send("comfy", map[string]any{"flow": f.ID})
-		writeJSON(w, flowView(f, true))
+		writeJSON(w, flowView(f, true, s.comfyInfoNow(r, false)))
 	case "DELETE":
 		d := s.comfyDir()
 		id := filepath.Base(r.URL.Query().Get("id"))

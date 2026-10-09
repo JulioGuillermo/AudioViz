@@ -1,4 +1,4 @@
-import { flowsStore, loadFlows, FlowForm } from './comfy.js';
+import { flowsStore, loadFlows, FlowForm, Issues } from './comfy.js';
 import { useStore } from './store.js';
 import { html, useEffect, useRef, useState } from './vendor/preact-htm.js';
 import { api, basename } from './util.js';
@@ -62,7 +62,8 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onRun, onU
   const mine = job && (job.kind === 'image' || job.kind === 'comfy') ? job : null;
   // the project's ComfyUI flows that make images: models too ("comfy:<id>")
   const allFlows = useStore(flowsStore);
-  useEffect(() => { loadFlows(); }, []);
+  // (the flows checked anew: models installed since count)
+  useEffect(() => { loadFlows(true); }, []);
   const flows = allFlows.filter((f) => f.kind === 'image' || f.kind === 'edit');
   const flow = model.startsWith('comfy:') ? flows.find((f) => 'comfy:' + f.id === model) : null;
   const [cvals, setCvals] = useState(() => ({ prompt: recall('prompt', '') }));
@@ -162,6 +163,7 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onRun, onU
   const form = flow ? html`<div class="ig-form">
     <div class="fld"><label>${t('Model')}</label><div class="ctl"><${Select} value=${model} options=${modelOpts} translate=${false} onChange=${set('model', setModel)} /></div></div>
     <p class="faint ig-desc">${t('A ComfyUI flow of the project: it runs in ComfyUI (it must be started).')}</p>
+    <${Issues} issues=${flow.issues} />
     <${FlowForm} flow=${flow} values=${cvals} setValues=${setCvals} images=${cimgs} size=${sizeFields}
       pickImage=${(i, p) => { if (p === null) setPicking({ comfy: i }); else { const a = [...cimgs]; a[i] = p; setCimgs(a); } }} />
   </div>` : html`<div class="ig-form">
@@ -320,7 +322,7 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onRun, onU
       <button class="btn" onClick=${onClose}>${t(running ? 'Keep running in the background' : 'Close')}</button>
       ${view === 'create'
         ? (running ? html`<button class="btn danger" onClick=${onCancel}><${Icon} name="x" size=${15} /> ${t('Cancel')}</button>`
-          : html`<button class="btn primary" disabled=${(flow ? false : !prompt.trim()) || !data || (job && job.status === 'running')} onClick=${start} title="Ctrl+Enter">
+          : html`<button class="btn primary" disabled=${(flow ? !!(flow.issues && flow.issues.length) : !prompt.trim()) || !data || (job && job.status === 'running')} onClick=${start} title="Ctrl+Enter">
               <${Icon} name="wand-sparkles" size=${15} /> ${t('Generate')}</button>`)
         : html`<button class="btn primary" onClick=${() => { setCur(null); setRefs([]); setAdv('init', ''); setView('create'); }}><${Icon} name="plus" size=${15} /> ${t('New image')}</button>`}`}>
     ${err && html`<div class="alert err" style="margin-bottom:10px"><${Icon} name="triangle-alert" size=${15} />${err}</div>`}

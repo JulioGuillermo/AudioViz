@@ -247,6 +247,10 @@ type File struct {
 }
 
 // Outputs: the files node nodeID made in prompt id (images, videos, audio)
+// ErrNoHistory: ComfyUI keeps nothing (yet) for a prompt: it writes its history a moment after
+// saying it ended
+var ErrNoHistory = errors.New("ComfyUI has no result for it")
+
 func (c *Client) Outputs(ctx context.Context, id, nodeID string) ([]File, error) {
 	var h map[string]struct {
 		Outputs map[string]map[string]json.RawMessage `json:"outputs"`
@@ -259,7 +263,7 @@ func (c *Client) Outputs(ctx context.Context, id, nodeID string) ([]File, error)
 	}
 	e, ok := h[id]
 	if !ok {
-		return nil, errors.New("ComfyUI has no result for it")
+		return nil, ErrNoHistory
 	}
 	var out []File
 	for nid, kinds := range e.Outputs {
