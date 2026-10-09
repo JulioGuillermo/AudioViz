@@ -301,6 +301,17 @@ func callFunc(fi int, a []float64, anyNil bool, env Env) (r float64, w bool) {
 			return 1, false
 		}
 		return 0, false
+	case "rgb", "rgba", "hsv":
+		// a color: the channel being worked out (rgb keeps the color's alpha)
+		ch := int(env.Var(VarChannel))
+		c := [4]float64{a[0], a[1], a[2], env.Var(VarValueA)}
+		switch Funcs[fi].Name {
+		case "rgba":
+			c[3] = a[3]
+		case "hsv":
+			c[0], c[1], c[2] = hsvToRGB(a[0], a[1], a[2])
+		}
+		return c[max(0, min(3, ch))], false
 	}
 	return 0, true
 }
@@ -336,8 +347,13 @@ func Noise2(x, y float64) float64 {
 // (env), so that what is left only reads index, count, rand() / random() and the values perItem
 // says (kind, name) change per item. The code keeps its length (jumps stay right).
 func (p *Program) Specialize(env Env, perItem func(kind int, name string) bool) *Program {
+	return p.SpecializeKeep(env, perItem, func(v int) bool { return v == VarIndex || v == VarCount })
+}
+
+// SpecializeKeep: Specialize keeping the variables keep says (read per item / pixel then)
+func (p *Program) SpecializeKeep(env Env, perItem func(kind int, name string) bool, keep func(v int) bool) *Program {
 	q := &Program{Code: append([]int32(nil), p.Code...), Consts: append([]float64(nil), p.Consts...),
-		Keys: p.Keys, Slots: p.Slots, Stack: p.Stack, UsesValue: p.UsesValue, PerItem: p.PerItem}
+		Keys: p.Keys, Slots: p.Slots, Stack: p.Stack, UsesValue: p.UsesValue, PerItem: p.PerItem, UsesPixel: p.UsesPixel}
 	konst := func(v float64) int32 {
 		q.Consts = append(q.Consts, v)
 		return int32(len(q.Consts) - 1)
@@ -348,7 +364,7 @@ func (p *Program) Specialize(env Env, perItem func(kind int, name string) bool) 
 		n := 1 + opArgs[op]
 		switch op {
 		case OpVar:
-			if v := int(q.Code[pc+1]); v != VarIndex && v != VarCount {
+			if v := int(q.Code[pc+1]); !keep(v) {
 				q.Code[pc], q.Code[pc+1] = OpConst, konst(env.Var(v))
 			}
 		case OpBand:
@@ -393,4 +409,29 @@ func ItemRand(seed uint32, index int, perFrame bool, frame int) float64 {
 		n ^= uint32(frame)*40503 + 0x9e3779b9
 	}
 	return hash(n)
+}
+
+// hsvToRGB: hue (degrees), saturation, value (0..1) as red, green, blue (0..1)
+func hsvToRGB(h, s, v float64) (float64, float64, float64) {
+	h = math.Mod(math.Mod(h, 360)+360, 360) / 60
+	s, v = math.Max(0, math.Min(1, s)), math.Max(0, math.Min(1, v))
+	c := v * s
+	x := c * (1 - math.Abs(math.Mod(h, 2)-1))
+	var r, g, b float64
+	switch int(h) {
+	case 0:
+		r, g, b = c, x, 0
+	case 1:
+		r, g, b = x, c, 0
+	case 2:
+		r, g, b = 0, c, x
+	case 3:
+		r, g, b = 0, x, c
+	case 4:
+		r, g, b = x, 0, c
+	default:
+		r, g, b = c, 0, x
+	}
+	m := v - c
+	return r + m, g + m, b + m
 }

@@ -8,11 +8,12 @@ import { api } from './util.js';
 // completion), the dialog (its check and its graph over time), the value shown under a property
 
 // What the language knows (as expr.Vars, Bands, Funcs)
-export const EXPR_VARS = ['value', 'clip_time', 'clip_progress', 'project_time', 'project_progress', 'frame', 'fps', 'index', 'count'];
+export const EXPR_VARS = ['value', 'clip_time', 'clip_progress', 'project_time', 'project_progress', 'frame', 'fps', 'index', 'count',
+  'text_x', 'text_y', 'letter_x', 'letter_y', 'screen_x', 'screen_y', 'image_x', 'image_y'];
 export const EXPR_BANDS = ['bass', 'mid', 'treble', 'volume', 'transient', 'beat', 'drums', 'kick', 'snare', 'hats', 'bassline', 'vocals', 'other'];
 export const EXPR_FUNCS = ['sin', 'cos', 'tan', 'asin', 'acos', 'atan', 'atan2', 'rad_sin', 'rad_cos', 'rad_tan', 'rad_asin', 'rad_acos',
   'rad_atan', 'rad_atan2', 'deg', 'rad', 'abs', 'sign', 'floor', 'ceil', 'round', 'fract', 'sqrt', 'exp', 'log', 'pow', 'mod', 'min',
-  'max', 'clamp', 'mix', 'lerp', 'smoothstep', 'step', 'map', 'noise', 'noise2', 'rand', 'random', 'is_nil', 'lag', 'peak'];
+  'max', 'clamp', 'mix', 'lerp', 'smoothstep', 'step', 'map', 'noise', 'noise2', 'rand', 'random', 'is_nil', 'lag', 'peak', 'rgb', 'rgba', 'hsv'];
 const KEYWORDS = ['if', 'let', 'ret', 'nil', 'and', 'or', 'not', 'true', 'false'];
 const CONSTS = ['pi', 'tau', 'e'];
 const OUR = new Set([...EXPR_VARS, ...EXPR_BANDS, ...CONSTS, 'time', 'progress']); // (older names still highlighted)
@@ -36,11 +37,11 @@ export function exprTokens(src) {
       const s = src.slice(i, j);
       let cls = '';
       if (s[0] === '$') cls = 'x-user';
-      else if ((s === 'path' || s === 'route') && src[j] === '.') {
+      else if ((s === 'path' || s === 'route' || s === 'value') && src[j] === '.') {
         push(s, 'x-var'); push('.', 'x-op');
         let k = j + 1; while (k < src.length && /[A-Za-z0-9_]/.test(src[k])) k++;
         const kn = src.slice(j + 1, k);
-        push(kn, ['x', 'y', 'progress', 'angle'].includes(kn) ? 'x-var' : 'x-key'); i = k; continue;
+        push(kn, s === 'value' || ['x', 'y', 'progress', 'angle'].includes(kn) ? 'x-var' : 'x-key'); i = k; continue;
       } else if (KEYWORDS.includes(s)) cls = 'x-kw';
       else if (FUNCS.has(s) && src[j] === '(') cls = 'x-fn';
       else if (OUR.has(s)) cls = 'x-var';
@@ -71,6 +72,8 @@ export function ExprEditor({ value, onInput, names = {}, err, rows = 6, autofocu
   const sync = () => { if (pre.current && ta.current) { pre.current.scrollTop = ta.current.scrollTop; pre.current.scrollLeft = ta.current.scrollLeft; } };
   const candidates = (src, pos) => {
     const before = src.slice(0, pos);
+    const mv = before.match(/\bvalue\.([a-z]*)$/);
+    if (mv) return { start: pos - mv[1].length, word: mv[1], items: ['r', 'g', 'b', 'a'].map((k) => ({ s: k, cls: 'x-var' })) };
     const mk = before.match(/\b(path|route)\.([A-Za-z0-9_]*)$/);
     if (mk) return { start: pos - mk[2].length, word: mk[2], items: [...['x', 'y', 'progress', 'angle'].map((k) => ({ s: k, cls: 'x-var' })), ...(names.keys || []).map((k) => ({ s: k, cls: 'x-key' }))] };
     const m = before.match(/\$?[A-Za-z_][A-Za-z0-9_]*$/) || (before.endsWith('$') ? ['$'] : null);
@@ -159,6 +162,8 @@ export function errText(err) {
   });
 }
 
+const EACH_NAMES = { text: 'For all the text', letter: 'Per letter', pixel: 'Per pixel' };
+
 // The dialog (mounted once by the app): { title, path, src, target, t0, dur, time, names, onSave }
 export const exprDialog = createStore(null);
 export const openExpr = (spec) => exprDialog.set(spec);
@@ -177,7 +182,8 @@ export function ExprDialog() {
   const [src, setSrc] = useState('');
   const [res, setRes] = useState(null); // ExprSeries
   const cv = useRef();
-  useEffect(() => { if (d) { setSrc(d.src || 'value'); setRes(null); } }, [d]);
+  const [each, setEach] = useState('');
+  useEffect(() => { if (d) { setSrc(d.src || 'value'); setRes(null); setEach(d.each || ''); } }, [d]);
   // checked and plotted as it is typed
   useEffect(() => {
     if (!d) return;
@@ -189,6 +195,23 @@ export function ExprDialog() {
   useEffect(() => {
     const c = cv.current;
     if (!c || !res || res.error || !res.samples) return;
+    if (res.colors) {
+      // a color: a strip of it over time (on a checker for its transparency)
+      const W = c.width = c.clientWidth * devicePixelRatio, H = c.height = c.clientHeight * devicePixelRatio;
+      const g = c.getContext('2d');
+      const q = 8 * devicePixelRatio;
+      for (let y = 0; y < H; y += q) for (let x = 0; x < W; x += q) { g.fillStyle = ((x + y) / q) % 2 ? '#555' : '#333'; g.fillRect(x, y, q, q); }
+      const n = res.colors.length;
+      res.colors.forEach((k, i) => {
+        g.fillStyle = `rgba(${k[0] * 255},${k[1] * 255},${k[2] * 255},${k[3]})`;
+        g.fillRect(Math.floor(i / n * W), 0, Math.ceil(W / n) + 1, H);
+      });
+      if (d && d.time != null && n > 1) {
+        const s = res.samples, kk = (d.time - s[0].t) / (s[n - 1].t - s[0].t);
+        if (kk >= 0 && kk <= 1) { g.strokeStyle = 'rgba(255,140,60,0.9)'; g.lineWidth = 2; g.beginPath(); g.moveTo(kk * W, 0); g.lineTo(kk * W, H); g.stroke(); }
+      }
+      return;
+    }
     const W = c.width = c.clientWidth * devicePixelRatio, H = c.height = c.clientHeight * devicePixelRatio;
     const g = c.getContext('2d');
     g.clearRect(0, 0, W, H);
@@ -212,7 +235,7 @@ export function ExprDialog() {
   }, [res]);
   if (!d) return null;
   const close = () => exprDialog.set(null);
-  const save = (v) => { d.onSave(v); close(); };
+  const save = (v) => { d.onSave(v, d.each != null ? each : undefined); close(); };
   const err = res && res.error;
   return html`<div class="modal-bg" onMouseDown=${(e) => e.target === e.currentTarget && close()}>
     <div class="modal xdlg" onKeyDown=${(e) => {
@@ -224,7 +247,14 @@ export function ExprDialog() {
       <div class="mb">
         <${ExprEditor} value=${src} onInput=${setSrc} names=${d.names} err=${err} rows=${7} autofocus=${true} />
         <div class=${'xstat' + (err ? ' bad' : '')}>${err ? html`<${Icon} name="triangle-alert" size=${13} /> ${err.line >= 0 ? t('Line {n}', { n: err.line + 1 }) + ': ' : ''}${errText(err)}`
-          : res ? html`<${Icon} name="check" size=${13} /> ${res.uses_value ? t('Uses the slider\'s value') : t('Doesn\'t use value: the slider has no effect')}${res.per_item ? ' · ' + t('Worked out per particle (the graph: one of them)') : ''}${res.warn ? html` · <span class="xwarn">${t('Something impossible came up (a division by 0…): 0 there')}</span>` : ''}` : '…'}</div>
+          : res ? html`<${Icon} name="check" size=${13} /> ${res.uses_value ? t('Uses the slider\'s value') : t('Doesn\'t use value: the slider has no effect')}${res.per_item && d.each == null ? ' · ' + t('Worked out per particle (the graph: one of them)') : ''}${res.warn ? html` · <span class="xwarn">${t('Something impossible came up (a division by 0…): 0 there')}</span>` : ''}` : '…'}</div>
+        ${d.each != null && html`<div class="xeach"><span>${t('Worked out')}</span>
+          <select value=${each} onChange=${(e) => setEach(e.target.value)}>
+            <option value="">${t('Automatic')}${res && res.each ? ' (' + t(EACH_NAMES[res.each]) + ')' : ''}</option>
+            ${(d.eachKinds || ['text', 'letter', 'pixel']).map((k) => html`<option value=${k}>${t(d.target && d.target.kind === 'clip' && k === 'text' ? 'For all of it' : EACH_NAMES[k])}</option>`)}
+          </select>
+          <span class="muted">${d.target && d.target.kind === 'clip' ? t('Per pixel: image_x, image_y, screen_x, screen_y change across the image')
+            : t('Per letter / pixel: index, count, rand(), text_x, text_y, letter_x, letter_y, screen_x, screen_y change across the text')}</span></div>`}
         <canvas ref=${cv} class="xgraph"></canvas>
       </div>
       <div class="mf">
@@ -250,7 +280,7 @@ export function pathKeyNames(shape) {
 }
 
 // ExprValue: the value an expression gives now, under its property
-export function ExprValue({ kf, path, src, onInfo }) {
+export function ExprValue({ kf, path, src, bool, onInfo }) {
   const [v, setV] = useState(null);
   const T = kf.t0 + kf.u;
   useEffect(() => {
@@ -266,7 +296,12 @@ export function ExprValue({ kf, path, src, onInfo }) {
   }, [src, T, path]);
   if (!v) return null;
   if (v.error) return html`<div class="xval bad" title=${errText(v.error)}>ƒ ${t('has a mistake: the slider\'s value is used')}</div>`;
+  if (v.colors && v.colors[0]) {
+    const k = v.colors[0];
+    return html`<div class="xval">ƒ = <span class="xswatch" style=${{ background: `rgba(${k[0] * 255},${k[1] * 255},${k[2] * 255},${k[3]})` }}></span></div>`;
+  }
   const s = v.samples && v.samples[0];
+  if (bool) return html`<div class="xval">ƒ = ${s && !s.nil && s.v > 0 ? t('on') : t('off')}</div>`;
   return html`<div class="xval">ƒ = ${s && !s.nil ? (+s.v.toFixed(4)) : 'nil (0)'}</div>`;
 }
 

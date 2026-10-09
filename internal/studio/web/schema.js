@@ -369,6 +369,7 @@ const textField = (f) => {
   // A fixed text can move, scale and turn over time (keyframes)
   if (f.key === 'position_x' || f.key === 'position_y') return [{ ...f, anim: true, showIf: (c) => !onPath(c), help: f.key === 'position_x' ? 'Or drag the text on the preview' : undefined }];
   if (f.key === 'size') return [{ ...f, anim: true }];
+  if (f.key === 'color') return [f, { key: 'opacity', label: 'Opacity', type: 'num', min: 0, max: 1, step: 0.01, def: 1 }];
   if (f.key === 'align') return [{ ...f, showIf: undefined, help: 'Left / right: the text starts / ends at Position X' }];
   if (f.key === 'max_width') return [f, { key: 'rotation', label: 'Rotation (°)', type: 'num', min: -360, max: 360, step: 1, def: 0, anim: true,
     help: 'Clockwise, around its position' }];

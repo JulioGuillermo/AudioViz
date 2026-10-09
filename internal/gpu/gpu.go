@@ -26,8 +26,9 @@ import (
 // A broken Vulkan driver can hang inside its setup calls instead of failing. Those calls run
 // with a time limit: past it the GPU is given up for the rest of the process (the CPU renders),
 // rather than freezing the program. The stuck call stays parked in its own thread. The first
-// run compiles the shaders (about 8 s on an Intel iGPU, cached afterwards): room for slower ones.
-const setupTimeout = 45 * time.Second
+// run compiles the shaders (about 40 s on an Intel iGPU since the expressions' interpreter is in
+// them; cached afterwards by the driver): room for slower ones.
+const setupTimeout = 120 * time.Second
 
 var stuck atomic.Bool
 
@@ -71,7 +72,7 @@ const (
 	MaxEmitParticles = C.VKR_EMIT_THREADS
 	EmitHeaderWords  = 128
 	EmitBirthWords   = 10
-	MaxEmitBirths    = 4096 // births per emitter (older ones are left out)
+	MaxEmitBirths    = 4096                                                 // births per emitter (older ones are left out)
 	EmitExtraWords   = 4096*2 + 256*3 + 240*240 + 1 + 3*256 + EmitExprWords // text points, path samples, collision grid, depth track, expressions
 	// EmitExprWords: an emitter's expressions worked out per particle (their programs and tracks);
 	// EmitExprStack, EmitExprSlots: the most a program can use of each (exprRun in emit.comp)
@@ -123,6 +124,8 @@ type Params struct {
 	TItemB   [MaxTextItems][4]float32 // center x, y, scale, alpha
 	TItemC   [MaxTextItems][4]float32 // karaoke fill, pad, style index, rotation (rad)
 	TItemD   [MaxTextItems][4]float32 // along its path (depth from it): how far (px), its direction (rad); turned round: 1 − width, 1 − height
+	TItemG   [MaxTextItems][4]float32 // in its text's box (0…1): its center x, y, per atlas px x, y
+	TItemH   [MaxTextItems][4]float32 // its index in its text, how many
 
 	BgMix [4]float32 // -, visualizer opacity, -, -
 	Prev  [4]int32   // preview: scale, width, height (scale 0/1 = normal render)
@@ -207,6 +210,10 @@ type LayerP struct {
 	// depth from its path, per point: its track (offset in words + 1, as float bits; 0 = none),
 	// how far along the path its center is (px), the path's direction there (unit x, y)
 	ZTrack [4]float32
+	// properties per pixel (expressions): their table's offset + 1 (0 none), seed, frame; along its
+	// path: how far its center is (px), the path's direction x, y, its opacity's factor
+	Xpr [4]int32
+	Xps [4]float32
 }
 
 // TextStyle mirrors 'TStyle' in render.comp: one entry of the per-frame text style table
@@ -215,10 +222,11 @@ type TextStyle struct {
 	Color, Upcoming, Outline, GlowC [4]float32
 	Shadow                          [4]float32 // dx, dy, opacity, blur
 	ShadowC                         [4]float32
-	GradN                           [4]int32 // gradient stop count, stage
-	Mask                            [4]int32 // screen mask: offset in the overlay buffer (words; a byte per px), width, height, on
+	GradN                           [4]int32   // gradient stop count, stage, glows (bit 0) / casts a shadow (bit 1)
+	Mask                            [4]int32   // screen mask: offset in the overlay buffer (words; a byte per px), width, height, on
 	Depth                           [4]float32 // behind what is nearer (0/1), its depth, soft edge; blur (px)
 	ZTrack                          [4]float32 // depth from its path: track offset + 1 (float bits; 0 none), margin (px); its twist as a ribbon: track offset + 1; wrapped round a cylinder (1: items' tD.z is their slant)
+	Xpr                             [4]int32   // properties per letter / pixel: their table's offset + 1 (0 none), its opacity (float bits), seed, frame
 	Grad                            [MaxGrad][4]float32
 }
 

@@ -663,3 +663,10 @@ a.btn { text-decoration: none; }
 .xval.bad { color: #ff7a7a; }
 .fld.expr-novalue .ctl { opacity: .4; }
 .xlib-c { gap: 6px; margin: 3px 0; align-items: center; } .xlib-c code { min-width: 90px; }
+
+.xswatch { display: inline-block; width: 34px; height: 11px; border-radius: 3px; vertical-align: middle; border: 1px solid rgba(255,255,255,.3);
+  background-image: none; box-shadow: inset 0 0 0 100px transparent; }
+
+.xeach { display: flex; align-items: center; gap: 8px; margin: 8px 0 2px; font-size: 12px; flex-wrap: wrap; }
+.xeach select { width: auto; }
+.xeach .muted { font-size: 11px; }

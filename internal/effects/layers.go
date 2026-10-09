@@ -61,6 +61,73 @@ type LayerFrame struct {
 	// free radius around it (the studio's view of what it goes round)
 	Solid [6]float32
 	Scene *Scene
+	// Its properties worked out per pixel (expressions, as ClipPxProps; nil: none), from its
+	// values: key color, opacity (times OpK: its fades and reaction), brightness, contrast,
+	// saturation, hue (degrees), key tolerance and softness; along its path: how far its center
+	// is, the path's direction
+	X             [NClipPx]*PixExpr
+	XV            [NClipPx]float64
+	OpK           float64
+	XS0, XTX, XTY float32
+}
+
+// ClipPxProps: a clip's properties an expression can give per pixel (their paths), in the order
+// of LayerFrame.X (and render.comp's table); the first is a color
+var ClipPxProps = []string{"chroma.color", "opacity", "brightness", "contrast", "saturation", "hue",
+	"chroma.tolerance", "chroma.softness"}
+
+// NClipPx: len(ClipPxProps)
+const NClipPx = 8
+
+// HasX: whether some property is worked out per pixel; FirstX: one of them
+func (l *LayerFrame) HasX() bool { return l.FirstX() != nil }
+func (l *LayerFrame) FirstX() *PixExpr {
+	for _, x := range l.X {
+		if x != nil {
+			return x
+		}
+	}
+	return nil
+}
+
+// pxShade: the clip at pixel (x, y) with its properties worked out there (as drawLayer): a copy
+// of it with them
+func (l *LayerFrame) pxShade(x, y int) LayerFrame {
+	q := *l
+	x0 := l.FirstX()
+	u, v := l.screenToImage(float64(x)+0.5, float64(y)+0.5)
+	b := l.Img.Bounds()
+	in := PixIn{Count: 1, S: l.XS0 + (float32(x)-float32(l.CX))*l.XTX + (float32(y)-float32(l.CY))*l.XTY,
+		TX: u / float64(b.Dx()), TY: v / float64(b.Dy()), SX: (float64(x) + 0.5) / float64(x0.W), SY: (float64(y) + 0.5) / float64(x0.H)}
+	in.LX, in.LY = in.TX, in.TY
+	for k, xk := range l.X {
+		if xk == nil {
+			continue
+		}
+		if k == 0 {
+			c := xk.Color(in, [4]float64{l.KeyColor[0], l.KeyColor[1], l.KeyColor[2], 1})
+			q.KeyColor = [3]float64{c[0], c[1], c[2]}
+			continue
+		}
+		r := xk.Scalar(in, l.XV[k])
+		switch k {
+		case 1:
+			q.Opacity = math.Max(0, math.Min(1, r)) * l.OpK
+		case 2:
+			q.Brightness = r
+		case 3:
+			q.Contrast = r
+		case 4:
+			q.Saturate = r
+		case 5:
+			q.Hue = r * math.Pi / 180
+		case 6:
+			q.KeyTol = math.Max(0, r)
+		case 7:
+			q.KeySoft = math.Max(0, r)
+		}
+	}
+	return q
 }
 
 // screenToImage: position in the clip's image (px, fractional) of the screen point p
@@ -301,8 +368,13 @@ func DrawLayer(dst *image.RGBA, l *LayerFrame) {
 				if s[3] <= 1e-4 {
 					continue
 				}
-				c, key := l.shade([3]float64{s[0] / s[3], s[1] / s[3], s[2] / s[3]})
-				a := math.Max(0, math.Min(1, s[3]*key*l.Opacity))
+				lx := l
+				if l.HasX() {
+					q := l.pxShade(x, y)
+					lx = &q
+				}
+				c, key := lx.shade([3]float64{s[0] / s[3], s[1] / s[3], s[2] / s[3]})
+				a := math.Max(0, math.Min(1, s[3]*key*lx.Opacity))
 				if l.Behind && l.Scene.On() {
 					// behind what is nearer than it
 					d := l.Scene.At(float32(x), float32(y))

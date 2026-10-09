@@ -71,7 +71,28 @@ const (
 	VarIndex
 	VarCount
 	VarProjectProgress
+	// a color's channel being worked out (0 red … 3 alpha) and the color's channels (value.r …):
+	// a color's expression runs once per channel (rgb() gives that channel)
+	VarChannel
+	VarValueR
+	VarValueG
+	VarValueB
+	VarValueA
+	// where a pixel is (a text's color worked out per pixel or letter; 0.5 elsewhere): in its
+	// text's box, in its letter, on the screen (0…1 each)
+	VarTextX
+	VarTextY
+	VarLetterX
+	VarLetterY
+	VarScreenX
+	VarScreenY
 )
+
+// PixelVars: the names of VarTextX …, in their order
+var PixelVars = []string{"text_x", "text_y", "letter_x", "letter_y", "screen_x", "screen_y"}
+
+// pixelAlias: where the pixel is in a clip's image (as in a text's box)
+var pixelAlias = map[string]string{"image_x": "text_x", "image_y": "text_y"}
 
 // Bands: the audio bands (as react_to), in the order OpBand numbers them
 var Bands = []string{"bass", "mid", "treble", "volume", "transient", "beat", "drums", "kick", "snare", "hats",
@@ -90,7 +111,7 @@ var Funcs = []struct {
 	{"deg", 1}, {"rad", 1}, {"abs", 1}, {"sign", 1}, {"floor", 1}, {"ceil", 1}, {"round", 1}, {"fract", 1},
 	{"sqrt", 1}, {"exp", 1}, {"log", 1}, {"pow", 2}, {"mod", 2}, {"min", 2}, {"max", 2}, {"clamp", 3},
 	{"mix", 3}, {"smoothstep", 3}, {"step", 2}, {"map", 5}, {"noise", 1}, {"noise2", 2}, {"rand", 0},
-	{"random", 0}, {"is_nil", 1},
+	{"random", 0}, {"is_nil", 1}, {"rgb", 3}, {"rgba", 4}, {"hsv", 3},
 }
 
 var funcAlias = map[string]string{"lerp": "mix"}
@@ -108,6 +129,8 @@ type Program struct {
 	// what it uses: the slider's value; something that changes per particle, letter or pixel
 	// (index, count, rand, a route's values); the time; the audio
 	UsesValue, PerItem, UsesTime, UsesAudio bool
+	// it reads where the pixel is (text_x …)
+	UsesPixel bool
 }
 
 // Library: the project's own: constants and functions (source text of $f(…) = … definitions)
@@ -249,6 +272,16 @@ func (c *compiler) expr(n *node) error {
 		}
 		c.emit(OpConst, c.konst(v))
 	case "key":
+		if n.sub == "value" {
+			ch := map[string]int{"r": VarValueR, "g": VarValueG, "b": VarValueB, "a": VarValueA}
+			v, ok := ch[n.name]
+			if !ok {
+				return errAt(n.tok, "value.%s: a color's channels are value.r, value.g, value.b, value.a", n.name)
+			}
+			c.prog.UsesValue = true
+			c.emit(OpVar, v)
+			return nil
+		}
 		kind := map[string]int{"path": 0, "route": 1}
 		k, ok := kind[n.sub]
 		if !ok {
@@ -349,6 +382,16 @@ func (c *compiler) name(n *node) error {
 				c.prog.UsesTime = true
 			}
 			c.emit(OpVar, i)
+			return nil
+		}
+	}
+	if a, ok := pixelAlias[name]; ok {
+		name = a
+	}
+	for i, v := range PixelVars {
+		if v == name {
+			c.prog.UsesPixel = true
+			c.emit(OpVar, VarTextX+i)
 			return nil
 		}
 	}
@@ -593,5 +636,5 @@ func Names() (vars, bands, funcs, consts []string) {
 		consts = append(consts, k)
 	}
 	sort.Strings(consts)
-	return append([]string(nil), Vars...), append([]string(nil), Bands...), funcs, consts
+	return append(append(append([]string(nil), Vars...), PixelVars...), "image_x", "image_y"), append([]string(nil), Bands...), funcs, consts
 }

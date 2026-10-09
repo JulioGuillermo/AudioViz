@@ -59,6 +59,10 @@ type Item struct {
 	// turned round (Motion.Flip): its width is 1 − Flip, its height 1 − FlipY (negative: mirrored);
 	// wrapped round a cylinder its x moves by Shear × its y (slanted)
 	Flip, FlipY, Shear float32
+	// where it is in its fixed text (expressions per pixel): its center in the text's box (0…1)
+	// and how much one atlas px is of it; its index there, how many
+	TX, TY, TSX, TSY float32
+	Index, Count     int
 }
 
 type Engine struct {

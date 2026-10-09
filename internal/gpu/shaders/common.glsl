@@ -33,6 +33,8 @@ struct LayerP {
     vec4 light4;   // rim light: from (px), soft (px), width (px), gain (0 = off)
     vec4 light5;   // rim light: edge (depth step)
     vec4 ztrack;   // depth from its path: track offset + 1 (float bits; 0 none), center along it (px), direction x, y
+    ivec4 xpr;     // properties per pixel (expressions): their table's offset in lay + 1 (0 none), seed, frame
+    vec4 xps;      // along its path: its center (px), direction x, y; its opacity's factor (fades, reaction)
 };
 
 // One entry of the per-frame text style table (lyrics = 0, fixed texts after)
@@ -44,10 +46,11 @@ struct TStyle {
     vec4 glowC;
     vec4 shadow;      // dx, dy, opacity, blur
     vec4 shadowC;
-    ivec4 gradN;      // gradient stop count, stage
+    ivec4 gradN;      // gradient stop count, stage, glows (bit 0) / casts a shadow (bit 1)
     ivec4 mask;       // screen mask: offset in lay (words; a byte per px), width, height, on
     vec4 depth;       // behind what is nearer (0/1), its depth, soft edge; blur (px, depth of field)
     vec4 ztrack;      // depth from its path: track offset + 1 (float bits; 0 none), margin (px); its twist as a ribbon: track offset + 1; wrapped round a cylinder (1: items' tD.z is their slant)
+    ivec4 xpr;        // properties per letter / pixel (expressions): their table's offset in lay + 1 (0 none), its opacity (float bits), seed, frame
     vec4 grad[MAX_GRAD];
 };
 
@@ -81,6 +84,8 @@ layout(std430, set = 0, binding = 0) readonly buffer Params {
     vec4 tB[MAX_TEXT];         // center x, y, scale, alpha
     vec4 tC[MAX_TEXT];         // karaoke fill, pad, style index, rotation (rad)
     vec4 tD[MAX_TEXT];         // along its path (depth from it): how far (px), its direction (rad); turned round: 1 − width, 1 − height
+    vec4 tG[MAX_TEXT];         // in its text's box (0…1): its center x, y, per atlas px x, y (colors per pixel)
+    vec4 tH[MAX_TEXT];         // its index in its text, how many (colors per pixel)
     vec4 bgMix;                // -, visualizer opacity
     ivec4 prev;                // preview: scale (1 = normal), output width and height
     vec4 layerA;               // background A (BG): scale, offX, offY, rot (segment motion)

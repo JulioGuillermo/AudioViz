@@ -74,8 +74,10 @@ type ClipConfig struct {
 	Depth ClipDepth `yaml:"depth,omitempty"`
 	// Keyframes (times from Start): any of the numbers and colors above, e.g. x, scale, opacity
 	Keys Keys `yaml:"keys,omitempty"`
-	// Advanced settings: an expression per property (exprs.go)
-	Exprs Exprs `yaml:"exprs,omitempty"`
+	// Advanced settings: an expression per property (exprs.go); per pixel or for all of it
+	// ("pixel", "text"; "" or none: per pixel when it reads where the pixel is)
+	Exprs    Exprs             `yaml:"exprs,omitempty"`
+	ExprEach map[string]string `yaml:"expr_each,omitempty"`
 }
 
 // MaskConfig limits where a clip is seen. It belongs to the clip (moves, scales and turns with

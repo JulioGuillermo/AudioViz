@@ -1,4 +1,5 @@
 #version 450
+#extension GL_GOOGLE_include_directive : require
 // Emitter pass (particle emitters, see internal/effects/emit.go: same math, in float32):
 //   phase 0: clear the accumulations
 //   phase 1: one invocation per particle: its state from its birth and age, splatted into its
@@ -136,193 +137,39 @@ float sdfAt(int o, int gw, int gh, float dv, vec2 p) {
 }
 
 
-// ---- expressions worked out per particle (as package expr: the same bytecode, the same ops)
-const int XSTK = 32, XSLOT = 16; // as gpu.EmitExprStack, EmitExprSlots
-uint xhash(uint n) {
-    n = (n << 13u) ^ n;
-    n = n * (n * n * 15731u + 789221u) + 1376312589u;
-    return n & 0x7fffffffu;
-}
-float xhashf(uint n) { return float(xhash(n)) / 2147483647.0; }
-float xnoise1(float x) {
-    float i = floor(x), f = x - i, u = f * f * (3.0 - 2.0 * f);
-    float a = xhashf(uint(int(i))), b = xhashf(uint(int(i) + 1));
-    return a + (b - a) * u;
-}
-float xnoise2(float x, float y) {
-    float ix = floor(x), iy = floor(y), fx = x - ix, fy = y - iy;
-    float ux = fx * fx * (3.0 - 2.0 * fx), uy = fy * fy * (3.0 - 2.0 * fy);
-    float a = xhashf(uint(int(ix)) ^ uint(int(iy)) * 2654435761u), b = xhashf(uint(int(ix) + 1) ^ uint(int(iy)) * 2654435761u);
-    float c = xhashf(uint(int(ix)) ^ uint(int(iy) + 1) * 2654435761u), d = xhashf(uint(int(ix) + 1) ^ uint(int(iy) + 1) * 2654435761u);
-    return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
-}
-// an item's random number (as expr.ItemRand)
-float xItemRand(uint seed, int index, bool perFrame, uint frame) {
-    uint n = seed ^ uint(index) * 2654435761u;
-    if (perFrame) n ^= frame * 40503u + 0x9e3779b9u;
-    return xhashf(n);
-}
-const float XDEG = 3.14159265358979 / 180.0;
-float xsafe(float v) { return (isnan(v) || isinf(v)) ? 0.0 : v; }
-// a power as Go's math.Pow: a negative base only to a whole power (else 0, as NaN gives)
-float xpow(float a, float b) {
-    if (a >= 0.0) return xsafe(pow(a, b));
-    if (fract(b) != 0.0) return 0.0;
-    return xsafe(pow(-a, b) * (mod(b, 2.0) == 1.0 ? -1.0 : 1.0));
-}
-// a built-in function (as expr.callFunc; the same numbers as expr.Funcs)
-float xcall(int fi, float a0, float a1, float a2, float a3, float a4, bool anyNil, uint seed, int index, uint frame) {
-    switch (fi) {
-    case 0: return sin(a0 * XDEG);
-    case 1: return cos(a0 * XDEG);
-    case 2: return xsafe(tan(a0 * XDEG));
-    case 3: return xsafe(asin(a0) / XDEG);
-    case 4: return xsafe(acos(a0) / XDEG);
-    case 5: return atan(a0) / XDEG;
-    case 6: return atan(a0, a1) / XDEG;
-    case 7: return sin(a0);
-    case 8: return cos(a0);
-    case 9: return xsafe(tan(a0));
-    case 10: return xsafe(asin(a0));
-    case 11: return xsafe(acos(a0));
-    case 12: return atan(a0);
-    case 13: return atan(a0, a1);
-    case 14: return a0 / XDEG;
-    case 15: return a0 * XDEG;
-    case 16: return abs(a0);
-    case 17: return sign(a0);
-    case 18: return floor(a0);
-    case 19: return ceil(a0);
-    case 20: return floor(a0 + 0.5);
-    case 21: return a0 - floor(a0);
-    case 22: return a0 < 0.0 ? 0.0 : sqrt(a0);
-    case 23: return xsafe(exp(a0));
-    case 24: return a0 <= 0.0 ? 0.0 : log(a0);
-    case 25: return xpow(a0, a1);
-    case 26: return a1 == 0.0 ? 0.0 : a0 - a1 * floor(a0 / a1);
-    case 27: return min(a0, a1);
-    case 28: return max(a0, a1);
-    case 29: return max(a1, min(a2, a0));
-    case 30: return a0 + (a1 - a0) * a2;
-    case 31: {
-        if (a1 == a0) return a2 < a0 ? 0.0 : 1.0;
-        float t = clamp((a2 - a0) / (a1 - a0), 0.0, 1.0);
-        return t * t * (3.0 - 2.0 * t);
-    }
-    case 32: return a1 < a0 ? 0.0 : 1.0;
-    case 33: return a2 == a1 ? a3 : a3 + (a0 - a1) / (a2 - a1) * (a4 - a3);
-    case 34: return xnoise1(a0);
-    case 35: return xnoise2(a0, a1);
-    case 36: return xItemRand(seed, index, false, frame);
-    case 37: return xItemRand(seed, index, true, frame);
-    case 38: return anyNil ? 1.0 : 0.0;
-    }
-    return 0.0;
-}
-// the arguments each function takes (expr.Funcs)
-int xargs(int fi) {
-    if (fi == 6 || fi == 13 || fi == 25 || fi == 26 || fi == 27 || fi == 28 || fi == 32 || fi == 35) return 2;
-    if (fi == 29 || fi == 30 || fi == 31) return 3;
-    if (fi == 33) return 5;
-    if (fi == 36 || fi == 37) return 0;
-    return 1;
-}
-// runs expression d (its 6 words: property, code, length, consts, key table, multiplier) for item
-// index at sRoute / sPath along its route / path; nil gives 0 (as effects.particleExprs)
-int xcount = 1; // how many particles (count)
-// the particle's route / path for its own values (path.x …): its samples, count, length, closed,
-// how far the route is moved (to where it was born)
+// ---- expressions worked out per particle (expr.glsl)
+#define XPW(i) ed[i]
+#include "expr.glsl"
+// the particle (exprRun's): how many (count), its route / path for its own values (path.x …):
+// its samples, count, length, closed, how far the route is moved (to where it was born), how far
+// along its route / path it is
+int xcount = 1;
 int xpo = 0, xns = 0;
 float xL = 0.0;
 bool xclosed = false;
 vec2 xshift = vec2(0.0);
-float exprRun(int d, int index, float sRoute, float sPath, uint seed, uint frame) {
-    float st[XSTK];
-    bool nl[XSTK];
-    float sl[XSLOT];
-    bool sn[XSLOT];
-    int sp = 0;
-    int code = int(ed[d + 1]), n = int(ed[d + 2]), co = int(ed[d + 3]), kt = int(ed[d + 4]);
-    int pc = 0;
-    for (int step = 0; step < 8192 && pc < n; step++) {
-        int op = int(ed[code + pc]);
-        int a0 = pc + 1 < n ? int(ed[code + pc + 1]) : 0;
-        int nx = pc + 1;
-        if (op == 0) { st[sp] = edf(co + a0); nl[sp] = false; sp++; nx = pc + 2; }
-        else if (op == 1) { st[sp] = 0.0; nl[sp] = true; sp++; }
-        else if (op == 2) { st[sp] = a0 == 6 ? float(index) : (a0 == 7 ? float(xcount) : 0.0); nl[sp] = false; sp++; nx = pc + 2; }
-        else if (op == 7) {
-            // a value along the route (kind 1) or path (0) where the item is
-            int kind = a0, k = int(ed[code + pc + 2]);
-            uint tu = ed[kt + 2 * k + (kind == 1 ? 0 : 1)];
-            if (tu >= 0xFFFFFFF0u) {
-                // the route's / path's own: where it is on it (as effects.PathBuiltinAt)
-                int b = int(tu - 0xFFFFFFF0u);
-                float s = wrapLen(kind == 1 ? sRoute : sPath, xL, xclosed);
-                vec4 pt = pathPoint(xpo, xns, xL, xclosed, s);
-                vec2 shv = kind == 1 ? xshift : vec2(0.0);
-                st[sp] = b == 1 ? (pt.x + shv.x) / float(W) : b == 2 ? (pt.y + shv.y) / float(H)
-                    : b == 3 ? (xL > 0.0 ? clamp(s / xL, 0.0, 1.0) : 0.0) : atan(pt.w, pt.z) / XDEG;
-                nl[sp] = false;
-            } else if (tu > 0u) { st[sp] = trackAtE(int(tu) - 1, kind == 1 ? sRoute : sPath); nl[sp] = false; }
-            else { st[sp] = 0.0; nl[sp] = true; }
-            sp++;
-            nx = pc + 3;
-        }
-        else if (op == 8) { st[sp] = sl[a0]; nl[sp] = sn[a0]; sp++; nx = pc + 2; }
-        else if (op == 9) { sp--; sl[a0] = st[sp]; sn[a0] = nl[sp]; nx = pc + 2; }
-        else if (op == 10) { sp--; }
-        else if (op >= 11 && op <= 22) {
-            sp--;
-            float b = nl[sp] ? 0.0 : st[sp];
-            sp--;
-            float a = nl[sp] ? 0.0 : st[sp];
-            float r = 0.0;
-            if (op == 11) r = a + b;
-            else if (op == 12) r = a - b;
-            else if (op == 13) r = a * b;
-            else if (op == 14) r = b == 0.0 ? 0.0 : a / b;
-            else if (op == 15) r = b == 0.0 ? 0.0 : a - b * floor(a / b);
-            else if (op == 16) r = xpow(a, b);
-            else if (op == 17) r = a == b ? 1.0 : 0.0;
-            else if (op == 18) r = a != b ? 1.0 : 0.0;
-            else if (op == 19) r = a < b ? 1.0 : 0.0;
-            else if (op == 20) r = a <= b ? 1.0 : 0.0;
-            else if (op == 21) r = a > b ? 1.0 : 0.0;
-            else r = a >= b ? 1.0 : 0.0;
-            st[sp] = xsafe(r); nl[sp] = false; sp++;
-        }
-        else if (op == 23) { float v = nl[sp - 1] ? 0.0 : st[sp - 1]; st[sp - 1] = -v; nl[sp - 1] = false; }
-        else if (op == 24) { float v = nl[sp - 1] ? 0.0 : st[sp - 1]; st[sp - 1] = v > 0.0 ? 0.0 : 1.0; nl[sp - 1] = false; }
-        else if (op == 25) { float v = nl[sp - 1] ? 0.0 : st[sp - 1]; st[sp - 1] = v > 0.0 ? 1.0 : 0.0; nl[sp - 1] = false; }
-        else if (op == 26) { nx = a0; }
-        else if (op == 27) { sp--; float v = nl[sp] ? 0.0 : st[sp]; nx = v > 0.0 ? pc + 2 : a0; if (v > 0.0) nx = pc + 2; }
-        else if (op == 28) { if (!nl[sp - 1]) nx = a0; else { sp--; nx = pc + 2; } }
-        else if (op == 29) {
-            float v = st[sp - 1]; bool vn = nl[sp - 1];
-            sp = a0; st[sp] = v; nl[sp] = vn; sp++;
-            nx = int(ed[code + pc + 2]);
-        }
-        else if (op == 30) {
-            int k = xargs(a0);
-            float ar[5];
-            bool anyNil = false;
-            for (int q = 4; q >= 0; q--) {
-                if (q >= k) { ar[q] = 0.0; continue; }
-                sp--;
-                anyNil = anyNil || nl[sp];
-                ar[q] = nl[sp] ? 0.0 : st[sp];
-            }
-            st[sp] = xsafe(xcall(a0, ar[0], ar[1], ar[2], ar[3], ar[4], anyNil, seed, index, frame)); nl[sp] = false; sp++;
-            nx = pc + 2;
-        }
-        else if (op == 31) { break; }
-        else if (op == 33) { st[sp - 1] = edf(co + a0); nl[sp - 1] = false; nx = pc + 2; }
-        // 32 (nop): nothing
-        pc = nx;
+float xSR = 0.0, xSP = 0.0;
+float xVar(int v) { return v == 6 ? float(xIndex) : (v == 7 ? float(xcount) : 0.0); }
+bool xKey(int kind, uint tu, out float v) {
+    v = 0.0;
+    if (tu >= 0xFFFFFFF0u) {
+        // the route's / path's own: where it is on it (as effects.PathBuiltinAt)
+        int b = int(tu - 0xFFFFFFF0u);
+        float s = wrapLen(kind == 1 ? xSR : xSP, xL, xclosed);
+        vec4 pt = pathPoint(xpo, xns, xL, xclosed, s);
+        vec2 shv = kind == 1 ? xshift : vec2(0.0);
+        v = b == 1 ? (pt.x + shv.x) / float(W) : b == 2 ? (pt.y + shv.y) / float(H)
+            : b == 3 ? (xL > 0.0 ? clamp(s / xL, 0.0, 1.0) : 0.0) : atan(pt.w, pt.z) / XDEG;
+        return true;
     }
-    if (sp == 0 || nl[sp - 1]) return 0.0;
-    return st[sp - 1];
+    if (tu > 0u) { v = trackAtE(int(tu) - 1, kind == 1 ? xSR : xSP); return true; }
+    return false;
+}
+// runs expression d (its 6 words: property, code, length, consts, key table, multiplier) for item
+// index at sRoute / sPath along its route / path; nil gives 0 (as effects.particleExprs)
+float exprRun(int d, int index, float sRoute, float sPath, uint seed, uint frame) {
+    xIndex = index; xSR = sRoute; xSP = sPath; xSeed = seed; xFrame = frame; xCh = 0; xValA = 0.0;
+    return xRun(int(ed[d + 1]), int(ed[d + 2]), int(ed[d + 3]), int(ed[d + 4]));
 }
 
 void splatPhase() {

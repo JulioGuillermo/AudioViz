@@ -392,6 +392,82 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 			}
 		}
 	}
+	// the clips' properties per pixel (their expressions' programs: a table of two words per
+	// effects.ClipPxProps, its program's offset + 1 and -, then the programs; written every frame)
+	for k := 0; k < n; k++ {
+		l := &fs.Layers[k]
+		lp := &p.Layers[k]
+		lp.Xpr, lp.Xps = [4]int32{}, [4]float32{}
+		x0 := l.FirstX()
+		if x0 == nil {
+			continue
+		}
+		put := func(i int, u uint32) { binary.LittleEndian.PutUint32(buf[i*4:], u) }
+		tab := 2 * effects.NClipPx
+		need := tab
+		for _, x := range l.X {
+			if x != nil {
+				need += effects.PixExprWords(x) + 1
+			}
+		}
+		if off+need > g.LayerWords {
+			continue
+		}
+		o := off + tab
+		for j, x := range l.X {
+			put(off+2*j, 0)
+			put(off+2*j+1, 0)
+			if x == nil {
+				continue
+			}
+			effects.PackPixExpr(put, o, x)
+			put(off+2*j, uint32(o+1))
+			put(off+2*j+1, math.Float32bits(float32(l.XV[j]))) // its value (the expression's value)
+			o += effects.PixExprWords(x)
+		}
+		lp.Xpr = [4]int32{int32(off + 1), int32(x0.Seed), int32(x0.Frame)}
+		lp.Xps = [4]float32{l.XS0, l.XTX, l.XTY, float32(l.OpK)}
+		off += need
+	}
+	// the texts' properties per letter / pixel (their expressions' programs: a table of two words
+	// per lyrics.TextPxProps, its program's offset + 1 and per letter, then the programs), after
+	// everything (every frame)
+	for si := 0; si < min(len(fs.TextStyles), gpu.MaxTextStyles); si++ {
+		ts := &p.TStyles[si]
+		ts.Xpr = [4]int32{}
+		st := &fs.TextStyles[si]
+		x0 := st.FirstX()
+		if x0 == nil {
+			continue
+		}
+		put := func(i int, u uint32) { binary.LittleEndian.PutUint32(buf[i*4:], u) }
+		tab := 2 * lyrics.NTextPx
+		need := tab
+		for _, x := range st.X {
+			if x != nil {
+				need += effects.PixExprWords(x)
+			}
+		}
+		if off+need > g.LayerWords {
+			continue
+		}
+		o := off + tab
+		for k, x := range st.X {
+			put(off+2*k, 0)
+			put(off+2*k+1, 0)
+			if x == nil {
+				continue
+			}
+			effects.PackPixExpr(put, o, x)
+			put(off+2*k, uint32(o+1))
+			if x.Letter {
+				put(off+2*k+1, 1)
+			}
+			o += effects.PixExprWords(x)
+		}
+		ts.Xpr = [4]int32{int32(off + 1), int32(math.Float32bits(float32(st.Opacity))), int32(x0.Seed), int32(x0.Frame)}
+		off += need
+	}
 	// Stages beyond the clips drawn (n) go on top: render.comp clamps them to n
 	p.LayerN = [4]int32{int32(n)}
 	p.ZIdx[0], p.ZIdx[1] = int32(fs.ZParts), int32(fs.ZViz)
@@ -1216,6 +1292,9 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 				fl = it.Shear // wrapped round a cylinder (its style's ztrack.w): its slant
 			}
 			p.TItemD[i] = [4]float32{it.PS, float32(math.Atan2(float64(it.PTY), float64(it.PTX))), fl, it.FlipY}
+			// where it is in its text (its properties per letter / pixel)
+			p.TItemG[i] = [4]float32{it.TX, it.TY, it.TSX, it.TSY}
+			p.TItemH[i] = [4]float32{float32(it.Index), float32(it.Count)}
 		}
 		f4 := func(c [4]float64) [4]float32 {
 			return [4]float32{float32(c[0]), float32(c[1]), float32(c[2]), float32(c[3])}
@@ -1238,6 +1317,12 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 			// GradN[1]: the stage among the overlay clips of this lyrics / text style
 			stg := min(fs.Stage(st.Z), gpu.MaxLayers)
 			ts.GradN = [4]int32{int32(ng), int32(stg)}
+			if st.GlowOn {
+				ts.GradN[2] |= 1
+			}
+			if st.ShadowOn {
+				ts.GradN[2] |= 2
+			}
 			p.ZIdx[2] |= 1 << stg
 			ts.Info = [4]float32{float32(st.OutlineW), float32(st.GlowR), float32(st.GlowI), float32(ch)}
 			ts.Color, ts.Upcoming, ts.Outline, ts.GlowC = f4(st.Color), f4(st.Upcoming), f4(st.Outline), f4(st.GlowC)

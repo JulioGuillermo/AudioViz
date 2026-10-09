@@ -295,15 +295,15 @@ function TextsInspector({ proj, sel, setSel, update, time, meta, ctx }) {
             onChange=${(e) => set({ ...x, end: Math.max(x.start + 0.1, clampT(parseTime(e.target.value))) })} />
           <span class="faint" style="font-size:11.5px">${t('{s} s', { s: (x.end - x.start).toFixed(2) })}</span></div></div>
       </div>
-      <${Form} fields=${TEXT_FIELDS} value=${x} onChange=${set} ctx=${ctx} kf=${keyApi({ keys: x.keys, u: time - x.start, max: x.end - x.start, exprs: x.exprs, target: { kind: 'text', text: i }, t0: x.start, pathKeys: pathKeyNames(x.motion && x.motion.path),
+      <${Form} fields=${TEXT_FIELDS} value=${x} onChange=${set} ctx=${ctx} kf=${keyApi({ keys: x.keys, u: time - x.start, max: x.end - x.start, exprs: x.exprs, exprEach: x.expr_each, target: { kind: 'text', text: i }, t0: x.start, pathKeys: pathKeyNames(x.motion && x.motion.path),
         focus: ctx.kfFocus, setFocus: ctx.setKfFocus, seek: (u) => ctx.seek(x.start + u),
         edit: (fn) => update((p) => { const tx = p.texts[i]; fn(tx, tx); }) })} />
-      <${MotionSection} obj=${x} what="text" ctx=${ctx} edit=${(fn) => update((p) => fn(p.texts[i]))} kf=${keyApi({ keys: x.keys, u: time - x.start, max: x.end - x.start, exprs: x.exprs, target: { kind: 'text', text: i }, t0: x.start, pathKeys: pathKeyNames(x.motion && x.motion.path),
+      <${MotionSection} obj=${x} what="text" ctx=${ctx} edit=${(fn) => update((p) => fn(p.texts[i]))} kf=${keyApi({ keys: x.keys, u: time - x.start, max: x.end - x.start, exprs: x.exprs, exprEach: x.expr_each, target: { kind: 'text', text: i }, t0: x.start, pathKeys: pathKeyNames(x.motion && x.motion.path),
         focus: ctx.kfFocus, setFocus: ctx.setKfFocus, seek: (u) => ctx.seek(x.start + u),
         edit: (fn) => update((p) => { const tx = p.texts[i]; fn(tx, tx); }) })} />
       ${ctx.pathNode && ctx.pathNode.what === 'motion' && html`<${NodeSection} obj=${x} what="motion" pi=${ctx.pathNode.pi}
         edit=${(fn) => update((p) => fn(p.texts[i]))} />`}
-      <${MaskSection} clip=${x} screen=${true} kf=${keyApi({ keys: x.keys, u: time - x.start, max: x.end - x.start, exprs: x.exprs, target: { kind: 'text', text: i }, t0: x.start, pathKeys: pathKeyNames(x.motion && x.motion.path),
+      <${MaskSection} clip=${x} screen=${true} kf=${keyApi({ keys: x.keys, u: time - x.start, max: x.end - x.start, exprs: x.exprs, exprEach: x.expr_each, target: { kind: 'text', text: i }, t0: x.start, pathKeys: pathKeyNames(x.motion && x.motion.path),
         focus: ctx.kfFocus, setFocus: ctx.setKfFocus, seek: (u) => ctx.seek(x.start + u),
         edit: (fn) => update((p) => { const tx = p.texts[i]; fn(tx, tx); }) })}
         selMask=${ctx.selMask} setSelMask=${ctx.setSelMask} ctx=${ctx} openEditor=${ctx.openEditor}

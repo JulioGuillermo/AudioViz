@@ -3,11 +3,13 @@ package engine
 import (
 	"hash/fnv"
 	"math"
+	"slices"
 	"strconv"
 
 	"audioviz/internal/config"
 	"audioviz/internal/effects"
 	"audioviz/internal/expr"
+	"audioviz/internal/lyrics"
 )
 
 // The properties' advanced settings (expressions): the session is their config.Evaluator. Each
@@ -53,13 +55,28 @@ type exprEnv struct {
 	ctx   *config.ExprCtx
 	value float64
 	count float64 // how many items (particles; 1 for an element)
+	// a color worked out channel by channel: the color, the channel now
+	color *[4]float64
+	ch    int
 }
 
 func (e *exprEnv) Var(v int) float64 {
 	c := e.ctx
+	if e.color != nil {
+		switch v {
+		case expr.VarValue:
+			return e.color[e.ch]
+		case expr.VarChannel:
+			return float64(e.ch)
+		case expr.VarValueR, expr.VarValueG, expr.VarValueB, expr.VarValueA:
+			return e.color[v-expr.VarValueR]
+		}
+	}
 	switch v {
 	case expr.VarValue:
 		return e.value
+	case expr.VarValueA:
+		return 1
 	case expr.VarProjectTime:
 		return c.T
 	case expr.VarProjectProgress:
@@ -78,6 +95,8 @@ func (e *exprEnv) Var(v int) float64 {
 		return float64(e.s.FPS)
 	case expr.VarCount:
 		return math.Max(e.count, 1)
+	case expr.VarTextX, expr.VarTextY, expr.VarLetterX, expr.VarLetterY, expr.VarScreenX, expr.VarScreenY:
+		return 0.5 // where a pixel is: the middle (worked out for all of it)
 	}
 	return 0
 }
@@ -197,8 +216,11 @@ type ExprSeries struct {
 	Error     *expr.Error  `json:"error,omitempty"`
 	UsesValue bool         `json:"uses_value"`
 	PerItem   bool         `json:"per_item,omitempty"` // worked out per particle (the samples: the first one's)
+	Colors    [][4]float64 `json:"colors,omitempty"`   // a color property: its color at each time
 	Warn      bool         `json:"warn,omitempty"`
 	Samples   []ExprSample `json:"samples"`
+	// a text's color: how it is worked out when left automatic (effects.EachText …)
+	Each string `json:"each,omitempty"`
 }
 
 // ExprSeries tries src on the property path of target at each of times (song seconds): the
@@ -230,12 +252,20 @@ func (s *Session) ExprSeries(src string, tg ExprTarget, path string, times []flo
 			if l.ID == tg.Layer && tg.Clip >= 0 && tg.Clip < len(l.Clips) {
 				c := &l.Clips[tg.Clip]
 				cfg, keys, start, dur, id = c, c.Keys, c.Start, c.End-c.Start, clipID(l.ID, tg.Clip)
+				if !l.IsEmitter() && slices.Contains(effects.ClipPxProps, path) {
+					out.Each = s.clipEach(src, "")
+				}
 			}
 		}
 	case "text":
 		if tg.Text >= 0 && tg.Text < len(s.Cfg.Texts) {
 			tc := &s.Cfg.Texts[tg.Text]
 			cfg, keys, start, dur, id = tc, tc.Keys, tc.Start, tc.End-tc.Start, "text:"+strconv.Itoa(tg.Text)
+			for _, cp := range lyrics.TextPxProps {
+				if cp == path {
+					out.Each = s.ColorEach(src, "", tc.Motion.Bend && tc.Motion.On())
+				}
+			}
 		}
 	case "seg":
 		if c, k, _, at, next, ok := s.Cfg.Timeline.SegRef(tg.Track, tg.Seg); ok {
@@ -249,6 +279,13 @@ func (s *Session) ExprSeries(src string, tg ExprTarget, path string, times []flo
 	for _, t := range times {
 		value, mo := 0.0, (*config.Motion)(nil)
 		if cfg != nil {
+			if c, ok := config.ColorAt(cfg, keys, t-start, path); ok {
+				// a color: worked out channel by channel
+				_, mo, _ = config.NumberAt(cfg, keys, t-start, "motion.progress")
+				out.Colors = append(out.Colors, s.runColor(p, c, &config.ExprCtx{T: t, U: t - start, Dur: dur, Motion: mo, ID: id}))
+				out.Samples = append(out.Samples, ExprSample{T: t})
+				continue
+			}
 			value, mo, _ = config.NumberAt(cfg, keys, t-start, path)
 		}
 		ctx := &config.ExprCtx{T: t, U: t - start, Dur: dur, Motion: mo, ID: id}
@@ -339,4 +376,79 @@ func (e *itemEnv) Key(kind int, name string) (float64, bool) {
 }
 func (e *itemEnv) Rand(perFrame bool) float64 {
 	return expr.ItemRand(e.seed, e.index, perFrame, e.frame)
+}
+
+// EvalColor (config.ColorEvaluator): a color from its expression, once per channel
+func (s *Session) EvalColor(src string, rgba [4]float64, ctx *config.ExprCtx) ([4]float64, bool) {
+	p, err := s.exprProgram(src)
+	if err != nil || p == nil || p.PerItem {
+		return rgba, false
+	}
+	return s.runColor(p, rgba, ctx), true
+}
+
+func (s *Session) runColor(p *expr.Program, rgba [4]float64, ctx *config.ExprCtx) [4]float64 {
+	var out [4]float64
+	for ch := 0; ch < 4; ch++ {
+		r := p.Run(&exprEnv{s: s, ctx: ctx, color: &rgba, ch: ch})
+		if !r.Nil {
+			out[ch] = math.Max(0, math.Min(1, r.V))
+		}
+	}
+	return out
+}
+
+// ColorEach (lyrics.ColorExprs): how a text's color expression src is worked out: as each says
+// (EachText, EachLetter, EachPixel), or by what it reads ("": where the pixel is: per pixel;
+// the letter, or its path's values along a bent text: per letter; else for all of it)
+func (s *Session) ColorEach(src, each string, bent bool) string {
+	switch each {
+	case effects.EachText, effects.EachLetter, effects.EachPixel:
+		return each
+	}
+	p, err := s.exprProgram(src)
+	switch {
+	case err != nil || p == nil:
+		return effects.EachText
+	case p.UsesPixel:
+		return effects.EachPixel
+	case p.PerItem || (bent && len(p.Keys) > 0):
+		return effects.EachLetter
+	}
+	return effects.EachText
+}
+
+// PixExpr (lyrics.ColorExprs): src specialized for the frame of ctx, to run per letter / pixel
+// (its path's values along ctx.Motion's path)
+func (s *Session) PixExpr(src string, ctx *config.ExprCtx) *effects.PixExpr {
+	p, err := s.exprProgram(src)
+	if err != nil || p == nil {
+		return nil
+	}
+	W, H := float64(s.W), float64(s.H)
+	x := &effects.PixExpr{W: s.W, H: s.H}
+	var mo *config.Motion
+	if ctx.Motion != nil && ctx.Motion.On() {
+		mo = ctx.Motion
+		x.Pts, x.L = effects.SamplePath(mo.Path, W, H)
+		x.Closed = !mo.Path.Open
+	}
+	x.Keys = make([]effects.EmitExprKey, len(p.Keys))
+	for k, name := range p.Keys {
+		if mo == nil {
+			continue
+		}
+		if b := effects.PathBuiltin(name); b > 0 {
+			x.Keys[k].Builtin = b
+		} else {
+			x.Keys[k].Path = effects.Track(mo.Path, name, W, H)
+		}
+	}
+	x.Prog = p.SpecializeKeep(&exprEnv{s: s, ctx: ctx}, func(kind int, name string) bool {
+		return kind == 0 && mo != nil
+	}, effects.PixKeep)
+	h := fnv.New32a()
+	h.Write([]byte(ctx.ID))
+	x.Seed, x.Frame = h.Sum32(), int(math.Round(ctx.T*float64(s.FPS)))
+	return x
 }

@@ -178,10 +178,56 @@ func TestNumbering(t *testing.T) {
 	}
 	want := []string{"sin", "cos", "tan", "asin", "acos", "atan", "atan2", "rad_sin", "rad_cos", "rad_tan", "rad_asin",
 		"rad_acos", "rad_atan", "rad_atan2", "deg", "rad", "abs", "sign", "floor", "ceil", "round", "fract", "sqrt", "exp",
-		"log", "pow", "mod", "min", "max", "clamp", "mix", "smoothstep", "step", "map", "noise", "noise2", "rand", "random", "is_nil"}
+		"log", "pow", "mod", "min", "max", "clamp", "mix", "smoothstep", "step", "map", "noise", "noise2", "rand", "random", "is_nil",
+		"rgb", "rgba", "hsv"}
 	for i, f := range Funcs {
 		if i >= len(want) || f.Name != want[i] {
 			t.Fatalf("Funcs[%d] = %s: emit.comp's xcall numbers them in this order", i, f.Name)
+		}
+	}
+}
+
+// a color's expression, once per channel
+type colorEnv struct {
+	testEnv
+	ch  int
+	val [4]float64
+}
+
+func (e colorEnv) Var(v int) float64 {
+	switch v {
+	case VarChannel:
+		return float64(e.ch)
+	case VarValue:
+		return e.val[e.ch]
+	case VarValueR, VarValueG, VarValueB, VarValueA:
+		return e.val[v-VarValueR]
+	}
+	return e.testEnv.Var(v)
+}
+
+func TestColors(t *testing.T) {
+	val := [4]float64{0.2, 0.4, 0.6, 0.8}
+	for _, c := range []struct {
+		src  string
+		want [4]float64
+	}{
+		{"value", val},
+		{"value * 0.5", [4]float64{0.1, 0.2, 0.3, 0.4}},
+		{"rgb(1, 0, value.b)", [4]float64{1, 0, 0.6, 0.8}},
+		{"rgba(0, 1, 0, 0.5)", [4]float64{0, 1, 0, 0.5}},
+		{"hsv(120, 1, 1)", [4]float64{0, 1, 0, 0.8}},
+		{"mix(value, rgb(1, 1, 1), 0.5)", [4]float64{0.6, 0.7, 0.8, 0.8}},
+	} {
+		p, err := Compile(c.src, nil)
+		if err != nil {
+			t.Fatalf("%q: %v", c.src, err)
+		}
+		for ch := 0; ch < 4; ch++ {
+			r := p.Run(colorEnv{ch: ch, val: val})
+			if math.Abs(r.V-c.want[ch]) > 1e-9 {
+				t.Errorf("%q channel %d = %v, want %v", c.src, ch, r.V, c.want[ch])
+			}
 		}
 	}
 }

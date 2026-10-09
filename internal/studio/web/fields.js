@@ -93,7 +93,12 @@ export function Edit({ tag = 'input', value, onKeyDown, ...rest }) {
 export const adjusting = createStore(null);
 
 // the types of properties an expression can give (numbers)
-const EXPRABLE = new Set(['num', 'int', 'optnum']);
+// a text's properties an expression can work out per letter or pixel (as lyrics.TextPxProps)
+const TEXT_EACH = ['color', 'outline_color', 'glow.color', 'shadow.color', 'opacity', 'outline_width', 'glow.intensity',
+  'glow.radius', 'shadow.opacity', 'shadow.blur'];
+// a clip's properties an expression can work out per pixel (as effects.ClipPxProps)
+const CLIP_EACH = ['chroma.color', 'opacity', 'brightness', 'contrast', 'saturation', 'hue', 'chroma.tolerance', 'chroma.softness'];
+const EXPRABLE = new Set(['num', 'int', 'optnum', 'bool', 'color']);
 
 function Row({ f, children, dia, kf, path }) {
   const [xinfo, setXinfo] = useState(null); // the expression's check (uses value?)
@@ -117,7 +122,12 @@ function Row({ f, children, dia, kf, path }) {
   } : {};
   // right-click: its advanced settings (an expression), its help (not on screen)
   const openAdv = () => openExpr({ title: t(f.label), path, src: src || 'value', had: !!src, target: kf.target, t0: kf.t0, dur: kf.dur,
-    time: kf.t0 + kf.u, names: { lib: libNames(exprLib.get()), keys: kf.pathKeys || [] }, onSave: (v) => kf.setExpr(path, v) });
+    time: kf.t0 + kf.u, names: { lib: libNames(exprLib.get()), keys: kf.pathKeys || [] },
+    // a text's colors: worked out for all of it, per letter or per pixel (or by what it reads)
+    each: kf.target && ((kf.target.kind === 'text' && TEXT_EACH.includes(path)) || (kf.target.kind === 'clip' && !kf.emitter && CLIP_EACH.includes(path)))
+      ? ((kf.exprEach || {})[path] || '') : null,
+    eachKinds: kf.target && kf.target.kind === 'clip' ? ['text', 'pixel'] : ['text', 'letter', 'pixel'],
+    onSave: (v, each) => { kf.setExpr(path, v); if (each != null) kf.setEach(path, v == null ? '' : each); } });
   const items = [];
   if (exprable) {
     items.push({ label: t('Advanced settings…'), icon: 'sigma', onClick: openAdv },
@@ -132,7 +142,7 @@ function Row({ f, children, dia, kf, path }) {
     <label for=${btn ? 'kf-none' : undefined}>${btn && dia}${src && html`<span class="xbadge" title=${t('It has an expression (right-click: Advanced settings)')}
       onClick=${(e) => { e.preventDefault(); e.stopPropagation(); openAdv(); }}>ƒ</span>`}${t(f.label)}</label>
     <div class="ctl">${children}</div>
-    ${src && html`<${ExprValue} kf=${kf} path=${path} src=${src} onInfo=${setXinfo} />`}
+    ${src && html`<${ExprValue} kf=${kf} path=${path} src=${src} bool=${f.type === 'bool'} onInfo=${setXinfo} />`}
   </div>`;
 }
 

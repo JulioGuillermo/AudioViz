@@ -59,6 +59,11 @@ type Style struct {
 	LightAdd                bool
 	LightDepthK, LightShade float64
 	Light                   config.TextLight // all of it (range and rim light)
+	// Its properties worked out per letter or pixel (expressions, as TextPxProps; nil: none);
+	// whether it glows, casts a shadow; its opacity (on its items' alpha unless X[4])
+	X                [NTextPx]*effects.PixExpr
+	GlowOn, ShadowOn bool
+	Opacity          float64
 }
 
 // cover: how much of a point at distance d (px, inside < 0) of an edge is covered: a sharp edge,
@@ -113,6 +118,7 @@ func StyleFor(cfg *config.LyricsConfig, t float64, feat *audio.FrameFeatures) St
 		c := rgba(g.Color, white)
 		st.Grad = append(st.Grad, GradStop{g.Offset, [3]float64{c[0], c[1], c[2]}})
 	}
+	st.GlowOn, st.ShadowOn, st.Opacity = cfg.Glow.Enabled, cfg.Shadow.Enabled, 1
 	if cfg.Glow.Enabled {
 		st.GlowR = cfg.Glow.Radius
 		st.GlowI = cfg.Glow.Intensity + cfg.React.Glow*band
@@ -213,6 +219,17 @@ func (st *Style) gradient(t float64) [3]float64 {
 	return g[len(g)-1].C
 }
 
+// hasX: whether some property is worked out per letter / pixel; FirstX: one of them
+func (st *Style) hasX() bool { return st.FirstX() != nil }
+func (st *Style) FirstX() *effects.PixExpr {
+	for _, x := range st.X {
+		if x != nil {
+			return x
+		}
+	}
+	return nil
+}
+
 func clampF(v, a, b float64) float64 { return math.Max(a, math.Min(b, v)) }
 
 func smoothstep(a, b, x float64) float64 {
@@ -261,8 +278,6 @@ func (e *Engine) textAt(col [3]float64, px0, py float64, ch float64, items []Ite
 		}
 		it := &items[i]
 		st := &styles[it.Style]
-		ow := st.OutlineW
-		gr := math.Max(st.GlowR, 0.5)
 		px := px0 + ch*chromaOf(st)
 		sc := float64(it.Scale)
 		// its depth here: from its path, per point (moved by the 2.5D camera, blurred by the
@@ -319,28 +334,69 @@ func (e *Engine) textAt(col [3]float64, px0, py float64, ch float64, items []Ite
 				continue
 			}
 		}
-		if st.ShadowOp > 0 {
-			sx, sy := unrot(st.ShadowDX/sc, st.ShadowDY/sc)
-			ds := e.sdfAt(ax-sx, ay-sy, it)*sc - ow
-			blur := math.Max(st.Blur, 0.75)
-			sa := (1 - smoothstep(-blur, blur, ds)) * st.ShadowOp * alpha
-			col = mix3(col, [3]float64{st.ShadowC[0], st.ShadowC[1], st.ShadowC[2]}, sa)
-		}
-		d := e.sdfAt(ax, ay, it) * sc
-		if st.GlowI > 0 {
-			g := math.Exp(-math.Max(d-ow, 0)/(gr*0.45)) * st.GlowI * alpha
-			g *= 1 - smoothstep(0.55, 0.95, (d/sc)/math.Max(pad, 1))
-			col = mix3(col, [3]float64{st.GlowC[0], st.GlowC[1], st.GlowC[2]}, clampF(g, 0, 1)*0.85)
-		}
-		if ow > 0 {
-			col = mix3(col, [3]float64{st.Outline[0], st.Outline[1], st.Outline[2]}, cover(d-ow, bl)*st.Outline[3]*alpha)
-		}
-		fillX := float64(it.AX) + pad + float64(it.Fill)*(float64(it.AW)-2*pad)
+		// its properties here: its style's, or worked out per letter / pixel (expressions; as
+		// drawText)
 		ty := clampF((ay-float64(it.AY)-pad)/math.Max(float64(it.AH)-2*pad, 1), 0, 1)
 		main := st.gradient(ty)
+		pv := [NTextPx][4]float64{{main[0], main[1], main[2], st.Color[3]}, st.Outline, st.GlowC, st.ShadowC,
+			{1}, {st.OutlineW}, {st.GlowI}, {st.GlowR}, {st.ShadowOp}, {st.Blur}}
+		if st.hasX() {
+			x := st.FirstX()
+			pin := effects.PixIn{Index: it.Index, Count: it.Count,
+				S:  it.PS + float32(px0-float64(it.CX))*it.PTX + float32(py-float64(it.CY))*it.PTY,
+				TX: float64(it.TX) + lx*float64(it.TSX), TY: float64(it.TY) + ly*float64(it.TSY),
+				LX: clampF((lx+hw-pad)/math.Max(float64(it.AW)-2*pad, 1), 0, 1),
+				LY: clampF((ly+hh-pad)/math.Max(float64(it.AH)-2*pad, 1), 0, 1),
+				SX: px0 / float64(x.W), SY: py / float64(x.H)}
+			lin := effects.PixIn{Index: it.Index, Count: it.Count, S: it.PS, TX: float64(it.TX), TY: float64(it.TY),
+				LX: 0.5, LY: 0.5, SX: float64(it.CX) / float64(x.W), SY: float64(it.CY) / float64(x.H)}
+			for k, xk := range st.X {
+				if xk == nil {
+					continue
+				}
+				in := pin
+				if xk.Letter {
+					in = lin
+				}
+				if k < TextPxColors {
+					pv[k] = xk.Color(in, pv[k])
+				} else {
+					base := pv[k][0]
+					if k == 4 {
+						base = st.Opacity // (not on its alpha then)
+					}
+					v := math.Max(0, xk.Scalar(in, base))
+					if k == 4 {
+						v = math.Min(v, 1)
+					}
+					pv[k][0] = v
+				}
+			}
+		}
+		ow := pv[5][0]
+		gr := math.Max(pv[7][0], 0.5)
+		alpha *= pv[4][0]
+		if st.ShadowOn && pv[8][0] > 0 {
+			sx, sy := unrot(st.ShadowDX/sc, st.ShadowDY/sc)
+			ds := e.sdfAt(ax-sx, ay-sy, it)*sc - ow
+			blur := math.Max(pv[9][0], 0.75)
+			sa := (1 - smoothstep(-blur, blur, ds)) * pv[8][0] * alpha
+			col = mix3(col, [3]float64{pv[3][0], pv[3][1], pv[3][2]}, sa)
+		}
+		d := e.sdfAt(ax, ay, it) * sc
+		if st.GlowOn && pv[6][0] > 0 {
+			g := math.Exp(-math.Max(d-ow, 0)/(gr*0.45)) * pv[6][0] * alpha
+			g *= 1 - smoothstep(0.55, 0.95, (d/sc)/math.Max(pad, 1))
+			col = mix3(col, [3]float64{pv[2][0], pv[2][1], pv[2][2]}, clampF(g, 0, 1)*0.85)
+		}
+		if ow > 0 {
+			oc := pv[1]
+			col = mix3(col, [3]float64{oc[0], oc[1], oc[2]}, cover(d-ow, bl)*oc[3]*alpha)
+		}
+		fillX := float64(it.AX) + pad + float64(it.Fill)*(float64(it.AW)-2*pad)
 		k := clampF(fillX-ax+0.5, 0, 1)
-		fc := mix3([3]float64{st.Upcoming[0], st.Upcoming[1], st.Upcoming[2]}, main, k)
-		fa := st.Upcoming[3] + (st.Color[3]-st.Upcoming[3])*k
+		fc := mix3([3]float64{st.Upcoming[0], st.Upcoming[1], st.Upcoming[2]}, [3]float64{pv[0][0], pv[0][1], pv[0][2]}, k)
+		fa := st.Upcoming[3] + (pv[0][3]-st.Upcoming[3])*k
 		col = mix3(col, fc, cover(d, bl)*fa*alpha)
 	}
 	return col

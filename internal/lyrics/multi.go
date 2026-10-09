@@ -148,6 +148,9 @@ func (m *Multi) Frame(t float64, feat *audio.FrameFeatures, lyr *config.LyricsCo
 		if len(its) == 0 {
 			continue
 		}
+		if i >= m.nLyr {
+			textBox(its)
+		}
 		si := 0
 		if i >= m.nLyr {
 			if len(styles) == MaxStyles {
@@ -274,6 +277,7 @@ func (m *Multi) Frame(t float64, feat *audio.FrameFeatures, lyr *config.LyricsCo
 				st.Rotation = float32(math.Atan2(float64(ty), float64(tx))) + r0
 				styles = append(styles, st)
 				m.applyItemExprs(its, tc, kk, xctx, true)
+				m.applyPxExprs(its, tc, kk, xctx, true, &styles[si])
 				for _, it := range its {
 					it.AY += float32(m.offs[i])
 					it.Style = si
@@ -307,6 +311,7 @@ func (m *Multi) Frame(t float64, feat *audio.FrameFeatures, lyr *config.LyricsCo
 				}
 			}
 			m.applyItemExprs(its, tc, kk, xctx, false)
+			m.applyPxExprs(its, tc, kk, xctx, false, &styles[si])
 		}
 		for _, it := range its {
 			it.AY += float32(m.offs[i])
@@ -489,7 +494,87 @@ func itemExprs(tc *config.TextConfig, ev config.Evaluator, bent bool) bool {
 			return true
 		}
 	}
+	for _, p := range TextPxProps {
+		if colorEach(tc, p, ev, bent) != effects.EachText {
+			return true
+		}
+	}
 	return false
+}
+
+// ColorExprs works out the texts' colors per letter or pixel (the engine's: config.Evaluator)
+type ColorExprs interface {
+	// ColorEach: how src is worked out (effects.EachText …): as each says, else by what it reads
+	ColorEach(src, each string, bent bool) string
+	// PixExpr: src ready to run per letter / pixel at ctx (nil: a mistake)
+	PixExpr(src string, ctx *config.ExprCtx) *effects.PixExpr
+}
+
+// TextPxProps: a fixed text's properties an expression can give per letter or pixel (their
+// paths), in the order of Style.X (and render.comp's table); TextPxColors: how many of them, from
+// the first, are colors
+var TextPxProps = []string{"color", "outline_color", "glow.color", "shadow.color", "opacity", "outline_width",
+	"glow.intensity", "glow.radius", "shadow.opacity", "shadow.blur"}
+
+const TextPxColors = 4
+
+// NTextPx: len(TextPxProps)
+const NTextPx = 10
+
+// colorEach: how the expression of color p of tc is worked out (EachText: none)
+func colorEach(tc *config.TextConfig, p string, ev config.Evaluator, bent bool) string {
+	ce, ok := ev.(ColorExprs)
+	src, has := tc.Exprs[p]
+	if !ok || !has {
+		return effects.EachText
+	}
+	return ce.ColorEach(src, tc.ExprEach[p], bent)
+}
+
+// textBox: where each of a fixed text's items is in the box of all of them (its center, 0…1,
+// and how much an atlas px is of it), its index and how many (expressions per letter / pixel)
+func textBox(its []Item) {
+	x0, y0, x1, y1 := float32(math.Inf(1)), float32(math.Inf(1)), float32(math.Inf(-1)), float32(math.Inf(-1))
+	for _, it := range its {
+		hw, hh := (it.AW/2-it.Pad)*it.Scale, (it.AH/2-it.Pad)*it.Scale
+		x0, x1 = min(x0, it.CX-hw), max(x1, it.CX+hw)
+		y0, y1 = min(y0, it.CY-hh), max(y1, it.CY+hh)
+	}
+	w, h := max(x1-x0, 1), max(y1-y0, 1)
+	for j := range its {
+		it := &its[j]
+		it.TX, it.TY = (it.CX-x0)/w, (it.CY-y0)/h
+		it.TSX, it.TSY = it.Scale/w, it.Scale/h
+		it.Index, it.Count = j, len(its)
+	}
+}
+
+// applyPxExprs: the text's properties worked out per letter or per pixel (its style's programs,
+// from its values now k: ctx), the rest of its opacity (k's, on its items' alpha)
+func (m *Multi) applyPxExprs(its []Item, tc, k *config.TextConfig, ctx config.ExprCtx, bent bool, st *Style) {
+	st.Opacity = math.Max(0, math.Min(1, k.Opacity))
+	ce, ok := m.Ev.(ColorExprs)
+	if mo := k.Motion; mo.On() {
+		ctx.Motion = &k.Motion
+	}
+	for b, p := range TextPxProps {
+		if !ok || len(tc.Exprs) == 0 {
+			break
+		}
+		each := colorEach(tc, p, m.Ev, bent)
+		if each == effects.EachText {
+			continue
+		}
+		if x := ce.PixExpr(tc.Exprs[p], &ctx); x != nil {
+			x.Letter = each == effects.EachLetter
+			st.X[b] = x
+		}
+	}
+	if st.X[4] == nil && st.Opacity < 1 {
+		for j := range its {
+			its[j].Alpha *= float32(st.Opacity)
+		}
+	}
 }
 
 // frameExprs: the text's expressions worked out for the whole text (those per letter left out:
@@ -503,6 +588,9 @@ func (m *Multi) frameExprs(tc *config.TextConfig, bent bool) config.Exprs {
 	for p, src := range tc.Exprs {
 		if isItemProp(p) && ie.IsItemExpr(src, bent) {
 			continue
+		}
+		if colorEach(tc, p, m.Ev, bent) != effects.EachText {
+			continue // per letter / pixel (applyPxExprs)
 		}
 		if out == nil {
 			out = config.Exprs{}

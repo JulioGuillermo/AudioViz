@@ -7,6 +7,7 @@
 //   -> NV12 conversion (BT.709, limited range) ready for the H.264 encoder.
 // Each invocation processes a 4x2 pixel block (1 Y word per row + 1 UV word).
 #extension GL_GOOGLE_include_directive : require
+#extension GL_EXT_control_flow_attributes : require
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
@@ -581,6 +582,81 @@ float ribbonV(int off, float sp, float ly) {
     return abs(k) < 0.02 ? 1e9 : ly / k;
 }
 
+// ---- texts' colors worked out per pixel (expressions: expr.glsl, as effects.PixExpr)
+#define XPW(i) lay[i]
+#include "expr.glsl"
+// the pixel being worked out: how many letters, the color it would have, where it is in its
+// text's box, in its letter, on the screen; how far along its path; the path sampled (offset in
+// lay, count, length, closed)
+int tCount = 1;
+vec4 tBase = vec4(0.0);
+vec2 tTX = vec2(0.5), tLX = vec2(0.5), tSX = vec2(0.5);
+float tS = 0.0;
+int tPathO = 0, tPathN = 0;
+float tPathL = 0.0;
+bool tPathC = false;
+float xVar(int v) {
+    if (v == 0) return tBase[clamp(xCh, 0, 3)];
+    if (v == 6) return float(xIndex);
+    if (v == 7) return float(max(tCount, 1));
+    if (v == 9) return float(xCh);
+    if (v >= 10 && v <= 13) return tBase[v - 10];
+    if (v == 14) return tTX.x;
+    if (v == 15) return tTX.y;
+    if (v == 16) return tLX.x;
+    if (v == 17) return tLX.y;
+    if (v == 18) return tSX.x;
+    if (v == 19) return tSX.y;
+    return 0.0;
+}
+// the point at length s along the path sampled at o (x, y, length so far) and its unit tangent
+// (as effects.pathPoint)
+vec4 pathPointL(int o, int n, float L, bool closed, float s) {
+    if (closed && L > 0.0) s -= L * floor(s / L);
+    int lo = 1, hi = n - 1;
+    while (lo < hi) {
+        int m = (lo + hi) / 2;
+        if (uintBitsToFloat(lay[o + m * 3 + 2]) >= s) hi = m; else lo = m + 1;
+    }
+    int a = o + (lo - 1) * 3, b = o + lo * 3;
+    float la = uintBitsToFloat(lay[a + 2]);
+    float dl = max(uintBitsToFloat(lay[b + 2]) - la, 1e-6);
+    float f = (s - la) / dl;
+    vec2 pa = vec2(uintBitsToFloat(lay[a]), uintBitsToFloat(lay[a + 1])), pb = vec2(uintBitsToFloat(lay[b]), uintBitsToFloat(lay[b + 1]));
+    return vec4(pa + (pb - pa) * f, (pb - pa) / dl);
+}
+bool xKey(int kind, uint tu, out float v) {
+    v = 0.0;
+    if (kind != 0) return false;
+    if (tu >= 0xFFFFFFF0u) {
+        // the path's own: where it is on it (as effects.PathBuiltinAt)
+        if (tPathN < 2) return false;
+        int b = int(tu - 0xFFFFFFF0u);
+        float s = tPathC && tPathL > 0.0 ? tS - tPathL * floor(tS / tPathL) : tS;
+        vec4 pt = pathPointL(tPathO, tPathN, tPathL, tPathC, s);
+        v = b == 1 ? pt.x / float(W) : b == 2 ? pt.y / float(H)
+            : b == 3 ? (tPathL > 0.0 ? clamp(s / tPathL, 0.0, 1.0) : 0.0) : atan(pt.w, pt.z) / XDEG;
+        return true;
+    }
+    if (tu > 0u) { v = trackAt(int(tu) - 1, tS); return true; }
+    return false;
+}
+// a value from the program at h in lay (effects.PackPixExpr), from the one it would have: a
+// color channel by channel (n = 4; as effects.PixExpr.Color), or a number (n = 1: Scalar)
+vec4 textExprValue(int h, vec4 base, int n) {
+    int code = int(lay[h]), len = int(lay[h + 1]), co = int(lay[h + 2]), kt = int(lay[h + 3]);
+    tPathO = int(lay[h + 4]); tPathN = int(lay[h + 5]);
+    tPathL = uintBitsToFloat(lay[h + 6]); tPathC = uintBitsToFloat(lay[h + 7]) > 0.5;
+    tBase = n == 1 ? vec4(base.x, base.x, base.x, 1.0) : base;
+    xValA = tBase.a;
+    vec4 o = vec4(0.0);
+    [[dont_unroll]] for (int c = 0; c < n; c++) {
+        xCh = c;
+        o[c] = xRun(code, len, co, kt);
+    }
+    return o;
+}
+
 // Texts of one stage among the overlay clips (stage < 0: all)
 vec3 drawText(vec3 col, vec2 p0, float ch, int stage) {
     int n = min(sTextN, TILE_TEXT);
@@ -615,8 +691,6 @@ vec3 drawText(vec3 col, vec2 p0, float ch, int stage) {
         int i = ord[oi];
         int s = int(P.tC[i].z);
         vec4 inf = P.ts[s].info;
-        float ow = inf.x;
-        float gr = max(inf.y, 0.5);
         vec2 p = p0 + vec2(ch * inf.w, 0.0);
         vec4 r = P.tA[i];
         vec4 b = P.tB[i];
@@ -665,34 +739,75 @@ vec3 drawText(vec3 col, vec2 p0, float ch, int stage) {
         }
         // bl: the depth of field's blur, a soft edge of the distance field
 
-        // Shadow (blurred)
+        // its properties here: its style's, or worked out per letter / pixel (expressions, as
+        // effects.PixExpr; the table at xpr.x - 1: two words per lyrics.TextPxProps, its program's
+        // offset + 1 and whether per letter); its opacity is on its alpha unless worked out here
+        float ty = clamp((a.y - r.y - pad) / max(r.w - 2.0 * pad, 1.0), 0.0, 1.0);
         vec4 sh = P.ts[s].shadow;
-        if (sh.z > 0.0) {
+        vec4 pv[10];
+        pv[0] = vec4(textGradient(s, ty), P.ts[s].color.a);
+        pv[1] = P.ts[s].outline;
+        pv[2] = P.ts[s].glowC;
+        pv[3] = P.ts[s].shadowC;
+        pv[4] = vec4(1.0);
+        pv[5] = vec4(inf.x);
+        pv[6] = vec4(inf.z);
+        pv[7] = vec4(inf.y);
+        pv[8] = vec4(sh.z);
+        pv[9] = vec4(sh.w);
+        int xt = P.ts[s].xpr.x;
+        if (xt > 0) {
+            xIndex = int(P.tH[i].x); tCount = int(P.tH[i].y);
+            xSeed = uint(P.ts[s].xpr.z); xFrame = uint(P.ts[s].xpr.w);
+            vec4 d4 = P.tD[i];
+            vec2 WH = vec2(float(W), float(H));
+            vec2 ptx = P.tG[i].xy + local * P.tG[i].zw;
+            vec2 plx = clamp((local + hs - pad) / max(r.zw - 2.0 * pad, vec2(1.0)), 0.0, 1.0);
+            float ps = d4.x + dot(p0 - b.xy, vec2(cos(d4.y), sin(d4.y)));
+            // (one call in a loop: the interpreter is big)
+            [[dont_unroll]] for (int q = 0; q < 10; q++) {
+                uint h = lay[xt - 1 + 2 * q];
+                if (h == 0u) continue;
+                bool letter = lay[xt + 2 * q] != 0u;
+                tTX = letter ? P.tG[i].xy : ptx;
+                tLX = letter ? vec2(0.5) : plx;
+                tSX = (letter ? b.xy : p0) / WH;
+                tS = letter ? d4.x : ps;
+                vec4 base = q == 4 ? vec4(intBitsToFloat(P.ts[s].xpr.y)) : pv[q];
+                vec4 v = textExprValue(int(h) - 1, base, q < 4 ? 4 : 1);
+                pv[q] = q < 4 ? clamp(v, 0.0, 1.0) : vec4(q == 4 ? clamp(v.x, 0.0, 1.0) : max(v.x, 0.0));
+            }
+        }
+        float ow = pv[5].x;
+        float gr = max(pv[7].x, 0.5);
+        alpha *= pv[4].x;
+        bool glowOn = (P.ts[s].gradN.z & 1) != 0, shadowOn = (P.ts[s].gradN.z & 2) != 0;
+
+        // Shadow (blurred)
+        if (shadowOn && pv[8].x > 0.0) {
             float ds = sdfAt(a - unrot * sh.xy / sc, r) * sc - ow;
-            float blur = max(sh.w, 0.75);
-            float sa = (1.0 - smoothstep(-blur, blur, ds)) * sh.z * alpha;
-            col = mix(col, P.ts[s].shadowC.rgb, sa);
+            float blur = max(pv[9].x, 0.75);
+            float sa = (1.0 - smoothstep(-blur, blur, ds)) * pv[8].x * alpha;
+            col = mix(col, pv[3].rgb, sa);
         }
 
         float d = sdfAt(a, r) * sc;           // distance in screen px
         // Glow
-        if (inf.z > 0.0) {
-            float g = exp(-max(d - ow, 0.0) / (gr * 0.45)) * inf.z * alpha;
+        if (glowOn && pv[6].x > 0.0) {
+            float g = exp(-max(d - ow, 0.0) / (gr * 0.45)) * pv[6].x * alpha;
             g *= 1.0 - smoothstep(0.55, 0.95, (d / sc) / max(pad, 1.0)); // reaches 0 before the edge of the area
-            col = mix(col, P.ts[s].glowC.rgb, clamp(g, 0.0, 1.0) * 0.85);
+            col = mix(col, pv[2].rgb, clamp(g, 0.0, 1.0) * 0.85);
         }
         // Outline
         if (ow > 0.0) {
             float co = bl > 0.5 ? 1.0 - smoothstep(-bl, bl, d - ow) : clamp(0.5 - (d - ow), 0.0, 1.0);
-            col = mix(col, P.ts[s].outline.rgb, co * P.ts[s].outline.a * alpha);
+            col = mix(col, pv[1].rgb, co * pv[1].a * alpha);
         }
         // Fill: main color up to the karaoke progress, the rest in the "upcoming" color
         float fillX = r.x + pad + P.tC[i].x * (r.z - 2.0 * pad);
-        float ty = clamp((a.y - r.y - pad) / max(r.w - 2.0 * pad, 1.0), 0.0, 1.0);
-        vec3 main = textGradient(s, ty);
         float k = clamp(fillX - a.x + 0.5, 0.0, 1.0);
-        vec3 fc = mix(P.ts[s].upcoming.rgb, main, k);
-        float fa = mix(P.ts[s].upcoming.a, P.ts[s].color.a, k);
+        vec3 fc = mix(P.ts[s].upcoming.rgb, pv[0].rgb, k);
+        float fa = mix(P.ts[s].upcoming.a, pv[0].a, k);
         float cf = bl > 0.5 ? 1.0 - smoothstep(-bl, bl, d) : clamp(0.5 - d, 0.0, 1.0);
         col = mix(col, fc, cf * fa * alpha);
     }
@@ -999,16 +1114,45 @@ vec3 drawLayer(vec3 col, int i, vec2 q) {
     }
     if (s.a <= 1e-4) return col;
     vec3 c = s.rgb / s.a;
-    float key = 1.0;
-    if ((L.info.w & 16) != 0) key = smoothstep(L.key.w, L.key.w + L.key2.x + 1e-4, distance(c, L.key.rgb));
-    c = (c - 0.5) * (1.0 + L.adj.y) + 0.5 + L.adj.x;
-    if (L.adj.z != 0.0) {
-        float g = dot(c, vec3(0.2126, 0.7152, 0.0722));
-        c = g + (c - g) * (1.0 + L.adj.z);
+    // its properties here: its own, or worked out per pixel (expressions, as LayerFrame.pxShade;
+    // the table at xpr.x - 1: two words per effects.ClipPxProps, its program's offset + 1 and its
+    // value): key color, opacity, brightness, contrast, saturation, hue, key tolerance, softness
+    vec4 pv[8];
+    pv[0] = vec4(L.key.rgb, 1.0);
+    pv[1] = vec4(L.xf2.y);
+    pv[2] = vec4(L.adj.x);
+    pv[3] = vec4(L.adj.y);
+    pv[4] = vec4(L.adj.z);
+    pv[5] = vec4(L.xf2.w);
+    pv[6] = vec4(L.key.w);
+    pv[7] = vec4(L.key2.x);
+    int xt = L.xpr.x;
+    if (xt > 0) {
+        xIndex = 0; tCount = 1;
+        xSeed = uint(L.xpr.y); xFrame = uint(L.xpr.z);
+        vec2 uv = layerUV(i, q + 0.5) / vec2(L.info.yz);
+        tTX = uv; tLX = uv;
+        tSX = (q + 0.5) / vec2(float(W), float(H));
+        tS = L.xps.x + dot(q - L.xf.xy, L.xps.yz);
+        [[dont_unroll]] for (int k = 0; k < 8; k++) {
+            uint h = lay[xt - 1 + 2 * k];
+            if (h == 0u) continue;
+            vec4 base = k == 0 ? pv[0] : vec4(uintBitsToFloat(lay[xt + 2 * k]));
+            vec4 v = textExprValue(int(h) - 1, base, k == 0 ? 4 : 1);
+            pv[k] = k == 0 ? clamp(v, 0.0, 1.0) : k == 1 ? vec4(clamp(v.x, 0.0, 1.0) * L.xps.w)
+                : k == 5 ? vec4(v.x * XDEG) : k >= 6 ? vec4(max(v.x, 0.0)) : v;
+        }
     }
-    if (L.xf2.w != 0.0) c = hueRotate(c, L.xf2.w);
+    float key = 1.0;
+    if ((L.info.w & 16) != 0) key = smoothstep(pv[6].x, pv[6].x + pv[7].x + 1e-4, distance(c, pv[0].rgb));
+    c = (c - 0.5) * (1.0 + pv[3].x) + 0.5 + pv[2].x;
+    if (pv[4].x != 0.0) {
+        float g = dot(c, vec3(0.2126, 0.7152, 0.0722));
+        c = g + (c - g) * (1.0 + pv[4].x);
+    }
+    if (pv[5].x != 0.0) c = hueRotate(c, pv[5].x);
     c = L.warp2.x * (c - 0.5) + 0.5 + L.warp2.y;
-    float a = clamp(s.a * key * L.xf2.y, 0.0, 1.0);
+    float a = clamp(s.a * key * pv[1].x, 0.0, 1.0);
     // behind what is nearer than it
     if (L.depth.x > 0.5 && P.depthI.z != 0) a *= 1.0 - smoothstep(zq - L.depth.z, zq + L.depth.z + 1e-4, sceneDepth(q));
     return mix(col, blendColor(L.info.w & 15, col, clamp(c, 0.0, 1.0)), a);
@@ -1058,8 +1202,10 @@ vec3 drawTexts(vec3 col, vec2 p, int stage) {
     if (P.textInfo.x <= 0) return col;
     if (P.textInfo.z != 0) {
         // Text chromatic aberration: each channel composited with an offset
+        // (one call in a loop: drawText is big, the driver would copy it per call)
         vec3 base = col;
-        return vec3(drawText(base, p, -1.0, stage).r, drawText(base, p, 0.0, stage).g, drawText(base, p, 1.0, stage).b);
+        [[dont_unroll]] for (int c = 0; c < 3; c++) col[c] = drawText(base, p, float(c - 1), stage)[c];
+        return col;
     }
     return drawText(col, p, 0.0, stage);
 }

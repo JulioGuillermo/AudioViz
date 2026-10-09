@@ -105,6 +105,45 @@ letters, each slightly turned:
       size: value * (0.8 + 0.4 * index / count)
 ```
 
-## Coming next
+## Colors and on/off
 
-Colors (`rgb()`, `rgba()`, `hsv()`) and on/off properties.
+A **color** property's expression is worked out once per channel (red, green, blue, opacity,
+0…1): `value` is the color (`value * 0.5` darkens it — and halves its opacity), `value.r`,
+`value.g`, `value.b`, `value.a` its channels; `rgb(r, g, b)` (keeping its opacity), `rgba(r, g, b,
+a)`, `hsv(hue°, saturation, brightness)` give one. E.g. a color that goes red with the bass:
+`mix(value, rgb(1, 0, 0), lag(bass, 0.2))`; a hue turning with the song: `hsv(time * 30, 0.8, 1)`.
+The dialog shows it as a strip over time.
+
+## Per letter or per pixel
+
+Some properties can change across their element: in the dialog, *Worked out* picks how — for all
+of it, per letter (texts), per pixel, or *automatic* (per pixel when the expression reads where
+the pixel is; on a text, per letter when it reads `index`, `count`, `rand()` or — on a bent text —
+its path's values; else for all of it).
+
+- **A fixed text:** its color, outline color, glow color, shadow color, opacity, outline width,
+  glow intensity and radius, shadow opacity and blur.
+- **A clip** (image or video): its opacity, brightness, contrast, saturation, hue, and its chroma
+  key's color, tolerance and softness.
+
+They can read:
+
+| | |
+|---|---|
+| `text_x`, `text_y` | where it is in the text's box, 0…1 (left → right, top → bottom) |
+| `letter_x`, `letter_y` | where it is in its letter, 0…1 |
+| `image_x`, `image_y` | where it is in a clip's image, 0…1 |
+| `screen_x`, `screen_y` | where it is on the screen, 0…1 |
+| `index`, `count`, `rand()` | a text's letter, how many there are, its random number |
+| `path.progress`, `path.name`… | its path's values where it is (along the path) |
+| `value` | what it would be there (a text's color: its gradient included) |
+
+Per letter, a letter is read at its middle. Elsewhere (or worked out for all of it) these read
+0.5. E.g. a rainbow across a text, moving: `hsv(text_x * 300 + time * 60, 0.9, 1)`; each letter
+its own: `hsv(index / count * 360, 0.8, 1)`; fire from the bottom of each letter:
+`mix(value, rgb(1, 0.3, 0), smoothstep(0.3, 1, letter_y))`; a glow growing along the text:
+`4 + 16 * text_x` (glow radius); a clip fading in from its left edge: `smoothstep(0, 0.4, image_x)`
+(opacity).
+
+An **on/off** property is on when its expression is more than 0: `bass > 0.6` turns it on with the
+bass.

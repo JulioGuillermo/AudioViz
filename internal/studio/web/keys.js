@@ -117,7 +117,7 @@ export function setIn(o, path, v) {
 // Keyframe actions for one target (a segment or a text). `edit(fn)` changes the project:
 // fn(holder, cfg) gets the object that holds `keys` and the config with the static values.
 // u: the cursor, in seconds from the target's start; seek(u) moves the cursor there.
-export function keyApi({ keys = {}, u, edit, seek, focus, setFocus, max = Infinity, exprs = {}, target = null, t0 = 0, pathKeys = [] }) {
+export function keyApi({ keys = {}, u, edit, seek, focus, setFocus, max = Infinity, exprs = {}, target = null, t0 = 0, pathKeys = [], exprEach = {}, emitter = false }) {
   u = Math.max(0, Math.min(max, +u.toFixed(3)));
   const write = (fn) => edit((h, cfg) => {
     const ks = { ...(h.keys || {}) };
@@ -129,7 +129,15 @@ export function keyApi({ keys = {}, u, edit, seek, focus, setFocus, max = Infini
     keys, u, focus, setFocus,
     // the advanced settings: an expression per property (config.Exprs); target, t0 (its start in
     // the song) and max (its length) for trying them; pathKeys: its path's value names
-    exprs: exprs || {}, target, t0, dur: Number.isFinite(max) ? max : 0, pathKeys,
+    exprs: exprs || {}, target, t0, dur: Number.isFinite(max) ? max : 0, pathKeys, exprEach: exprEach || {}, emitter,
+    // how a text's color expression is worked out ('' auto, text, letter, pixel)
+    setEach(path, each) {
+      edit((h) => {
+        const ee = { ...(h.expr_each || {}) };
+        if (!each) delete ee[path]; else ee[path] = each;
+        if (Object.keys(ee).length) h.expr_each = ee; else delete h.expr_each;
+      });
+    },
     setExpr(path, src) {
       edit((h) => {
         const ex = { ...(h.exprs || {}) };

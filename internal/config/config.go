@@ -377,13 +377,16 @@ type TextConfig struct {
 	End          float64 `yaml:"end"`   // s: has fully left
 	Label        string  `yaml:"label,omitempty"`
 	Rotation     float64 `yaml:"rotation,omitempty"` // degrees clockwise, around its position
+	Opacity      float64 `yaml:"opacity"`            // 0…1, on all of it
 	Motion       Motion  `yaml:"motion,omitempty"`   // along a path (instead of position_x / position_y)
 	LyricsConfig `yaml:",inline"`
 	// Keyframes (times from Start): colors, glow, position_x / position_y (the text moves),
 	// size (it scales around its position), rotation...
 	Keys Keys `yaml:"keys,omitempty"`
-	// Advanced settings: an expression per property (exprs.go)
-	Exprs Exprs `yaml:"exprs,omitempty"`
+	// Advanced settings: an expression per property (exprs.go); how a color's is worked out:
+	// "text" (once for all of it), "letter", "pixel" ("" or none: by what it reads)
+	Exprs    Exprs             `yaml:"exprs,omitempty"`
+	ExprEach map[string]string `yaml:"expr_each,omitempty"`
 }
 
 // DefaultText is a new text: white, centered, fading in and out
@@ -397,7 +400,7 @@ func DefaultText() TextConfig {
 	l.InDuration, l.OutDuration = 0.6, 0.6
 	l.WordPop = 0
 	l.React = TextReact{ReactTo: "bass"}
-	return TextConfig{Start: 0, End: 5, LyricsConfig: l}
+	return TextConfig{Start: 0, End: 5, Opacity: 1, LyricsConfig: l}
 }
 
 // UnmarshalYAML fills the fields missing in the YAML with DefaultText

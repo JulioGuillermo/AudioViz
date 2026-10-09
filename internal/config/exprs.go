@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"math"
 	"reflect"
 	"strconv"
@@ -32,6 +33,12 @@ type ExprCtx struct {
 // false keeps it
 type Evaluator interface {
 	EvalExpr(src string, value float64, ctx *ExprCtx) (float64, bool)
+}
+
+// ColorEvaluator: an Evaluator that also works out colors (once per channel): the color then
+// (red, green, blue, alpha 0..1), its new one; false keeps it
+type ColorEvaluator interface {
+	EvalColor(src string, rgba [4]float64, ctx *ExprCtx) ([4]float64, bool)
 }
 
 // ItemEvaluator: an Evaluator that also works out the expressions that change per item (a
@@ -73,6 +80,14 @@ func Animate[T any](cfg *T, keys Keys, exprs Exprs, ev Evaluator, ctx ExprCtx) *
 		parts := strings.Split(path, ".")
 		v, ok := getPath(rv, parts)
 		if !ok {
+			// a color (#rrggbb[aa])
+			if ce, isCE := ev.(ColorEvaluator); isCE {
+				if c, ok := getColorPath(rv, parts); ok {
+					if nc, ok := ce.EvalColor(src, c, &ctx); ok {
+						setPath(rv, parts, colorHex(nc))
+					}
+				}
+			}
 			continue
 		}
 		if nv, ok := ev.EvalExpr(src, v, &ctx); ok {
@@ -179,4 +194,69 @@ func (tl *Timeline) SegRef(track string, i int) (cfg any, keys Keys, exprs Exprs
 	}
 	return sg.FieldByName("Cfg").Addr().Interface(), sg.FieldByName("Keys").Interface().(Keys),
 		sg.FieldByName("Exprs").Interface().(Exprs), sg.FieldByName("At").Float(), next, true
+}
+
+// getColorPath: the color at a property path (a #rrggbb or #rrggbbaa string) as 0..1 channels
+func getColorPath(v reflect.Value, path []string) ([4]float64, bool) {
+	for _, p := range path {
+		for v.Kind() == reflect.Ptr {
+			if v.IsNil() {
+				return [4]float64{}, false
+			}
+			v = v.Elem()
+		}
+		if v.Kind() != reflect.Struct {
+			return [4]float64{}, false
+		}
+		f, ok := fieldByYAML(v, p)
+		if !ok {
+			return [4]float64{}, false
+		}
+		v = f
+	}
+	if v.Kind() != reflect.String {
+		return [4]float64{}, false
+	}
+	return ParseColor(v.String())
+}
+
+// ParseColor: #rrggbb or #rrggbbaa as 0..1 channels (alpha 1 without it)
+func ParseColor(s string) ([4]float64, bool) {
+	s = strings.TrimPrefix(strings.TrimSpace(s), "#")
+	if len(s) != 6 && len(s) != 8 {
+		return [4]float64{}, false
+	}
+	var c [4]float64
+	c[3] = 1
+	for i := 0; i < len(s)/2; i++ {
+		n, err := strconv.ParseUint(s[2*i:2*i+2], 16, 8)
+		if err != nil {
+			return [4]float64{}, false
+		}
+		c[i] = float64(n) / 255
+	}
+	return c, true
+}
+
+// colorHex: 0..1 channels as #rrggbbaa
+func colorHex(c [4]float64) string {
+	b := func(x float64) int { return int(math.Round(math.Max(0, math.Min(1, x)) * 255)) }
+	return fmt.Sprintf("#%02x%02x%02x%02x", b(c[0]), b(c[1]), b(c[2]), b(c[3]))
+}
+
+// ColorAt: the color at a property path of cfg (a pointer to a config block) with its keys
+// applied at u
+func ColorAt(cfg any, keys Keys, u float64, path string) ([4]float64, bool) {
+	src := reflect.ValueOf(cfg)
+	if src.Kind() != reflect.Ptr || src.Elem().Kind() != reflect.Struct {
+		return [4]float64{}, false
+	}
+	cp := reflect.New(src.Elem().Type())
+	cp.Elem().Set(src.Elem())
+	for p, l := range keys {
+		if v := ValueAt(l, u); v != nil {
+			setPath(cp.Elem(), strings.Split(p, "."), v)
+		}
+	}
+	return getColorPath(cp.Elem(), strings.Split(path, "."))
 }

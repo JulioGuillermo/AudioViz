@@ -5,6 +5,7 @@ import (
 	"image"
 	_ "image/png"
 	"math"
+	"slices"
 	"os"
 	"sort"
 	"strconv"
@@ -86,7 +87,7 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx f
 			}
 			c := c0
 			if len(c0.Keys) > 0 || len(c0.Exprs) > 0 {
-				c = config.Animate(c0, c0.Keys, c0.Exprs, s, config.ExprCtx{T: t, U: t - c0.Start, Dur: c0.End - c0.Start, ID: clipID(layer.ID, ci)})
+				c = config.Animate(c0, c0.Keys, s.clipFrameExprs(c0, emit), s, config.ExprCtx{T: t, U: t - c0.Start, Dur: c0.End - c0.Start, ID: clipID(layer.ID, ci)})
 			}
 			if emit {
 				// particles: a frame-sized image (made by the GPU pass or DrawEmitter) shown as is
@@ -219,13 +220,14 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx f
 			if c.FlipY {
 				sy = -sy
 			}
-			op := c.Opacity * (1 - c.React.Opacity + c.React.Opacity*band)
+			opk := 1 - c.React.Opacity + c.React.Opacity*band // its reaction and fades
 			if c.FadeIn > 0 {
-				op *= math.Min(1, (t-c.Start)/c.FadeIn)
+				opk *= math.Min(1, (t-c.Start)/c.FadeIn)
 			}
 			if c.FadeOut > 0 {
-				op *= math.Min(1, (c.End-t)/c.FadeOut)
+				opk *= math.Min(1, (c.End-t)/c.FadeOut)
 			}
+			op := c.Opacity * opk
 			cx, cy, rot := c.X*W, c.Y*H, c.Rotation*math.Pi/180
 			var pathA float64
 			if c.Motion.On() {
@@ -247,6 +249,7 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx f
 				lf.KeyColor = [3]float64{0, 1, 0}
 			}
 			lf.LayerID, lf.Clip = layer.ID, ci
+			s.clipPxExprs(&lf, c0, c, opk, config.ExprCtx{T: t, U: t - c0.Start, Dur: c0.End - c0.Start, ID: clipID(layer.ID, ci)}, pathA)
 			lf.W = s.clipWarp(&c.Effects, bg, t, idx, li, feat, minDim)
 			if len(c.Masks) > 0 {
 				lf.Mask, lf.MaskVer = s.maskFor(c.Masks, int(tw), int(th))
@@ -385,7 +388,19 @@ func (s *Session) LayerPixels() int {
 		cur += e.d
 		best = max(best, cur)
 	}
-	return best + s.textMaskWords() + s.emitterWords() + s.depthWords()
+	return best + s.textMaskWords() + s.emitterWords() + s.depthWords() + s.textExprWords()
+}
+
+// textExprWords: room for the texts' tracks along their paths and their colors' programs (per
+// pixel), written every frame
+func (s *Session) textExprWords() int {
+	n := 0
+	for i := range s.Cfg.Texts {
+		if len(s.Cfg.Texts[i].Exprs) > 0 || s.Cfg.Texts[i].Motion.On() {
+			n++
+		}
+	}
+	return min(n, gpu.MaxTextStyles) * 2 * (8192 + 3*effects.MaxPathSamples)
 }
 
 // depthWords: room for the depth of the backgrounds A and B (16 bits per pixel) when some
@@ -616,3 +631,66 @@ func pathDepthSettings(d config.ClipDepth) config.ClipDepth {
 
 // clipID: a clip's id for its expressions' stable random numbers
 func clipID(layer string, clip int) string { return layer + ":" + strconv.Itoa(clip) }
+
+// clipEach: how a clip's expression src is worked out: per pixel (as each says, or when it reads
+// where the pixel is) or for all of it
+func (s *Session) clipEach(src, each string) string {
+	switch each {
+	case effects.EachPixel, effects.EachText:
+		return each
+	}
+	if p, err := s.exprProgram(src); err == nil && p != nil && p.UsesPixel {
+		return effects.EachPixel
+	}
+	return effects.EachText
+}
+
+// clipFrameExprs: a clip's expressions worked out for all of it (those per pixel left out:
+// clipPxExprs; an emitter's are all for all of it)
+func (s *Session) clipFrameExprs(c *config.ClipConfig, emit bool) config.Exprs {
+	if emit || len(c.Exprs) == 0 {
+		return c.Exprs
+	}
+	var out config.Exprs
+	for p, src := range c.Exprs {
+		if slices.Contains(effects.ClipPxProps, p) && s.clipEach(src, c.ExprEach[p]) == effects.EachPixel {
+			continue
+		}
+		if out == nil {
+			out = config.Exprs{}
+		}
+		out[p] = src
+	}
+	return out
+}
+
+// clipPxExprs: a clip's properties worked out per pixel (c0's expressions, from c: its values
+// now; opk: its opacity's factor now, its fades and reaction), along its path at angle pathA
+func (s *Session) clipPxExprs(lf *effects.LayerFrame, c0, c *config.ClipConfig, opk float64, ctx config.ExprCtx, pathA float64) {
+	if len(c0.Exprs) == 0 {
+		return
+	}
+	if c.Motion.On() {
+		ctx.Motion = &c.Motion
+		W, H := float64(s.W), float64(s.H)
+		_, L := effects.NodeLens(c.Motion.Path, W, H)
+		pr := c.Motion.Progress
+		if c.Motion.Path.Open {
+			pr = math.Max(0, math.Min(1, pr))
+		} else {
+			pr -= math.Floor(pr)
+		}
+		lf.XS0, lf.XTX, lf.XTY = float32(pr*L), float32(math.Cos(pathA)), float32(math.Sin(pathA))
+	}
+	vals := [effects.NClipPx]float64{0, c.Opacity, c.Brightness, c.Contrast, c.Saturation, c.Hue, c.Chroma.Tolerance, c.Chroma.Softness}
+	for k, p := range effects.ClipPxProps {
+		src, ok := c0.Exprs[p]
+		if !ok || s.clipEach(src, c0.ExprEach[p]) != effects.EachPixel {
+			continue
+		}
+		if x := s.PixExpr(src, &ctx); x != nil {
+			lf.X[k], lf.XV[k] = x, vals[k]
+		}
+	}
+	lf.OpK = opk
+}
