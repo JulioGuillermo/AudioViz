@@ -40,6 +40,7 @@ gives over the element's time (or ±6 s around the cursor), the cursor in orange
 | `bass@-0.5` | a band 0.5 s before (or after, with +) |
 | `lag(bass, 0.3)` | smoothed over 0.3 s; `peak(kick, 1)`: the loudest of the last second |
 | `path.name` | a named value of the motion path's nodes at its place ([node values](layers.md#values-on-the-nodes)) |
+| `path.x`, `path.y`, `path.progress`, `path.angle` | where it is on its motion path: x, y (0…1 of the frame, as *Position*), how far along (0…1), its direction (degrees); an emitter's particles each where they are on their `route.` (the same four) or path; a text's letters each where they are. These names are not for the nodes' values |
 | `pi`, `tau`, `e` | |
 
 ### Functions
@@ -88,7 +89,22 @@ its own speed:
         emitter.speed: value * (0.6 + rand() * 0.8)
 ```
 
+## Per letter
+
+A fixed text's **size, rotation, position_x and position_y** can change per letter: an
+expression that reads `index` (the letter's number), `count` (how many), `rand()` / `random()`
+(each letter its own) or `path.name` (the motion path's value where the letter is) lays the text
+out letter by letter and gives each its own: its size scales it, its rotation turns it and its
+position moves it by how much they differ from the text's. E.g. a wave running through the
+letters, each slightly turned:
+
+```yaml
+    exprs:
+      position_y: value + sin(index * 40 + time * 200) * 0.03
+      rotation: value + (rand() - 0.5) * 30
+      size: value * (0.8 + 0.4 * index / count)
+```
+
 ## Coming next
 
-Per letter and per pixel (texts along their path); colors (`rgb()`, `rgba()`, `hsv()`) and on/off
-properties.
+Colors (`rgb()`, `rgba()`, `hsv()`) and on/off properties.

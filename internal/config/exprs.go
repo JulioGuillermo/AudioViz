@@ -34,6 +34,16 @@ type Evaluator interface {
 	EvalExpr(src string, value float64, ctx *ExprCtx) (float64, bool)
 }
 
+// ItemEvaluator: an Evaluator that also works out the expressions that change per item (a
+// text's letters): for the frame of ctx, a function giving item index's value (of count, s px
+// along its path); false: src doesn't change per item (or has a mistake)
+type ItemEvaluator interface {
+	// letters: the text is laid out along its path letter by letter (bent): then its path's
+	// values (path.…) are each letter's too
+	ItemExpr(src string, value float64, ctx *ExprCtx, letters bool) (func(index, count int, s float32) float64, bool)
+	IsItemExpr(src string, letters bool) bool
+}
+
 // Animate: cfg at u (s from its start) with its keyframes and expressions applied (a copy when
 // anything applies). ctx: T, Dur, ID (U is set; Motion is cfg's own if it has one, after the keys)
 func Animate[T any](cfg *T, keys Keys, exprs Exprs, ev Evaluator, ctx ExprCtx) *T {

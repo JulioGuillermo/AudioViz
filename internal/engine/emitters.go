@@ -337,7 +337,7 @@ func (s *Session) emitFrame(li, ci int, c0, c *config.ClipConfig, idx int, feats
 // emitExprs: the clip's expressions that change per particle (index, rand(), route.name…),
 // specialized for the frame at t for each particle to work out (EmitParams.Exprs)
 func (s *Session) emitExprs(p *effects.EmitParams, c0, c *config.ClipConfig, e *config.EmitterConfig, t float64, li, ci int, sc float64) {
-	p.Exprs, p.Frame, p.Count = nil, int(math.Round(t*float64(s.FPS))), e.Max
+	p.Exprs, p.Frame, p.Count, p.FrameW, p.FrameH = nil, int(math.Round(t*float64(s.FPS))), e.Max, s.W, s.H
 	if len(c0.Exprs) == 0 {
 		return
 	}
@@ -364,6 +364,10 @@ func (s *Session) emitExprs(p *effects.EmitParams, c0, c *config.ClipConfig, e *
 		value, _, _ := config.NumberAt(c, nil, 0, path)
 		keys := make([]effects.EmitExprKey, len(prog.Keys))
 		for k, name := range prog.Keys {
+			if b := effects.PathBuiltin(name); b > 0 {
+				keys[k].Builtin = b // the route's / path's own: where each particle is on it
+				continue
+			}
 			if route != nil {
 				keys[k].Route = effects.Track(route, name, W, H)
 			}
@@ -373,9 +377,13 @@ func (s *Session) emitExprs(p *effects.EmitParams, c0, c *config.ClipConfig, e *
 		}
 		perItem := func(kind int, name string) bool {
 			for k, n := range prog.Keys {
-				if n == name {
-					return (kind == 1 && keys[k].Route != nil) || (kind == 0 && keys[k].Path != nil)
+				if n != name {
+					continue
 				}
+				if keys[k].Builtin > 0 {
+					return (kind == 1 && route != nil) || (kind == 0 && mpath != nil)
+				}
+				return (kind == 1 && keys[k].Route != nil) || (kind == 0 && keys[k].Path != nil)
 			}
 			return false
 		}

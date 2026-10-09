@@ -133,17 +133,30 @@ func (e *exprEnv) Key(kind int, name string) (float64, bool) {
 		return 0, false
 	}
 	W, H := float64(e.s.W), float64(e.s.H)
-	t := effects.Track(mo.Path, name, W, H)
-	if t == nil {
-		return 0, false
-	}
-	_, L := effects.NodeLens(mo.Path, W, H)
 	p := mo.Progress
 	if mo.Path.Open {
 		p = math.Max(0, math.Min(1, p))
 	} else {
 		p -= math.Floor(p)
 	}
+	if b := effects.PathBuiltin(name); b > 0 {
+		// where it is on its path: x, y (0..1 of the frame), progress, angle
+		x, y, a := effects.PathAt(mo.Path, W, H, p)
+		switch b {
+		case 1:
+			return x / W, true
+		case 2:
+			return y / H, true
+		case 3:
+			return p, true
+		}
+		return a * 180 / math.Pi, true
+	}
+	t := effects.Track(mo.Path, name, W, H)
+	if t == nil {
+		return 0, false
+	}
+	_, L := effects.NodeLens(mo.Path, W, H)
 	return float64(t.At(float32(p * L))), true
 }
 
@@ -244,4 +257,86 @@ func (s *Session) ExprSeries(src string, tg ExprTarget, path string, times []flo
 		out.Samples = append(out.Samples, ExprSample{T: t, V: r.V, Nil: r.Nil})
 	}
 	return out
+}
+
+// IsItemExpr (config.ItemEvaluator): src changes per item (index, rand(), …; with letters, its
+// path's values too)
+func (s *Session) IsItemExpr(src string, letters bool) bool {
+	p, err := s.exprProgram(src)
+	return err == nil && p != nil && (p.PerItem || (letters && len(p.Keys) > 0))
+}
+
+// ItemExpr (config.ItemEvaluator): src specialized for the frame of ctx, run per item: its
+// index, how many, s px along the motion path (path.name there)
+func (s *Session) ItemExpr(src string, value float64, ctx *config.ExprCtx, letters bool) (func(index, count int, sp float32) float64, bool) {
+	if !s.IsItemExpr(src, letters) {
+		return nil, false
+	}
+	p, _ := s.exprProgram(src)
+	W, H := float64(s.W), float64(s.H)
+	tracks := map[string]*effects.PathTrack{}
+	var pts []float32
+	var L float32
+	closed := false
+	if mo := ctx.Motion; mo != nil && mo.On() {
+		for _, name := range p.Keys {
+			if t := effects.Track(mo.Path, name, W, H); t != nil {
+				tracks[name] = t
+			}
+		}
+		pts, L = effects.SamplePath(mo.Path, W, H)
+		closed = !mo.Path.Open
+	}
+	q := p.Specialize(&exprEnv{s: s, ctx: ctx, value: value}, func(kind int, name string) bool {
+		return kind == 0 && (tracks[name] != nil || (pts != nil && effects.PathBuiltin(name) > 0))
+	})
+	h := fnv.New32a()
+	h.Write([]byte(ctx.ID))
+	seed, frame := h.Sum32(), int(math.Round(ctx.T*float64(s.FPS)))
+	return func(index, count int, sp float32) float64 {
+		r := q.Run(&itemEnv{index: index, count: count, s: sp, tracks: tracks, seed: seed, frame: frame, pts: pts, L: L, closed: closed, W: s.W, H: s.H})
+		if r.Nil {
+			return 0
+		}
+		return r.V
+	}, true
+}
+
+// itemEnv: what an item's expression reads (specialized: index, count, random numbers, the
+// path's values where it is)
+type itemEnv struct {
+	index, count int
+	s            float32
+	tracks       map[string]*effects.PathTrack
+	seed         uint32
+	frame        int
+	pts          []float32 // the path sampled (its own values: x, y, progress, angle)
+	L            float32
+	closed       bool
+	W, H         int
+}
+
+func (e *itemEnv) Var(v int) float64 {
+	switch v {
+	case expr.VarIndex:
+		return float64(e.index)
+	case expr.VarCount:
+		return float64(e.count)
+	}
+	return 0
+}
+func (e *itemEnv) Band(int, float64) float64 { return 0 }
+func (e *itemEnv) Lag(int, float64) float64  { return 0 }
+func (e *itemEnv) Peak(int, float64) float64 { return 0 }
+func (e *itemEnv) Key(kind int, name string) (float64, bool) {
+	if b := effects.PathBuiltin(name); kind == 0 && b > 0 && e.pts != nil {
+		return effects.PathBuiltinAt(b, e.pts, e.L, e.closed, e.s, 0, 0, e.W, e.H), true
+	}
+	if t := e.tracks[name]; kind == 0 && t != nil {
+		return float64(t.At(e.s)), true
+	}
+	return 0, false
+}
+func (e *itemEnv) Rand(perFrame bool) float64 {
+	return expr.ItemRand(e.seed, e.index, perFrame, e.frame)
 }

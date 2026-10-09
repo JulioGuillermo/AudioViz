@@ -229,6 +229,13 @@ int xargs(int fi) {
 }
 // runs expression d (its 6 words: property, code, length, consts, key table, multiplier) for item
 // index at sRoute / sPath along its route / path; nil gives 0 (as effects.particleExprs)
+int xcount = 1; // how many particles (count)
+// the particle's route / path for its own values (path.x …): its samples, count, length, closed,
+// how far the route is moved (to where it was born)
+int xpo = 0, xns = 0;
+float xL = 0.0;
+bool xclosed = false;
+vec2 xshift = vec2(0.0);
 float exprRun(int d, int index, float sRoute, float sPath, uint seed, uint frame) {
     float st[XSTK];
     bool nl[XSTK];
@@ -243,12 +250,21 @@ float exprRun(int d, int index, float sRoute, float sPath, uint seed, uint frame
         int nx = pc + 1;
         if (op == 0) { st[sp] = edf(co + a0); nl[sp] = false; sp++; nx = pc + 2; }
         else if (op == 1) { st[sp] = 0.0; nl[sp] = true; sp++; }
-        else if (op == 2) { st[sp] = a0 == 6 ? float(index) : 0.0; nl[sp] = false; sp++; nx = pc + 2; }
+        else if (op == 2) { st[sp] = a0 == 6 ? float(index) : (a0 == 7 ? float(xcount) : 0.0); nl[sp] = false; sp++; nx = pc + 2; }
         else if (op == 7) {
             // a value along the route (kind 1) or path (0) where the item is
             int kind = a0, k = int(ed[code + pc + 2]);
-            int to = int(ed[kt + 2 * k + (kind == 1 ? 0 : 1)]);
-            if (to > 0) { st[sp] = trackAtE(to - 1, kind == 1 ? sRoute : sPath); nl[sp] = false; }
+            uint tu = ed[kt + 2 * k + (kind == 1 ? 0 : 1)];
+            if (tu >= 0xFFFFFFF0u) {
+                // the route's / path's own: where it is on it (as effects.PathBuiltinAt)
+                int b = int(tu - 0xFFFFFFF0u);
+                float s = wrapLen(kind == 1 ? sRoute : sPath, xL, xclosed);
+                vec4 pt = pathPoint(xpo, xns, xL, xclosed, s);
+                vec2 shv = kind == 1 ? xshift : vec2(0.0);
+                st[sp] = b == 1 ? (pt.x + shv.x) / float(W) : b == 2 ? (pt.y + shv.y) / float(H)
+                    : b == 3 ? (xL > 0.0 ? clamp(s / xL, 0.0, 1.0) : 0.0) : atan(pt.w, pt.z) / XDEG;
+                nl[sp] = false;
+            } else if (tu > 0u) { st[sp] = trackAtE(int(tu) - 1, kind == 1 ? sRoute : sPath); nl[sp] = false; }
             else { st[sp] = 0.0; nl[sp] = true; }
             sp++;
             nx = pc + 3;
@@ -358,6 +374,9 @@ void splatPhase() {
         bool pclosed = (ed[h + 72] & 1u) != 0u;
         float sR = wrapLen(along0, PL, pclosed), sPa = wrapLen(bP * PL + along0, PL, pclosed);
         uint frame = ed[h + 97];
+        xcount = int(ed[h + 98]);
+        xpo = int(ed[h + 69]); xns = int(ed[h + 70]); xL = PL; xclosed = pclosed;
+        xshift = (ed[h + 72] & 8u) != 0u && xns >= 2 ? vec2(bX, bY) - vec2(edf(xpo), edf(xpo + 1)) : vec2(0.0);
         int np = int(ed[xb - 1]);
         for (int q = 0; q < np; q++) {
             int d = xb - 1 + 1 + 6 * q;

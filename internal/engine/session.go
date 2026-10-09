@@ -176,7 +176,7 @@ func (s *Session) Update(cfg *config.ProjectConfig) error {
 	if lk != s.lyrKey {
 		s.lyr = nil
 		t0 := time.Now()
-		m, err := lyrics.NewMulti(cfg.Timeline.Lyrics, cfg.Texts, w, h)
+		m, err := lyrics.NewMulti(cfg.Timeline.Lyrics, cfg.Texts, w, h, s)
 		if err != nil {
 			return err
 		}

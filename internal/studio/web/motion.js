@@ -173,7 +173,8 @@ export function NodeSection({ obj, what, pi, edit }) {
           onChange=${(e) => {
             const k = e.target.value.trim().replace(/[^A-Za-z0-9_]/g, '_');
             e.target.value = '';
-            if (k && !/^[0-9]/.test(k)) set((n) => { n.keys = { ...(n.keys || {}), [k]: n.keys && n.keys[k] ? n.keys[k] : { v: 1 } }; });
+            // x, y, progress, angle: every path has them (path.x …), not for its nodes
+            if (k && !/^[0-9]/.test(k) && !['x', 'y', 'progress', 'angle'].includes(k)) set((n) => { n.keys = { ...(n.keys || {}), [k]: n.keys && n.keys[k] ? n.keys[k] : { v: 1 } }; });
           }} />
         <datalist id="node-key-names">${names.filter((k) => !keys[k]).map((k) => html`<option value=${k} />`)}</datalist>
       </div>

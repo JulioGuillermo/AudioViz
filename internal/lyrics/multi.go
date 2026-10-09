@@ -33,7 +33,7 @@ type Multi struct {
 
 // NewMulti builds the lyrics (path and offset of the first segment; skipped when lyrics are off
 // or have no file) and the fixed texts. Returns nil when there is nothing to draw.
-func NewMulti(segs []config.Seg[config.LyricsConfig], texts []config.TextConfig, w, h int) (*Multi, error) {
+func NewMulti(segs []config.Seg[config.LyricsConfig], texts []config.TextConfig, w, h int, ev config.Evaluator) (*Multi, error) {
 	m := &Multi{w: w, h: h}
 	var engines []*Engine
 	anyOn := false
@@ -65,7 +65,7 @@ func NewMulti(segs []config.Seg[config.LyricsConfig], texts []config.TextConfig,
 	m.nLyr = len(engines)
 	for i := range texts {
 		texts[i].Keys.Sort()
-		e, err := textEngine(&texts[i], w, h)
+		e, err := textEngine(&texts[i], w, h, itemExprs(&texts[i], ev, texts[i].Motion.Bend && texts[i].Motion.On()))
 		if err != nil {
 			return nil, err
 		}
@@ -94,7 +94,7 @@ func NewMulti(segs []config.Seg[config.LyricsConfig], texts []config.TextConfig,
 
 // textEngine lays out a fixed text as a single line from Start to End at its own position.
 // Its in animation starts at Start and its out animation ends at End.
-func textEngine(tc *config.TextConfig, w, h int) (*Engine, error) {
+func textEngine(tc *config.TextConfig, w, h int, letters bool) (*Engine, error) {
 	if !tc.Enabled || strings.TrimSpace(tc.Text) == "" || tc.End <= tc.Start {
 		return nil, nil
 	}
@@ -129,7 +129,7 @@ func textEngine(tc *config.TextConfig, w, h int) (*Engine, error) {
 			ln.Words = append(ln.Words, Word{Text: wd, Start: start, End: end})
 		}
 	}
-	return buildEngine(&cfg, []Line{ln}, w, h, true, tc.Motion.Bend && tc.Motion.On())
+	return buildEngine(&cfg, []Line{ln}, w, h, true, letters || (tc.Motion.Bend && tc.Motion.On()))
 }
 
 // Frame returns the words visible at t (combined atlas coordinates) and the style table they
@@ -159,10 +159,12 @@ func (m *Multi) Frame(t float64, feat *audio.FrameFeatures, lyr *config.LyricsCo
 			var dx, dy, sc float32 = 0, 0, 1
 			rot := tc.Rotation
 			mo := tc.Motion
+			kk := tc // its values now (keys and expressions applied)
+			xctx := config.ExprCtx{T: t, U: t - tc.Start, Dur: tc.End - tc.Start, ID: "text:" + strconv.Itoa(i-m.nLyr)}
 			if len(tc.Keys) > 0 || (len(tc.Exprs) > 0 && m.Ev != nil) {
 				// Animated text: style from its properties now; moved by the change of its
 				// position, scaled and turned around it by the change of its size and rotation
-				k := config.Animate(tc, tc.Keys, tc.Exprs, m.Ev, config.ExprCtx{T: t, U: t - tc.Start, Dur: tc.End - tc.Start, ID: "text:" + strconv.Itoa(i-m.nLyr)})
+				k := config.Animate(tc, tc.Keys, m.frameExprs(tc, tc.Motion.Bend && tc.Motion.On()), m.Ev, config.ExprCtx{T: t, U: t - tc.Start, Dur: tc.End - tc.Start, ID: "text:" + strconv.Itoa(i-m.nLyr)})
 				kc := k.LyricsConfig
 				kc.Position, kc.Mode = cfg.Position, cfg.Mode
 				cfg = &kc
@@ -173,6 +175,7 @@ func (m *Multi) Frame(t float64, feat *audio.FrameFeatures, lyr *config.LyricsCo
 				}
 				rot = k.Rotation
 				mo = k.Motion
+				kk = k
 			}
 			bend := mo.On() && mo.Bend && tc.Motion.Bend // laid out letter by letter
 			var ztr *effects.PathTrack
@@ -188,7 +191,7 @@ func (m *Multi) Frame(t float64, feat *audio.FrameFeatures, lyr *config.LyricsCo
 					pts, L := effects.SamplePath(mo.Path, float64(m.w), float64(m.h))
 					rib = effects.NewRibbon(pts, L, !mo.Path.Open)
 				}
-				if ztr != nil || rib != nil {
+				if ztr != nil || rib != nil || len(tc.Exprs) > 0 {
 					_, L := effects.NodeLens(mo.Path, float64(m.w), float64(m.h))
 					p := mo.Progress
 					if mo.Path.Open {
@@ -270,6 +273,7 @@ func (m *Multi) Frame(t float64, feat *audio.FrameFeatures, lyr *config.LyricsCo
 				st.Text, st.AnchorX, st.AnchorY = i-m.nLyr, px, py
 				st.Rotation = float32(math.Atan2(float64(ty), float64(tx))) + r0
 				styles = append(styles, st)
+				m.applyItemExprs(its, tc, kk, xctx, true)
 				for _, it := range its {
 					it.AY += float32(m.offs[i])
 					it.Style = si
@@ -295,13 +299,14 @@ func (m *Multi) Frame(t float64, feat *audio.FrameFeatures, lyr *config.LyricsCo
 					its[j].Flip, its[j].FlipY = 1-fsx, 1-fsy
 				}
 			}
-			if ztr != nil || rib != nil {
+			if ztr != nil || rib != nil || (len(tc.Exprs) > 0 && mo.On()) {
 				for j := range its {
 					// along the path from its anchor (on the path) in the path's direction
 					its[j].PS = zs0 + (its[j].CX-ax-dx)*ztx + (its[j].CY-ay-dy)*zty
 					its[j].PTX, its[j].PTY = ztx, zty
 				}
 			}
+			m.applyItemExprs(its, tc, kk, xctx, false)
 		}
 		for _, it := range its {
 			it.AY += float32(m.offs[i])
@@ -462,9 +467,94 @@ func (m *Multi) TextPoints(i int, t float64, fill bool, max int) []float32 {
 // can be born on the letters of a hidden text: only the fire shows them)
 func TextPointsOf(tc config.TextConfig, t float64, fill bool, max, w, h int) []float32 {
 	tc.Enabled = true
-	m, err := NewMulti(nil, []config.TextConfig{tc}, w, h)
+	m, err := NewMulti(nil, []config.TextConfig{tc}, w, h, nil)
 	if err != nil || m == nil {
 		return nil
 	}
 	return m.TextPoints(0, t, fill, max)
+}
+
+// TextItemProps: a fixed text's properties an expression can give per letter (their paths)
+var TextItemProps = []string{"size", "rotation", "position_x", "position_y"}
+
+// itemExprs: whether the text has expressions per letter (laid out letter by letter then);
+// bent: its letters go along its path (its path's values are per letter then)
+func itemExprs(tc *config.TextConfig, ev config.Evaluator, bent bool) bool {
+	ie, ok := ev.(config.ItemEvaluator)
+	if !ok {
+		return false
+	}
+	for _, p := range TextItemProps {
+		if src, ok := tc.Exprs[p]; ok && ie.IsItemExpr(src, bent) {
+			return true
+		}
+	}
+	return false
+}
+
+// frameExprs: the text's expressions worked out for the whole text (those per letter left out:
+// applyItemExprs works them out)
+func (m *Multi) frameExprs(tc *config.TextConfig, bent bool) config.Exprs {
+	ie, ok := m.Ev.(config.ItemEvaluator)
+	if !ok || len(tc.Exprs) == 0 {
+		return tc.Exprs
+	}
+	var out config.Exprs
+	for p, src := range tc.Exprs {
+		if isItemProp(p) && ie.IsItemExpr(src, bent) {
+			continue
+		}
+		if out == nil {
+			out = config.Exprs{}
+		}
+		out[p] = src
+	}
+	return out
+}
+
+func isItemProp(p string) bool {
+	for _, x := range TextItemProps {
+		if x == p {
+			return true
+		}
+	}
+	return false
+}
+
+// applyItemExprs: each letter's own size, rotation and place (its expressions per letter, from
+// the text's values now k): its scale, its rotation and its place moved by how its value differs
+func (m *Multi) applyItemExprs(its []Item, tc, k *config.TextConfig, ctx config.ExprCtx, bent bool) {
+	ie, ok := m.Ev.(config.ItemEvaluator)
+	if !ok || len(tc.Exprs) == 0 || len(its) == 0 {
+		return
+	}
+	base := map[string]float64{"size": k.Size, "rotation": k.Rotation, "position_x": k.PositionX, "position_y": k.PositionY}
+	if mo := k.Motion; mo.On() {
+		ctx.Motion = &k.Motion
+	}
+	for _, p := range TextItemProps {
+		src, ok := tc.Exprs[p]
+		if !ok {
+			continue
+		}
+		run, ok := ie.ItemExpr(src, base[p], &ctx, bent)
+		if !ok {
+			continue
+		}
+		for j := range its {
+			v := run(j, len(its), its[j].PS)
+			switch p {
+			case "size":
+				if base[p] > 0 {
+					its[j].Scale *= float32(math.Max(v, 0) / base[p])
+				}
+			case "rotation":
+				its[j].Rot += float32((v - base[p]) * math.Pi / 180)
+			case "position_x":
+				its[j].CX += float32((v - base[p]) * float64(m.w))
+			case "position_y":
+				its[j].CY += float32((v - base[p]) * float64(m.h))
+			}
+		}
+	}
 }

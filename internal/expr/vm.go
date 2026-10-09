@@ -348,7 +348,7 @@ func (p *Program) Specialize(env Env, perItem func(kind int, name string) bool) 
 		n := 1 + opArgs[op]
 		switch op {
 		case OpVar:
-			if v := int(q.Code[pc+1]); v != VarIndex {
+			if v := int(q.Code[pc+1]); v != VarIndex && v != VarCount {
 				q.Code[pc], q.Code[pc+1] = OpConst, konst(env.Var(v))
 			}
 		case OpBand:

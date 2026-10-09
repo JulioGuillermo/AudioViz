@@ -101,8 +101,9 @@ type EmitParams struct {
 	RouteK            float64 // how much they follow their route (0..1): mixed with their free motion
 	// expressions worked out per particle (EmitExprProps), specialized for this frame; Frame: the
 	// frame (for random()), Count: how many particles (count)
-	Exprs        []EmitExpr
-	Frame, Count int
+	Exprs          []EmitExpr
+	Frame, Count   int
+	FrameW, FrameH int // the frame's size (path.x / .y are 0..1 of it)
 	// the depth along the path they go along (their route, or the motion path): each one takes
 	// the depth of its point on it (nil: the emitter's own)
 	ZTrack *PathTrack
@@ -1168,7 +1169,48 @@ type EmitExpr struct {
 }
 
 // EmitExprKey: a named value along the route and along the motion path (nil: none)
-type EmitExprKey struct{ Route, Path *PathTrack }
+type EmitExprKey struct {
+	Route, Path *PathTrack
+	Builtin     int // PathBuiltin's: x, y, progress or angle of the route / path where it is
+}
+
+// PathBuiltin: the values every path has (path.x, .y, .progress, .angle): 1…4; 0 if name is a
+// value of its nodes
+func PathBuiltin(name string) int {
+	switch name {
+	case "x":
+		return 1
+	case "y":
+		return 2
+	case "progress":
+		return 3
+	case "angle":
+		return 4
+	}
+	return 0
+}
+
+// PathBuiltinAt: a path's own value b (PathBuiltin) at s px along it (pp, L, closed as
+// SamplePath; dx, dy: how far it is moved, px), in a W×H frame: x, y 0..1 of the frame, its
+// progress 0..1, its direction in degrees
+func PathBuiltinAt(b int, pp []float32, L float32, closed bool, s, dx, dy float32, W, H int) float64 {
+	s = wrapLen(s, L, closed)
+	x, y, tx, ty := pathPoint(pp, L, closed, s)
+	switch b {
+	case 1:
+		return float64((x + dx) / float32(W))
+	case 2:
+		return float64((y + dy) / float32(H))
+	case 3:
+		if L <= 0 {
+			return 0
+		}
+		return float64(max(0, min(1, s/L)))
+	case 4:
+		return math.Atan2(float64(ty), float64(tx)) * 180 / math.Pi
+	}
+	return 0
+}
 
 // partParams: the params a particle can have of its own
 type partParams struct {
@@ -1209,7 +1251,10 @@ func (e *EmitFrame) particleExprs(pp *partParams, i int, bt Birth, r func(uint32
 	if k := float32(p.Drag); k > 1e-3 {
 		along = sp * (1 - float32(math.Exp(float64(-k*max(age, 0))))) / k
 	}
-	env := &particleEnv{p: p, i: i, sRoute: along, sPath: float32(bt.PathP)*p.PathLen + along}
+	env := &particleEnv{p: p, i: i, sRoute: along, sPath: float32(bt.PathP)*p.PathLen + along, W: max(p.FrameW, 1), H: max(p.FrameH, 1)}
+	if p.Route && !p.RouteFixed && len(p.Path) >= 2 {
+		env.shiftX, env.shiftY = float32(bt.X)-p.Path[0], float32(bt.Y)-p.Path[1]
+	}
 	for k := range p.Exprs {
 		x := &p.Exprs[k]
 		env.keys, env.prog = x.Keys, x.Prog
@@ -1225,16 +1270,21 @@ func (e *EmitFrame) particleExprs(pp *partParams, i int, bt Birth, r func(uint32
 // particleEnv: what a particle's expression reads (expr.Env, specialized: only index, random
 // numbers and the values along its route / path are left)
 type particleEnv struct {
-	p             *EmitParams
-	i             int
-	sRoute, sPath float32
+	p              *EmitParams
+	i              int
+	sRoute, sPath  float32
+	shiftX, shiftY float32 // its route moved to where it was born
+	W, H           int
 	keys          []EmitExprKey
 	prog          *expr.Program
 }
 
 func (e *particleEnv) Var(v int) float64 {
-	if v == expr.VarIndex {
+	switch v {
+	case expr.VarIndex:
 		return float64(e.i)
+	case expr.VarCount:
+		return float64(max(e.p.Count, 1))
 	}
 	return 0
 }
@@ -1245,6 +1295,15 @@ func (e *particleEnv) Key(kind int, name string) (float64, bool) {
 	for k, n := range e.prog.Keys {
 		if n != name || k >= len(e.keys) {
 			continue
+		}
+		if b := e.keys[k].Builtin; b > 0 && len(e.p.Path) >= 6 {
+			// where it is on its route (moved to where it was born unless fixed) or path
+			if kind == 1 && e.p.Route {
+				return PathBuiltinAt(b, e.p.Path, e.p.PathLen, e.p.PathClosed, e.sRoute, e.shiftX, e.shiftY, e.W, e.H), true
+			}
+			if kind == 0 && e.p.Follow && !e.p.Route {
+				return PathBuiltinAt(b, e.p.Path, e.p.PathLen, e.p.PathClosed, e.sPath, 0, 0, e.W, e.H), true
+			}
 		}
 		if kind == 1 && e.keys[k].Route != nil {
 			return float64(e.keys[k].Route.At(wrapLen(e.sRoute, e.p.PathLen, e.p.PathClosed))), true
@@ -1312,6 +1371,10 @@ func PackEmitExprs(u []uint32, f []float32, off int, xs []EmitExpr) {
 		for k, ky := range x.Keys {
 			for j, t := range []*PathTrack{ky.Route, ky.Path} {
 				u[tab+2*k+j] = 0
+				if ky.Builtin > 0 {
+					u[tab+2*k+j] = 0xFFFFFFF0 + uint32(ky.Builtin) // the path's own (exprRun works it out)
+					continue
+				}
 				if t == nil {
 					continue
 				}

@@ -519,7 +519,7 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		}
 		// the expressions worked out per particle: after the depth track
 		eo := zo + 1 + 3*256
-		u[h+96], u[h+97] = 0, uint32(P.Frame)
+		u[h+96], u[h+97], u[h+98] = 0, uint32(P.Frame), uint32(max(P.Count, 1))
 		if len(P.Exprs) > 0 {
 			effects.PackEmitExprs(u, f, eo, P.Exprs)
 			u[h+96] = uint32(eo + 1)

@@ -39,7 +39,8 @@ export function exprTokens(src) {
       else if ((s === 'path' || s === 'route') && src[j] === '.') {
         push(s, 'x-var'); push('.', 'x-op');
         let k = j + 1; while (k < src.length && /[A-Za-z0-9_]/.test(src[k])) k++;
-        push(src.slice(j + 1, k), 'x-key'); i = k; continue;
+        const kn = src.slice(j + 1, k);
+        push(kn, ['x', 'y', 'progress', 'angle'].includes(kn) ? 'x-var' : 'x-key'); i = k; continue;
       } else if (KEYWORDS.includes(s)) cls = 'x-kw';
       else if (FUNCS.has(s) && src[j] === '(') cls = 'x-fn';
       else if (OUR.has(s)) cls = 'x-var';
@@ -71,7 +72,7 @@ export function ExprEditor({ value, onInput, names = {}, err, rows = 6, autofocu
   const candidates = (src, pos) => {
     const before = src.slice(0, pos);
     const mk = before.match(/\b(path|route)\.([A-Za-z0-9_]*)$/);
-    if (mk) return { start: pos - mk[2].length, word: mk[2], items: (names.keys || []).map((k) => ({ s: k, cls: 'x-key' })) };
+    if (mk) return { start: pos - mk[2].length, word: mk[2], items: [...['x', 'y', 'progress', 'angle'].map((k) => ({ s: k, cls: 'x-var' })), ...(names.keys || []).map((k) => ({ s: k, cls: 'x-key' }))] };
     const m = before.match(/\$?[A-Za-z_][A-Za-z0-9_]*$/) || (before.endsWith('$') ? ['$'] : null);
     if (!m) return null;
     const w = m[0];
