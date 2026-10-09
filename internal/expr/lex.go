@@ -52,13 +52,23 @@ type Error struct {
 	Pos  int    `json:"pos"`  // byte offset
 	Line int    `json:"line"` // 0-based (−1: not in this text, e.g. the project's functions)
 	Msg  string `json:"msg"`
+	// Msg's format and its values (%s, %d, %q in order), for the studio to translate it
+	Fmt  string   `json:"fmt,omitempty"`
+	Args []string `json:"args,omitempty"`
+}
+
+// newErr: an Error at pos / line from a format and its values
+func newErr(pos, line int, f string, a ...any) *Error {
+	args := make([]string, len(a))
+	for i, x := range a {
+		args[i] = fmt.Sprint(x)
+	}
+	return &Error{Pos: pos, Line: line, Msg: fmt.Sprintf(f, a...), Fmt: f, Args: args}
 }
 
 func (e *Error) Error() string { return fmt.Sprintf("line %d: %s", e.Line+1, e.Msg) }
 
-func errAt(t token, f string, a ...any) *Error {
-	return &Error{Pos: t.pos, Line: t.line, Msg: fmt.Sprintf(f, a...)}
-}
+func errAt(t token, f string, a ...any) *Error { return newErr(t.pos, t.line, f, a...) }
 
 // lex splits src into tokens; newlines inside brackets don't end a statement; a line starting with
 // spaces or tabs gives a tIndent before its first token; # starts a comment to the line's end
@@ -111,7 +121,7 @@ func lex(src string) ([]token, *Error) {
 			}
 			var v float64
 			if _, err := fmt.Sscanf(src[i:j], "%g", &v); err != nil {
-				return nil, &Error{Pos: i, Line: line, Msg: "a number is wrong: " + src[i:j]}
+				return nil, newErr(i, line, "a number is wrong: %s", src[i:j])
 			}
 			out = append(out, token{k: tNum, s: src[i:j], num: v, pos: i, line: line, isInt: isInt})
 			i = j
@@ -124,7 +134,7 @@ func lex(src string) ([]token, *Error) {
 			if c == '$' {
 				k = tUser
 				if j == i+1 {
-					return nil, &Error{Pos: i, Line: line, Msg: "a name is missing after $"}
+					return nil, newErr(i, line, "a name is missing after $")
 				}
 			}
 			out = append(out, token{k: k, s: src[i:j], pos: i, line: line})
@@ -153,7 +163,7 @@ func lex(src string) ([]token, *Error) {
 				i++
 				continue
 			}
-			return nil, &Error{Pos: i, Line: line, Msg: fmt.Sprintf("unexpected %q", c)}
+			return nil, newErr(i, line, "unexpected %q", string(c))
 		}
 	}
 	out = append(out, token{k: tEOF, pos: len(src), line: line})

@@ -138,6 +138,27 @@ export function ExprEditor({ value, onInput, names = {}, err, rows = 6, autofocu
   </div>`;
 }
 
+// errText: an expression's mistake in the studio's language: its format translated (the prefixes
+// the compiler puts before an inner mistake, separately), its values put back in
+const ERR_PREFIXES = ['in %s: ', 'the project\'s functions, line %d: '];
+export function errText(err) {
+  if (!err) return '';
+  if (!err.fmt) return err.msg;
+  let rest = err.fmt, out = '';
+  for (let found = true; found;) {
+    found = false;
+    for (const p of ERR_PREFIXES) {
+      if (rest.startsWith(p)) { out += t(p.trim()) + ' '; rest = rest.slice(p.length); found = true; }
+    }
+  }
+  out += t(rest);
+  const args = [...(err.args || [])];
+  return out.replace(/%[sdq]/g, (m) => {
+    const a = args.length ? args.shift() : '';
+    return m === '%q' ? '“' + a + '”' : a;
+  });
+}
+
 // The dialog (mounted once by the app): { title, path, src, target, t0, dur, time, names, onSave }
 export const exprDialog = createStore(null);
 export const openExpr = (spec) => exprDialog.set(spec);
@@ -202,7 +223,7 @@ export function ExprDialog() {
         <button class="btn icon ghost" title=${t('Close (Esc)')} onClick=${close}><${Icon} name="x" size=${16} /></button></div>
       <div class="mb">
         <${ExprEditor} value=${src} onInput=${setSrc} names=${d.names} err=${err} rows=${7} autofocus=${true} />
-        <div class=${'xstat' + (err ? ' bad' : '')}>${err ? html`<${Icon} name="triangle-alert" size=${13} /> ${err.line >= 0 ? t('Line {n}', { n: err.line + 1 }) + ': ' : ''}${err.msg}`
+        <div class=${'xstat' + (err ? ' bad' : '')}>${err ? html`<${Icon} name="triangle-alert" size=${13} /> ${err.line >= 0 ? t('Line {n}', { n: err.line + 1 }) + ': ' : ''}${errText(err)}`
           : res ? html`<${Icon} name="check" size=${13} /> ${res.uses_value ? t('Uses the slider\'s value') : t('Doesn\'t use value: the slider has no effect')}${res.per_item ? ' · ' + t('Worked out per particle (the graph: one of them)') : ''}${res.warn ? html` · <span class="xwarn">${t('Something impossible came up (a division by 0…): 0 there')}</span>` : ''}` : '…'}</div>
         <canvas ref=${cv} class="xgraph"></canvas>
       </div>
@@ -244,7 +265,7 @@ export function ExprValue({ kf, path, src, onInfo }) {
     return () => { live = false; clearTimeout(h); };
   }, [src, T, path]);
   if (!v) return null;
-  if (v.error) return html`<div class="xval bad" title=${v.error.msg}>ƒ ${t('has a mistake: the slider\'s value is used')}</div>`;
+  if (v.error) return html`<div class="xval bad" title=${errText(v.error)}>ƒ ${t('has a mistake: the slider\'s value is used')}</div>`;
   const s = v.samples && v.samples[0];
   return html`<div class="xval">ƒ = ${s && !s.nil ? (+s.v.toFixed(4)) : 'nil (0)'}</div>`;
 }
@@ -260,7 +281,7 @@ export function LibrarySection({ lib, onChange, Section, Edit }) {
   useEffect(() => {
     const h = setTimeout(() => {
       api('POST', '/api/expr', { src: '0', target: { kind: 'none' }, path: '', times: [] })
-        .then((r) => setErr(r.error ? r.error.msg : null)).catch(() => {});
+        .then((r) => setErr(r.error ? errText(r.error) : null)).catch(() => {});
     }, 400);
     return () => clearTimeout(h);
   }, [lib && lib.functions, JSON.stringify(consts)]);

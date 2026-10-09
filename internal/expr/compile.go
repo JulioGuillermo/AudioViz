@@ -143,10 +143,11 @@ func Compile(src string, lib *Library) (*Program, error) {
 		if strings.TrimSpace(lib.Funcs) != "" {
 			ls, err := parse(lib.Funcs)
 			if err != nil {
-				return nil, fmt.Errorf("the project's functions: %w", err)
+				return nil, &Error{Pos: -1, Line: -1, Msg: fmt.Sprintf("the project's functions, line %d: %s", err.Line+1, err.Msg),
+					Fmt: "the project's functions, line %d: " + err.Fmt, Args: append([]string{fmt.Sprint(err.Line + 1)}, err.Args...)}
 			}
 			if len(ls.body) > 0 {
-				return nil, fmt.Errorf("the project's functions: only $name(…) = … definitions")
+				return nil, newErr(-1, -1, "the project's functions: only $name(…) = … definitions")
 			}
 			for _, f := range ls.funcs {
 				c.funcs[f.name] = f
@@ -157,7 +158,7 @@ func Compile(src string, lib *Library) (*Program, error) {
 		c.funcs[f.name] = f
 	}
 	if len(s.body) == 0 {
-		return nil, &Error{Msg: "it is empty: write an expression (value is the slider's)"}
+		return nil, newErr(0, 0, "it is empty: write an expression (value is the slider's)")
 	}
 	var fix []int
 	c.retFix = &fix
@@ -573,10 +574,9 @@ func (c *compiler) userCall(n *node) error {
 	}
 	c.scope, c.retBase, c.retFix = saveScope, saveBase, saveFix
 	if err != nil {
-		var e *Error
-		if ee, ok := err.(*Error); ok {
-			e = ee
-			return &Error{Pos: n.tok.pos, Line: n.tok.line, Msg: fmt.Sprintf("in %s: %s", f.name, e.Msg)}
+		if e, ok := err.(*Error); ok {
+			return &Error{Pos: n.tok.pos, Line: n.tok.line, Msg: fmt.Sprintf("in %s: %s", f.name, e.Msg),
+				Fmt: "in %s: " + e.Fmt, Args: append([]string{f.name}, e.Args...)}
 		}
 		return err
 	}
