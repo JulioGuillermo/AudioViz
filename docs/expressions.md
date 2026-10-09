@@ -72,8 +72,23 @@ expressions:
 A function can call other functions but not itself (there are no loops: an expression always
 ends). An expression can also define its own functions before its last lines.
 
+## Per particle
+
+An emitter's **speed, life, size, size at the end, gravity, wind, turbulence, direction and
+spread** can change per particle: an expression that reads `index` (the particle's number),
+`count`, `rand()` / `random()` (each particle its own) or `route.name` (the route's value where
+the particle is; `path.name` too when they travel along the motion path) is worked out for each
+particle, on the GPU (the same bytecode, its own interpreter) and the CPU alike. The audio and the
+rest are worked out once per frame. E.g. flames that grow where the route's `w` is big, each at
+its own speed:
+
+```yaml
+      exprs:
+        emitter.size: value * route.w
+        emitter.speed: value * (0.6 + rand() * 0.8)
+```
+
 ## Coming next
 
-Values that change per particle, letter or pixel (`route.name`, `index`, per-particle `rand()`)
-run on the GPU's interpreter (the same bytecode); colors (`rgb()`, `rgba()`, `hsv()`) and on/off
+Per letter and per pixel (texts along their path); colors (`rgb()`, `rgba()`, `hsv()`) and on/off
 properties.

@@ -121,3 +121,67 @@ func TestErrors(t *testing.T) {
 		}
 	}
 }
+
+// per item: what doesn't change per item is worked out, the rest runs the same
+type itemEnv struct {
+	testEnv
+	index int
+}
+
+func (e itemEnv) Var(v int) float64 {
+	if v == VarIndex {
+		return float64(e.index)
+	}
+	return e.testEnv.Var(v)
+}
+func (e itemEnv) Key(kind int, name string) (float64, bool) {
+	if kind == 1 {
+		return float64(e.index) * 10, true
+	}
+	return e.testEnv.Key(kind, name)
+}
+
+func TestSpecialize(t *testing.T) {
+	src := "value * (1 + lag(bass, 0.3)) + bass@-0.5 + index + route.glow + path.glow + time"
+	p, err := Compile(src, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.PerItem {
+		t.Fatal("index / route make it per item")
+	}
+	frame := testEnv{value: 10, time: 2}
+	q := p.Specialize(frame, func(kind int, name string) bool { return kind == 1 })
+	for idx := 0; idx < 3; idx++ {
+		want := p.Run(itemEnv{frame, idx})
+		got := q.Run(itemEnv{frame, idx})
+		if math.Abs(want.V-got.V) > 1e-9 {
+			t.Errorf("index %d: specialized %v, want %v", idx, got.V, want.V)
+		}
+	}
+	for pc := 0; pc < len(q.Code); pc += 1 + opArgs[q.Code[pc]] {
+		switch q.Code[pc] {
+		case OpBand, OpBandAt, OpLag, OpPeak:
+			t.Errorf("a band is left at %d", pc)
+		case OpVar:
+			if q.Code[pc+1] != VarIndex {
+				t.Errorf("a frame variable is left at %d", pc)
+			}
+		}
+	}
+}
+
+// the GPU's interpreter (emit.comp) numbers the ops and functions as these: they must not move
+func TestNumbering(t *testing.T) {
+	if OpPopPush != 33 || OpCall != 30 || OpKey != 7 || VarIndex != 6 {
+		t.Errorf("an op or variable moved: emit.comp's exprRun reads them by number")
+	}
+	want := []string{"sin", "cos", "tan", "asin", "acos", "atan", "atan2", "rad_sin", "rad_cos", "rad_tan", "rad_asin",
+		"rad_acos", "rad_atan", "rad_atan2", "deg", "rad", "abs", "sign", "floor", "ceil", "round", "fract", "sqrt", "exp",
+		"log", "pow", "mod", "min", "max", "clamp", "mix", "smoothstep", "step", "map", "noise", "noise2", "rand", "random", "is_nil"}
+	for i, f := range Funcs {
+		if i >= len(want) || f.Name != want[i] {
+			t.Fatalf("Funcs[%d] = %s: emit.comp's xcall numbers them in this order", i, f.Name)
+		}
+	}
+}

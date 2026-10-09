@@ -262,6 +262,7 @@ func (s *Session) emitFrame(li, ci int, c0, c *config.ClipConfig, idx int, feats
 		p.PathClosed = !c.Motion.Path.Open
 		p.ZTrack = effects.Track(c.Motion.Path, "z", float64(s.W), float64(s.H))
 	}
+	s.emitExprs(&p, c0, c, e, float64(idx)/float64(s.FPS), li, ci, sc)
 	if e.Floor > 0 || e.FloorDepth {
 		// below the emitter now (with a depth map and FloorDepth, layersAt finds the scene's)
 		_, y, _ := s.clipPlace(c)
@@ -331,4 +332,62 @@ func (s *Session) emitFrame(li, ci int, c0, c *config.ClipConfig, idx int, feats
 	i0 := max(0, int(math.Floor(bs[0].N-0.5)))
 	i1 := int(math.Floor(bs[len(bs)-1].N + 0.5))
 	return &effects.EmitFrame{P: p, Births: bs, I0: i0, I1: i1, T: t}
+}
+
+// emitExprs: the clip's expressions that change per particle (index, rand(), route.name…),
+// specialized for the frame at t for each particle to work out (EmitParams.Exprs)
+func (s *Session) emitExprs(p *effects.EmitParams, c0, c *config.ClipConfig, e *config.EmitterConfig, t float64, li, ci int, sc float64) {
+	p.Exprs, p.Frame, p.Count = nil, int(math.Round(t*float64(s.FPS))), e.Max
+	if len(c0.Exprs) == 0 {
+		return
+	}
+	W, H := float64(s.W), float64(s.H)
+	var route, mpath *config.MaskShape
+	if p.Route {
+		route = e.Route
+	} else if p.Follow {
+		mpath = c.Motion.Path
+	}
+	ctx := &config.ExprCtx{T: t, U: t - c0.Start, Dur: c0.End - c0.Start, ID: clipID(s.Cfg.Layers[li].ID, ci)}
+	if c.Motion.On() {
+		ctx.Motion = &c.Motion
+	}
+	for prop, path := range effects.EmitExprProps {
+		src, ok := c0.Exprs[path]
+		if !ok {
+			continue
+		}
+		prog, err := s.exprProgram(src)
+		if err != nil || prog == nil || !prog.PerItem {
+			continue // a mistake, or worked out for the whole emitter (Animate)
+		}
+		value, _, _ := config.NumberAt(c, nil, 0, path)
+		keys := make([]effects.EmitExprKey, len(prog.Keys))
+		for k, name := range prog.Keys {
+			if route != nil {
+				keys[k].Route = effects.Track(route, name, W, H)
+			}
+			if mpath != nil {
+				keys[k].Path = effects.Track(mpath, name, W, H)
+			}
+		}
+		perItem := func(kind int, name string) bool {
+			for k, n := range prog.Keys {
+				if n == name {
+					return (kind == 1 && keys[k].Route != nil) || (kind == 0 && keys[k].Path != nil)
+				}
+			}
+			return false
+		}
+		env := &exprEnv{s: s, ctx: ctx, value: value, count: float64(e.Max)}
+		mul := sc
+		switch prop {
+		case 1: // life (s)
+			mul = 1
+		case 7, 8: // degrees
+			mul = math.Pi / 180
+		}
+		p.Exprs = append(p.Exprs, effects.EmitExpr{Prop: prop, Prog: prog.Specialize(env, perItem), Mul: mul, Keys: keys})
+	}
+	p.Exprs = effects.FitEmitExprs(p.Exprs)
 }

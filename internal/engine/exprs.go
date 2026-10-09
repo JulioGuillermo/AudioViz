@@ -37,8 +37,8 @@ func (s *Session) exprProgram(src string) (*expr.Program, error) {
 // as it is, nil gives 0
 func (s *Session) EvalExpr(src string, value float64, ctx *config.ExprCtx) (float64, bool) {
 	p, err := s.exprProgram(src)
-	if err != nil || p == nil {
-		return 0, false
+	if err != nil || p == nil || p.PerItem {
+		return 0, false // a mistake keeps the value; per item: worked out per particle (emitExprs)
 	}
 	r := p.Run(&exprEnv{s: s, ctx: ctx, value: value})
 	if r.Nil {
@@ -52,6 +52,7 @@ type exprEnv struct {
 	s     *Session
 	ctx   *config.ExprCtx
 	value float64
+	count float64 // how many items (particles; 1 for an element)
 }
 
 func (e *exprEnv) Var(v int) float64 {
@@ -76,7 +77,7 @@ func (e *exprEnv) Var(v int) float64 {
 	case expr.VarFPS:
 		return float64(e.s.FPS)
 	case expr.VarCount:
-		return 1
+		return math.Max(e.count, 1)
 	}
 	return 0
 }
@@ -182,6 +183,7 @@ type ExprSample struct {
 type ExprSeries struct {
 	Error     *expr.Error  `json:"error,omitempty"`
 	UsesValue bool         `json:"uses_value"`
+	PerItem   bool         `json:"per_item,omitempty"` // worked out per particle (the samples: the first one's)
 	Warn      bool         `json:"warn,omitempty"`
 	Samples   []ExprSample `json:"samples"`
 }
@@ -201,7 +203,7 @@ func (s *Session) ExprSeries(src string, tg ExprTarget, path string, times []flo
 		}
 		return out
 	}
-	out.UsesValue = p.UsesValue
+	out.UsesValue, out.PerItem = p.UsesValue, p.PerItem
 	if base, err := s.featuresLocked(s.baseKey); err == nil {
 		s.exprFeats = base
 	}

@@ -42,13 +42,15 @@ const (
 	OpRetTo    // base addr: keep the top, drop the stack down to base, jump
 	OpCall     // fn: a built-in function (Funcs) on its arguments
 	OpEnd      // the result: the top
+	OpNop      // nothing (what a specialized program leaves in place of what it worked out)
+	OpPopPush  // c: pop, push Consts[c] (a band worked out for the frame, in place of its argument)
 )
 
 // opArgs: how many operands each op has
 var opArgs = [...]int{OpConst: 1, OpNil: 0, OpVar: 1, OpBand: 1, OpBandAt: 1, OpLag: 1, OpPeak: 1, OpKey: 2,
 	OpLoad: 1, OpStore: 1, OpPop: 0, OpAdd: 0, OpSub: 0, OpMul: 0, OpDiv: 0, OpMod: 0, OpPow: 0, OpEq: 0,
 	OpNe: 0, OpLt: 0, OpLe: 0, OpGt: 0, OpGe: 0, OpNeg: 0, OpNot: 0, OpTruthy: 0, OpJmp: 1, OpJmpF: 1,
-	OpCoalesce: 1, OpRetTo: 2, OpCall: 1, OpEnd: 0}
+	OpCoalesce: 1, OpRetTo: 2, OpCall: 1, OpEnd: 0, OpNop: 0, OpPopPush: 1}
 
 // Vars: the variables of ours, in the order OpVar numbers them: the slider's value; the
 // project's time (s) and progress (0…1 of the song); the element's (clip_…: from its start, of
@@ -276,6 +278,10 @@ func (c *compiler) expr(n *node) error {
 		c.prog.UsesAudio = true
 		c.emit(OpBandAt, b)
 	case "un":
+		if n.op == "-" && n.kids[0].kind == "num" {
+			c.emit(OpConst, c.konst(-n.kids[0].num)) // a negative number (known: bass@-0.5)
+			return nil
+		}
 		if err := c.expr(n.kids[0]); err != nil {
 			return err
 		}

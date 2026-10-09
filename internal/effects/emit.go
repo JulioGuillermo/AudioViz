@@ -1,11 +1,14 @@
 package effects
 
 import (
-	"audioviz/internal/config"
 	"image"
 	"math"
 	"sync"
 	"sync/atomic"
+
+	"audioviz/internal/config"
+	"audioviz/internal/expr"
+	"audioviz/internal/gpu"
 )
 
 // Particle emitters (config.EmitterConfig). Stateless: a particle's state is a closed formula of
@@ -96,6 +99,10 @@ type EmitParams struct {
 	// they are born unless RouteFixed
 	Route, RouteFixed bool
 	RouteK            float64 // how much they follow their route (0..1): mixed with their free motion
+	// expressions worked out per particle (EmitExprProps), specialized for this frame; Frame: the
+	// frame (for random()), Count: how many particles (count)
+	Exprs        []EmitExpr
+	Frame, Count int
 	// the depth along the path they go along (their route, or the motion path): each one takes
 	// the depth of its point on it (nil: the emitter's own)
 	ZTrack *PathTrack
@@ -364,7 +371,12 @@ func (e *EmitFrame) At(i int) (Particle, bool) {
 		return Particle{}, false
 	}
 	r := func(j uint32) float32 { return rnd(p.Seed, i, j) }
-	life := float32(p.Life) * (1 + float32(p.LifeVar)*(2*r(0)-1))
+	// its own values (expressions per particle), else the emitter's
+	pp := partParams{p.Speed, p.Life, p.Size, p.SizeEnd, p.Gravity, p.Wind, p.Turb, p.Dir, p.Spread}
+	if len(p.Exprs) > 0 {
+		e.particleExprs(&pp, i, bt, r)
+	}
+	life := float32(pp.Life) * (1 + float32(p.LifeVar)*(2*r(0)-1))
 	if life < 0.05 {
 		life = 0.05
 	}
@@ -405,10 +417,10 @@ func (e *EmitFrame) At(i int) (Particle, bool) {
 	if p.Shape == EmitText {
 		rot = 0
 	}
-	a := float32(p.Dir) + rot + (r(3)-0.5)*float32(p.Spread)
-	sp := float32(p.Speed) * (1 + float32(p.SpeedVar)*(2*r(4)-1)) * float32(bt.Speed)
+	a := float32(pp.Dir) + rot + (r(3)-0.5)*float32(pp.Spread)
+	sp := float32(pp.Speed) * (1 + float32(p.SpeedVar)*(2*r(4)-1)) * float32(bt.Speed)
 	vx0, vy0 := sp*float32(math.Sin(float64(a))), -sp*float32(math.Cos(float64(a)))
-	ax, ay := float32(p.Wind), float32(p.Gravity)
+	ax, ay := float32(pp.Wind), float32(pp.Gravity)
 	k := float32(p.Drag)
 	// the launch and the forces at time tt: displacement and velocity (closed form, with drag)
 	motion := func(tt float32) (dx, dy, vx, vy float32) {
@@ -506,7 +518,7 @@ func (e *EmitFrame) At(i int) (Particle, bool) {
 		vy += m * (ty*sv - vy)
 	}
 	// wandering: two waves per axis with random phases, zero at birth
-	if p.Turb > 0 {
+	if pp.Turb > 0 {
 		wv := 2 * math.Pi * float32(p.TurbFreq)
 		wave := func(j uint32) float32 {
 			p1, p2 := 2*math.Pi*r(j), 2*math.Pi*r(j+1)
@@ -514,10 +526,10 @@ func (e *EmitFrame) At(i int) (Particle, bool) {
 			s += 0.5 * (float32(math.Sin(float64(2.13*wv*age+p2))) - float32(math.Sin(float64(p2))))
 			return s / 1.5
 		}
-		dx += float32(p.Turb) * wave(5)
-		dy += float32(p.Turb) * wave(7)
+		dx += float32(pp.Turb) * wave(5)
+		dy += float32(pp.Turb) * wave(7)
 	}
-	size := (float32(p.Size) + (float32(p.SizeEnd)-float32(p.Size))*u) * (1 + float32(p.SizeVar)*(2*r(9)-1)) * float32(bt.Size)
+	size := (float32(pp.Size) + (float32(pp.SizeEnd)-float32(pp.Size))*u) * (1 + float32(p.SizeVar)*(2*r(9)-1)) * float32(bt.Size)
 	// color over the life, faded in and out
 	var c [4]float32
 	c0, c1 := p.Col[0], p.Col[1]
@@ -1138,4 +1150,180 @@ func zPlaneAt(acc, zacc []uint32, GW, GH, div, x, y int) float32 {
 		return -1
 	}
 	return float32(zacc[cy*GW+cx]) / float32(a)
+}
+
+// EmitExprProps: the emitter's properties an expression can give per particle (their paths in
+// the config), in the order emit.comp numbers them
+var EmitExprProps = []string{"emitter.speed", "emitter.life", "emitter.size", "emitter.size_end", "emitter.gravity",
+	"emitter.wind", "emitter.turbulence", "emitter.direction", "emitter.spread"}
+
+// EmitExpr: an expression worked out per particle: its property (EmitExprProps), its program
+// specialized for the frame, what turns its result into the params' units (the clip's scale,
+// degrees → radians), and the tracks of the values it reads on the route / motion path
+type EmitExpr struct {
+	Prop int
+	Prog *expr.Program
+	Mul  float64
+	Keys []EmitExprKey // one per Prog.Keys
+}
+
+// EmitExprKey: a named value along the route and along the motion path (nil: none)
+type EmitExprKey struct{ Route, Path *PathTrack }
+
+// partParams: the params a particle can have of its own
+type partParams struct {
+	Speed, Life, Size, SizeEnd, Gravity, Wind, Turb, Dir, Spread float64
+}
+
+func (pp *partParams) set(prop int, v float64) {
+	switch prop {
+	case 0:
+		pp.Speed = v
+	case 1:
+		pp.Life = v
+	case 2:
+		pp.Size = v
+	case 3:
+		pp.SizeEnd = v
+	case 4:
+		pp.Gravity = v
+	case 5:
+		pp.Wind = v
+	case 6:
+		pp.Turb = v
+	case 7:
+		pp.Dir = v
+	case 8:
+		pp.Spread = v
+	}
+}
+
+// particleExprs works out particle i's expressions: they read its index, its random numbers and
+// the values of the route / motion path where it is (as far along as the emitter's speed takes
+// it, its age then). As exprItem in emit.comp.
+func (e *EmitFrame) particleExprs(pp *partParams, i int, bt Birth, r func(uint32) float32) {
+	p := &e.P
+	age := float32(e.T) - float32(bt.T)
+	sp := float32(p.Speed) * (1 + float32(p.SpeedVar)*(2*r(4)-1)) * float32(bt.Speed)
+	along := sp * max(age, 0)
+	if k := float32(p.Drag); k > 1e-3 {
+		along = sp * (1 - float32(math.Exp(float64(-k*max(age, 0))))) / k
+	}
+	env := &particleEnv{p: p, i: i, sRoute: along, sPath: float32(bt.PathP)*p.PathLen + along}
+	for k := range p.Exprs {
+		x := &p.Exprs[k]
+		env.keys, env.prog = x.Keys, x.Prog
+		res := x.Prog.Run(env)
+		v := res.V
+		if res.Nil {
+			v = 0
+		}
+		pp.set(x.Prop, v*x.Mul)
+	}
+}
+
+// particleEnv: what a particle's expression reads (expr.Env, specialized: only index, random
+// numbers and the values along its route / path are left)
+type particleEnv struct {
+	p             *EmitParams
+	i             int
+	sRoute, sPath float32
+	keys          []EmitExprKey
+	prog          *expr.Program
+}
+
+func (e *particleEnv) Var(v int) float64 {
+	if v == expr.VarIndex {
+		return float64(e.i)
+	}
+	return 0
+}
+func (e *particleEnv) Band(int, float64) float64 { return 0 }
+func (e *particleEnv) Lag(int, float64) float64  { return 0 }
+func (e *particleEnv) Peak(int, float64) float64 { return 0 }
+func (e *particleEnv) Key(kind int, name string) (float64, bool) {
+	for k, n := range e.prog.Keys {
+		if n != name || k >= len(e.keys) {
+			continue
+		}
+		if kind == 1 && e.keys[k].Route != nil {
+			return float64(e.keys[k].Route.At(wrapLen(e.sRoute, e.p.PathLen, e.p.PathClosed))), true
+		}
+		if kind == 0 && e.keys[k].Path != nil {
+			return float64(e.keys[k].Path.At(wrapLen(e.sPath, e.p.PathLen, e.p.PathClosed))), true
+		}
+	}
+	return 0, false
+}
+func (e *particleEnv) Rand(perFrame bool) float64 {
+	return expr.ItemRand(e.p.Seed, e.i, perFrame, e.p.Frame)
+}
+
+// exprWords: the words an expression takes in the emitter data (render.go packs it so)
+func (x *EmitExpr) exprWords() int {
+	n := 6 + len(x.Prog.Code) + len(x.Prog.Consts) + 2*len(x.Keys)
+	for _, k := range x.Keys {
+		for _, t := range []*PathTrack{k.Route, k.Path} {
+			if t != nil {
+				n += 1 + 3*len(t.S)
+			}
+		}
+	}
+	return n
+}
+
+// FitEmitExprs: the expressions that fit in the GPU's room (in order), the same for the CPU
+func FitEmitExprs(xs []EmitExpr) []EmitExpr {
+	var out []EmitExpr
+	used := 1
+	for _, x := range xs {
+		w := x.exprWords()
+		if x.Prog.Stack > gpu.EmitExprStack || x.Prog.Slots > gpu.EmitExprSlots || used+w > gpu.EmitExprWords {
+			continue
+		}
+		used += w
+		out = append(out, x)
+	}
+	return out
+}
+
+// PackEmitExprs writes the expressions (that fit: FitEmitExprs) at word off of the emitter data
+// (u, f the same words as uint32 / float32), as exprRun in emit.comp reads them: n, then per
+// expression 6 words (property, code, its length, consts, key table, multiplier), then the data
+func PackEmitExprs(u []uint32, f []float32, off int, xs []EmitExpr) {
+	u[off] = uint32(len(xs))
+	d := off + 1 + 6*len(xs)
+	for q, x := range xs {
+		h := off + 1 + 6*q
+		u[h] = uint32(x.Prop)
+		u[h+1], u[h+2] = uint32(d), uint32(len(x.Prog.Code))
+		for _, c := range x.Prog.Code {
+			u[d] = uint32(c)
+			d++
+		}
+		u[h+3] = uint32(d)
+		for _, c := range x.Prog.Consts {
+			f[d] = float32(c)
+			d++
+		}
+		u[h+4] = uint32(d)
+		tab := d
+		d += 2 * len(x.Keys)
+		for k, ky := range x.Keys {
+			for j, t := range []*PathTrack{ky.Route, ky.Path} {
+				u[tab+2*k+j] = 0
+				if t == nil {
+					continue
+				}
+				u[tab+2*k+j] = uint32(d + 1)
+				n := len(t.S)
+				f[d] = float32(n)
+				for m := 0; m < n; m++ {
+					f[d+1+m], f[d+1+n+m], f[d+1+2*n+m] = t.S[m], t.V[m], float32(t.E[m])
+				}
+				d += 1 + 3*n
+			}
+		}
+		f[h+5] = float32(x.Mul)
+	}
 }

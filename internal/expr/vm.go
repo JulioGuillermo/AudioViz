@@ -163,6 +163,10 @@ func (p *Program) Run(env Env) Result {
 			r, w := callFunc(fi, a[:n], isNil, env)
 			warn = warn || w
 			push(r, false)
+		case OpNop:
+		case OpPopPush:
+			pop()
+			push(p.Consts[arg(0)], false)
 		case OpEnd:
 			if len(st) == 0 {
 				return Result{Nil: true, Warn: warn}
@@ -325,4 +329,68 @@ func Noise2(x, y float64) float64 {
 	h := func(dx, dy int32) float64 { return hash(uint32(int32(ix)+dx) ^ uint32(int32(iy)+dy)*2654435761) }
 	a, b, c, d := h(0, 0), h(1, 0), h(0, 1), h(1, 1)
 	return a + (b-a)*ux + (c-a)*uy + (a-b-c+d)*ux*uy
+}
+
+// Specialize: the program for one frame, for running it per item (per particle, on the GPU and
+// the CPU): the audio, the variables and the values that don't change per item worked out now
+// (env), so that what is left only reads index, count, rand() / random() and the values perItem
+// says (kind, name) change per item. The code keeps its length (jumps stay right).
+func (p *Program) Specialize(env Env, perItem func(kind int, name string) bool) *Program {
+	q := &Program{Code: append([]int32(nil), p.Code...), Consts: append([]float64(nil), p.Consts...),
+		Keys: p.Keys, Slots: p.Slots, Stack: p.Stack, UsesValue: p.UsesValue, PerItem: p.PerItem}
+	konst := func(v float64) int32 {
+		q.Consts = append(q.Consts, v)
+		return int32(len(q.Consts) - 1)
+	}
+	prev := -1
+	for pc := 0; pc < len(q.Code); {
+		op := int(q.Code[pc])
+		n := 1 + opArgs[op]
+		switch op {
+		case OpVar:
+			if v := int(q.Code[pc+1]); v != VarIndex {
+				q.Code[pc], q.Code[pc+1] = OpConst, konst(env.Var(v))
+			}
+		case OpBand:
+			q.Code[pc], q.Code[pc+1] = OpConst, konst(env.Band(int(q.Code[pc+1]), 0))
+		case OpBandAt, OpLag, OpPeak:
+			// its argument when it is known now (else now, 0 s)
+			b, a := int(q.Code[pc+1]), 0.0
+			if prev >= 0 && q.Code[prev] == OpConst {
+				a = q.Consts[q.Code[prev+1]]
+			}
+			var v float64
+			switch op {
+			case OpBandAt:
+				v = env.Band(b, a)
+			case OpLag:
+				v = env.Lag(b, a)
+			default:
+				v = env.Peak(b, a)
+			}
+			q.Code[pc], q.Code[pc+1] = OpPopPush, konst(v)
+		case OpKey:
+			kind, name := int(q.Code[pc+1]), p.Keys[q.Code[pc+2]]
+			if !perItem(kind, name) {
+				if v, ok := env.Key(kind, name); ok {
+					q.Code[pc], q.Code[pc+1], q.Code[pc+2] = OpConst, konst(v), OpNop
+				} else {
+					q.Code[pc], q.Code[pc+1], q.Code[pc+2] = OpNil, OpNop, OpNop
+				}
+			}
+		}
+		prev = pc
+		pc += n
+	}
+	return q
+}
+
+// ItemRand: an item's random number 0..1 (as exprItemRand in emit.comp): stable for the element
+// (seed) and the item, or a new one each frame
+func ItemRand(seed uint32, index int, perFrame bool, frame int) float64 {
+	n := seed ^ uint32(index)*2654435761
+	if perFrame {
+		n ^= uint32(frame)*40503 + 0x9e3779b9
+	}
+	return hash(n)
 }

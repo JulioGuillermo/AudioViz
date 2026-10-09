@@ -863,4 +863,5 @@ export const ES = {
   "has a mistake: the slider's value is used": 'tiene un error: se usa el valor del slider', 'Functions and constants': 'Funciones y constantes',
   "Your own constants ($name) and functions ($name(a, b) = …) for the advanced settings (expressions) of any property. A function's body can go on the lines under it, indented: let steps, ret(x) to give a result early, the last line its result.": 'Tus constantes ($nombre) y funciones ($nombre(a, b) = …) para la configuración avanzada (expresiones) de cualquier propiedad. El cuerpo de una función puede ir en las líneas de debajo, sangradas: pasos con let, ret(x) para devolver antes, y la última línea es su resultado.',
   'new constant: name': 'nueva constante: nombre', 'Apply': 'Aplicar', 'Line {n}': 'Línea {n}',
+  'Worked out per particle (the graph: one of them)': 'Se calcula por partícula (la gráfica: una de ellas)',
 };

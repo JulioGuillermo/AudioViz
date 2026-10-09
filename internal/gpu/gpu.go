@@ -72,7 +72,12 @@ const (
 	EmitHeaderWords  = 128
 	EmitBirthWords   = 10
 	MaxEmitBirths    = 4096 // births per emitter (older ones are left out)
-	EmitExtraWords   = 4096*2 + 256*3 + 240*240 + 1 + 3*256 // text points, path samples, collision grid, depth track
+	EmitExtraWords   = 4096*2 + 256*3 + 240*240 + 1 + 3*256 + EmitExprWords // text points, path samples, collision grid, depth track, expressions
+	// EmitExprWords: an emitter's expressions worked out per particle (their programs and tracks);
+	// EmitExprStack, EmitExprSlots: the most a program can use of each (exprRun in emit.comp)
+	EmitExprWords = 6144
+	EmitExprStack = 32
+	EmitExprSlots = 16
 )
 
 // EmitDataWords: size of the emitter data buffer for n emitters

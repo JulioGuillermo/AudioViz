@@ -202,7 +202,7 @@ export function ExprDialog() {
       <div class="mb">
         <${ExprEditor} value=${src} onInput=${setSrc} names=${d.names} err=${err} rows=${7} autofocus=${true} />
         <div class=${'xstat' + (err ? ' bad' : '')}>${err ? html`<${Icon} name="triangle-alert" size=${13} /> ${err.line >= 0 ? t('Line {n}', { n: err.line + 1 }) + ': ' : ''}${err.msg}`
-          : res ? html`<${Icon} name="check" size=${13} /> ${res.uses_value ? t('Uses the slider\'s value') : t('Doesn\'t use value: the slider has no effect')}${res.warn ? html` · <span class="xwarn">${t('Something impossible came up (a division by 0…): 0 there')}</span>` : ''}` : '…'}</div>
+          : res ? html`<${Icon} name="check" size=${13} /> ${res.uses_value ? t('Uses the slider\'s value') : t('Doesn\'t use value: the slider has no effect')}${res.per_item ? ' · ' + t('Worked out per particle (the graph: one of them)') : ''}${res.warn ? html` · <span class="xwarn">${t('Something impossible came up (a division by 0…): 0 there')}</span>` : ''}` : '…'}</div>
         <canvas ref=${cv} class="xgraph"></canvas>
       </div>
       <div class="mf">
