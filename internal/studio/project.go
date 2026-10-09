@@ -62,6 +62,15 @@ type ProjectJSON struct {
 	EmitterPresets map[string]map[string]any `json:"emitterPresets,omitempty"`
 	// Values of a new text (read-only for the UI; ignored when the project comes back)
 	TextDefaults map[string]any `json:"textDefaults,omitempty"`
+	// The song's lyrics (the lyrics track's file: its lines and words), changed by parts like
+	// the rest (collab.go writes them to the file; ignored by ProjectFromJSON)
+	Lyrics *LyricsJSON `json:"lyrics,omitempty"`
+}
+
+// LyricsJSON: the lyrics file's path and its lines
+type LyricsJSON struct {
+	Path  string     `json:"path"`
+	Lines []lineJSON `json:"lines"`
 }
 
 // toMap converts a config block into a map with the YAML keys
@@ -195,6 +204,13 @@ func ProjectToJSON(c *config.ProjectConfig) *ProjectJSON {
 	p.Texts = []map[string]any{}
 	for _, t := range c.Texts {
 		p.Texts = append(p.Texts, toMap(t))
+	}
+	p.Lyrics = &LyricsJSON{Lines: []lineJSON{}}
+	if len(c.Timeline.Lyrics) > 0 {
+		p.Lyrics.Path = c.Timeline.Lyrics[0].Cfg.Path
+		if ls, err := readLyricsJSON(p.Lyrics.Path); err == nil {
+			p.Lyrics.Lines = ls
+		}
 	}
 	return p
 }

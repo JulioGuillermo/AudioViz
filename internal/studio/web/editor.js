@@ -1,6 +1,7 @@
 import { html, useEffect, useLayoutEffect, useRef, useState } from './vendor/preact-htm.js';
 import { useStore } from './store.js';
 import { fmtTime } from './util.js';
+import { RemoteCursors } from './peers.js';
 import { Icon } from './icons.js';
 import { t } from './i18n.js';
 import { useFrameStream } from './frames.js';
@@ -45,7 +46,8 @@ const rot = (x, y, deg) => {
 };
 
 export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selClip, selEmit = false, onClip, inspector, onClose, marks = null, onKeys, kf = {},
-  tool: tool0 = 'select', selMask = null, editMask, onPainted, onNeedMask, selId, selClipIdx, selText, selTextIdx, onText, maskOwner = null, pathOwner = null, editPath, onPathNode, view = '' }) {
+  tool: tool0 = 'select', selMask = null, editMask, onPainted, onNeedMask, selId, selClipIdx, selText, selTextIdx, onText, maskOwner = null, pathOwner = null, editPath, onPathNode, view = '',
+  cursors = [], onPointer }) {
   const time = useStore(timeStore);
   const W = meta.width, H = meta.height;
   const viewRef = useRef();
@@ -144,6 +146,8 @@ export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selCli
   };
   const onPointerMove = (e) => {
     const p = toFrame(e.clientX, e.clientY);
+    // my pointer on the frame (0..1), for the others (as the preview's)
+    if (onPointer) onPointer({ area: 'preview', x: +(p.x / W).toFixed(4), y: +(p.y / H).toFixed(4) });
     setPen({ type: e.pointerType, pressure: e.pressure, tilt: [e.tiltX || 0, e.tiltY || 0], x: p.x, y: p.y });
     if (!pts.current.has(e.pointerId)) return;
     pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -251,6 +255,7 @@ export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selCli
           onPointerUp=${onPointerUp} onPointerCancel=${onPointerUp} onWheel=${onWheel}>
         ${v && html`<div class="ed-world" style=${world}>
           <canvas ref=${canvas} width=${Math.round(W / scale)} height=${Math.round(H / scale)}></canvas>
+          <${RemoteCursors} list=${cursors} place=${(c) => ({ x: c.x * W, y: c.y * H })} scale=${1 / v.z} rot=${v.r} />
           ${selText && tool === 'select' && textBoxOf(info.texts, selTextIdx) && html`<${TextHandles} text=${selText} box=${textBoxOf(info.texts, selTextIdx)}
             time=${time} meta=${meta} k=${1} hs=${1 / v.z} toFrame=${toFrame} onChange=${onText} />`}
           ${showClip && tool === 'select' && html`<${selEmit ? EmitterHandles : ClipHandles} clip=${selClip} time=${time} meta=${meta} k=${1} hs=${1 / v.z}

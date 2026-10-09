@@ -37,12 +37,14 @@ export function peerCursors(peers, cursors, area, me) {
   return out;
 }
 
-// RemoteCursors: arrows with names, placed by place(cursor) → {x, y} (px in their box)
-export function RemoteCursors({ list, place }) {
+// RemoteCursors: arrows with names, placed by place(cursor) → {x, y} (px in their box); scale:
+// their size there (a zoomed view: 1 / its zoom)
+export function RemoteCursors({ list, place, scale = 1, rot = 0 }) {
   return list.map(({ p, c }) => {
     const pos = place(c);
     if (!pos) return null;
-    return html`<div key=${p.id} class="rcursor" style=${{ left: pos.x + 'px', top: pos.y + 'px', '--c': p.color || '#888' }}>
+    const tf = scale !== 1 || rot ? { transform: `scale(${scale}) rotate(${-rot}deg)`, transformOrigin: '0 0' } : {};
+    return html`<div key=${p.id} class="rcursor" style=${{ left: pos.x + 'px', top: pos.y + 'px', '--c': p.color || '#888', ...tf }}>
       <svg width="14" height="18" viewBox="0 0 14 18"><path d="M1 1 L1 15 L5 11 L8 17 L10 16 L7 10 L13 10 Z" /></svg>
       <span>${p.name || t('Someone')}</span></div>`;
   });

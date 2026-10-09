@@ -362,6 +362,7 @@ func (s *Session) emitExprs(p *effects.EmitParams, c0, c *config.ClipConfig, e *
 			continue // a mistake, or worked out for the whole emitter (Animate)
 		}
 		value, _, _ := config.NumberAt(c, nil, 0, path)
+		color := prop >= effects.EmitColorProp
 		keys := make([]effects.EmitExprKey, len(prog.Keys))
 		for k, name := range prog.Keys {
 			if b := effects.PathBuiltin(name); b > 0 {
@@ -395,7 +396,12 @@ func (s *Session) emitExprs(p *effects.EmitParams, c0, c *config.ClipConfig, e *
 		case 7, 8: // degrees
 			mul = math.Pi / 180
 		}
-		p.Exprs = append(p.Exprs, effects.EmitExpr{Prop: prop, Prog: prog.Specialize(env, perItem), Mul: mul, Keys: keys})
+		q := prog.Specialize(env, perItem)
+		if color {
+			// a color: its value (the emitter's color) and its channel read per particle
+			q, mul = prog.SpecializeKeep(env, perItem, effects.EmitColorKeep), 1
+		}
+		p.Exprs = append(p.Exprs, effects.EmitExpr{Prop: prop, Prog: q, Mul: mul, Keys: keys})
 	}
 	p.Exprs = effects.FitEmitExprs(p.Exprs)
 }

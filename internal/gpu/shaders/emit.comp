@@ -167,7 +167,18 @@ float xL = 0.0;
 bool xclosed = false;
 vec2 xshift = vec2(0.0);
 float xSR = 0.0, xSP = 0.0;
-float xVar(int v) { return v == 6 ? float(xIndex) : (v == 7 ? float(xcount) : 0.0); }
+// (a color worked out channel by channel: the emitter's, as the expression's value)
+vec4 xBase = vec4(0.0);
+bool xColor = false;
+float xVar(int v) {
+    if (v == 6) return float(xIndex);
+    if (v == 7) return float(xcount);
+    if (!xColor) return 0.0;
+    if (v == 0) return xBase[clamp(xCh, 0, 3)];
+    if (v == 9) return float(xCh);
+    if (v >= 10 && v <= 13) return xBase[v - 10];
+    return 0.0;
+}
 bool xKey(int kind, uint tu, out float v) {
     v = 0.0;
     if (tu >= 0xFFFFFFF0u) {
@@ -185,9 +196,19 @@ bool xKey(int kind, uint tu, out float v) {
 }
 // runs expression d (its 6 words: property, code, length, consts, key table, multiplier) for item
 // index at sRoute / sPath along its route / path; nil gives 0 (as effects.particleExprs)
-float exprRun(int d, int index, float sRoute, float sPath, uint seed, uint frame) {
-    xIndex = index; xSR = sRoute; xSP = sPath; xSeed = seed; xFrame = frame; xCh = 0; xValA = 0.0;
-    return xRun(int(ed[d + 1]), int(ed[d + 2]), int(ed[d + 3]), int(ed[d + 4]));
+// a color (color: from the emitter's base) is worked out channel by channel (n = 4), a number
+// once (as effects.particleExprs); one call of the interpreter (the driver inlines it)
+vec4 exprRun(int d, int index, float sRoute, float sPath, uint seed, uint frame, bool color, vec4 base) {
+    xIndex = index; xSR = sRoute; xSP = sPath; xSeed = seed; xFrame = frame;
+    xColor = color; xBase = base; xValA = color ? base.a : 0.0;
+    vec4 o = vec4(0.0);
+    int n = color ? 4 : 1;
+    for (int c = 0; c < n; c++) {
+        xCh = c;
+        o[c] = xRun(int(ed[d + 1]), int(ed[d + 2]), int(ed[d + 3]), int(ed[d + 4]));
+    }
+    xColor = false;
+    return o;
 }
 
 void splatPhase() {
@@ -245,8 +266,15 @@ void splatPhase() {
         int np = int(ed[xb - 1]);
         for (int q = 0; q < np; q++) {
             int d = xb - 1 + 1 + 6 * q;
-            float v = exprRun(d, i, sR, sPa, seed, frame) * edf(d + 5);
             int prop = int(ed[d]);
+            bool isCol = prop >= 9; // a color of its own: birth, middle, end
+            vec4 r = exprRun(d, i, sR, sPa, seed, frame, isCol, prop == 9 ? c0 : prop == 10 ? c1 : c2);
+            if (isCol) {
+                r = clamp(r, 0.0, 1.0);
+                if (prop == 9) c0 = r; else if (prop == 10) c1 = r; else c2 = r;
+                continue;
+            }
+            float v = r.x * edf(d + 5);
             if (prop == 0) sp.x = v;
             else if (prop == 1) ph.w = v;
             else if (prop == 2) lf.y = v;

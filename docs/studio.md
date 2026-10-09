@@ -25,11 +25,17 @@ one wins.
 
 - **Who is here**: their initials in the top bar (🤖 an agent). Click yours to set your name (asked
   the first time).
-- **Their cursors** on the preview and the timeline, with their names; the arrow button next to
-  the initials hides or shows them.
+- **Their cursors** on the preview, the timeline and the editor (E), with their names; the arrow
+  button next to the initials hides or shows them.
 - **What they have selected**: a dot of their color next to that row of the timeline (an agent's:
   where it changed something last).
 - **Undo** (Ctrl+Z) undoes only your own changes.
+- **What agents changed** (*🤖 N to review* in the top bar): each change in words (*Text 1 ·
+  color → #ff0000*; clicking a line selects what it touched), to **accept** or **undo** — only
+  that change: what came after it stays (it warns if someone changed the same since). Accept all
+  / undo all, and *reviewed too* to see the ones already done.
+- The **lyrics** change by parts too: a word or a line at a time, everyone at once, without
+  overwriting each other.
 - What you hide or fold on the timeline is yours alone (it stays in this browser).
 
 ### Chat

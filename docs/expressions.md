@@ -89,6 +89,12 @@ its own speed:
         emitter.speed: value * (0.6 + rand() * 0.8)
 ```
 
+Its **colors** (at birth, halfway, at the end: `emitter.color_start`, `color_mid`, `color_end`)
+too, channel by channel (see *Colors* below; `value` is the emitter's color): e.g. each spark its
+own hue, turning with the song — `emitter.color_start: hsv(index * 47 + time * 90, 1, 1)`; some
+of them bluish — `emitter.color_mid: mix(value, rgb(0.2, 0.4, 1), rand())`. (The *flame* look
+makes its own colors from how hot it is: there the particles' colors don't show.)
+
 ## Per letter
 
 A fixed text's **size, rotation, position_x and position_y** can change per letter: an

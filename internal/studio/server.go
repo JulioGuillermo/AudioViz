@@ -137,6 +137,8 @@ func Run(opt Options, ready func(url string)) error {
 	mux.HandleFunc("POST /api/project/ops", s.hOps)
 	mux.HandleFunc("GET /api/project/ops", s.hOpsSince)
 	mux.HandleFunc("POST /api/presence", s.hPresence)
+	mux.HandleFunc("GET /api/project/changes", s.hChanges)
+	mux.HandleFunc("POST /api/project/review", s.hReview)
 	mux.HandleFunc("GET /api/chat", s.hChat)
 	mux.HandleFunc("POST /api/chat", s.hChatPost)
 	mux.HandleFunc("POST /api/chat/edit", s.hChatEdit)
@@ -478,25 +480,33 @@ func (s *Server) lyricsPath() (string, float64) {
 
 func (s *Server) hGetLyrics(w http.ResponseWriter, r *http.Request) {
 	path, _ := s.lyricsPath()
-	if path == "" {
-		writeJSON(w, map[string]any{"path": "", "lines": []lineJSON{}})
-		return
-	}
-	// Times are shown without the offset (the offset is applied when rendering)
-	lines, err := lyrics.Load(path, 0)
+	lines, err := readLyricsJSON(path)
 	if err != nil {
 		fail(w, 400, err)
 		return
 	}
+	writeJSON(w, map[string]any{"path": path, "lines": lines})
+}
+
+// readLyricsJSON: the lines of a lyrics file (times without the offset: it is applied when
+// rendering); none without a file
+func readLyricsJSON(path string) ([]lineJSON, error) {
 	out := []lineJSON{}
+	if path == "" {
+		return out, nil
+	}
+	lines, err := lyrics.Load(path, 0)
+	if err != nil {
+		return out, err
+	}
 	for _, l := range lines {
-		lj := lineJSON{Start: l.Start, End: l.End}
+		lj := lineJSON{Start: l.Start, End: l.End, Words: []wordJSON{}}
 		for _, wd := range l.Words {
 			lj.Words = append(lj.Words, wordJSON{wd.Text, wd.Start, wd.End})
 		}
 		out = append(out, lj)
 	}
-	writeJSON(w, map[string]any{"path": path, "lines": out})
+	return out, nil
 }
 
 func lrcTime(t float64) string {
@@ -505,7 +515,8 @@ func lrcTime(t float64) string {
 	return fmt.Sprintf("%02d:%05.2f", m, t-float64(m)*60)
 }
 
-// hPutLyrics saves the edited lyrics as LRC with per-word timing
+// hPutLyrics: the lyrics all at once (lines, and maybe another file: path): as a change of the
+// project's (its /lyrics: written to the .lrc, sent to everyone; collab.go)
 func (s *Server) hPutLyrics(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Lines []lineJSON `json:"lines"`
@@ -515,22 +526,34 @@ func (s *Server) hPutLyrics(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, err)
 		return
 	}
-	path, _ := s.lyricsPath()
+	if req.Lines == nil {
+		req.Lines = []lineJSON{}
+	}
+	var lines any = req.Lines
+	b, _ := json.Marshal(lines)
+	_ = json.Unmarshal(b, &lines)
+	ops := []jsonOp{{Op: "set", Path: "/lyrics/lines", Value: lines}}
 	if req.Path != "" {
-		path = req.Path
+		ops = append([]jsonOp{{Op: "set", Path: "/tracks/lyrics/0/cfg/path", Value: req.Path}}, ops...)
 	}
-	if path == "" {
-		s.mu.Lock()
-		path = filepath.Join(filepath.Dir(s.projPath), "lyrics.lrc")
-		s.mu.Unlock()
+	client := r.URL.Query().Get("client")
+	if client == "" {
+		client = "lyrics"
 	}
-	if !strings.HasSuffix(strings.ToLower(path), ".lrc") {
-		path = strings.TrimSuffix(path, filepath.Ext(path)) + ".lrc"
+	if _, err := s.applyOps("", -1, ops, client, "", s.peerName(client), false); err != nil {
+		fail(w, 400, err)
+		return
 	}
-	sort.Slice(req.Lines, func(i, j int) bool { return req.Lines[i].Start < req.Lines[j].Start })
+	path, _ := s.lyricsPath()
+	writeJSON(w, map[string]any{"path": path})
+}
+
+// writeLRC: the lines as an LRC file with per-word timing
+func writeLRC(path string, lines []lineJSON) error {
+	sort.Slice(lines, func(i, j int) bool { return lines[i].Start < lines[j].Start })
 	var b bytes.Buffer
 	b.WriteString("[re:audioviz studio]\n")
-	for _, l := range req.Lines {
+	for _, l := range lines {
 		if len(l.Words) == 0 {
 			continue
 		}
@@ -548,25 +571,7 @@ func (s *Server) hPutLyrics(w http.ResponseWriter, r *http.Request) {
 		}
 		fmt.Fprintf(&b, " <%s>\n", lrcTime(l.Words[len(l.Words)-1].End))
 	}
-	if err := os.WriteFile(path, b.Bytes(), 0644); err != nil {
-		fail(w, 500, err)
-		return
-	}
-	// the session reads them again; the other studios too
-	s.mu.Lock()
-	sess, cfg := s.sess, s.cfg
-	s.mu.Unlock()
-	if sess != nil && cfg != nil {
-		s.renderMu.Lock()
-		err := sess.Update(cfg)
-		s.renderMu.Unlock()
-		if err != nil {
-			fail(w, 500, err)
-			return
-		}
-	}
-	s.hub.send("lyrics", map[string]any{"client": r.URL.Query().Get("client"), "path": path})
-	writeJSON(w, map[string]any{"path": path})
+	return os.WriteFile(path, b.Bytes(), 0644)
 }
 
 // ---------------------------------------------------------------- preview

@@ -25,6 +25,7 @@ import { createScrubber } from './scrub.js';
 import { diff, applyOps, transformPair, deepEqual, me as whoAmI, saveMe } from './collab.js';
 import { PeersBar, RemoteCursors, peerCursors, peerMarks } from './peers.js';
 import { ChatPanel, chatStore, loadChat, chatEvent, unreadCount, notifyMsg } from './chat.js';
+import { AgentChanges } from './review.js';
 
 // ------------------------------------------------------------------ preview
 
@@ -473,6 +474,8 @@ function LangSelect() {
   return html`<span class="lang"><${Select} cls="" value=${lang} options=${LANGS} translate=${false} onChange=${setLang} title=${t('Interface language')} /></span>`;
 }
 
+const NO_LYRICS = { lines: [], path: '' };
+
 function App() {
   useStore(langStore); // re-render everything when the language changes
   const [st, setSt] = useState(null);
@@ -480,7 +483,8 @@ function App() {
   useEffect(() => { exprLib.set((proj && proj.expressions) || {}); }, [proj && proj.expressions]);
   const [meta, setMeta] = useState(null);
   const [ana, setAna] = useState(null);
-  const [lyr, setLyr] = useState({ lines: [], path: '' });
+  // the song's lyrics: part of the project (its /lyrics: changed by parts like the rest, collab.js)
+  const lyr = (proj && proj.lyrics) || NO_LYRICS;
   const [lyrSave, setLyrSave] = useState('');
   const [sel, setSel] = useState({ kind: 'track', track: 'visualizer', seg: 0 });
   const [lineSel, setLineSel] = useState([]);
@@ -563,10 +567,10 @@ function App() {
   // released; changes less than 0.6 s apart, like moving a slider, merge into one). 32 steps.
   const hist = useRef({ past: [], future: [], cur: null, at: 0 });
   const [, setHistTick] = useState(0);
-  const histBase = () => { if (!hist.current.cur) hist.current.cur = { proj: projRef.current, lyr: lyrRef.current }; };
+  const histBase = () => { if (!hist.current.cur) hist.current.cur = { proj: projRef.current, lyr: null }; };
   const record = () => {
     const h = hist.current;
-    const snap = { proj: projRef.current, lyr: lyrRef.current };
+    const snap = { proj: projRef.current, lyr: null };
     if (!h.cur) { h.cur = snap; return; }
     if (snap.proj === h.cur.proj && snap.lyr === h.cur.lyr) return;
     // an entry: what changed (and back), and the lyrics before / after
@@ -620,15 +624,8 @@ function App() {
       setAna({ ...a, bass: b64u8(a.bass), mid: b64u8(a.mid), treble: b64u8(a.treble), rms: b64u8(a.rms), wave: b64u8(a.wave), stems: st });
     } catch (e) { showErr(e); }
   };
-  const loadLyrics = async () => {
-    let l;
-    try { l = await api('GET', '/api/lyrics'); } catch (e) { l = { lines: [], path: '' }; showErr(e); }
-    lyrRef.current = l;
-    setLyr(l);
-    setLineSel([]);
-    // A (re)loaded file is the current state, not a change of its own
-    if (hist.current.cur) hist.current.cur = { ...hist.current.cur, lyr: l };
-  };
+  // (the lyrics come with the project: another file only clears the lines selected)
+  const loadLyrics = () => { setLineSel([]); };
   const loadAudio = (p) => {
     const a = audio.current;
     const src = p.audio.path ? '/api/media?path=' + encodeURIComponent(p.audio.path) : '';
@@ -664,6 +661,8 @@ function App() {
   };
 
   useEffect(() => { sendPresence({ sel }); }, [sel]);
+
+  const [agentRev, setAgentRev] = useState(0); // the agents' changes to review changed
 
   // --- the project's chat (chat.js)
   const [chatOpen, setChatOpen] = useState(false);
@@ -809,11 +808,11 @@ function App() {
         setJob(msg.data);
         if (msg.data.kind === 'lyrics' && msg.data.status === 'done') onLyricsGenerated(msg.data.output);
       }
-      if (msg.type === 'ops') receive(msg.data);
+      if (msg.type === 'ops') { receive(msg.data); if (msg.data.agent || msg.data.reverts) setAgentRev((x) => x + 1); }
+      if (msg.type === 'changes') setAgentRev((x) => x + 1);
       if (msg.type === 'chat' || msg.type === 'typing') chatEvent(msg.type, msg.data, meRef.current, notifyMsg);
       if (msg.type === 'presence') setPeers(msg.data || []);
       if (msg.type === 'cursor' && msg.data.id !== meRef.current.id) setCursors((c) => ({ ...c, [msg.data.id]: { ...msg.data, at: Date.now() } }));
-      if (msg.type === 'lyrics' && msg.data.client !== meRef.current.id) loadLyrics();
       // an agent opened a project, or someone saved all of it at once: taken again
       if (msg.type === 'project' && msg.data && msg.data.kind === 'opened') loadAll().catch(showErr);
       if (msg.type === 'project' && msg.data && msg.data.kind === 'reload') resyncProject().catch(showErr);
@@ -853,19 +852,14 @@ function App() {
     projRef.current = np;
     setProj(np);
     flushRef.current();
-    if (lyrTo && lyrTo !== lyrRef.current) {
-      lyrRef.current = lyrTo;
-      setLyr(lyrTo);
-      lyrSaveRef.current();
-    }
-    hist.current.cur = { proj: np, lyr: lyrRef.current };
+    hist.current.cur = { proj: np, lyr: null };
     // Keep the selection valid
     setSel((s) => {
       if (s.kind === 'track') { const n = np.tracks[s.track].length; return s.seg >= n ? { ...s, seg: n - 1 } : s; }
       if (s.kind === 'text') return s.i >= np.texts.length ? { ...s, i: np.texts.length - 1 } : s;
       return s;
     });
-    setLineSel((ls) => ls.filter((i) => i < lyrRef.current.lines.length));
+    setLineSel((ls) => ls.filter((i) => i < ((np.lyrics && np.lyrics.lines.length) || 0)));
   };
   const undo = () => {
     const h = hist.current;
@@ -894,23 +888,16 @@ function App() {
     if (h.cur) h.cur = { ...h.cur, proj: applyOps(h.cur.proj, ops) };
   };
 
-  // --- saving the lyrics (edits on the timeline / inspector are saved automatically)
-  const lyrSaveRef = useRef(debounce(async () => {
-    setLyrSave('saving');
-    try {
-      // (the session reads them again; the other studios too)
-      await api('PUT', '/api/lyrics?client=' + meRef.current.id, { lines: lyrRef.current.lines, path: lyrRef.current.path });
-      setLyrSave('saved');
-      setRev((x) => x + 1);
-    } catch (e) { setLyrSave('error'); showErr(e); }
-  }, 600));
+  // --- the lyrics: a change of the project's (its /lyrics), sent by parts like any other; save =
+  // false: a drag, shown now and sent (and recorded) when released (onLyricsCommit)
   const editLyrics = (fn, save = true) => {
+    const ed = (p) => { p.lyrics = p.lyrics || { lines: [], path: '' }; fn(p.lyrics.lines); };
+    if (save) { update(ed); return; }
     histBase();
-    const n = clone(lyrRef.current);
-    fn(n.lines);
-    lyrRef.current = n;
-    setLyr(n);
-    if (save) { lyrSaveRef.current(); record(); } // save = false: a drag, recorded when released
+    const p = clone(projRef.current);
+    ed(p);
+    projRef.current = p;
+    setProj(p);
   };
 
   // --- transport
@@ -1587,6 +1574,8 @@ function App() {
       <span class="projname" title=${meta.path}>${meta.name}</span>
       <span class=${'save' + (save.kind === 'error' ? ' err' : '')}>${saveText && html`<${Icon} name=${save.kind === 'error' ? 'triangle-alert' : save.kind === 'saving' ? 'loader-circle' : 'check'} size=${13} />`}${saveText}</span>
       <span class="spacer"></span>
+      <${AgentChanges} me=${meRef.current} proj=${proj} rev=${agentRev} labelOf=${(id) => t(trackById[id] ? trackById[id].label : id)}
+        onSelect=${setSel} showErr=${showErr} />
       <${PeersBar} peers=${peers} me=${meRef.current} show=${showCursors} setShow=${setShowCursors} onRename=${renameMe} />
       <button class=${'btn icon ghost chatbtn' + (chatOpen ? ' on' : '')} title=${t('Chat of the project')} onClick=${() => setChatOpen(!chatOpen)}>
         <${Icon} name="message-square" size=${16} />${(() => { const n = unreadCount(chatState.msgs, meRef.current, meta.path); return n > 0 && !chatOpen ? html`<i class="cbadge">${n > 99 ? '99+' : n}</i>` : null; })()}</button>
@@ -1698,8 +1687,9 @@ function App() {
       layers=${layersFF} onSelectLayer=${selectLayer} onMoveClip=${onMoveClip} onAddClip=${(id, tt) => ctx.addClip(id, tt)} onAddLayer=${(tt) => ctx.addLayer(tt)}
       onKeys=${onKeys}
       onSelectLine=${selectLine} onLyrics=${(lines) => editLyrics((all) => { all.splice(0, all.length, ...lines); }, false)}
-      onLyricsCommit=${() => { lyrSaveRef.current(); record(); }} />
+      onLyricsCommit=${() => update(() => {})} />
     ${editor && html`<${Editor} meta=${meta} timeStore=${timeStore} playing=${playing} setPlaying=${setPlaying} seek=${seek} rev=${rev}
+      cursors=${showCursors ? peerCursors(peers, cursors, 'preview', meRef.current) : []} onPointer=${(c) => sendPresence({ cursor: c })}
       selClip=${selClip} selEmit=${selEmit} inspector=${inspector} onClose=${() => { setEditor(false); setEditorTool('select'); setPathWhat('motion'); }} marks=${editorMarks} onKeys=${onKeys} kf=${{ focus: kfFocus, setFocus: setKfFocus, sel: kfSel, setSel: setKfSel }}
       tool=${editorTool} selMask=${selMask} onNeedMask=${needMask} selId=${sel.id} selClipIdx=${sel.clip}
       maskOwner=${maskOwner} pathOwner=${pathOwner} editPath=${(fn) => pathOwner && pathOwner.edit((o) => (pathOwner.route ? setRoute : setPath)(o, fn))} onPathNode=${setPathNodeI} view=${previewView} editMask=${(fn) => maskOwner && maskOwner.edit((o) => { const tt = timeStore.get();

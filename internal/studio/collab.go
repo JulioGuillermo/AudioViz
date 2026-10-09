@@ -36,6 +36,14 @@ type opBatch struct {
 	Client string   `json:"client"`
 	ID     string   `json:"id,omitempty"`
 	Name   string   `json:"name,omitempty"`
+	// when; by an agent (MCP); what undoes it (on the project as it was right after it); whether
+	// it was reviewed: "accepted" or "reverted" (agents' changes: review.go)
+	Time   int64    `json:"t,omitempty"`
+	Agent  bool     `json:"agent,omitempty"`
+	Inv    []jsonOp `json:"inv,omitempty"`
+	Status string   `json:"status,omitempty"`
+	// a revert: the batch it undid
+	Reverts int `json:"reverts,omitempty"`
 }
 
 // errStale: the client is too far behind (or its project is another): it must take the project
@@ -98,6 +106,11 @@ func (s *Server) collabReset() {
 // applyOps applies a client's operations made on version base. strict: all of them or none (an
 // agent's edit); else the ones whose place is gone (someone removed it meanwhile) are left out.
 func (s *Server) applyOps(epoch string, base int, ops []jsonOp, client, id, name string, strict bool) (*opBatch, error) {
+	return s.applyOpsR(epoch, base, ops, client, id, name, strict, 0)
+}
+
+// applyOpsR: applyOps; reverts: the batch these operations undo (0: none)
+func (s *Server) applyOpsR(epoch string, base int, ops []jsonOp, client, id, name string, strict bool, reverts int) (*opBatch, error) {
 	c := s.collab
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -140,9 +153,10 @@ func (s *Server) applyOps(epoch string, base int, ops []jsonOp, client, id, name
 	}
 	// on a copy: kept only if the whole project is still valid
 	var root any = cloneJSON(c.proj)
-	var done []jsonOp
+	var done, inv []jsonOp
 	for i, o := range todo {
 		o = resolveOp(root, o)
+		undo := inverseOp(root, o)
 		next, err := ptrApply(root, o.Op, o.Path, cloneJSON(o.Value))
 		if err != nil {
 			if strict {
@@ -152,9 +166,22 @@ func (s *Server) applyOps(epoch string, base int, ops []jsonOp, client, id, name
 		}
 		root = next
 		done = append(done, o)
+		inv = append([]jsonOp{undo}, inv...)
 	}
 	if len(done) == 0 {
 		return &opBatch{V: c.ver, Client: client, ID: id}, nil
+	}
+	// the lyrics changed: written to their file (the session reads them from it)
+	if slices.ContainsFunc(done, func(o jsonOp) bool { return o.Path == "/lyrics" || strings.HasPrefix(o.Path, "/lyrics/") }) {
+		extra, err := writeLyricsOf(root, filepath.Dir(path))
+		if err != nil {
+			return nil, err
+		}
+		for _, o := range extra {
+			if root, err = ptrApply(root, o.Op, o.Path, o.Value); err == nil {
+				done = append(done, o)
+			}
+		}
 	}
 	b, _ := json.Marshal(root)
 	var pj ProjectJSON
@@ -187,6 +214,12 @@ func (s *Server) applyOps(epoch string, base int, ops []jsonOp, client, id, name
 	// the project as it is now (its values filled in): the operations carry those values, so
 	// that every copy ends the same
 	c.proj = projectMap(ProjectToJSON(cfg))
+	// the lyrics read again from another file, or with other lines than were sent (a line
+	// without words is not kept): sent whole as they are now (else each operation carries its
+	// value as the file keeps it, below)
+	if lyricsShape(c.proj) != lyricsShape(rootMap(root)) {
+		done = append(done, jsonOp{Op: "set", Path: "/lyrics"})
+	}
 	for i, o := range done {
 		if o.Op == "remove" {
 			continue
@@ -199,13 +232,86 @@ func (s *Server) applyOps(epoch string, base int, ops []jsonOp, client, id, name
 		}
 	}
 	c.ver++
-	bt := opBatch{V: c.ver, Ops: done, Client: client, ID: id, Name: name}
+	bt := opBatch{V: c.ver, Ops: done, Client: client, ID: id, Name: name, Time: time.Now().UnixMilli(), Inv: inv,
+		Agent: s.isAgent(client), Reverts: reverts}
 	c.log = append(c.log, bt)
 	if len(c.log) > collabLog {
 		c.log = c.log[len(c.log)-collabLog:]
 	}
 	s.hub.send("ops", bt)
 	return &bt, nil
+}
+
+// inverseOp: what undoes o on root (before o is applied)
+func inverseOp(root any, o jsonOp) jsonOp {
+	old, err := ptrGet(root, o.Path)
+	switch o.Op {
+	case "insert":
+		return jsonOp{Op: "remove", Path: o.Path}
+	case "remove":
+		ts, _ := ptrTokens(o.Path)
+		if len(ts) > 0 {
+			if _, e := strconv.Atoi(ts[len(ts)-1]); e == nil {
+				if parent, e := ptrGet(root, "/"+strings.Join(escTokens(ts[:len(ts)-1]), "/")); e == nil {
+					if _, isList := parent.([]any); isList {
+						return jsonOp{Op: "insert", Path: o.Path, Value: cloneJSON(old)}
+					}
+				}
+			}
+		}
+		return jsonOp{Op: "set", Path: o.Path, Value: cloneJSON(old)}
+	}
+	if err != nil {
+		return jsonOp{Op: "remove", Path: o.Path} // (it was not there)
+	}
+	return jsonOp{Op: "set", Path: o.Path, Value: cloneJSON(old)}
+}
+
+// isAgent: whether a client is an agent (MCP)
+func (s *Server) isAgent(id string) bool {
+	c := s.collab
+	c.pmu.Lock()
+	defer c.pmu.Unlock()
+	p := c.peers[id]
+	return p != nil && p.Agent
+}
+
+// lyricsShape: the lyrics' file and how many lines
+func lyricsShape(m map[string]any) string {
+	l, _ := m["lyrics"].(map[string]any)
+	lines, _ := l["lines"].([]any)
+	return fmt.Sprint(l["path"], "|", len(lines))
+}
+
+func rootMap(v any) map[string]any {
+	m, _ := v.(map[string]any)
+	return m
+}
+
+// writeLyricsOf: the project's /lyrics written to the lyrics track's file (dir/lyrics.lrc when it
+// has none: the operation that sets the track's path to it is returned)
+func writeLyricsOf(root any, dir string) ([]jsonOp, error) {
+	lv, err := ptrGet(root, "/lyrics/lines")
+	if err != nil {
+		return nil, nil
+	}
+	b, _ := json.Marshal(lv)
+	var lines []lineJSON
+	if err := json.Unmarshal(b, &lines); err != nil {
+		return nil, fmt.Errorf("lyrics: %w", err)
+	}
+	var extra []jsonOp
+	p, _ := ptrGet(root, "/tracks/lyrics/0/cfg/path")
+	path, _ := p.(string)
+	if path == "" {
+		path = filepath.Join(dir, "lyrics.lrc")
+		extra = append(extra, jsonOp{Op: "set", Path: "/tracks/lyrics/0/cfg/path", Value: path})
+	}
+	if !strings.HasSuffix(strings.ToLower(path), ".lrc") {
+		path = strings.TrimSuffix(path, filepath.Ext(path)) + ".lrc"
+		extra = append(extra, jsonOp{Op: "set", Path: "/tracks/lyrics/0/cfg/path", Value: path})
+	}
+	return extra, writeLRC(path, lines)
 }
 
 func cloneJSON(v any) any {

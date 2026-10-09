@@ -394,7 +394,7 @@ func (e *EmitFrame) At(i int) (Particle, bool) {
 	}
 	r := func(j uint32) float32 { return rnd(p.Seed, i, j) }
 	// its own values (expressions per particle), else the emitter's
-	pp := partParams{p.Speed, p.Life, p.Size, p.SizeEnd, p.Gravity, p.Wind, p.Turb, p.Dir, p.Spread}
+	pp := partParams{p.Speed, p.Life, p.Size, p.SizeEnd, p.Gravity, p.Wind, p.Turb, p.Dir, p.Spread, p.Col}
 	if len(p.Exprs) > 0 {
 		e.particleExprs(&pp, i, bt, r)
 	}
@@ -554,10 +554,10 @@ func (e *EmitFrame) At(i int) (Particle, bool) {
 	size := (float32(pp.Size) + (float32(pp.SizeEnd)-float32(pp.Size))*u) * (1 + float32(p.SizeVar)*(2*r(9)-1)) * float32(bt.Size)
 	// color over the life, faded in and out
 	var c [4]float32
-	c0, c1 := p.Col[0], p.Col[1]
+	c0, c1 := pp.Col[0], pp.Col[1]
 	f := u * 2
 	if u >= 0.5 {
-		c0, c1, f = p.Col[1], p.Col[2], (u-0.5)*2
+		c0, c1, f = pp.Col[1], pp.Col[2], (u-0.5)*2
 	}
 	for j := range c {
 		c[j] = float32(c0[j]) + (float32(c1[j])-float32(c0[j]))*f
@@ -1182,7 +1182,18 @@ func zPlaneAt(acc, zacc []uint32, GW, GH, div, x, y int) float32 {
 // EmitExprProps: the emitter's properties an expression can give per particle (their paths in
 // the config), in the order emit.comp numbers them
 var EmitExprProps = []string{"emitter.speed", "emitter.life", "emitter.size", "emitter.size_end", "emitter.gravity",
-	"emitter.wind", "emitter.turbulence", "emitter.direction", "emitter.spread"}
+	"emitter.wind", "emitter.turbulence", "emitter.direction", "emitter.spread",
+	"emitter.color_start", "emitter.color_mid", "emitter.color_end"}
+
+// EmitColorProp: the first of EmitExprProps that are colors (birth, middle, end: worked out channel
+// by channel, from the emitter's)
+const EmitColorProp = 9
+
+// EmitColorKeep: the variables a particle's color expression reads per particle
+func EmitColorKeep(v int) bool {
+	return v == expr.VarIndex || v == expr.VarCount || v == expr.VarValue || v == expr.VarChannel ||
+		(v >= expr.VarValueR && v <= expr.VarValueA)
+}
 
 // EmitExpr: an expression worked out per particle: its property (EmitExprProps), its program
 // specialized for the frame, what turns its result into the params' units (the clip's scale,
@@ -1241,6 +1252,7 @@ func PathBuiltinAt(b int, pp []float32, L float32, closed bool, s, dx, dy float3
 // partParams: the params a particle can have of its own
 type partParams struct {
 	Speed, Life, Size, SizeEnd, Gravity, Wind, Turb, Dir, Spread float64
+	Col                                                         [3][4]float64 // birth, middle, end
 }
 
 func (pp *partParams) set(prop int, v float64) {
@@ -1284,6 +1296,22 @@ func (e *EmitFrame) particleExprs(pp *partParams, i int, bt Birth, r func(uint32
 	for k := range p.Exprs {
 		x := &p.Exprs[k]
 		env.keys, env.prog = x.Keys, x.Prog
+		if c := x.Prop - EmitColorProp; c >= 0 && c < 3 {
+			// a color: channel by channel, from the emitter's (as exprColor in emit.comp)
+			base := p.Col[c]
+			env.base = &base
+			for ch := 0; ch < 4; ch++ {
+				env.ch = ch
+				res := x.Prog.Run(env)
+				v := 0.0
+				if !res.Nil {
+					v = max(0, min(1, res.V))
+				}
+				pp.Col[c][ch] = v
+			}
+			env.base = nil
+			continue
+		}
 		res := x.Prog.Run(env)
 		v := res.V
 		if res.Nil {
@@ -1303,6 +1331,8 @@ type particleEnv struct {
 	W, H           int
 	keys           []EmitExprKey
 	prog           *expr.Program
+	base           *[4]float64 // a color worked out: the emitter's, the channel now
+	ch             int
 }
 
 func (e *particleEnv) Var(v int) float64 {
@@ -1311,6 +1341,16 @@ func (e *particleEnv) Var(v int) float64 {
 		return float64(e.i)
 	case expr.VarCount:
 		return float64(max(e.p.Count, 1))
+	}
+	if e.base != nil {
+		switch v {
+		case expr.VarValue:
+			return e.base[e.ch]
+		case expr.VarChannel:
+			return float64(e.ch)
+		case expr.VarValueR, expr.VarValueG, expr.VarValueB, expr.VarValueA:
+			return e.base[v-expr.VarValueR]
+		}
 	}
 	return 0
 }

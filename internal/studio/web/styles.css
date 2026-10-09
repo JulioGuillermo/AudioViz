@@ -728,3 +728,24 @@ a.btn { text-decoration: none; }
   padding: 3px 0; min-width: 160px; box-shadow: 0 6px 18px rgba(0,0,0,.4); }
 .cat div { padding: 4px 10px; font-size: 13px; cursor: pointer; }
 .cat div:hover { background: var(--surface-3, #2a2c33); }
+
+/* reviewing the agents' changes */
+.agentchg { position: relative; margin-right: 6px; }
+.agentchg .btn.warn { background: color-mix(in srgb, #a78bfa 30%, transparent); border-color: #a78bfa; }
+.agpanel { position: absolute; top: calc(100% + 6px); right: 0; width: 380px; max-height: 70vh; display: flex; flex-direction: column; z-index: 70;
+  background: var(--surface-1, #17181c); border: 1px solid var(--border, #2a2c33); border-radius: 8px; box-shadow: 0 10px 30px rgba(0,0,0,.45); }
+.agh { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border, #2a2c33); font-size: 13px; }
+.agh label { font-size: 11.5px; display: flex; align-items: center; gap: 4px; }
+.agall { display: flex; gap: 6px; padding: 8px 10px 0; }
+.aglist { overflow-y: auto; padding: 8px 10px; display: flex; flex-direction: column; gap: 8px; }
+.agitem { border: 1px solid var(--border, #2a2c33); border-radius: 6px; padding: 7px 9px; font-size: 12.5px; }
+.agitem.done { opacity: .6; }
+.agmeta { display: flex; gap: 8px; align-items: baseline; }
+.agmeta .faint { font-size: 11px; }
+.agst { margin-left: auto; font-size: 10.5px; padding: 0 6px; border-radius: 3px; background: var(--surface-3, #2a2c33); }
+.agst.accepted { color: #22c55e; } .agst.reverted { color: #f97316; }
+.agitem ul { margin: 5px 0 0; padding-left: 16px; }
+.agitem li { cursor: pointer; margin: 1px 0; word-break: break-word; }
+.agitem li:hover { color: var(--accent); }
+.agwarn { margin-top: 5px; font-size: 11.5px; color: #eab308; display: flex; gap: 4px; align-items: center; }
+.agbtns { display: flex; gap: 6px; margin-top: 6px; }
