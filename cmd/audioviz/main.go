@@ -263,6 +263,7 @@ func runStudio(args []string) {
 	addr := fs.String("addr", "127.0.0.1:8787", "Listen address (use 0.0.0.0:8787 to open it from another machine on the network)")
 	noOpen := fs.Bool("no-open", false, "Do not open the browser automatically")
 	workspace := fs.String("workspace", "", "Folder holding the projects (default ~/AudioViz)")
+	mcpToken := fs.String("mcp-token", os.Getenv("AUDIOVIZ_MCP_TOKEN"), "Token agents must send to the MCP server (/mcp, /sse); default $AUDIOVIZ_MCP_TOKEN")
 	// The project may come before or after the options
 	var project string
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -272,8 +273,12 @@ func runStudio(args []string) {
 	if project == "" && fs.NArg() > 0 {
 		project = fs.Arg(0)
 	}
-	err := studio.Run(studio.Options{Addr: *addr, Project: project, Workspace: *workspace, Version: version}, func(url string) {
+	err := studio.Run(studio.Options{Addr: *addr, Project: project, Workspace: *workspace, Version: version, MCPToken: *mcpToken}, func(url string) {
 		fmt.Printf("🎛️  AudioViz Studio at %s  (Ctrl+C to quit)\n", url)
+		fmt.Printf("🤖 MCP server for agents: %s/mcp (Streamable HTTP), %s/sse (SSE)\n", url, url)
+		if *mcpToken == "" && !strings.HasPrefix(*addr, "127.") && !strings.HasPrefix(*addr, "localhost") {
+			fmt.Println("⚠️  Open to the network without an MCP token: anyone who reaches it can drive the studio (use --mcp-token)")
+		}
 		if !*noOpen {
 			openBrowser(url) // per system: open_*.go
 		}
@@ -288,7 +293,7 @@ func printHelp() {
 	fmt.Printf(`AudioViz - Audio-Reactive Music Video Generator
 Usage:
   audioviz [path_to_project.yaml] [options]
-  audioviz studio [project] [--addr 127.0.0.1:8787] [--no-open]   # GUI
+  audioviz studio [project] [--addr 127.0.0.1:8787] [--no-open] [--mcp-token T]   # GUI (+ MCP server at /mcp)
   audioviz lyrics <audio> [lyrics.txt] [-o lyrics.lrc] [--lang en] [--fast]   # synced lyrics (transcribed if no .txt)
 
 Examples:

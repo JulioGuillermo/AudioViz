@@ -19,6 +19,7 @@ and lossless FLAC audio inside an MP4.
 ## Audio and reactivity
 - [Audio](audio.md) — formats, volume, sensitivity
 - [Expressions](expressions.md) — advanced settings: any property from a formula (audio, time, path values, your own functions)
+- [Agents (MCP server)](mcp.md) — let an AI agent (Claude Code, Claude Desktop…) drive the studio over HTTP / SSE
 - [Reactivity and normalization](reactivity.md) — `react_to` (bass/mid/treble/...) and adaptive normalization
 
 ## Background — [overview](background/README.md) · [motion](background/motion.md) · [transitions](background/transitions.md)

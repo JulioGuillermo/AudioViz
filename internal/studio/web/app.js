@@ -618,9 +618,30 @@ function App() {
         setJob(m.data);
         if (m.data.kind === 'lyrics' && m.data.status === 'done') onLyricsGenerated(m.data.output);
       }
+      // an agent (the MCP server) opened or changed the project: taken as it is now
+      if (m.type === 'project' && m.data && m.data.by === 'mcp') {
+        if (m.data.kind === 'opened') loadAll().catch(showErr);
+        else externalRef.current().catch(showErr);
+      }
     };
     return () => es.close();
   }, []);
+
+  // The project as the server has it now (an agent changed it): an undoable step, already saved
+  const externalRef = useRef();
+  externalRef.current = async () => {
+    const r = await api('GET', '/api/project');
+    const old = projRef.current;
+    histBase();
+    setProj(r.project);
+    projRef.current = r.project;
+    setMeta(r.meta);
+    record();
+    if (old && r.project.audio.path !== old.audio.path) { loadAna(); loadAudio(r.project); }
+    if (old && r.project.tracks.lyrics[0].cfg.path !== old.tracks.lyrics[0].cfg.path) loadLyrics();
+    else if (old) loadLyrics();
+    setRev((x) => x + 1);
+  };
 
   // --- saving the project (debounced to group fast changes)
   const pushRef = useRef(debounce(async (p, oldAudio, oldLyr) => {

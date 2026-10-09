@@ -59,6 +59,8 @@ type Options struct {
 	Project   string // project.yaml or folder to open at startup
 	Workspace string // folder holding the projects (default ~/AudioViz)
 	Version   string
+	// MCPToken: the token the MCP server (/mcp, /sse) asks for ("": none, see mcp.go)
+	MCPToken string
 }
 
 // Run starts the studio and blocks until the server is closed
@@ -129,6 +131,7 @@ func Run(opt Options, ready func(url string)) error {
 	mux.HandleFunc("GET /api/depth/view", s.hDepthView)
 	mux.HandleFunc("POST /api/expr", s.hExpr)
 	mux.HandleFunc("GET /api/events", s.hub.serve)
+	s.mountMCP(mux, opt.MCPToken)
 
 	ln, err := net.Listen("tcp", opt.Addr)
 	if err != nil {
