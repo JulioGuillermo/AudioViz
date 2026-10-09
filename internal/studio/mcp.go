@@ -744,6 +744,99 @@ func init() {
 				}
 				return jsonOut(v), nil
 			}},
+		{Name: "read_chat", Title: "Read the chat",
+			Desc:   "The project's chat (people and agents working on it): the last top-level messages (each with how many answers its thread has), or a thread (thread: its first message's id) with all its answers. Files: their name; frame_time when it is a frame of the song.",
+			Schema: obj(map[string]any{"thread": prop("string", "a thread: its first message's id"), "last": prop("integer", "how many messages (default 30)")}),
+			Run: func(m *mcpServer, _ context.Context, a args) ([]any, error) {
+				v, err := m.s.chatThread(a.str("thread"), int(a.num("last", 30)))
+				if err != nil {
+					return nil, err
+				}
+				if len(v) == 0 {
+					return textOut("No messages."), nil
+				}
+				return jsonOut(v), nil
+			}},
+		{Name: "post_chat", Title: "Write in the chat",
+			Desc: "Posts a message in the project's chat, as this agent (thread: answer in that thread — the id of its first message or of any of its answers). Markdown: **bold**, `code`, links; @name mentions someone. Attach: frame_time (a frame of the song at that second: everyone can click it to go there), images (paths of files on the studio's machine, e.g. from list_images), or file_name + file_data (base64).",
+			Schema: obj(map[string]any{"text": prop("string", "the message"), "thread": prop("string", "the thread to answer in"),
+				"frame_time": prop("number", "attach the frame at this second"),
+				"images":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "files on the studio's machine to attach"},
+				"file_name":  prop("string", "a file to attach: its name"), "file_data": prop("string", "its content, base64")}),
+			Run: func(m *mcpServer, ctx context.Context, a args) ([]any, error) {
+				dir := m.projectDir()
+				if dir == "" {
+					return nil, errors.New("no project is open")
+				}
+				var files []chatFile
+				if a.has("frame_time") {
+					f, err := m.s.frameFile(a.num("frame_time", 0), 2)
+					if err != nil {
+						return nil, err
+					}
+					files = append(files, f)
+				}
+				imgs, _ := a["images"].([]any)
+				for _, x := range imgs {
+					p, _ := x.(string)
+					fh, err := os.Open(p)
+					if err != nil {
+						return nil, err
+					}
+					f, err := saveChatFile(dir, filepath.Base(p), fh)
+					fh.Close()
+					if err != nil {
+						return nil, err
+					}
+					files = append(files, f)
+				}
+				if n := a.str("file_name"); n != "" {
+					b, err := base64.StdEncoding.DecodeString(a.str("file_data"))
+					if err != nil {
+						return nil, fmt.Errorf("file_data: %w", err)
+					}
+					f, err := saveChatFile(dir, n, bytes.NewReader(b))
+					if err != nil {
+						return nil, err
+					}
+					files = append(files, f)
+				}
+				sid := sessionOf(ctx)
+				msg, err := m.s.chatPost(m.s.chatAuthor(sid, "🤖 Agent", "#a78bfa"), a.str("thread"), a.str("text"), files)
+				if err != nil {
+					return nil, err
+				}
+				return textOut("Posted (id " + msg.ID + ")."), nil
+			}},
+		{Name: "wait_for_mention", Title: "Wait to be called in the chat",
+			Desc:   "Waits until someone mentions this agent in the chat (@its name, or @name if given) and returns that message with its thread, so the agent can do what it asks and answer there (post_chat with its thread); then wait again to keep listening. Returns \"no mention\" after timeout seconds (default 300, at most 1800).",
+			Schema: obj(map[string]any{"name": prop("string", "the name to listen for (default: this agent's)"), "timeout": prop("number", "seconds")}),
+			Run: func(m *mcpServer, ctx context.Context, a args) ([]any, error) {
+				sid := sessionOf(ctx)
+				name := a.str("name")
+				if name == "" {
+					name = m.s.peerName(sid)
+				}
+				if name == "" || name == "🤖 Agent" {
+					name = "agent"
+				}
+				t := math.Max(1, math.Min(1800, a.num("timeout", 300)))
+				msg, err := m.s.chatWait(name, time.Duration(t*float64(time.Second)), ctx.Done())
+				if err != nil {
+					return nil, err
+				}
+				if msg == nil {
+					return textOut(fmt.Sprintf("No mention of @%s in %.0f s. Wait again to keep listening.", strings.TrimSpace(strings.TrimPrefix(name, "🤖")), t)), nil
+				}
+				thread := msg.Thread
+				if thread == "" {
+					thread = msg.ID
+				}
+				th, _ := m.s.chatThread(thread, 0)
+				return jsonOut(map[string]any{"message": map[string]any{"id": msg.ID, "author": msg.Author.Name, "text": msg.Text},
+					"thread": thread, "conversation": th,
+					"answer_with": map[string]any{"tool": "post_chat", "thread": thread}}), nil
+			}},
 		{Name: "compute_depth", Title: "Depth of an image",
 			Desc:   "Works out the depth map of a background image with the local AI (a job: see job_status), for the 2.5D effects (things behind others, the camera's parallax, depth of field, light). detail: low, medium, high.",
 			Schema: obj(map[string]any{"image": prop("string", "the image's path"), "detail": prop("string", "low | medium | high"), "model": prop("string", "the model (default: mono)")}, "image"),
@@ -760,7 +853,8 @@ func init() {
 const mcpInstructions = `AudioViz makes audio-reactive music videos. This server drives its studio (everyone with the project open sees the agent's changes live; they show the agent among those connected).
 Start with studio_state (is a project open?) and get_project. The project: audio (the song), output (size, fps, file), tracks (background, lyrics, visualizer, particles and the effects: lists of segments; the first, at 0, is the base), texts (fixed texts: titles), layers (overlay clips: images, videos; or particle emitters), markers.
 Change it with edit_project (JSON Pointer operations); any number, color or switch can have keyframes (keys) or an expression (exprs: the language in expressions.md: audio bands like bass, kick; time; per letter / pixel …). Check visually with render_frame, and place things on the music with audio_analysis. Read the documentation with get_docs (index.md first).
-Long work (export_video, generate_image, generate_lyrics, separate_stems, compute_depth) runs as one job at a time: follow it with job_status.`
+Long work (export_video, generate_image, generate_lyrics, separate_stems, compute_depth) runs as one job at a time: follow it with job_status.
+The project has a chat (read_chat, post_chat): the people working on it may ask you things there; wait_for_mention waits until someone writes @you, then answer in that thread (show results with frame_time).`
 
 // ---------------------------------------------------------------- helpers
 

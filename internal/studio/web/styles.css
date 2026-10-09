@@ -685,3 +685,46 @@ a.btn { text-decoration: none; }
 .rtime { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px dashed var(--c); pointer-events: none; z-index: 5; }
 .rtime span { position: absolute; top: 2px; left: 3px; background: var(--c); color: #111; font-size: 10px; font-weight: 600; padding: 0 5px; border-radius: 3px; white-space: nowrap; }
 .pmark { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--c); margin-left: 5px; vertical-align: middle; box-shadow: 0 0 0 1px rgba(0,0,0,.4); }
+
+/* the project's chat */
+.chatbtn { position: relative; }
+.chatbtn.on { color: var(--accent); }
+.cbadge { position: absolute; top: -2px; right: -4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--accent);
+  color: #111; font: 700 10px/16px var(--sans, sans-serif); font-style: normal; text-align: center; }
+.chat { position: fixed; top: 44px; right: 0; bottom: 0; width: min(400px, 100vw); z-index: 60; display: flex; flex-direction: column;
+  background: var(--surface-1, #17181c); border-left: 1px solid var(--border, #2a2c33); box-shadow: -8px 0 24px rgba(0,0,0,.35); }
+.chat-h { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-bottom: 1px solid var(--border, #2a2c33); }
+.chat-h .faint { font-size: 12px; }
+.chat-list { flex: 1; overflow-y: auto; padding: 8px 10px; display: flex; flex-direction: column; gap: 10px; }
+.cempty { text-align: center; margin-top: 30px; font-size: 13px; }
+.cmsg { display: flex; gap: 8px; align-items: flex-start; }
+.cmsg.gone { padding-left: 32px; font-size: 12px; font-style: italic; }
+.cav { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--c); color: #111; font-size: 10px; font-weight: 700;
+  display: inline-flex; align-items: center; justify-content: center; }
+.cbody { flex: 1; min-width: 0; }
+.chead { display: flex; align-items: baseline; gap: 6px; font-size: 12.5px; }
+.chead .faint { font-size: 11px; }
+.cact { margin-left: auto; display: flex; gap: 2px; opacity: 0; transition: opacity .15s; }
+.cmsg:hover .cact { opacity: 1; }
+.cact .btn { width: 22px; height: 22px; }
+.ctext { font-size: 13px; line-height: 1.45; word-wrap: break-word; margin-top: 2px; }
+.ctext code { background: var(--surface-3, #2a2c33); padding: 0 4px; border-radius: 3px; font-family: var(--mono); font-size: 12px; }
+.ctext a { color: var(--accent); cursor: pointer; text-decoration: underline; }
+.ctext .mention { color: #a78bfa; font-weight: 600; }
+.cfiles { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; }
+.cimg { position: relative; }
+.cimg img { max-width: 260px; max-height: 180px; border-radius: 6px; display: block; border: 1px solid var(--border, #2a2c33); }
+.cimg.frame .btn { position: absolute; left: 6px; bottom: 6px; }
+.cfile { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; padding: 4px 8px; border-radius: 6px; background: var(--surface-2, #202227); color: inherit; text-decoration: none; }
+.cthr { margin-top: 4px; font-size: 11.5px; color: var(--accent); }
+.ctyping { font-size: 11.5px; padding: 2px 12px; }
+.ccomp { border-top: 1px solid var(--border, #2a2c33); padding: 8px 10px; position: relative; }
+.ccomp textarea { width: 100%; resize: none; font-size: 13px; min-height: 44px; max-height: 160px; }
+.cbar { display: flex; align-items: center; gap: 4px; margin-top: 6px; }
+.cpend { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px; }
+.cpend .chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; padding: 2px 4px 2px 6px; border-radius: 5px; background: var(--surface-2, #202227); }
+.cpend .chip img { width: 28px; height: 20px; object-fit: cover; border-radius: 3px; }
+.cat { position: absolute; bottom: 100%; left: 10px; background: var(--surface-2, #202227); border: 1px solid var(--border, #2a2c33); border-radius: 6px;
+  padding: 3px 0; min-width: 160px; box-shadow: 0 6px 18px rgba(0,0,0,.4); }
+.cat div { padding: 4px 10px; font-size: 13px; cursor: pointer; }
+.cat div:hover { background: var(--surface-3, #2a2c33); }

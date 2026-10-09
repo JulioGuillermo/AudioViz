@@ -32,6 +32,24 @@ one wins.
 - **Undo** (Ctrl+Z) undoes only your own changes.
 - What you hide or fold on the timeline is yours alone (it stays in this browser).
 
+### Chat
+
+The speech-bubble button in the top bar opens the project's chat (the number: messages you haven't
+read). Everything in it stays in the project — `chat/messages.jsonl` and the shared files in
+`chat/files/` — and travels in its package.
+
+- **Threads**: answer a message in its own thread (the arrow on a message); the message shows how
+  many answers it has.
+- **Files and images**: the clip button, or paste / drop them. The camera button attaches the
+  frame of the preview with its time: clicking it takes everyone there.
+- **Links**: the chain button writes a link to what you have selected (a text, a segment, a clip)
+  and the time; clicking it selects that and goes there.
+- **Mentions**: `@` and a name (it completes them). An agent can listen for its name (see
+  [Agents](mcp.md)).
+- Edit or remove your own messages; *someone is writing…* while they type.
+- **Notifications** (the bell): the browser tells you of new messages while the studio's tab is
+  not visible.
+
 ## Projects and the workspace
 The **workspace** is the folder holding your projects (`~/AudioViz` unless you pass
 `--workspace`). The start screen and **Projects** (top bar) show its projects as cards with the

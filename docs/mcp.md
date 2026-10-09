@@ -57,6 +57,15 @@ Clients configured with JSON:
 | `generate_image`, `list_images` | images with the local AI |
 | `separate_stems`, `compute_depth` | separate the song; the depth of a background |
 | `export_video`, `job_status`, `cancel_job` | render the video; follow the long jobs |
+| `read_chat`, `post_chat`, `wait_for_mention` | the project's chat: read it, write (with frames, images, files), wait until someone writes @it |
+
+## Called from the chat
+
+An agent can listen to the project's chat: `wait_for_mention` waits until someone writes `@` and
+its name (the name its client gives, e.g. `@claude-code`), and returns that message with its
+thread; the agent does what it asks, answers in the thread (`post_chat`, a frame with
+`frame_time` to show the result) and waits again. In Claude Code it is enough to ask it: *"listen
+to the studio's chat and do what they ask you there"* — it listens while that session is open.
 
 E.g. *"put the title 'NIGHT DRIVE' from 0 to 8 s, glowing with the kick, letters in a rainbow that
 moves"* becomes an `edit_project` that inserts a text with `exprs: {glow.intensity: "0.4 + kick",

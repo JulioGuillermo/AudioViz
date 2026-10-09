@@ -48,6 +48,8 @@ type Server struct {
 	hub      *hub
 	job      *job
 	collab   *collab // the project's versions and who is connected (collab.go)
+	chatMu   sync.Mutex
+	chat     *chat // the open project's chat (chat.go)
 	startDir string
 	// Folder holding the projects (New creates them there, Import unpacks there)
 	workspace string
@@ -135,6 +137,13 @@ func Run(opt Options, ready func(url string)) error {
 	mux.HandleFunc("POST /api/project/ops", s.hOps)
 	mux.HandleFunc("GET /api/project/ops", s.hOpsSince)
 	mux.HandleFunc("POST /api/presence", s.hPresence)
+	mux.HandleFunc("GET /api/chat", s.hChat)
+	mux.HandleFunc("POST /api/chat", s.hChatPost)
+	mux.HandleFunc("POST /api/chat/edit", s.hChatEdit)
+	mux.HandleFunc("POST /api/chat/upload", s.hChatUpload)
+	mux.HandleFunc("GET /api/chat/file", s.hChatFile)
+	mux.HandleFunc("POST /api/chat/frame", s.hChatFrame)
+	mux.HandleFunc("POST /api/chat/typing", s.hChatTyping)
 	s.mountMCP(mux, opt.MCPToken)
 
 	ln, err := net.Listen("tcp", opt.Addr)

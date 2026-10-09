@@ -225,6 +225,10 @@ func (s *Server) hPackage(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		err = walkFiles(filepath.Join(cfg.Dir, "assets"), func(p string) error { return add(relTo(cfg.Dir, p), file(p)) })
 	}
+	// its chat (messages and what was shared)
+	if err == nil {
+		err = walkFiles(filepath.Join(cfg.Dir, "chat"), func(p string) error { return add(relTo(cfg.Dir, p), file(p)) })
+	}
 	if err == nil && withVideos {
 		for _, v := range listExports(cfg.Dir) {
 			if err = add(exportsDir+"/"+v.Name, file(v.Path)); err != nil {

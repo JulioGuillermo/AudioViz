@@ -24,6 +24,7 @@ import { t, setLang, langStore, LANGS } from './i18n.js';
 import { createScrubber } from './scrub.js';
 import { diff, applyOps, transformPair, deepEqual, me as whoAmI, saveMe } from './collab.js';
 import { PeersBar, RemoteCursors, peerCursors, peerMarks } from './peers.js';
+import { ChatPanel, chatStore, loadChat, chatEvent, unreadCount, notifyMsg } from './chat.js';
 
 // ------------------------------------------------------------------ preview
 
@@ -608,6 +609,7 @@ function App() {
     loadAudio(d.project);
     loadAna();
     loadLyrics();
+    loadChat();
     setRev((r) => r + 1);
   };
   const loadAna = async () => {
@@ -662,6 +664,29 @@ function App() {
   };
 
   useEffect(() => { sendPresence({ sel }); }, [sel]);
+
+  // --- the project's chat (chat.js)
+  const [chatOpen, setChatOpen] = useState(false);
+  const chatState = useStore(chatStore);
+  // a link to what is selected, at this moment (av://…)
+  const linkNow = () => {
+    const p = projRef.current, tt = timeStore.get();
+    const at = `[${fmtTime(tt)}](av://t/${tt.toFixed(2)})`;
+    if (!p) return at + ' ';
+    let el = '';
+    if (sel.kind === 'text' && p.texts[sel.i]) el = `[${(p.texts[sel.i].label || p.texts[sel.i].text || t('Text')).split('\n')[0].slice(0, 30)}](av://text/${sel.i})`;
+    else if (sel.kind === 'track' && p.tracks[sel.track]) el = `[${t(trackById[sel.track] ? trackById[sel.track].label : sel.track)}${sel.seg ? ' #' + (sel.seg + 1) : ''}](av://track/${sel.track}/${sel.seg || 0})`;
+    else if (sel.kind === 'layer') { const l = p.layers.find((x) => x.id === sel.id); if (l) el = `[${l.name || t('Layer')}${sel.clip != null ? ' #' + (sel.clip + 1) : ''}](av://layer/${l.id}/${sel.clip ?? ''})`; }
+    return (el ? el + ' · ' : '') + at + ' ';
+  };
+  // a link in a message: go to its time, or select its element
+  const onAvLink = (url) => {
+    const ps = url.replace('av://', '').split('/');
+    if (ps[0] === 't') seek(+ps[1]);
+    else if (ps[0] === 'text') setSel({ kind: 'text', i: +ps[1] });
+    else if (ps[0] === 'track') setSel({ kind: 'track', track: ps[1], seg: +ps[2] || 0 });
+    else if (ps[0] === 'layer') setSel({ kind: 'layer', id: ps[1], clip: ps[2] === '' || ps[2] == null ? null : +ps[2] });
+  };
 
   // --- the project's sync: conf = as the server has it (version v); inflight = my batch on its
   // way (one at a time); shadow = conf + inflight; what is on screen (projRef) may have more of
@@ -784,6 +809,7 @@ function App() {
         if (msg.data.kind === 'lyrics' && msg.data.status === 'done') onLyricsGenerated(msg.data.output);
       }
       if (msg.type === 'ops') receive(msg.data);
+      if (msg.type === 'chat' || msg.type === 'typing') chatEvent(msg.type, msg.data, meRef.current, notifyMsg);
       if (msg.type === 'presence') setPeers(msg.data || []);
       if (msg.type === 'cursor' && msg.data.id !== meRef.current.id) setCursors((c) => ({ ...c, [msg.data.id]: { ...msg.data, at: Date.now() } }));
       if (msg.type === 'lyrics' && msg.data.client !== meRef.current.id) loadLyrics();
@@ -1548,6 +1574,8 @@ function App() {
       onImages=${() => setDlg({ type: 'images' })} />`;
 
   return html`<div class="app" style=${{ '--tl-h': tlH + 'px', '--left-w': layout.left + 'px', '--right-w': layout.right + 'px' }}>
+    <${ChatPanel} open=${chatOpen} onClose=${() => setChatOpen(false)} me=${meRef.current} peers=${peers} path=${meta.path}
+      linkNow=${linkNow} timeStore=${timeStore} onSeek=${seek} onAvLink=${onAvLink} />
     <div class="split-v left" onMouseDown=${(e) => colDrag(e, 'left')} onDblClick=${() => setLayout('left', null)}
       title=${t('Drag to resize · double-click: default size')}></div>
     <div class="split-v right" onMouseDown=${(e) => colDrag(e, 'right')} onDblClick=${() => setLayout('right', null)}
@@ -1559,6 +1587,8 @@ function App() {
       <span class=${'save' + (save.kind === 'error' ? ' err' : '')}>${saveText && html`<${Icon} name=${save.kind === 'error' ? 'triangle-alert' : save.kind === 'saving' ? 'loader-circle' : 'check'} size=${13} />`}${saveText}</span>
       <span class="spacer"></span>
       <${PeersBar} peers=${peers} me=${meRef.current} show=${showCursors} setShow=${setShowCursors} onRename=${renameMe} />
+      <button class=${'btn icon ghost chatbtn' + (chatOpen ? ' on' : '')} title=${t('Chat of the project')} onClick=${() => setChatOpen(!chatOpen)}>
+        <${Icon} name="message-square" size=${16} />${(() => { const n = unreadCount(chatState.msgs, meRef.current, meta.path); return n > 0 && !chatOpen ? html`<i class="cbadge">${n > 99 ? '99+' : n}</i>` : null; })()}</button>
       ${job && html`<div class="jobbar" title=${job.message} onClick=${() => job.kind !== 'depth' && job.kind !== 'stems' && setDlg({ type: { lyrics: 'genlyrics', image: 'images' }[job.kind] || 'export' })}>
         <${Icon} name=${job.status === 'running' ? (job.kind === 'export' ? 'film' : 'wand-sparkles') : job.status === 'done' ? 'check' : 'triangle-alert'} size=${14}
           cls=${{ done: 'st-ok', error: 'st-err', canceled: 'st-warn' }[job.status] || 'muted'} />
