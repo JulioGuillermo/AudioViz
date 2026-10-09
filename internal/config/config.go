@@ -20,6 +20,8 @@ type ProjectConfig struct {
 	Texts             []TextConfig            `yaml:"texts,omitempty"`
 	Layers            []LayerConfig           `yaml:"layers,omitempty"` // overlay layers (layers.go)
 	Output            OutputConfig            `yaml:"output"`
+	// The project's own constants and functions for the expressions (exprs.go)
+	Expressions ExprLibrary `yaml:"expressions,omitempty"`
 	// How the studio shows the project (no effect on the video)
 	Studio StudioView `yaml:"studio,omitempty"`
 
@@ -139,7 +141,7 @@ type ParallaxConfig struct {
 	// moved by its segments)
 	Motion  string  `yaml:"motion"`
 	Speed   float64 `yaml:"speed"`
-	X       float64 `yaml:"x"`     // where the camera is, -1 … 1 (left / up … right / down)
+	X       float64 `yaml:"x"` // where the camera is, -1 … 1 (left / up … right / down)
 	Y       float64 `yaml:"y"`
 	Dolly   float64 `yaml:"dolly"` // moving in: what is near grows more than what is far (0 … 0.3)
 	Focus   float64 `yaml:"focus"` // the depth that stays still: 0 far … 1 near
@@ -169,27 +171,27 @@ type ShakeConfig struct {
 }
 
 type ChromaticAberrationConfig struct {
-	Enabled  bool    `yaml:"enabled"`
-	MaxShift float64 `yaml:"max_shift"` // Maximum R and B shift in pixels
-	Mode     string  `yaml:"mode"`      // "horizontal" or "radial"
-	ReactTo  string  `yaml:"react_to"`  // "bass", "treble", "transient", "overall"
+	Enabled    bool    `yaml:"enabled"`
+	MaxShift   float64 `yaml:"max_shift"` // Maximum R and B shift in pixels
+	Mode       string  `yaml:"mode"`      // "horizontal" or "radial"
+	ReactTo    string  `yaml:"react_to"`  // "bass", "treble", "transient", "overall"
 	DepthRange `yaml:",inline"`
 }
 
 type RippleConfig struct {
-	Enabled   bool    `yaml:"enabled"`
-	Amplitude float64 `yaml:"amplitude"` // Maximum wave amplitude in pixels
-	Frequency float64 `yaml:"frequency"` // Spatial frequency of the wave
-	Speed     float64 `yaml:"speed"`     // Temporal propagation speed
-	ReactTo   string  `yaml:"react_to"`  // mid (def.), bass, treble, overall, transient, beat
+	Enabled    bool    `yaml:"enabled"`
+	Amplitude  float64 `yaml:"amplitude"` // Maximum wave amplitude in pixels
+	Frequency  float64 `yaml:"frequency"` // Spatial frequency of the wave
+	Speed      float64 `yaml:"speed"`     // Temporal propagation speed
+	ReactTo    string  `yaml:"react_to"`  // mid (def.), bass, treble, overall, transient, beat
 	DepthRange `yaml:",inline"`
 }
 
 type GlitchConfig struct {
-	Enabled   bool    `yaml:"enabled"`
-	Threshold float64 `yaml:"threshold"` // Transient energy threshold (0.0 to 1.0)
-	Intensity float64 `yaml:"intensity"` // Strip displacement intensity
-	ReactTo   string  `yaml:"react_to"`  // "" = hits/transients (def.); or a band that triggers when exceeding threshold
+	Enabled    bool    `yaml:"enabled"`
+	Threshold  float64 `yaml:"threshold"` // Transient energy threshold (0.0 to 1.0)
+	Intensity  float64 `yaml:"intensity"` // Strip displacement intensity
+	ReactTo    string  `yaml:"react_to"`  // "" = hits/transients (def.); or a band that triggers when exceeding threshold
 	DepthRange `yaml:",inline"`
 }
 
@@ -198,7 +200,7 @@ type ColorFlashConfig struct {
 	BrightnessBoost float64 `yaml:"brightness_boost"` // e.g. 0.20
 	ContrastBoost   float64 `yaml:"contrast_boost"`   // e.g. 0.15
 	ReactTo         string  `yaml:"react_to"`         // bass (def.), mid, treble, overall, transient, beat
-	DepthRange `yaml:",inline"`
+	DepthRange      `yaml:",inline"`
 }
 
 type VisualizerConfig struct {
@@ -291,14 +293,14 @@ type LyricsConfig struct {
 	Enabled bool `yaml:"enabled"`
 	// Drawing order among the overlay layers: k = right above layer k (0 = above the
 	// background); unset = above all of them
-	ZIndex *int    `yaml:"z_index,omitempty"`
+	ZIndex *int `yaml:"z_index,omitempty"`
 	// Its depth in the scene (with a depth map), as a clip's: fixed or the scene's where it is,
 	// behind what is nearer; it moves with the 2.5D camera and blurs with the depth of field
-	Depth  ClipDepth `yaml:"depth,omitempty"`
+	Depth ClipDepth `yaml:"depth,omitempty"`
 	// The light it throws on the scene behind it (what is drawn before it)
 	Light  TextLight `yaml:"light,omitempty"`
-	Path   string  `yaml:"path"`
-	Offset float64 `yaml:"offset"` // seconds added to all timestamps (+ = later)
+	Path   string    `yaml:"path"`
+	Offset float64   `yaml:"offset"` // seconds added to all timestamps (+ = later)
 
 	Font      string  `yaml:"font"`      // .ttf/.otf; empty = built-in font (Go Bold)
 	Size      float64 `yaml:"size"`      // size in px
@@ -380,6 +382,8 @@ type TextConfig struct {
 	// Keyframes (times from Start): colors, glow, position_x / position_y (the text moves),
 	// size (it scales around its position), rotation...
 	Keys Keys `yaml:"keys,omitempty"`
+	// Advanced settings: an expression per property (exprs.go)
+	Exprs Exprs `yaml:"exprs,omitempty"`
 }
 
 // DefaultText is a new text: white, centered, fading in and out

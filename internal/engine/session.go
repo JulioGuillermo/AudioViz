@@ -5,6 +5,7 @@ import (
 	"image"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -39,9 +40,9 @@ type Session struct {
 	// layerMedia: the files of the overlay clips (layers.go); masks: their combined masks
 	layerMedia map[string]*layerMedia
 	masks      map[string]maskEntry
-	emitTabs   map[string]*emitTable  // births of the emitter clips (emitters.go)
-	textPts    map[string][]float32   // points on the letters of the texts emitters are born on
-	stems      []audio.StemFrame      // the separated song per frame (stems.go), nil until separated
+	emitTabs   map[string]*emitTable // births of the emitter clips (emitters.go)
+	textPts    map[string][]float32  // points on the letters of the texts emitters are born on
+	stems      []audio.StemFrame     // the separated song per frame (stems.go), nil until separated
 	stemsKey   string
 	depths     map[string]*depthEntry // depth maps of the backgrounds, fitted to the frame (depth.go)
 	maskSeq    int
@@ -50,6 +51,8 @@ type Session struct {
 	LyrVer     int // changes every time the lyrics atlas is rebuilt
 	sim        particleSim
 	fluids     map[string]*effects.Fluid // simulated fluid transitions (see fluidFor)
+	exprCache  map[string]exprEntry      // the expressions compiled (exprs.go)
+	exprFeats  []audio.FrameFeatures     // the analysis the expressions read (the frame being made)
 	silent     []audio.FrameFeatures     // when the project has no audio yet
 }
 
@@ -97,6 +100,7 @@ func (s *Session) closeLayerMedia() {
 func (s *Session) Update(cfg *config.ProjectConfig) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.exprCache = nil // the expressions and the library may have changed
 
 	// Resolution: the output one or that of the first background
 	w, h := cfg.Output.Width, cfg.Output.Height
@@ -177,6 +181,7 @@ func (s *Session) Update(cfg *config.ProjectConfig) error {
 			return err
 		}
 		if m != nil {
+			m.Ev = s
 			s.lyr = m
 			s.Logf("🎤 Lyrics and texts: atlas %dx%d (%v)", m.Atlas.W, m.Atlas.H, time.Since(t0).Round(time.Millisecond))
 		}
@@ -260,7 +265,7 @@ func (s *Session) motionAt(i int, t float64) effects.Layer {
 		}
 	}
 	span := math.Max(end-sg.At, 1e-3)
-	return effects.MotionAt(sg.CfgAt(t).Motion, (t-sg.At)/span, t-sg.At, s.W, s.H, i)
+	return effects.MotionAt(sg.CfgAtEv(t, config.SegDur(segs, i, s.Duration()), s, "motion"+strconv.Itoa(i)).Motion, (t-sg.At)/span, t-sg.At, s.W, s.H, i)
 }
 
 // FrameState is everything needed to draw a frame, already resolved on the timeline
@@ -334,6 +339,7 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.exprFeats = base
 	fs := &FrameState{Idx: idx, T: t, Feat: &base[idx]}
 
 	// Background effects: their results are blended (so enabling/disabling also fades)
@@ -342,7 +348,7 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 	// Background: each segment's image with its motion; during a transition the previous one
 	// (A) and the new one (B) are both drawn and mixed by the transition
 	bi := config.Active(tl.Background, t)
-	pbg, cbg, k := config.Blend(tl.Background, t)
+	pbg, cbg, k := config.BlendEv(tl.Background, t, s.Duration(), s, "Background")
 	fs.BG = config.Lerp(pbg, cbg, k)
 	ra, err := s.mediaFor(cbg)
 	if err != nil {
@@ -399,7 +405,7 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 	fs.FX.zoomDolly = 0
 
 	// Visualizer: same type -> interpolate; type change -> one fades out and the other fades in
-	pv, cv, kv := config.Blend(tl.Visualizer, t)
+	pv, cv, kv := config.BlendEv(tl.Visualizer, t, s.Duration(), s, "Visualizer")
 	fs.VizAlpha = 1
 	switch {
 	case kv >= 1:
@@ -427,7 +433,7 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 
 	// Lyrics
 	if s.lyr != nil {
-		pl, cl, kl := config.Blend(tl.Lyrics, t)
+		pl, cl, kl := config.BlendEv(tl.Lyrics, t, s.Duration(), s, "Lyrics")
 		fs.Lyr, fs.LyrSt = s.lyr, config.Lerp(pl, cl, kl)
 		fs.TextItems, fs.TextStyles = s.lyr.Frame(t, fs.Feat, &fs.LyrSt)
 		for i := range fs.TextStyles {
@@ -463,7 +469,7 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 		}
 	}
 	fs.ZViz = fs.Stage(fs.Viz.ZIndex)
-	fs.ZParts = fs.Stage(tl.Particles[config.Active(tl.Particles, t)].CfgAt(t).ZIndex)
+	fs.ZParts = fs.Stage(config.SegAtEv(tl.Particles, t, s.Duration(), s, "particles").ZIndex)
 	fs.ZLyric = fs.Stage(fs.LyrSt.ZIndex)
 	return fs, nil
 }
@@ -727,21 +733,21 @@ func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures) (fram
 	minDim := math.Max(math.Min(float64(s.W), float64(s.H)), 64)
 	var fx frameFX
 	{
-		a, b, k := config.Blend(tl.BassZoom, t)
+		a, b, k := config.BlendEv(tl.BassZoom, t, s.Duration(), s, "BassZoom")
 		z := lerp(zoomOf(a, feat), zoomOf(b, feat), k)
 		// with depth, part of it is the camera moving in (Prepare puts it back flat without one)
 		d := lerp(zoomDepth(a), zoomDepth(b), k)
 		fx.zoom, fx.zoomDolly = 1+(z-1)*(1-d), (z-1)*d
 	}
 	{
-		a, b, k := config.Blend(tl.Shake, t)
+		a, b, k := config.BlendEv(tl.Shake, t, s.Duration(), s, "Shake")
 		ax, ay, az := shakeOf(a, t, feat, minDim)
 		bx, by, bz := shakeOf(b, t, feat, minDim)
 		fx.shakeX, fx.shakeY = lerp(ax, bx, k), lerp(ay, by, k)
 		fx.zoom *= lerp(az, bz, k)
 	}
 	{
-		a, b, k := config.Blend(tl.Ripple, t)
+		a, b, k := config.BlendEv(tl.Ripple, t, s.Duration(), s, "Ripple")
 		aa, af, at := rippleOf(a, idx, feat)
 		ba, bf, bt := rippleOf(b, idx, feat)
 		fx.rippleAmp, fx.rippleFreq, fx.rTim = lerp(aa, ba, k), lerp(af, bf, k), lerp(at, bt, k)
@@ -752,7 +758,7 @@ func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures) (fram
 		}
 	}
 	{
-		a, b, k := config.Blend(tl.Chromatic, t)
+		a, b, k := config.BlendEv(tl.Chromatic, t, s.Duration(), s, "Chromatic")
 		as, am := chromaOf(a, feat)
 		bs, bm := chromaOf(b, feat)
 		fx.chromaShift = lerp(as, bs, k)
@@ -763,7 +769,7 @@ func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures) (fram
 	}
 	glitchAmt := 0.0
 	{
-		a, b, k := config.Blend(tl.Glitch, t)
+		a, b, k := config.BlendEv(tl.Glitch, t, s.Duration(), s, "Glitch")
 		c := a
 		if k >= 0.5 {
 			c = b
@@ -772,13 +778,13 @@ func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures) (fram
 		glitchAmt = c.Intensity
 	}
 	{
-		a, b, k := config.Blend(tl.ColorFlash, t)
+		a, b, k := config.BlendEv(tl.ColorFlash, t, s.Duration(), s, "ColorFlash")
 		ab, ac := flashOf(a, feat)
 		bb, bc := flashOf(b, feat)
 		fx.bright, fx.contrast = lerp(ab, bb, k), lerp(ac, bc, k)
 	}
 	{
-		a, b, k := config.Blend(tl.Parallax, t)
+		a, b, k := config.BlendEv(tl.Parallax, t, s.Duration(), s, "Parallax")
 		pa, pb := parallaxOf(a, t, feat), parallaxOf(b, t, feat)
 		fx.par = effects.Parallax{SX: lerp(pa.SX, pb.SX, k), SY: lerp(pa.SY, pb.SY, k), Dolly: lerp(pa.Dolly, pb.Dolly, k),
 			Focus: lerp(pa.Focus, pb.Focus, k)}
@@ -792,7 +798,7 @@ func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures) (fram
 		}
 	}
 	{
-		a, b, k := config.Blend(tl.DoF, t)
+		a, b, k := config.BlendEv(tl.DoF, t, s.Duration(), s, "DoF")
 		da, db := dofOf(a, feat), dofOf(b, feat)
 		fx.dof = effects.DoF{From: lerp(da.From, db.From, k), To: lerp(da.To, db.To, k), Soft: lerp(da.Soft, db.Soft, k),
 			Blur: lerp(da.Blur, db.Blur, k)}
@@ -815,19 +821,19 @@ func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures) (fram
 		return [4]float64{from, to, soft, 1}
 	}
 	{
-		a, b, k := config.Blend(tl.ColorFlash, t)
+		a, b, k := config.BlendEv(tl.ColorFlash, t, s.Duration(), s, "ColorFlash")
 		fx.rFlash = rangeOf(&a.DepthRange, &b.DepthRange, k)
 	}
 	{
-		a, b, k := config.Blend(tl.Chromatic, t)
+		a, b, k := config.BlendEv(tl.Chromatic, t, s.Duration(), s, "Chromatic")
 		fx.rChroma = rangeOf(&a.DepthRange, &b.DepthRange, k)
 	}
 	{
-		a, b, k := config.Blend(tl.Ripple, t)
+		a, b, k := config.BlendEv(tl.Ripple, t, s.Duration(), s, "Ripple")
 		fx.rRipple = rangeOf(&a.DepthRange, &b.DepthRange, k)
 	}
 	{
-		a, b, k := config.Blend(tl.Glitch, t)
+		a, b, k := config.BlendEv(tl.Glitch, t, s.Duration(), s, "Glitch")
 		fx.rGlitch = rangeOf(&a.DepthRange, &b.DepthRange, k)
 	}
 	return fx, glitchAmt
@@ -894,8 +900,8 @@ func (s *Session) stepParticle(i int, feat *audio.FrameFeatures, fresh bool) {
 				e.ps.Alpha = 1
 			}
 		}
-		if len(segs[e.seg].Keys) > 0 {
-			e.ps.SetConfig(segs[e.seg].CfgAt(t)) // animated properties
+		if len(segs[e.seg].Keys) > 0 || len(segs[e.seg].Exprs) > 0 {
+			e.ps.SetConfig(segs[e.seg].CfgAtEv(t, config.SegDur(segs, e.seg, s.Duration()), s, "particles"+strconv.Itoa(e.seg))) // animated properties
 		}
 		e.ps.Update(feat, 1/float64(s.FPS))
 		if e.seg == cur || (e.ps.Alive() && e.ps.Alpha > 0) {

@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"sort"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 
@@ -84,8 +85,8 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx f
 				break
 			}
 			c := c0
-			if len(c0.Keys) > 0 {
-				c = config.ApplyKeys(c0, c0.Keys, t-c0.Start)
+			if len(c0.Keys) > 0 || len(c0.Exprs) > 0 {
+				c = config.Animate(c0, c0.Keys, c0.Exprs, s, config.ExprCtx{T: t, U: t - c0.Start, Dur: c0.End - c0.Start, ID: clipID(layer.ID, ci)})
 			}
 			if emit {
 				// particles: a frame-sized image (made by the GPU pass or DrawEmitter) shown as is
@@ -556,16 +557,13 @@ func (s *Session) ObjectDepth(fs *FrameState, isText bool, text int, layerID str
 			if text >= len(s.Cfg.Texts) {
 				return 0, 0, false
 			}
-			tc := &s.Cfg.Texts[text]
-			if len(tc.Keys) > 0 {
-				tc = config.ApplyKeys(tc, tc.Keys, fs.T-tc.Start)
-			}
+			tc := textAt(&s.Cfg.Texts[text], fs.T, s, text)
 			d, x, y = tc.Depth, tc.PositionX*W, tc.PositionY*H
 			if mo := tc.Motion; mo.On() {
 				x, y, _ = effects.PathAt(mo.Path, W, H, mo.Progress)
 			}
 		} else if ly := s.Cfg.Timeline.Lyrics; len(ly) > 0 {
-			c := ly[config.Active(ly, fs.T)].CfgAt(fs.T)
+			c := config.SegAtEv(ly, fs.T, s.Duration(), s, "lyrics")
 			d, y = c.Depth, c.PositionY*H
 		}
 		z, ok := clipDepth(&d, sc, x, y)
@@ -582,8 +580,8 @@ func (s *Session) ObjectDepth(fs *FrameState, isText bool, text int, layerID str
 			continue
 		}
 		c := &ly.Clips[clip]
-		if len(c.Keys) > 0 {
-			c = config.ApplyKeys(c, c.Keys, fs.T-c.Start)
+		if len(c.Keys) > 0 || len(c.Exprs) > 0 {
+			c = config.Animate(c, c.Keys, c.Exprs, s, config.ExprCtx{T: fs.T, U: fs.T - c.Start, Dur: c.End - c.Start, ID: clipID(ly.ID, clip)})
 		}
 		z, ok := clipDepth(&c.Depth, sc, c.X*W, c.Y*H)
 		return z, soft(&c.Depth), ok
@@ -615,3 +613,6 @@ func pathDepthSettings(d config.ClipDepth) config.ClipDepth {
 	}
 	return d
 }
+
+// clipID: a clip's id for its expressions' stable random numbers
+func clipID(layer string, clip int) string { return layer + ":" + strconv.Itoa(clip) }

@@ -127,6 +127,7 @@ func Run(opt Options, ready func(url string)) error {
 	mux.HandleFunc("GET /api/stems", s.hStemsState)
 	mux.HandleFunc("POST /api/stems/open", s.hStemsOpen)
 	mux.HandleFunc("GET /api/depth/view", s.hDepthView)
+	mux.HandleFunc("POST /api/expr", s.hExpr)
 	mux.HandleFunc("GET /api/events", s.hub.serve)
 
 	ln, err := net.Listen("tcp", opt.Addr)

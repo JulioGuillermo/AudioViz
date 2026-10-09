@@ -3,6 +3,7 @@ package lyrics
 import (
 	"image"
 	"math"
+	"strconv"
 	"strings"
 
 	"audioviz/internal/audio"
@@ -25,7 +26,9 @@ type Multi struct {
 	nLyr  int                  // subs[:nLyr] are lyrics segments, subs[nLyr:] fixed texts
 	texts []*config.TextConfig // the fixed text of each subs[nLyr+i] (its keyframes)
 	draw  *Engine
-	w, h  int
+	// Ev works out the texts' expressions (the engine's; nil: none)
+	Ev   config.Evaluator
+	w, h int
 }
 
 // NewMulti builds the lyrics (path and offset of the first segment; skipped when lyrics are off
@@ -156,10 +159,10 @@ func (m *Multi) Frame(t float64, feat *audio.FrameFeatures, lyr *config.LyricsCo
 			var dx, dy, sc float32 = 0, 0, 1
 			rot := tc.Rotation
 			mo := tc.Motion
-			if len(tc.Keys) > 0 {
+			if len(tc.Keys) > 0 || (len(tc.Exprs) > 0 && m.Ev != nil) {
 				// Animated text: style from its properties now; moved by the change of its
 				// position, scaled and turned around it by the change of its size and rotation
-				k := config.ApplyKeys(tc, tc.Keys, t-tc.Start)
+				k := config.Animate(tc, tc.Keys, tc.Exprs, m.Ev, config.ExprCtx{T: t, U: t - tc.Start, Dur: tc.End - tc.Start, ID: "text:" + strconv.Itoa(i-m.nLyr)})
 				kc := k.LyricsConfig
 				kc.Position, kc.Mode = cfg.Position, cfg.Mode
 				cfg = &kc

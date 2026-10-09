@@ -11,6 +11,7 @@ import { Editor } from './editor.js';
 import { maskShapes, setMaskShapes, MaskSection, segMaskOwner, editSegMasks } from './masks.js';
 import { MotionSection, NodeSection, setPath, setRoute } from './motion.js';
 import { HelpDialog, helpMenu, helpItem } from './help.js';
+import { ExprDialog, exprLib, pathKeyNames, LibrarySection } from './exprs.js';
 import { DepthSection } from './depth.js';
 import { StemsSection } from './stems.js';
 import { isEmitterLayer, newEmitterClip, emitterMenuItems, EmitterHandles } from './emitters.js';
@@ -294,15 +295,15 @@ function TextsInspector({ proj, sel, setSel, update, time, meta, ctx }) {
             onChange=${(e) => set({ ...x, end: Math.max(x.start + 0.1, clampT(parseTime(e.target.value))) })} />
           <span class="faint" style="font-size:11.5px">${t('{s} s', { s: (x.end - x.start).toFixed(2) })}</span></div></div>
       </div>
-      <${Form} fields=${TEXT_FIELDS} value=${x} onChange=${set} ctx=${ctx} kf=${keyApi({ keys: x.keys, u: time - x.start, max: x.end - x.start,
+      <${Form} fields=${TEXT_FIELDS} value=${x} onChange=${set} ctx=${ctx} kf=${keyApi({ keys: x.keys, u: time - x.start, max: x.end - x.start, exprs: x.exprs, target: { kind: 'text', text: i }, t0: x.start, pathKeys: pathKeyNames(x.motion && x.motion.path),
         focus: ctx.kfFocus, setFocus: ctx.setKfFocus, seek: (u) => ctx.seek(x.start + u),
         edit: (fn) => update((p) => { const tx = p.texts[i]; fn(tx, tx); }) })} />
-      <${MotionSection} obj=${x} what="text" ctx=${ctx} edit=${(fn) => update((p) => fn(p.texts[i]))} kf=${keyApi({ keys: x.keys, u: time - x.start, max: x.end - x.start,
+      <${MotionSection} obj=${x} what="text" ctx=${ctx} edit=${(fn) => update((p) => fn(p.texts[i]))} kf=${keyApi({ keys: x.keys, u: time - x.start, max: x.end - x.start, exprs: x.exprs, target: { kind: 'text', text: i }, t0: x.start, pathKeys: pathKeyNames(x.motion && x.motion.path),
         focus: ctx.kfFocus, setFocus: ctx.setKfFocus, seek: (u) => ctx.seek(x.start + u),
         edit: (fn) => update((p) => { const tx = p.texts[i]; fn(tx, tx); }) })} />
       ${ctx.pathNode && ctx.pathNode.what === 'motion' && html`<${NodeSection} obj=${x} what="motion" pi=${ctx.pathNode.pi}
         edit=${(fn) => update((p) => fn(p.texts[i]))} />`}
-      <${MaskSection} clip=${x} screen=${true} kf=${keyApi({ keys: x.keys, u: time - x.start, max: x.end - x.start,
+      <${MaskSection} clip=${x} screen=${true} kf=${keyApi({ keys: x.keys, u: time - x.start, max: x.end - x.start, exprs: x.exprs, target: { kind: 'text', text: i }, t0: x.start, pathKeys: pathKeyNames(x.motion && x.motion.path),
         focus: ctx.kfFocus, setFocus: ctx.setKfFocus, seek: (u) => ctx.seek(x.start + u),
         edit: (fn) => update((p) => { const tx = p.texts[i]; fn(tx, tx); }) })}
         selMask=${ctx.selMask} setSelMask=${ctx.setSelMask} ctx=${ctx} openEditor=${ctx.openEditor}
@@ -319,6 +320,7 @@ function TrackInspector({ proj, track, segIdx, time, meta, update, setSel, ctx, 
   const setSeg = (ns) => update((p) => { p.tracks[track][i] = ns; });
   const end = i + 1 < segs.length ? segs[i + 1].at : meta.duration;
   const kf = keyApi({ keys: seg.keys, u: time - seg.at, max: end - seg.at, focus: ctx.kfFocus, setFocus: ctx.setKfFocus,
+    exprs: seg.exprs, target: { kind: 'seg', track, seg: i }, t0: seg.at,
     seek: (u) => ctx.seek(seg.at + u), edit: (fn) => update((p) => { const s = p.tracks[track][i]; fn(s, s.cfg); }) });
   return html`<div>
     <div class="insp-h">
@@ -460,6 +462,7 @@ function App() {
   useStore(langStore); // re-render everything when the language changes
   const [st, setSt] = useState(null);
   const [proj, setProj] = useState(null);
+  useEffect(() => { exprLib.set((proj && proj.expressions) || {}); }, [proj && proj.expressions]);
   const [meta, setMeta] = useState(null);
   const [ana, setAna] = useState(null);
   const [lyr, setLyr] = useState({ lines: [], path: '' });
@@ -1174,7 +1177,7 @@ function App() {
         onPick=${pick.cb} onClose=${() => setPick(null)} />`}
     ${toast && html`<div class="toast" onClick=${() => setToast('')}><${Icon} name="triangle-alert" size=${16} />${toast}</div>`}`;
 
-  if (!proj || !meta) return html`<${Welcome} st=${st} ctx=${ctx} />${dialogs}<${ContextMenu} /><${HelpDialog} />`;
+  if (!proj || !meta) return html`<${Welcome} st=${st} ctx=${ctx} />${dialogs}<${ContextMenu} /><${HelpDialog} /><${ExprDialog} />`;
 
   const view = { hidden: [], collapsed: [], ...(proj.view || {}) };
   // Entries of each zone in the track list (track ids, "texts")
@@ -1359,6 +1362,7 @@ function App() {
       <${StemsSection} ctx=${ctx} hasAudio=${meta.hasAudio} audio=${proj.audio} onAudio=${(v) => update((p) => { p.audio = v; })} /></div></div>`;
   else if (sel.kind === 'output') inspector = html`<div><div class="insp-h"><div class="insp-title"><${Icon} name="monitor" size=${16} cls="muted" />${t('Output')}<span class="sub">${t('Project')}</span></div></div><div class="insp-b">
       <${Form} fields=${OUTPUT_FIELDS} value=${proj.output} onChange=${(v) => update((p) => { p.output = v; })} ctx=${ctx} />
+      <${LibrarySection} lib=${proj.expressions || {}} Section=${Section} Edit=${Edit} onChange=${(l) => update((p) => { p.expressions = l; })} />
       <p class="faint" style="font-size:12px">${t('Current resolution')}: ${meta.width}×${meta.height} · ${meta.fps} fps · ${fmtTime(meta.duration)}</p></div></div>`;
   else if (sel.kind === 'layer' && layerById_(sel.id)) inspector = html`<${LayerInspector} proj=${proj} sel=${sel} setSel=${setSel} update=${update} time=${time} meta=${meta} ctx=${ctx} />`;
   else if (sel.kind === 'text') inspector = html`<${TextsInspector} proj=${proj} sel=${sel} setSel=${setSel} update=${update} time=${time} meta=${meta} ctx=${ctx} />`;
@@ -1496,7 +1500,7 @@ function App() {
       onText=${(props) => update((p) => { const tx = p.texts[sel.i]; if (tx) setClipProps(tx, props, timeStore.get()); })}
       onClip=${(props) => update((p) => { const c = p.layers.find((l) => l.id === sel.id).clips[sel.clip]; setClipProps(c, props, timeStore.get()); })} />`}
     ${dialogs}
-    <${ContextMenu} /><${HelpDialog} />
+    <${ContextMenu} /><${HelpDialog} /><${ExprDialog} />
     ${dragging && html`<div class="dropzone"><div><${Icon} name="upload" size=${28} />
       <div style="margin-top:10px;font-size:15px;font-weight:600">${t('Drop to add to the project')}</div>
       <div class="faint" style="margin-top:4px">${t('Audio, background image or video, lyrics (.lrc/.srt/.txt) or font')}</div></div></div>`}

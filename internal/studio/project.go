@@ -25,7 +25,8 @@ type SegJSON struct {
 	Label      string         `json:"label"`
 	Transition TransJSON      `json:"transition"`
 	Cfg        map[string]any `json:"cfg"`
-	Keys       config.Keys    `json:"keys,omitempty"` // keyframes: property path → keys (times from At)
+	Keys       config.Keys    `json:"keys,omitempty"`  // keyframes: property path → keys (times from At)
+	Exprs      config.Exprs   `json:"exprs,omitempty"` // advanced settings: property path → expression
 }
 
 type MarkerJSON struct {
@@ -53,6 +54,8 @@ type ProjectJSON struct {
 	Texts   []map[string]any     `json:"texts"`  // fixed texts (config.TextConfig, YAML keys)
 	View    ViewJSON             `json:"view"`   // studio view: hidden tracks, folded zones
 	Layers  []LayerJSON          `json:"layers"` // overlay layers, bottom to top (config.LayerConfig)
+	// the project's own constants and functions for the expressions
+	Expressions config.ExprLibrary `json:"expressions"`
 	// Values of a new clip (read-only for the UI)
 	ClipDefaults map[string]any `json:"clipDefaults,omitempty"`
 	// The emitter presets (read-only for the UI)
@@ -104,7 +107,7 @@ func fromMap(m map[string]any, dst any) error {
 func segsToJSON[T any](segs []config.Seg[T]) []SegJSON {
 	out := make([]SegJSON, len(segs))
 	for i, s := range segs {
-		out[i] = SegJSON{At: s.At, Label: s.Label, Transition: TransJSON{s.Transition.Mode, s.Transition.Duration, s.Transition.Direction, s.Transition.Burn, s.Transition.Fluid}, Cfg: toMap(s.Cfg), Keys: s.Keys}
+		out[i] = SegJSON{At: s.At, Label: s.Label, Transition: TransJSON{s.Transition.Mode, s.Transition.Duration, s.Transition.Direction, s.Transition.Burn, s.Transition.Fluid}, Cfg: toMap(s.Cfg), Keys: s.Keys, Exprs: s.Exprs}
 	}
 	return out
 }
@@ -133,7 +136,7 @@ func segsFromJSON[T any](name string, in []SegJSON, def T, fix func(*T)) ([]conf
 			mode = "cut"
 		}
 		s.Keys.Sort()
-		out = append(out, config.Seg[T]{At: at, Label: s.Label, Cfg: cfg, Keys: s.Keys,
+		out = append(out, config.Seg[T]{At: at, Label: s.Label, Cfg: cfg, Keys: s.Keys, Exprs: s.Exprs,
 			Transition: config.Transition{Mode: mode, Duration: s.Transition.Duration, Direction: s.Transition.Direction, Burn: s.Transition.Burn, Fluid: s.Transition.Fluid}})
 	}
 	// Sort by time (the first one always at 0)
@@ -173,6 +176,7 @@ func ProjectToJSON(c *config.ProjectConfig) *ProjectJSON {
 		p.Markers = append(p.Markers, MarkerJSON{m.At, m.Label})
 	}
 	p.View = ViewJSON{Hidden: append([]string{}, c.Studio.Hidden...), Collapsed: append([]string{}, c.Studio.Collapsed...)}
+	p.Expressions = c.Expressions
 	p.TextDefaults = toMap(config.DefaultText())
 	p.ClipDefaults = toMap(config.DefaultClip())
 	p.EmitterPresets = map[string]map[string]any{}
@@ -253,6 +257,7 @@ func ProjectFromJSON(p *ProjectJSON, dir string) (*config.ProjectConfig, error) 
 		c.Markers = append(c.Markers, config.Marker{At: m.At, Label: m.Label})
 	}
 	c.Studio = config.StudioView{Hidden: p.View.Hidden, Collapsed: p.View.Collapsed}
+	c.Expressions = p.Expressions
 	for i, m := range p.Texts {
 		t := config.DefaultText()
 		if err := fromMap(m, &t); err != nil {

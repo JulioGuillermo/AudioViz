@@ -8,6 +8,7 @@ import { t } from './i18n.js';
 import { keyApi, valueAt, keyIndexAt, KEY_EPS, setIn } from './keys.js';
 import { MaskSection } from './masks.js';
 import { helpMenu } from './help.js';
+import { pathKeyNames } from './exprs.js';
 import { MotionSection, RouteSection, NodeSection, hasPath, movePath } from './motion.js';
 
 // Overlay layers (config.LayerConfig): proj.layers is bottom to top (drawing order); the studio
@@ -249,6 +250,8 @@ export function LayerInspector({ proj, sel, setSel, update, time, meta, ctx }) {
   const editLayer = (fn) => update((p) => { fn(p.layers.find((l) => l.id === sel.id)); });
   const clampT = (v) => Math.max(0, Math.min(meta.duration, v));
   const kf = c && keyApi({ keys: c.keys, u: time - c.start, max: c.end - c.start, focus: ctx.kfFocus, setFocus: ctx.setKfFocus,
+    exprs: c.exprs, target: { kind: 'clip', layer: layer.id, clip: j }, t0: c.start,
+    pathKeys: [...new Set([...pathKeyNames(c.motion && c.motion.path), ...pathKeyNames(c.emitter && c.emitter.route)])],
     seek: (u) => ctx.seek(c.start + u), edit: (fn) => editLayer((l) => { const cc = l.clips[j]; fn(cc, cc); }) });
   const emit = isEmitterLayer(layer);
   const clipName = (cl, k) => cl.label || (emit ? presetLabel(cl.emitter && cl.emitter.preset) : basename(cl.path)) || t('Clip {n}', { n: k + 1 });

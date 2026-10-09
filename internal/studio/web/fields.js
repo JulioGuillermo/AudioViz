@@ -5,6 +5,7 @@ import { t } from './i18n.js';
 import { createStore } from './store.js';
 import { openMenu } from './menu.js';
 import { helpItem, tHelp } from './help.js';
+import { openExpr, exprClip, ExprValue, exprLib, libNames } from './exprs.js';
 import { animatable, valueAt, keyIndexAt } from './keys.js';
 
 // Generic form built from the schema. value = config object; onChange(newObject).
@@ -91,7 +92,13 @@ export function Edit({ tag = 'input', value, onKeyDown, ...rest }) {
 // depth range, f.rangeKeys its [from, to, soft] keys): { kind, keys } or null
 export const adjusting = createStore(null);
 
-function Row({ f, children, dia }) {
+// the types of properties an expression can give (numbers)
+const EXPRABLE = new Set(['num', 'int', 'optnum']);
+
+function Row({ f, children, dia, kf, path }) {
+  const [xinfo, setXinfo] = useState(null); // the expression's check (uses value?)
+  const exprable = kf && kf.target && path && EXPRABLE.has(f.type);
+  const src = exprable && kf.exprs ? kf.exprs[path] : null;
   const btn = dia && dia !== 'gap';
   // f.adjust: say so while the pointer is down on it or it has the focus
   const adj = f.adjust ? {
@@ -108,11 +115,24 @@ function Row({ f, children, dia }) {
     onFocusIn: (e) => { if (e.target.type !== 'range') adjusting.set({ kind: f.adjust, keys: f.rangeKeys }); },
     onFocusOut: (e) => { if (e.target.type !== 'range') adjusting.set(null); },
   } : {};
-  // right-click: its help (the element's explanation is not on screen)
-  const menu = f.help ? (e) => openMenu(e, [helpItem(t(f.label), tHelp(f.help))]) : undefined;
-  return html`<div class=${'fld' + (dia ? ' kfable' : '') + (f.adjust ? ' adjust' : '')} ...${adj} onContextMenu=${menu}>
-    <label for=${btn ? 'kf-none' : undefined}>${btn && dia}${t(f.label)}</label>
+  // right-click: its advanced settings (an expression), its help (not on screen)
+  const openAdv = () => openExpr({ title: t(f.label), path, src: src || 'value', had: !!src, target: kf.target, t0: kf.t0, dur: kf.dur,
+    time: kf.t0 + kf.u, names: { lib: libNames(exprLib.get()), keys: kf.pathKeys || [] }, onSave: (v) => kf.setExpr(path, v) });
+  const items = [];
+  if (exprable) {
+    items.push({ label: t('Advanced settings…'), icon: 'sigma', onClick: openAdv },
+      { label: t('Copy the expression'), icon: 'copy', disabled: !src, onClick: () => exprClip.set(src) },
+      { label: t('Paste the expression'), icon: 'clipboard', disabled: !exprClip.get(), onClick: () => kf.setExpr(path, exprClip.get()) });
+    if (src) items.push({ label: t('Remove the expression'), icon: 'trash-2', danger: true, onClick: () => kf.setExpr(path, null) });
+  }
+  if (f.help) items.push(...(items.length ? ['-'] : []), helpItem(t(f.label), tHelp(f.help)));
+  const menu = items.length ? (e) => openMenu(e, items) : undefined;
+  const noValue = src && xinfo && !xinfo.error && !xinfo.uses_value;
+  return html`<div class=${'fld' + (dia ? ' kfable' : '') + (f.adjust ? ' adjust' : '') + (src ? ' has-expr' : '') + (noValue ? ' expr-novalue' : '')} ...${adj} onContextMenu=${menu}>
+    <label for=${btn ? 'kf-none' : undefined}>${btn && dia}${src && html`<span class="xbadge" title=${t('It has an expression (right-click: Advanced settings)')}
+      onClick=${(e) => { e.preventDefault(); e.stopPropagation(); openAdv(); }}>ƒ</span>`}${t(f.label)}</label>
     <div class="ctl">${children}</div>
+    ${src && html`<${ExprValue} kf=${kf} path=${path} src=${src} onInfo=${setXinfo} />`}
   </div>`;
 }
 
@@ -246,39 +266,39 @@ export function Section({ title, children, id, defOpen = false, extra = null, he
 function Field({ f, v, set, ctx, isFirst, kf, path, dia }) {
   switch (f.type) {
     case 'num': case 'int':
-      return html`<${Row} f=${f} dia=${dia}><${Num} f=${f} v=${v ?? f.def} set=${set} /></${Row}>`;
+      return html`<${Row} f=${f} dia=${dia} kf=${kf} path=${path}><${Num} f=${f} v=${v ?? f.def} set=${set} /></${Row}>`;
     case 'optnum':
-      return html`<${Row} f=${f} dia=${dia}><${Num} f=${f} v=${v} set=${set} optional=${true} /></${Row}>`;
+      return html`<${Row} f=${f} dia=${dia} kf=${kf} path=${path}><${Num} f=${f} v=${v} set=${set} optional=${true} /></${Row}>`;
     case 'bool':
-      return html`<${Row} f=${f} dia=${dia}><${Switch} checked=${v} onChange=${set} /></${Row}>`;
+      return html`<${Row} f=${f} dia=${dia} kf=${kf} path=${path}><${Switch} checked=${v} onChange=${set} /></${Row}>`;
     case 'enum': {
       const numeric = typeof f.options[0][0] === 'number';
       const cur = v === undefined || v === null || (v === '' && f.def !== undefined) ? f.def : v;
-      return html`<${Row} f=${f} dia=${dia}><${Select} value=${cur} options=${f.options} onChange=${(x) => set(numeric ? +x : x)} /></${Row}>`;
+      return html`<${Row} f=${f} dia=${dia} kf=${kf} path=${path}><${Select} value=${cur} options=${f.options} onChange=${(x) => set(numeric ? +x : x)} /></${Row}>`;
     }
     case 'color':
-      return html`<${Row} f=${f} dia=${dia}><${Color} f=${f} v=${v} set=${set} /></${Row}>`;
+      return html`<${Row} f=${f} dia=${dia} kf=${kf} path=${path}><${Color} f=${f} v=${v} set=${set} /></${Row}>`;
     case 'gradient':
-      return html`<${Row} f=${f} dia=${dia}><${Gradient} v=${v} set=${set} /></${Row}>`;
+      return html`<${Row} f=${f} dia=${dia} kf=${kf} path=${path}><${Gradient} v=${v} set=${set} /></${Row}>`;
     case 'text':
-      return html`<${Row} f=${f} dia=${dia}><${Edit} type="text" class="grow" value=${v ?? ''} onChange=${(e) => set(e.target.value)} /></${Row}>`;
+      return html`<${Row} f=${f} dia=${dia} kf=${kf} path=${path}><${Edit} type="text" class="grow" value=${v ?? ''} onChange=${(e) => set(e.target.value)} /></${Row}>`;
     case 'textarea':
-      return html`<${Row} f=${f} dia=${dia}><${Edit} tag="textarea" class="grow" rows="3" value=${v ?? ''} onChange=${(e) => set(e.target.value)} /></${Row}>`;
+      return html`<${Row} f=${f} dia=${dia} kf=${kf} path=${path}><${Edit} tag="textarea" class="grow" rows="3" value=${v ?? ''} onChange=${(e) => set(e.target.value)} /></${Row}>`;
     case 'textpick': {
       // one of the project's fixed texts (its index)
       const opts = (ctx.textChoices || []).map(([i, name]) => [i, name]);
-      if (!opts.length) return html`<${Row} f=${f} dia=${dia}><span class="faint" style="font-size:12px">${t('No fixed texts yet (Titles and texts)')}</span></${Row}>`;
-      return html`<${Row} f=${f} dia=${dia}><${Select} value=${v ?? 0} options=${opts} translate=${false} onChange=${(x) => set(+x)} /></${Row}>`;
+      if (!opts.length) return html`<${Row} f=${f} dia=${dia} kf=${kf} path=${path}><span class="faint" style="font-size:12px">${t('No fixed texts yet (Titles and texts)')}</span></${Row}>`;
+      return html`<${Row} f=${f} dia=${dia} kf=${kf} path=${path}><${Select} value=${v ?? 0} options=${opts} translate=${false} onChange=${(x) => set(+x)} /></${Row}>`;
     }
     case 'zindex': {
       // Above all the layers (unset), above the background (0), or above a layer (its index + 1)
       const opts = [['', t('Above all the layers')], [0, t('Above the background, under the layers')],
         ...(ctx.layerChoices || []).map(([z, name]) => [z, t('Above “{n}”', { n: name })])];
-      return html`<${Row} f=${f} dia=${dia}><${Select} value=${v ?? ''} options=${opts} translate=${false}
+      return html`<${Row} f=${f} dia=${dia} kf=${kf} path=${path}><${Select} value=${v ?? ''} options=${opts} translate=${false}
         onChange=${(x) => set(x === '' ? null : +x)} /></${Row}>`;
     }
     case 'file':
-      return html`<${Row} f=${f} dia=${dia}><div class="filectl">
+      return html`<${Row} f=${f} dia=${dia} kf=${kf} path=${path}><div class="filectl">
         <div class="fn" title=${v || ''}><${Icon} name=${FILE_ICON[f.kind] || 'file'} size=${14} cls="faint" />
           <span>${v ? basename(v) : html`<span class="faint">${t('None')}</span>`}</span></div>
         <button class="btn icon" title=${t('Choose file')} onClick=${() => ctx.pickFile(f.kind, set, v)}><${Icon} name="folder-open" size=${15} /></button>

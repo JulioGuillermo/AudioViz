@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"math"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 
@@ -66,10 +67,10 @@ func textRef(tc *config.TextConfig) float64 {
 	return math.Min(tc.Start+tc.InDuration+0.05, (tc.Start+tc.End)/2)
 }
 
-// textAt: a fixed text's settings at time t (its keys applied)
-func textAt(tc *config.TextConfig, t float64) *config.TextConfig {
-	if len(tc.Keys) > 0 {
-		return config.ApplyKeys(tc, tc.Keys, t-tc.Start)
+// textAt: a fixed text's settings at time t (its keys and expressions applied; i: its index)
+func textAt(tc *config.TextConfig, t float64, ev config.Evaluator, i int) *config.TextConfig {
+	if len(tc.Keys) > 0 || len(tc.Exprs) > 0 {
+		return config.Animate(tc, tc.Keys, tc.Exprs, ev, config.ExprCtx{T: t, U: t - tc.Start, Dur: tc.End - tc.Start, ID: "text:" + strconv.Itoa(i)})
 	}
 	return tc
 }
@@ -81,7 +82,7 @@ func (s *Session) textPlace(i int, t float64) (x, y, rot, scale float64, ok bool
 		return 0, 0, 0, 1, false
 	}
 	tc := &s.Cfg.Texts[i]
-	k := textAt(tc, t)
+	k := textAt(tc, t, s, i)
 	W, H := float64(s.W), float64(s.H)
 	x, y, rot, scale = k.PositionX*W, k.PositionY*H, k.Rotation*math.Pi/180, 1
 	if mo := k.Motion; mo.On() {
@@ -91,7 +92,7 @@ func (s *Session) textPlace(i int, t float64) (x, y, rot, scale float64, ok bool
 			rot += a
 		}
 	}
-	if r := textAt(tc, textRef(tc)); r.Size > 0 && k.Size > 0 {
+	if r := textAt(tc, textRef(tc), s, i); r.Size > 0 && k.Size > 0 {
 		scale = k.Size / r.Size
 	}
 	return x, y, rot, scale, true
@@ -137,8 +138,8 @@ func (s *Session) emitTableFor(li, ci int, c0 *config.ClipConfig, feats []audio.
 	for f := f0; f <= f1; f++ {
 		t := float64(f) / fps
 		c := c0
-		if len(c0.Keys) > 0 {
-			c = config.ApplyKeys(c0, c0.Keys, t-c0.Start)
+		if len(c0.Keys) > 0 || len(c0.Exprs) > 0 {
+			c = config.Animate(c0, c0.Keys, c0.Exprs, s, config.ExprCtx{T: t, U: t - c0.Start, Dur: c0.End - c0.Start, ID: clipID(s.Cfg.Layers[li].ID, ci)})
 		}
 		e := c.Emitter
 		if e == nil {

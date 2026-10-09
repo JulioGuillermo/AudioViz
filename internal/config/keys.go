@@ -312,6 +312,8 @@ func setLeaf(v reflect.Value, val any) {
 	case reflect.Bool:
 		if b, ok := val.(bool); ok {
 			v.SetBool(b)
+		} else if f, ok := val.(float64); ok {
+			v.SetBool(boolFromExpr(f)) // an expression's number: more than 0 is true
 		}
 	case reflect.Slice, reflect.Map, reflect.Struct:
 		// Lists and blocks (e.g. a mask's shapes): through YAML into the field's type

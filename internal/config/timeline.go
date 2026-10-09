@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"sort"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
@@ -93,7 +94,47 @@ type Seg[T any] struct {
 	Label      string
 	Transition Transition
 	Cfg        T
-	Keys       Keys // keyframes of its properties (times from At); see keys.go
+	Keys       Keys  // keyframes of its properties (times from At); see keys.go
+	Exprs      Exprs // the advanced settings (expressions) of its properties; see exprs.go
+}
+
+// CfgAtEv is CfgAt with its expressions too (worked out by ev; dur: the segment's length, for
+// progress)
+func (s *Seg[T]) CfgAtEv(t, dur float64, ev Evaluator, id string) *T {
+	if len(s.Keys) == 0 && (len(s.Exprs) == 0 || ev == nil) {
+		return &s.Cfg
+	}
+	return Animate(&s.Cfg, s.Keys, s.Exprs, ev, ExprCtx{T: t, U: t - s.At, Dur: dur, ID: id})
+}
+
+// SegDur: how long segment i lasts: until the next one, the last one until end (the song's)
+func SegDur[T any](segs []Seg[T], i int, end float64) float64 {
+	if i+1 < len(segs) {
+		return segs[i+1].At - segs[i].At
+	}
+	return max(end-segs[i].At, 0)
+}
+
+// SegAtEv: the config of the segment active at t, with its keys and expressions
+func SegAtEv[T any](segs []Seg[T], t, end float64, ev Evaluator, id string) *T {
+	i := Active(segs, t)
+	return segs[i].CfgAtEv(t, SegDur(segs, i, end), ev, id+strconv.Itoa(i))
+}
+
+// BlendEv is Blend with the segments' expressions too (worked out by ev; id names the track;
+// end: the song's, for the last segment's length)
+func BlendEv[T any](segs []Seg[T], t, end float64, ev Evaluator, id string) (prev, cur *T, k float64) {
+	i := Active(segs, t)
+	cur = segs[i].CfgAtEv(t, SegDur(segs, i, end), ev, id+strconv.Itoa(i))
+	prev, k = cur, 1
+	if i > 0 {
+		s := segs[i]
+		if s.Transition.Animated() && t < s.At+s.Transition.Duration {
+			prev = segs[i-1].CfgAtEv(t, SegDur(segs, i-1, end), ev, id+strconv.Itoa(i-1))
+			k = (t - s.At) / s.Transition.Duration
+		}
+	}
+	return
 }
 
 // Marker is a named mark on the timeline (song sections)
@@ -159,6 +200,7 @@ func buildTrack[T any](base T, nodes []yaml.Node, fix func(*T)) ([]Seg[T], error
 		Label      string      `yaml:"label"`
 		Transition *Transition `yaml:"transition"`
 		Keys       Keys        `yaml:"keys"`
+		Exprs      Exprs       `yaml:"exprs"`
 	}
 	var parsed []struct {
 		h    head
@@ -206,10 +248,10 @@ func buildTrack[T any](base T, nodes []yaml.Node, fix func(*T)) ([]Seg[T], error
 			}
 		}
 		p.h.Keys.Sort()
-		seg := Seg[T]{At: *p.h.At, Label: p.h.Label, Transition: tr, Cfg: cfg, Keys: p.h.Keys}
+		seg := Seg[T]{At: *p.h.At, Label: p.h.Label, Transition: tr, Cfg: cfg, Keys: p.h.Keys, Exprs: p.h.Exprs}
 		if seg.At <= 0 {
 			// A segment at 0 replaces the base (or only gives it a name or keyframes)
-			segs[0].Cfg, segs[0].Label, segs[0].Keys = cfg, p.h.Label, p.h.Keys
+			segs[0].Cfg, segs[0].Label, segs[0].Keys, segs[0].Exprs = cfg, p.h.Label, p.h.Keys, p.h.Exprs
 			continue
 		}
 		segs = append(segs, seg)
@@ -327,6 +369,9 @@ func segNode[T any](s Seg[T]) (*yaml.Node, error) {
 	if len(s.Keys) > 0 {
 		add("keys", s.Keys)
 	}
+	if len(s.Exprs) > 0 {
+		add("exprs", s.Exprs)
+	}
 	n.Content = append(n.Content, body.Content...)
 	return n, nil
 }
@@ -334,7 +379,7 @@ func segNode[T any](s Seg[T]) (*yaml.Node, error) {
 func trackNodes[T any](segs []Seg[T]) ([]*yaml.Node, error) {
 	var out []*yaml.Node
 	// The first segment is the top-level block; its name and keyframes go in an entry at 0
-	if s := segs[0]; s.Label != "" || len(s.Keys) > 0 {
+	if s := segs[0]; s.Label != "" || len(s.Keys) > 0 || len(s.Exprs) > 0 {
 		n := &yaml.Node{Kind: yaml.MappingNode}
 		add := func(k string, v any) {
 			var vn yaml.Node
@@ -347,6 +392,9 @@ func trackNodes[T any](segs []Seg[T]) ([]*yaml.Node, error) {
 		}
 		if len(s.Keys) > 0 {
 			add("keys", s.Keys)
+		}
+		if len(s.Exprs) > 0 {
+			add("exprs", s.Exprs)
 		}
 		out = append(out, n)
 	}
