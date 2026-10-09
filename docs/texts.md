@@ -122,7 +122,11 @@ lyrics' [Light on the scene](lyrics/README.md#light-on-the-scene).
 With a motion path, **Bend along the path** (in *Motion path*) lays the text out letter by letter and
 puts each one at its distance from the anchor along the path, turned with it: the text follows the
 path's shape instead of moving as one block (the progress places its middle; a closed path goes
-round). Its own rotation is added to each letter.
+round). Its own rotation is added to each letter. With *Going back* → *Turns round (readable)*
+the whole text turns round like a card where its middle is and is laid the other way along the
+path, so that it still reads well; *mirror* twists it like a ribbon: it keeps following the path,
+narrows where the path goes up or down and then shows its back.
+Its path's [node values](layers.md#values-on-the-nodes) (depth) apply letter by letter.
 
 ## Masks
 

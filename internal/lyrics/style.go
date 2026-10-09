@@ -39,18 +39,26 @@ type Style struct {
 	MaskSX, MaskSY float64 // mask px per frame px
 	// Its depth (config): the engine places it (InDepth) at DepthZ, hidden where the scene is
 	// nearer if Behind (soft by DepthSoft), and blurred by DepthBlur px (the depth of field)
-	Depth                       config.ClipDepth
-	InDepth, Behind             bool
+	Depth                        config.ClipDepth
+	InDepth, Behind              bool
 	DepthZ, DepthSoft, DepthBlur float64
-	Scene                       *effects.Scene
+	Scene                        *effects.Scene
+	// its depth from its path, per point (each item's PS, PTX, PTY); ZMargin: how far (px) the
+	// 2.5D camera and the depth of field can take it at most
+	ZTrack  *effects.PathTrack
+	ZMargin float64
+	// twisting like a ribbon along its path (Motion.Flip "twist"), per pixel (each item's PS,
+	// PTX, PTY); or wrapped round a cylinder (Wrap: its letters slanted, Item.Shear)
+	Ribbon *effects.Ribbon
+	Wrap   bool
 	// Its light on the scene (config.TextLight): color × strength now (with the band), reach
 	// and end (px of 1080p), add (or soft), fade with depth and shading
-	LightOn                bool
-	LightCol               [3]float64
-	LightR, LightE         float64
-	LightAdd               bool
+	LightOn                 bool
+	LightCol                [3]float64
+	LightR, LightE          float64
+	LightAdd                bool
 	LightDepthK, LightShade float64
-	Light                  config.TextLight // all of it (range and rim light)
+	Light                   config.TextLight // all of it (range and rim light)
 }
 
 // cover: how much of a point at distance d (px, inside < 0) of an edge is covered: a sharp edge,
@@ -238,20 +246,60 @@ func maskAt(m *image.Alpha, x, y float64) float64 {
 // textAt replicates the shader's drawText. ch = -1, 0, 1: channel pass for chromatic aberration
 // (each item's point is shifted by ch times its style's chroma).
 func (e *Engine) textAt(col [3]float64, px0, py float64, ch float64, items []Item, styles []Style) [3]float64 {
-	for i := range items {
+	// the order they are drawn in here: as they come, or far to near where they have a depth
+	// along their path, twist as ribbons or wrap round a cylinder (as drawText)
+	var ordBuf [maxTextOrder]int
+	ord := textOrder(ordBuf[:0], px0, py, items, styles)
+	nn := len(items)
+	if ord != nil {
+		nn = len(ord)
+	}
+	for oi := 0; oi < nn; oi++ {
+		i := oi
+		if ord != nil {
+			i = ord[oi]
+		}
 		it := &items[i]
 		st := &styles[it.Style]
 		ow := st.OutlineW
 		gr := math.Max(st.GlowR, 0.5)
 		px := px0 + ch*chromaOf(st)
 		sc := float64(it.Scale)
-		dx, dy := px-float64(it.CX), py-float64(it.CY)
+		// its depth here: from its path, per point (moved by the 2.5D camera, blurred by the
+		// depth of field as that point is), or one for all of it
+		zq, bl, qy := st.DepthZ, st.DepthBlur, py
+		zt := st.ZTrack != nil && st.Scene.On()
+		if zt {
+			zq = float64(st.ZTrack.At(it.PS + float32(px0-float64(it.CX))*it.PTX + float32(py-float64(it.CY))*it.PTY))
+			ddx, ddy := st.Scene.Par.Disp(zq, px0-0.5, py-0.5, st.Scene.W, st.Scene.H)
+			px, qy = px-ddx, py-ddy
+			bl = float64(st.Scene.DoF.CoC(float32(zq)))
+		}
+		dx, dy := px-float64(it.CX), qy-float64(it.CY)
 		rc, rs := 1.0, 0.0
 		if it.Rot != 0 {
 			rc, rs = math.Cos(float64(it.Rot)), math.Sin(float64(it.Rot))
 		}
 		unrot := func(x, y float64) (float64, float64) { return x*rc + y*rs, -x*rs + y*rc }
 		lx, ly := unrot(dx/sc, dy/sc)
+		if st.Ribbon != nil {
+			// a ribbon: the height of the letter seen here, as twisted as its point on the path is
+			sp := it.PS + float32(px0-float64(it.CX))*it.PTX + float32(py-float64(it.CY))*it.PTY
+			v, ok := st.Ribbon.V(sp, float32(ly))
+			if !ok {
+				continue
+			}
+			ly = float64(v)
+		}
+		if it.Flip != 0 || it.FlipY != 0 {
+			// turned round: narrower or lower (mirrored when negative)
+			w, h := 1-float64(it.Flip), 1-float64(it.FlipY)
+			if math.Abs(w) < 0.02 || math.Abs(h) < 0.02 {
+				continue
+			}
+			lx, ly = lx/w, ly/h
+		}
+		lx -= float64(it.Shear) * ly // wrapped round a cylinder: slanted
 		hw, hh := float64(it.AW)/2, float64(it.AH)/2
 		if math.Abs(lx) > hw || math.Abs(ly) > hh {
 			continue
@@ -267,11 +315,10 @@ func (e *Engine) textAt(col [3]float64, px0, py float64, ch float64, items []Ite
 		if st.Behind && st.Scene.On() {
 			// hidden where the scene is nearer (the depth at this pixel)
 			z := float64(st.Scene.At(float32(px0-0.5), float32(py-0.5)))
-			if alpha *= 1 - smoothstep(st.DepthZ-st.DepthSoft, st.DepthZ+st.DepthSoft+1e-4, z); alpha <= 0 {
+			if alpha *= 1 - smoothstep(zq-st.DepthSoft, zq+st.DepthSoft+1e-4, z); alpha <= 0 {
 				continue
 			}
 		}
-		bl := st.DepthBlur
 		if st.ShadowOp > 0 {
 			sx, sy := unrot(st.ShadowDX/sc, st.ShadowDY/sc)
 			ds := e.sdfAt(ax-sx, ay-sy, it)*sc - ow
@@ -317,8 +364,8 @@ func (e *Engine) DrawCPU(img *image.RGBA, items []Item, styles []Style) {
 			c, s := math.Abs(math.Cos(float64(it.Rot))), math.Abs(math.Sin(float64(it.Rot)))
 			hw, hh = hw*c+hh*s, hw*s+hh*c
 		}
-		ex := chromaOf(st) + math.Abs(st.ShadowDX) + st.DepthBlur + 2
-		ey := math.Abs(st.ShadowDY) + st.DepthBlur + 2
+		ex := chromaOf(st) + math.Abs(st.ShadowDX) + st.DepthBlur + st.ZMargin + 2
+		ey := math.Abs(st.ShadowDY) + st.DepthBlur + st.ZMargin + 2
 		x0, x1 = math.Min(x0, float64(it.CX)-hw-ex), math.Max(x1, float64(it.CX)+hw+ex)
 		y0, y1 = math.Min(y0, float64(it.CY)-hh-ey), math.Max(y1, float64(it.CY)+hh+ey)
 	}
@@ -354,4 +401,58 @@ func (e *Engine) DrawCPU(img *image.RGBA, items []Item, styles []Style) {
 		}(k)
 	}
 	wg.Wait()
+}
+
+// maxTextOrder: texts sorted at one pixel at most (as MAX_ORD in render.comp)
+const maxTextOrder = 16
+
+// textOrder: the items drawn at pixel (px, py) far to near (the items near it: within their box
+// and their glow), when some style has a depth along its path, twists or wraps; nil: draw
+// them all as they come. As drawText's order.
+func textOrder(buf []int, px, py float64, items []Item, styles []Style) []int {
+	any := false
+	for i := range styles {
+		if styles[i].Ribbon != nil || styles[i].Wrap || (styles[i].ZTrack != nil && styles[i].Scene.On()) {
+			any = true
+			break
+		}
+	}
+	if !any {
+		return nil
+	}
+	var keys [maxTextOrder]float32
+	for i := range items {
+		it := &items[i]
+		st := &styles[it.Style]
+		reach := math.Hypot(float64(it.AW), float64(it.AH))*0.5*float64(it.Scale)*(1+math.Abs(float64(it.Shear))) + chromaOf(st) +
+			math.Max(math.Abs(st.ShadowDX), math.Abs(st.ShadowDY)) + st.DepthBlur + st.ZMargin + st.GlowR + 2
+		if math.Hypot(px-float64(it.CX), py-float64(it.CY)) > reach {
+			continue
+		}
+		key := float32(i) * 1e-4
+		zt := st.ZTrack != nil && st.Scene.On()
+		if zt || st.Ribbon != nil || st.Wrap {
+			sp := it.PS + float32(px-float64(it.CX))*it.PTX + float32(py-float64(it.CY))*it.PTY
+			switch {
+			case zt:
+				key = 10 + st.ZTrack.At(sp)
+			case st.Wrap:
+				key = 10.5 + 0.5*it.PTX // going right: in front
+			default:
+				k, _ := st.Ribbon.At(sp)
+				key = 10.5 + 0.5*k
+			}
+		}
+		if len(buf) == maxTextOrder {
+			break
+		}
+		j := len(buf)
+		buf = append(buf, i)
+		for j > 0 && keys[j-1] > key {
+			buf[j], keys[j] = buf[j-1], keys[j-1]
+			j--
+		}
+		buf[j], keys[j] = i, key
+	}
+	return buf
 }

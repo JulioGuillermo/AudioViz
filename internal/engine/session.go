@@ -547,6 +547,23 @@ func (s *Session) textsInDepth(fs *FrameState) {
 	sc := fs.Scene
 	for si := range fs.TextStyles {
 		st := &fs.TextStyles[si]
+		if st.ZTrack != nil && sc.On() {
+			// its depth comes from its path, per point (blurred and moved per point when drawn)
+			d := pathDepthSettings(st.Depth)
+			st.InDepth, st.Behind, st.Scene = true, d.Behind, sc
+			st.DepthSoft = math.Max(d.Soft, 0.005)
+			n := 0
+			for _, it := range fs.TextItems {
+				if it.Style == si {
+					st.DepthZ += float64(st.ZTrack.At(it.PS))
+					n++
+				}
+			}
+			st.DepthZ /= float64(max(n, 1))
+			st.ZMargin = sc.Par.MaxDisp(s.W, s.H) + sc.DoF.Blur
+			continue
+		}
+		st.ZTrack = nil
 		if st.Depth.Mode == "" || st.Depth.Mode == "off" {
 			continue
 		}

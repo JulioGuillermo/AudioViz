@@ -53,6 +53,12 @@ type Item struct {
 	Style          int     // index into the frame's style table (0 = lyrics)
 	Pad            float32
 	Rot            float32 // radians, clockwise on screen
+	// along its text's path (when the path gives its depth, Style.ZTrack): how far along it its
+	// center is (px) and the path's direction there
+	PS, PTX, PTY float32
+	// turned round (Motion.Flip): its width is 1 − Flip, its height 1 − FlipY (negative: mirrored);
+	// wrapped round a cylinder its x moves by Shear × its y (slanted)
+	Flip, FlipY, Shear float32
 }
 
 type Engine struct {

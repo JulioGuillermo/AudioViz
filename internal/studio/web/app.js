@@ -9,7 +9,8 @@ import { editKeysTimes } from './keymarks.js';
 import { useFrameStream } from './frames.js';
 import { Editor } from './editor.js';
 import { maskShapes, setMaskShapes, MaskSection, segMaskOwner, editSegMasks } from './masks.js';
-import { MotionSection, setPath, setRoute } from './motion.js';
+import { MotionSection, NodeSection, setPath, setRoute } from './motion.js';
+import { HelpDialog, helpMenu, helpItem } from './help.js';
 import { DepthSection } from './depth.js';
 import { StemsSection } from './stems.js';
 import { isEmitterLayer, newEmitterClip, emitterMenuItems, EmitterHandles } from './emitters.js';
@@ -214,7 +215,7 @@ function FluidOptions({ s, set, ctx }) {
   const slider = (k, label, def, title) => html`<div class="fld"><label title=${title || ''}>${t(label)}</label><div class="ctl">
     <input type="range" min="0.05" max="1" step="0.05" value=${f[k] || def} onInput=${(e) => upd(k, +e.target.value)} />
     <span class="mono faint" style="font-size:11px;width:30px;text-align:right">${(f[k] || def).toFixed(2)}</span></div></div>`;
-  return html`<div class="burnopts">
+  return html`<div class="burnopts" onContextMenu=${helpMenu(t('Transition'), 'The flow is simulated the first time the transition is shown (a few seconds); then it plays smoothly.')}>
     ${slider('color_weight', 'Color seeking', s.transition.mode === 'liquid' ? 0.3 : 0.6, t('Low: each part flows nearby. High: it travels to the most similar color of the new image'))}
     ${s.transition.mode === 'liquid' && slider('viscosity', 'Viscosity', 0.6, t('How much neighbors move together: high, thick streams; low, more like separate drops'))}
     ${slider('interaction', 'Interaction', 0.5, t('How solid the particles are: high, they push each other hard; low, they slip past each other'))}
@@ -223,7 +224,6 @@ function FluidOptions({ s, set, ctx }) {
       <button class="btn sm" title=${t('Another flow with the same settings')} onClick=${() => upd('seed', 1 + Math.floor(Math.random() * 999999))}><${Icon} name="shuffle" size=${13} /> ${t('Other variation')}</button>
       <button class="btn sm" onClick=${() => ctx.seek(s.at + s.transition.duration * 0.5)}><${Icon} name="play" size=${13} /> ${t('Go to the middle of the transition')}</button>
     </div>
-    <p class="faint" style="font-size:11.5px;margin:6px 0 0">${t('The flow is simulated the first time the transition is shown (a few seconds); then it plays smoothly.')}</p>
   </div>`;
 }
 
@@ -236,7 +236,7 @@ function BurnOptions({ s, set, ctx }) {
   const slider = (k, label, def, title) => html`<div class="fld"><label title=${title || ''}>${t(label)}</label><div class="ctl">
     <input type="range" min="0.05" max="1" step="0.05" value=${b[k] || def} onInput=${(e) => upd(k, +e.target.value)} />
     <span class="mono faint" style="font-size:11px;width:30px;text-align:right">${(b[k] || def).toFixed(2)}</span></div></div>`;
-  return html`<div class="burnopts">
+  return html`<div class="burnopts" onContextMenu=${helpMenu(t('Ignition points'), 'Click on the preview to add a point (up to 8), drag one to move it, Shift+click to remove it.')}>
     <div class="fld"><label>${t('Fire starts at')}</label><div class="ctl">
       <${Select} value=${origins} options=${[['random', 'Random points'], ['points', 'Points I choose']]} onChange=${(v) => upd('origins', v)} /></div></div>
     ${origins === 'random' ? html`
@@ -244,7 +244,6 @@ function BurnOptions({ s, set, ctx }) {
         <input type="number" min="1" max="8" step="1" value=${b.count || 3} onInput=${(e) => upd('count', Math.max(1, Math.min(8, +e.target.value || 3)))} />
         <button class="btn sm icon" title=${t('Other random points')} onClick=${() => upd('seed', 1 + Math.floor(Math.random() * 999999))}><${Icon} name="shuffle" size=${13} /></button>
       </div></div>` : html`
-      <p class="faint" style="font-size:11.5px;margin:2px 0 6px">${t('Click on the preview to add a point (up to 8), drag one to move it, Shift+click to remove it.')}</p>
       <div class="row" style="flex-wrap:wrap;gap:4px;margin-bottom:6px">
         ${pts.map((q, j) => html`<span class="chip">${j + 1}<span class="mono faint">${q[0].toFixed(2)}, ${q[1].toFixed(2)}</span>
           <button class="btn icon sm ghost" title=${t('Remove')} onClick=${() => upd('points', pts.filter((_, n) => n !== j))}><${Icon} name="x" size=${11} /></button></span>`)}
@@ -283,7 +282,7 @@ function TextsInspector({ proj, sel, setSel, update, time, meta, ctx }) {
     </div>
     <div class="insp-b">
       ${!x ? html`<p class="faint" style="font-size:12px">${t('No texts yet. Add one at the cursor, or double-click the Texts lane on the timeline.')}</p>` : html`
-      <div class="card">
+      <div class="card" onContextMenu=${helpMenu(t('Text'), 'Drag on the preview to place it. In and out animations happen inside this time.')}>
         <div class="fld"><label>${t('Name')}</label><div class="ctl"><${Edit} type="text" class="grow" value=${x.label || ''}
           placeholder=${t('Optional')} onChange=${(e) => set({ ...x, label: e.target.value })} /></div></div>
         <div class="fld"><label>${t('Starts at')}</label><div class="ctl">
@@ -294,7 +293,6 @@ function TextsInspector({ proj, sel, setSel, update, time, meta, ctx }) {
           <${Edit} type="text" class="mono" style="width:96px" value=${fmtTime(x.end)}
             onChange=${(e) => set({ ...x, end: Math.max(x.start + 0.1, clampT(parseTime(e.target.value))) })} />
           <span class="faint" style="font-size:11.5px">${t('{s} s', { s: (x.end - x.start).toFixed(2) })}</span></div></div>
-        <div class="card-note">${t('Drag on the preview to place it. In and out animations happen inside this time.')}</div>
       </div>
       <${Form} fields=${TEXT_FIELDS} value=${x} onChange=${set} ctx=${ctx} kf=${keyApi({ keys: x.keys, u: time - x.start, max: x.end - x.start,
         focus: ctx.kfFocus, setFocus: ctx.setKfFocus, seek: (u) => ctx.seek(x.start + u),
@@ -302,6 +300,8 @@ function TextsInspector({ proj, sel, setSel, update, time, meta, ctx }) {
       <${MotionSection} obj=${x} what="text" ctx=${ctx} edit=${(fn) => update((p) => fn(p.texts[i]))} kf=${keyApi({ keys: x.keys, u: time - x.start, max: x.end - x.start,
         focus: ctx.kfFocus, setFocus: ctx.setKfFocus, seek: (u) => ctx.seek(x.start + u),
         edit: (fn) => update((p) => { const tx = p.texts[i]; fn(tx, tx); }) })} />
+      ${ctx.pathNode && ctx.pathNode.what === 'motion' && html`<${NodeSection} obj=${x} what="motion" pi=${ctx.pathNode.pi}
+        edit=${(fn) => update((p) => fn(p.texts[i]))} />`}
       <${MaskSection} clip=${x} screen=${true} kf=${keyApi({ keys: x.keys, u: time - x.start, max: x.end - x.start,
         focus: ctx.kfFocus, setFocus: ctx.setKfFocus, seek: (u) => ctx.seek(x.start + u),
         edit: (fn) => update((p) => { const tx = p.texts[i]; fn(tx, tx); }) })}
@@ -338,14 +338,12 @@ function TrackInspector({ proj, track, segIdx, time, meta, update, setSel, ctx, 
       <${SegHeader} segs=${segs} i=${i} set=${setSeg} meta=${meta} track=${track} ctx=${ctx} />
       <${Form} fields=${def.fields} value=${seg.cfg} onChange=${(cfg) => setSeg({ ...seg, cfg })} ctx=${ctx} isFirst=${i === 0} kf=${kf} />
       ${track === 'background' && html`<${DepthSection} cfg=${seg.cfg} ctx=${ctx} onChange=${(cfg) => setSeg({ ...seg, cfg })} />`}
-      ${track === 'background' && html`<${Section} id="genimg" title=${t('Generate an image')}>
-        <p class="faint" style="margin:2px 0 8px;font-size:12px">${t('Create a background from a description, or edit an image, with AI on your GPU.')}</p>
+      ${track === 'background' && html`<${Section} id="genimg" title=${t('Generate an image')} help=${'Create a background from a description, or edit an image, with AI on your GPU.'}>
         <button class="btn" onClick=${onImages}><${Icon} name="wand-sparkles" size=${15} /> ${t('Generate an image…')}</button></${Section}>`}
       ${track === 'lyrics' && html`<${MaskSection} clip=${segMaskOwner(seg)} screen=${true} kf=${kf}
         selMask=${ctx.selMask} setSelMask=${ctx.setSelMask} ctx=${ctx} openEditor=${ctx.openEditor}
         editClip=${(fn) => update((p) => editSegMasks(p.tracks.lyrics[i], fn))} />`}
-      ${track === 'lyrics' && html`<${Section} id="genlyr" title=${t('Generate lyrics')}>
-        <p class="faint" style="margin:2px 0 8px;font-size:12px">${t('Creates an .lrc with the timing of every word, from the lyrics as text or transcribing the song.')}</p>
+      ${track === 'lyrics' && html`<${Section} id="genlyr" title=${t('Generate lyrics')} help=${'Creates an .lrc with the timing of every word, from the lyrics as text or transcribing the song.'}>
         <div class="row"><button class="btn" onClick=${onGenLyrics}><${Icon} name="wand-sparkles" size=${15} /> ${t('Generate synced lyrics…')}</button>
         ${hasLines && html`<button class="btn" title=${t('Correct the whole lyrics as text and align it again')} onClick=${onEditText}><${Icon} name="pencil" size=${14} /> ${t('Edit text')}</button>`}</div></${Section}>`}
     </div>
@@ -415,7 +413,7 @@ function LineEditor({ lyr, lines, time, onChange, seek, saveState, onResync, res
       </div>`}
     </div>
     ${multi ? html`<div class="insp-b"><p class="faint" style="font-size:12px">${t('Several lines selected (Shift+click). Drag them together on the timeline, shift them with the buttons, or resync them.')}</p></div>`
-      : html`<div class="insp-b"><div class="words">
+      : html`<div class="insp-b" onContextMenu=${helpMenu(t('Words'), 'Tip: with Edit words, drag the words (or their edges) on the timeline; or play, pause right when a word starts and press the crosshair button. If a line is far off, drag it roughly into place and press Resync.')}><div class="words">
       <div class="word head"><span>${t('Word')}</span><span>${t('Start')}</span><span>${t('End')}</span><span></span></div>
       ${line.words.map((w, k) => html`<div class=${'word' + (time >= w.start && time < w.end ? ' now' : '')}>
         <${Edit} type="text" value=${w.text} onChange=${(e) => setWord(k, 'text', e.target.value)} />
@@ -424,8 +422,7 @@ function LineEditor({ lyr, lines, time, onChange, seek, saveState, onResync, res
         <span class="row" style="gap:2px"><button class="btn icon" title=${t('Set the start at the cursor')} onClick=${() => setWord(k, 'start', +time.toFixed(2))}><${Icon} name="crosshair" size=${14} /></button>
         ${k > 0 && html`<button class="btn icon" title=${t('Start a new line at this word')} onClick=${() => split(k)}><${Icon} name="scissors" size=${14} /></button>`}</span>
       </div>`)}
-    </div>
-    <p class="faint" style="font-size:12px">${t('Tip: with Edit words, drag the words (or their edges) on the timeline; or play, pause right when a word starts and press the crosshair button. If a line is far off, drag it roughly into place and press Resync.')}</p></div>`}
+    </div></div>`}
   </div>`;
 }
 
@@ -479,9 +476,10 @@ function App() {
   const [editor, setEditor] = useState(false); // the full-screen editor
   const [editorTool, setEditorTool] = useState('select');
   const [pathWhat, setPathWhat] = useState('motion'); // the path tool edits the motion path or an emitter's route
+  const [pathNodeI, setPathNodeI] = useState(null); // the node selected on it (the inspector's node section)
   const [selMask, setSelMask] = useState(null); // the mask of the selected clip being edited
   useEffect(() => setSelMask(null), [sel.kind, sel.id, sel.clip, sel.i, sel.track, sel.seg]);
-  useEffect(() => { setKfFocus(null); setKfSel(null); }, [sel.kind, sel.track, sel.seg, sel.i, sel.id, sel.clip]);
+  useEffect(() => { setKfFocus(null); setKfSel(null); setPathNodeI(null); }, [sel.kind, sel.track, sel.seg, sel.i, sel.id, sel.clip]);
   const [playing, setPlaying] = useState(false);
   const [scale, setScale] = useState(2);
   const [rev, setRev] = useState(0);
@@ -742,7 +740,9 @@ function App() {
     job, showErr,
     seek,
     selMask, setSelMask,
-    openEditor: (tool, what) => { setEditorTool(tool || 'select'); setPathWhat(what || 'motion'); setEditor(true); },
+    openEditor: (tool, what) => { setEditorTool(tool || 'select'); setPathWhat(what || 'motion'); setPathNodeI(null); setEditor(true); },
+    // the path node selected in the editor: { what: 'motion' | 'route', pi } or null
+    get pathNode() { return editor && pathNodeI != null ? { what: pathWhat === 'route' ? 'route' : 'motion', pi: pathNodeI } : null; },
     // z_index choices: each layer bottom to top as [z, name]
     get layerChoices() { return (projRef.current.layers || []).map((l, i) => [i + 1, l.name || t('Layer {n}', { n: i + 1 })]); },
     get textChoices() { return (projRef.current.texts || []).map((x, i) => [i, x.label || (x.text || '').split('\n')[0] || t('Text {n}', { n: i + 1 })]); },
@@ -1005,6 +1005,11 @@ function App() {
         c.id === 'texts'
           ? { label: t('New text at the cursor ({t})', { t: fmtTime(timeStore.get()) }), icon: 'plus', onClick: () => ctx.addText(timeStore.get()) }
           : { label: t('New segment at the cursor ({t})', { t: fmtTime(timeStore.get()) }), icon: 'plus', onClick: () => ctx.addSeg(c.id, timeStore.get()) },
+        ...(() => {
+          // its help: the track's own, or what its "Enabled" says
+          const h = def && (def.help || ((def.fields || []).find((f) => f.key === 'enabled') || {}).help);
+          return h ? ['-', helpItem(t(def.label), t(h))] : [];
+        })(),
       ]);
     } else if (c.kind === 'layer' || c.kind === 'clip' || c.kind === 'layerlane') {
       const li = p.layers.findIndex((l) => l.id === c.id), l = p.layers[li];
@@ -1025,6 +1030,8 @@ function App() {
         { label: t('Bring forward'), icon: 'arrow-up', disabled: ff === 0, onClick: () => moveLayer(ff, ff - 1) },
         { label: t('Send backward'), icon: 'chevron-down', disabled: ff === p.layers.length - 1, onClick: () => moveLayer(ff, ff + 1) },
         { label: t(hidden ? 'Show its track on the timeline' : 'Hide its track on the timeline'), icon: hidden ? 'eye' : 'eye-off', onClick: () => toggleView('hidden', 'layer:' + c.id) },
+        '-',
+        helpItem(t('Layer'), t('Layers higher in the list are drawn in front. Drag them in the left panel to change the order.')),
         '-',
         { label: t('Delete layer'), icon: 'trash-2', danger: true, onClick: () => { if (confirm(t('Delete the layer “{n}” and its clips?', { n: layerName(l, li) }))) { update((q) => { q.layers = q.layers.filter((x) => x.id !== c.id); }); setSel({ kind: 'output' }); } } });
       openMenu(e, items);
@@ -1167,7 +1174,7 @@ function App() {
         onPick=${pick.cb} onClose=${() => setPick(null)} />`}
     ${toast && html`<div class="toast" onClick=${() => setToast('')}><${Icon} name="triangle-alert" size=${16} />${toast}</div>`}`;
 
-  if (!proj || !meta) return html`<${Welcome} st=${st} ctx=${ctx} />${dialogs}<${ContextMenu} />`;
+  if (!proj || !meta) return html`<${Welcome} st=${st} ctx=${ctx} />${dialogs}<${ContextMenu} /><${HelpDialog} />`;
 
   const view = { hidden: [], collapsed: [], ...(proj.view || {}) };
   // Entries of each zone in the track list (track ids, "texts")
@@ -1265,6 +1272,13 @@ function App() {
         if (!from && !to) from = 1;
         return 'lightrange&' + new URLSearchParams({ from: from ?? 1, to: to ?? 0, soft: Math.min(g(ks) ?? 0.05, 0.08) }).toString();
       }
+    }
+    if (adj && adj.kind === 'nodedepth' && ctx.pathNode) {
+      // a path node's depth: what is behind it, in red
+      const o = selClip || (sel.kind === 'text' ? (proj.texts || [])[sel.i] : null), pn = ctx.pathNode;
+      const sh = o && (pn.what === 'route' ? o.emitter && o.emitter.route : o.motion && o.motion.path);
+      const v = sh && sh.vals && sh.vals[pn.pi];
+      if (v && v.z != null) return 'objdepth&' + new URLSearchParams({ z: v.z, soft: 0.03 }).toString();
     }
     if (adj && adj.kind === 'solid' && selClip) // what an emitter goes round, in cyan
       return 'solid&' + new URLSearchParams({ layer: sel.id, clip: sel.clip }).toString();
@@ -1476,13 +1490,13 @@ function App() {
     ${editor && html`<${Editor} meta=${meta} timeStore=${timeStore} playing=${playing} setPlaying=${setPlaying} seek=${seek} rev=${rev}
       selClip=${selClip} selEmit=${selEmit} inspector=${inspector} onClose=${() => { setEditor(false); setEditorTool('select'); setPathWhat('motion'); }} marks=${editorMarks} onKeys=${onKeys} kf=${{ focus: kfFocus, setFocus: setKfFocus, sel: kfSel, setSel: setKfSel }}
       tool=${editorTool} selMask=${selMask} onNeedMask=${needMask} selId=${sel.id} selClipIdx=${sel.clip}
-      maskOwner=${maskOwner} pathOwner=${pathOwner} editPath=${(fn) => pathOwner && pathOwner.edit((o) => (pathOwner.route ? setRoute : setPath)(o, fn))} editMask=${(fn) => maskOwner && maskOwner.edit((o) => { const tt = timeStore.get();
+      maskOwner=${maskOwner} pathOwner=${pathOwner} editPath=${(fn) => pathOwner && pathOwner.edit((o) => (pathOwner.route ? setRoute : setPath)(o, fn))} onPathNode=${setPathNodeI} view=${previewView} editMask=${(fn) => maskOwner && maskOwner.edit((o) => { const tt = timeStore.get();
         setMaskShapes(o, selMask, tt, fn(maskShapes(o, selMask, tt))); })}
       onPainted=${onPainted} selText=${selText} selTextIdx=${selText ? sel.i : null}
       onText=${(props) => update((p) => { const tx = p.texts[sel.i]; if (tx) setClipProps(tx, props, timeStore.get()); })}
       onClip=${(props) => update((p) => { const c = p.layers.find((l) => l.id === sel.id).clips[sel.clip]; setClipProps(c, props, timeStore.get()); })} />`}
     ${dialogs}
-    <${ContextMenu} />
+    <${ContextMenu} /><${HelpDialog} />
     ${dragging && html`<div class="dropzone"><div><${Icon} name="upload" size=${28} />
       <div style="margin-top:10px;font-size:15px;font-weight:600">${t('Drop to add to the project')}</div>
       <div class="faint" style="margin-top:4px">${t('Audio, background image or video, lyrics (.lrc/.srt/.txt) or font')}</div></div></div>`}

@@ -53,6 +53,10 @@ type LayerFrame struct {
 	Behind            bool
 	DepthZ, DepthSoft float32
 	InDepth           bool // it has a depth (DepthZ, DepthSoft), behind things or not
+	// its depth from its path, per point (DepthZ: at its center): the track, how far along the
+	// path its center is (px) and the path's direction there
+	ZTrack        *PathTrack
+	ZS0, ZTX, ZTY float32
 	// an emitter that goes round the scene: on, its depth, the band, where it is born x, y, the
 	// free radius around it (the studio's view of what it goes round)
 	Solid [6]float32
@@ -93,9 +97,9 @@ func (l *LayerFrame) bilinear(u, v float64) [4]float64 {
 	return out
 }
 
-// sample: the clip at screen point q (blurred if Blur > 0: 3×3 taps at ±Blur)
-func (l *LayerFrame) sample(qx, qy float64) [4]float64 {
-	if l.Blur <= 0.5 {
+// sample: the clip at screen point q (blurred if blur > 0: 3×3 taps at ±blur)
+func (l *LayerFrame) sample(qx, qy, blur float64) [4]float64 {
+	if blur <= 0.5 {
 		u, v := l.screenToImage(qx+0.5, qy+0.5)
 		return l.bilinear(u, v)
 	}
@@ -104,7 +108,7 @@ func (l *LayerFrame) sample(qx, qy float64) [4]float64 {
 	for j := -1; j <= 1; j++ {
 		for i := -1; i <= 1; i++ {
 			w := 1.0 / float64(1+i*i+j*j)
-			u, v := l.screenToImage(qx+0.5+float64(i)*l.Blur, qy+0.5+float64(j)*l.Blur)
+			u, v := l.screenToImage(qx+0.5+float64(i)*blur, qy+0.5+float64(j)*blur)
 			s := l.bilinear(u, v)
 			for k := range acc {
 				acc[k] += s[k] * w
@@ -141,10 +145,20 @@ func (w *Warp) warp(qx, qy float64, W, H int) (float64, float64) {
 	return qx - w.ShakeX, qy - w.ShakeY
 }
 
-// at: the clip's color at screen pixel q (premultiplied), with its background effects
-func (l *LayerFrame) at(qx, qy float64, W, H int) [4]float64 {
+// zAt: its depth at screen pixel q (from its path's track; DepthZ without one)
+func (l *LayerFrame) zAt(qx, qy float64) float32 {
+	if l.ZTrack == nil {
+		return l.DepthZ
+	}
+	return l.ZTrack.At(l.ZS0 + (float32(qx)-float32(l.CX))*l.ZTX + (float32(qy)-float32(l.CY))*l.ZTY)
+}
+
+// at: the clip's color at screen pixel q (premultiplied), with its background effects; moved by
+// (dx, dy) more and blurred by blur (its depth here, see DrawLayer)
+func (l *LayerFrame) at(qx, qy float64, W, H int, dx, dy, blur float64) [4]float64 {
 	wx, wy := l.W.warp(qx, qy, W, H)
-	s := l.sample(wx, wy)
+	wx, wy = wx-dx, wy-dy
+	s := l.sample(wx, wy, blur)
 	if l.Mask != nil {
 		u, v := l.screenToImage(wx+0.5, wy+0.5)
 		m := l.maskAt(u, v)
@@ -164,11 +178,11 @@ func (l *LayerFrame) at(qx, qy float64, W, H int) [4]float64 {
 		inside := func(x, y float64) bool { return x >= 0 && x < float64(W) && y >= 0 && y < float64(H) }
 		if inside(qx+ox, qy+oy) {
 			rx, ry := l.W.warp(qx+ox, qy+oy, W, H)
-			s[0] = l.sample(rx, ry)[0]
+			s[0] = l.sample(rx-dx, ry-dy, blur)[0]
 		}
 		if inside(qx-ox, qy-oy) {
 			bx, by := l.W.warp(qx-ox, qy-oy, W, H)
-			s[2] = l.sample(bx, by)[2]
+			s[2] = l.sample(bx-dx, by-dy, blur)[2]
 		}
 	}
 	return s
@@ -266,7 +280,24 @@ func DrawLayer(dst *image.RGBA, l *LayerFrame) {
 						}
 					}
 				}
-				s := l.at(float64(x), float64(y), W, H)
+				// its depth here: from its path, per point (moved by the 2.5D camera and blurred by the
+				// depth of field as that point is), or one for all of it
+				zq := l.DepthZ
+				var zx, zy float64
+				zb := l.Blur
+				if l.ZTrack != nil && l.Scene.On() {
+					zq = l.zAt(float64(x), float64(y))
+					zx, zy = l.Scene.Par.Disp(float64(zq), float64(x), float64(y), W, H)
+					zb += float64(l.Scene.DoF.CoC(zq))
+				} else if l.Emit != nil && l.Emit.ZPlane != nil && l.Scene.On() {
+					// an emitter's particles each at the depth of their point on their path
+					if v := l.Emit.ZPlane[y*W+x]; v >= 0 {
+						zq = v
+					}
+					zx, zy = l.Scene.Par.Disp(float64(zq), float64(x), float64(y), W, H)
+					zb += float64(l.Scene.DoF.CoC(zq))
+				}
+				s := l.at(float64(x), float64(y), W, H, zx, zy, zb)
 				if s[3] <= 1e-4 {
 					continue
 				}
@@ -275,7 +306,7 @@ func DrawLayer(dst *image.RGBA, l *LayerFrame) {
 				if l.Behind && l.Scene.On() {
 					// behind what is nearer than it
 					d := l.Scene.At(float32(x), float32(y))
-					a *= float64(1 - smooth32(l.DepthZ-l.DepthSoft, l.DepthZ+l.DepthSoft+1e-4, d))
+					a *= float64(1 - smooth32(zq-l.DepthSoft, zq+l.DepthSoft+1e-4, d))
 				}
 				if a <= 0 {
 					continue

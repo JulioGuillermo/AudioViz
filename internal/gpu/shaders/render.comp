@@ -28,6 +28,7 @@ vec3 gHit = vec3(0.0);
 // Per-tile (workgroup) lists: particles and words that may touch the tile
 const int TILE_PARTS = 512;
 const int TILE_TEXT = 96;
+const int MAX_ORD = 16; // texts sorted at one pixel at most (as lyrics' maxTextOrder)
 shared int sPart[TILE_PARTS];
 shared int sPartN;
 shared int sText[TILE_TEXT];
@@ -529,23 +530,124 @@ float maskBilinear(ivec4 m, vec2 q) {
 
 // Composites the texts over col at point p. ch = -1, 0, 1: channel pass for chromatic
 // aberration (each item's point is shifted by ch times its style's chroma).
+vec2 pDisp(float z, vec2 u); // the 2.5D camera's shift (below)
+
+// The easings of keys (as config.Ease; e: its index in config.Eases)
+float easeK(int e, float k) {
+    k = clamp(k, 0.0, 1.0);
+    if (e == 1) return 0.0;
+    if (e == 2) return k * k * k;
+    if (e == 3) return 1.0 - pow(1.0 - k, 3.0);
+    if (e == 4) return k < 0.5 ? 4.0 * k * k * k : 1.0 - pow(-2.0 * k + 2.0, 3.0) / 2.0;
+    if (e == 5) {
+        const float c = 1.70158 * 1.525;
+        if (k < 0.5) return (2.0 * k) * (2.0 * k) * ((c + 1.0) * 2.0 * k - c) / 2.0;
+        return ((2.0 * k - 2.0) * (2.0 * k - 2.0) * ((c + 1.0) * (2.0 * k - 2.0) + c) + 2.0) / 2.0;
+    }
+    if (e == 6) return k >= 1.0 ? 1.0 : 1.0 - exp(-6.0 * k) * cos(4.5 * 3.14159265 * k);
+    return k;
+}
+// A value along a path (as effects.PathTrack.At): at off, n, then n lengths, values, easings
+float trackAt(int off, float s) {
+    int n = int(uintBitsToFloat(lay[off]));
+    int so = off + 1, vo = off + 1 + n, eo = off + 1 + 2 * n;
+    if (s <= uintBitsToFloat(lay[so])) return uintBitsToFloat(lay[vo]);
+    if (s >= uintBitsToFloat(lay[so + n - 1])) return uintBitsToFloat(lay[vo + n - 1]);
+    int j = 1;
+    while (j < n - 1 && uintBitsToFloat(lay[so + j]) < s) j++;
+    float s0 = uintBitsToFloat(lay[so + j - 1]), s1 = uintBitsToFloat(lay[so + j]);
+    float v0 = uintBitsToFloat(lay[vo + j - 1]), v1 = uintBitsToFloat(lay[vo + j]);
+    float k = (s - s0) / max(s1 - s0, 1e-6);
+    return v0 + (v1 - v0) * easeK(int(uintBitsToFloat(lay[eo + j - 1])), k);
+}
+
+// A text twisting like a ribbon (as effects.Ribbon): at off, n, its length, closed, then n × (K: how
+// much it is seen across, O: the outside of the curve)
+vec2 ribbonAt(int off, float s) {
+    int n = int(uintBitsToFloat(lay[off]));
+    float L = uintBitsToFloat(lay[off + 1]);
+    if (uintBitsToFloat(lay[off + 2]) > 0.5 && L > 0.0) s -= L * floor(s / L);
+    float f = clamp(s / max(L, 1e-6) * float(n - 1), 0.0, float(n - 1));
+    int i = min(int(f), n - 2);
+    float t = f - float(i);
+    vec2 a = vec2(uintBitsToFloat(lay[off + 3 + 2 * i]), uintBitsToFloat(lay[off + 4 + 2 * i]));
+    vec2 b = vec2(uintBitsToFloat(lay[off + 5 + 2 * i]), uintBitsToFloat(lay[off + 6 + 2 * i]));
+    return a + (b - a) * t;
+}
+// the height in a letter seen at its height ly, sp px along the path; 1e9: none, edge-on (as
+// effects.Ribbon.V)
+float ribbonV(int off, float sp, float ly) {
+    float k = ribbonAt(off, sp).x;
+    return abs(k) < 0.02 ? 1e9 : ly / k;
+}
+
 // Texts of one stage among the overlay clips (stage < 0: all)
 vec3 drawText(vec3 col, vec2 p0, float ch, int stage) {
     int n = min(sTextN, TILE_TEXT);
+    // the order they are drawn in here: as they come, or far to near where they have a depth
+    // along their path or fold as ribbons (as lyrics' textOrder)
+    int ord[MAX_ORD];
+    float okey[MAX_ORD];
+    int no = 0;
     for (int ti = 0; ti < n; ti++) {
         int i = sText[ti];
         int s = int(P.tC[i].z);
         if (stage >= 0 && min(P.ts[s].gradN.y, P.layerN.x) != stage) continue;
+        vec4 b = P.tB[i];
+        float slant = P.ts[s].ztrack.w > 0.5 ? abs(P.tD[i].z) : 0.0;
+        float reach = length(P.tA[i].zw) * 0.5 * b.z * (1.0 + slant) + abs(P.ts[s].info.w) + max(abs(P.ts[s].shadow.x), abs(P.ts[s].shadow.y))
+            + P.ts[s].depth.w + P.ts[s].ztrack.y + P.ts[s].info.y + 2.0;
+        if (distance(p0, b.xy) > reach) continue;
+        float key = float(i) * 1e-4;
+        int zt = P.depthI.z != 0 ? floatBitsToInt(P.ts[s].ztrack.x) : 0, rb = floatBitsToInt(P.ts[s].ztrack.z);
+        if (zt > 0 || rb > 0 || P.ts[s].ztrack.w > 0.5) {
+            vec4 d4 = P.tD[i];
+            float sp = d4.x + dot(p0 - b.xy, vec2(cos(d4.y), sin(d4.y)));
+            key = zt > 0 ? 10.0 + trackAt(zt - 1, sp) : (P.ts[s].ztrack.w > 0.5 ? 10.5 + 0.5 * cos(d4.y) : 10.5 + 0.5 * ribbonAt(rb - 1, sp).x);
+        }
+        if (no == MAX_ORD) break;
+        int j = no++;
+        while (j > 0 && okey[j - 1] > key) { ord[j] = ord[j - 1]; okey[j] = okey[j - 1]; j--; }
+        ord[j] = i;
+        okey[j] = key;
+    }
+    for (int oi = 0; oi < no; oi++) {
+        int i = ord[oi];
+        int s = int(P.tC[i].z);
         vec4 inf = P.ts[s].info;
         float ow = inf.x;
         float gr = max(inf.y, 0.5);
         vec2 p = p0 + vec2(ch * inf.w, 0.0);
         vec4 r = P.tA[i];
         vec4 b = P.tB[i];
+        vec4 dp = P.ts[s].depth;
+        // its depth here: from its path, per point (moved by the 2.5D camera, blurred by the depth
+        // of field as that point is), or one for all of it (as lyrics' textAt)
+        float zq = dp.y, bl = dp.w;
+        int zt = floatBitsToInt(P.ts[s].ztrack.x);
+        if (zt > 0 && P.depthI.z != 0) {
+            vec4 d4 = P.tD[i];
+            zq = trackAt(zt - 1, d4.x + dot(p0 - b.xy, vec2(cos(d4.y), sin(d4.y))));
+            p -= pDisp(zq, p0 - 0.5);
+            bl = dofCoC(zq);
+        }
         float sc = b.z;
         float rc = cos(P.tC[i].w), rs = sin(P.tC[i].w);
         mat2 unrot = mat2(rc, -rs, rs, rc);    // turns screen offsets back by the item's rotation
         vec2 local = unrot * (p - b.xy) / sc;  // atlas px relative to the word center
+        int rb = floatBitsToInt(P.ts[s].ztrack.z);
+        if (rb > 0) {
+            // a ribbon: the height of the letter seen here, folded as its point on the path is
+            vec4 d4 = P.tD[i];
+            float v = ribbonV(rb - 1, d4.x + dot(p0 - b.xy, vec2(cos(d4.y), sin(d4.y))), local.y);
+            if (v > 1e8) continue;
+            local.y = v;
+        }
+        bool wrap = P.ts[s].ztrack.w > 0.5;    // wrapped round a cylinder: tD.z is its slant
+        vec2 fwh = 1.0 - vec2(wrap ? 0.0 : P.tD[i].z, P.tD[i].w); // turned round: narrower or lower (mirrored < 0)
+        if (abs(fwh.x) < 0.02 || abs(fwh.y) < 0.02) continue;
+        local /= fwh;
+        if (wrap) local.x -= P.tD[i].z * local.y;
         vec2 hs = r.zw * 0.5;
         if (abs(local.x) > hs.x || abs(local.y) > hs.y) continue;
         vec2 a = r.xy + hs + local;
@@ -556,13 +658,12 @@ vec3 drawText(vec3 col, vec2 p0, float ch, int stage) {
             alpha *= maskBilinear(tm, p0 * vec2(tm.yz) / vec2(W, H));
             if (alpha <= 0.0) continue;
         }
-        vec4 dp = P.ts[s].depth;
         if (dp.x > 0.5 && P.depthI.z != 0) {
             // hidden where the scene is nearer (this pixel's depth)
-            alpha *= 1.0 - smoothstep(dp.y - dp.z, dp.y + dp.z + 1e-4, gHit.z);
+            alpha *= 1.0 - smoothstep(zq - dp.z, zq + dp.z + 1e-4, gHit.z);
             if (alpha <= 0.0) continue;
         }
-        float bl = dp.w; // the depth of field's blur: a soft edge of the distance field
+        // bl: the depth of field's blur, a soft edge of the distance field
 
         // Shadow (blurred)
         vec4 sh = P.ts[s].shadow;
@@ -626,8 +727,7 @@ vec2 layerUV(int i, vec2 s) {
     return d / L.xf.zw + vec2(L.info.yz) * 0.5;
 }
 
-vec4 layerSample(int i, vec2 q) {
-    float b = P.layers[i].xf2.z;
+vec4 layerSample(int i, vec2 q, float b) {
     if (b <= 0.5) return layerBilinear(i, layerUV(i, q + 0.5));
     vec4 acc = vec4(0.0);
     float tw = 0.0;
@@ -862,8 +962,27 @@ vec3 applyLight(vec3 col, int i, vec2 q) {
 vec3 drawLayer(vec3 col, int i, vec2 q) {
     LayerP L = P.layers[i];
     if (L.light0.w != 0) col = applyLight(col, i, q);
-    vec2 qw = layerWarp(i, q);
-    vec4 s = layerSample(i, qw);
+    // its depth here: from its path, per point (moved by the 2.5D camera, blurred by the depth of
+    // field as that point is), or one for all of it
+    float zq = L.depth.y, zb = L.xf2.z;
+    vec2 zd = vec2(0.0);
+    int zt = floatBitsToInt(L.ztrack.x);
+    if (zt > 0 && P.depthI.z != 0) {
+        zq = trackAt(zt - 1, L.ztrack.y + dot(q - L.xf.xy, L.ztrack.zw));
+        zd = pDisp(zq, q);
+        zb += dofCoC(zq);
+    } else if ((L.info.w & 16384) != 0 && P.depthI.z != 0) {
+        // an emitter's particles each at the depth of their point on their path (its depth plane,
+        // after its image and lens)
+        ivec2 c = clamp(ivec2(q), ivec2(0), L.info.yz - 1);
+        int planes = (L.info.w & 8192) != 0 ? 2 : 1;
+        float v = uintBitsToFloat(lay[L.info.x + L.info.y * L.info.z * planes + c.y * L.info.y + c.x]);
+        if (v >= 0.0) zq = v;
+        zd = pDisp(zq, q);
+        zb += dofCoC(zq);
+    }
+    vec2 qw = layerWarp(i, q) - zd;
+    vec4 s = layerSample(i, qw, zb);
     if (L.mask.w != 0) s *= maskAt(i, layerUV(i, qw + 0.5));
     float shift = L.warp1.z;
     int cm = int(L.warp1.w);
@@ -875,8 +994,8 @@ vec3 drawLayer(vec3 col, int i, vec2 q) {
         } else {
             off = vec2(-round(shift), 0.0);
         }
-        if (inside(q + off)) s.r = layerSample(i, layerWarp(i, q + off)).r;
-        if (inside(q - off)) s.b = layerSample(i, layerWarp(i, q - off)).b;
+        if (inside(q + off)) s.r = layerSample(i, layerWarp(i, q + off) - zd, zb).r;
+        if (inside(q - off)) s.b = layerSample(i, layerWarp(i, q - off) - zd, zb).b;
     }
     if (s.a <= 1e-4) return col;
     vec3 c = s.rgb / s.a;
@@ -891,7 +1010,7 @@ vec3 drawLayer(vec3 col, int i, vec2 q) {
     c = L.warp2.x * (c - 0.5) + 0.5 + L.warp2.y;
     float a = clamp(s.a * key * L.xf2.y, 0.0, 1.0);
     // behind what is nearer than it
-    if (L.depth.x > 0.5 && P.depthI.z != 0) a *= 1.0 - smoothstep(L.depth.y - L.depth.z, L.depth.y + L.depth.z + 1e-4, sceneDepth(q));
+    if (L.depth.x > 0.5 && P.depthI.z != 0) a *= 1.0 - smoothstep(zq - L.depth.z, zq + L.depth.z + 1e-4, sceneDepth(q));
     return mix(col, blendColor(L.info.w & 15, col, clamp(c, 0.0, 1.0)), a);
 }
 
@@ -1087,8 +1206,9 @@ void buildTileLists(vec2 lo, vec2 hi) {
     int nt = P.textInfo.x;
     for (int i = int(li); i < nt; i += 64) {
         int s = int(P.tC[i].z);
-        float extra = abs(P.ts[s].info.w) + max(abs(P.ts[s].shadow.x), abs(P.ts[s].shadow.y)) + P.ts[s].depth.w + 2.0;
+        float extra = abs(P.ts[s].info.w) + max(abs(P.ts[s].shadow.x), abs(P.ts[s].shadow.y)) + P.ts[s].depth.w + P.ts[s].ztrack.y + 2.0;
         vec2 hw = P.tA[i].zw * 0.5 * P.tB[i].z;
+        if (P.ts[s].ztrack.w > 0.5) hw.x += abs(P.tD[i].z) * hw.y; // slanted round a cylinder
         float rc = abs(cos(P.tC[i].w)), rs = abs(sin(P.tC[i].w));
         vec2 hs = vec2(hw.x * rc + hw.y * rs, hw.x * rs + hw.y * rc) + extra;
         vec2 c = P.tB[i].xy;

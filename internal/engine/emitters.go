@@ -254,10 +254,12 @@ func (s *Session) emitFrame(li, ci int, c0, c *config.ClipConfig, idx int, feats
 		p.Follow, p.Route, p.RouteFixed, p.RouteK = true, true, e.RouteFixed, math.Min(math.Max(e.RouteStrength, 0), 1)
 		p.Path, p.PathLen = effects.SamplePath(r, float64(s.W), float64(s.H))
 		p.PathClosed = !r.Open
+		p.ZTrack = effects.Track(r, "z", float64(s.W), float64(s.H))
 	} else if e.FollowPath && c.Motion.On() {
 		p.Follow = true
 		p.Path, p.PathLen = effects.SamplePath(c.Motion.Path, float64(s.W), float64(s.H))
 		p.PathClosed = !c.Motion.Path.Open
+		p.ZTrack = effects.Track(c.Motion.Path, "z", float64(s.W), float64(s.H))
 	}
 	if e.Floor > 0 || e.FloorDepth {
 		// below the emitter now (with a depth map and FloorDepth, layersAt finds the scene's)

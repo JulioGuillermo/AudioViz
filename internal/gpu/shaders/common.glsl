@@ -32,6 +32,7 @@ struct LayerP {
     vec4 light3;   // shading of the surfaces, 2.5D on, lit from, to (soft edge in light1.w)
     vec4 light4;   // rim light: from (px), soft (px), width (px), gain (0 = off)
     vec4 light5;   // rim light: edge (depth step)
+    vec4 ztrack;   // depth from its path: track offset + 1 (float bits; 0 none), center along it (px), direction x, y
 };
 
 // One entry of the per-frame text style table (lyrics = 0, fixed texts after)
@@ -46,6 +47,7 @@ struct TStyle {
     ivec4 gradN;      // gradient stop count, stage
     ivec4 mask;       // screen mask: offset in lay (words; a byte per px), width, height, on
     vec4 depth;       // behind what is nearer (0/1), its depth, soft edge; blur (px, depth of field)
+    vec4 ztrack;      // depth from its path: track offset + 1 (float bits; 0 none), margin (px); its twist as a ribbon: track offset + 1; wrapped round a cylinder (1: items' tD.z is their slant)
     vec4 grad[MAX_GRAD];
 };
 
@@ -78,6 +80,7 @@ layout(std430, set = 0, binding = 0) readonly buffer Params {
     vec4 tA[MAX_TEXT];         // atlas x, y, w, h
     vec4 tB[MAX_TEXT];         // center x, y, scale, alpha
     vec4 tC[MAX_TEXT];         // karaoke fill, pad, style index, rotation (rad)
+    vec4 tD[MAX_TEXT];         // along its path (depth from it): how far (px), its direction (rad); turned round: 1 − width, 1 − height
     vec4 bgMix;                // -, visualizer opacity
     ivec4 prev;                // preview: scale (1 = normal), output width and height
     vec4 layerA;               // background A (BG): scale, offX, offY, rot (segment motion)

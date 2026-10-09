@@ -96,6 +96,9 @@ type EmitParams struct {
 	// they are born unless RouteFixed
 	Route, RouteFixed bool
 	RouteK            float64 // how much they follow their route (0..1): mixed with their free motion
+	// the depth along the path they go along (their route, or the motion path): each one takes
+	// the depth of its point on it (nil: the emitter's own)
+	ZTrack *PathTrack
 	// A floor (y px) they bounce on: how much speed they keep (bounce) and sideways (friction)
 	FloorOn                 bool
 	Floor, Bounce, Friction float64
@@ -255,6 +258,14 @@ func SamplePath(sh *config.MaskShape, W, H float64) ([]float32, float32) {
 	return out, float32(L)
 }
 
+// wrapLen: a length along a path of length L: round it when closed
+func wrapLen(s, L float32, closed bool) float32 {
+	if closed && L > 0 {
+		s -= L * float32(math.Floor(float64(s/L)))
+	}
+	return s
+}
+
 // pathPoint: the point at length s along a sampled path (x, y, length so far), and its unit
 // tangent; past its ends it goes on straight (round, when closed). As in emit.comp.
 func pathPoint(pp []float32, L float32, closed bool, s float32) (x, y, tx, ty float32) {
@@ -287,6 +298,8 @@ type EmitFrame struct {
 	T      float64
 	// the water's lens (DrawEmitter): where what is under each pixel is seen from, moved (x, y px; nil = none)
 	Lens []float32
+	// the depth of its particles at each pixel (DrawEmitter, with EmitParams.ZTrack; -1: none there)
+	ZPlane []float32
 }
 
 // pcg hash (same as emit.comp)
@@ -306,6 +319,7 @@ type Particle struct {
 	X, Y, VX, VY float32
 	Size         float32 // diameter, px
 	R, G, B, A   float32 // straight color and alpha
+	Z            float32 // its depth from the path it goes along (EmitParams.ZTrack; -1: none)
 }
 
 // birthOf: the moment particle i is born (it is born when the count passes i + 0.5); ok = false
@@ -406,6 +420,7 @@ func (e *EmitFrame) At(i int) (Particle, bool) {
 		return vx0*tt + 0.5*ax*tt*tt, vy0*tt + 0.5*ay*tt*tt, vx0 + ax*tt, vy0 + ay*tt
 	}
 	dx, dy, vx, vy := motion(age)
+	pz := float32(-1) // its depth from its path (none)
 	if p.Follow && !p.Route && len(p.Path) >= 6 {
 		// along the path: as far as its speed takes it, the cross offset of its shape, the forces
 		along, sv := sp*age, sp
@@ -414,6 +429,9 @@ func (e *EmitFrame) At(i int) (Particle, bool) {
 			along, sv = sp*(1-ek)/k, sp*ek
 		}
 		px, py, tx, ty := pathPoint(p.Path, p.PathLen, p.PathClosed, float32(bt.PathP)*p.PathLen+along)
+		if p.ZTrack != nil {
+			pz = p.ZTrack.At(wrapLen(float32(bt.PathP)*p.PathLen+along, p.PathLen, p.PathClosed))
+		}
 		lat := ox
 		fx, fy, fvx, fvy := float32(0), float32(0), float32(0), float32(0)
 		if k > 1e-3 {
@@ -474,6 +492,9 @@ func (e *EmitFrame) At(i int) (Particle, bool) {
 		along *= hs / 3
 		sv := spd(age)
 		px, py, tx, ty := pathPoint(p.Path, p.PathLen, p.PathClosed, along)
+		if p.ZTrack != nil {
+			pz = p.ZTrack.At(wrapLen(along, p.PathLen, p.PathClosed))
+		}
 		if !p.RouteFixed {
 			px, py = px+float32(bt.X)-p.Path[0], py+float32(bt.Y)-p.Path[1]
 		}
@@ -519,7 +540,7 @@ func (e *EmitFrame) At(i int) (Particle, bool) {
 		px, py, vx, vy = p.collide(px, py, vx, vy)
 		px, py, vx, vy = p.collide(px, py, vx, vy)
 	}
-	return Particle{px, py, vx, vy, max(size, 0), c[0], c[1], c[2], c[3]}, true
+	return Particle{px, py, vx, vy, max(size, 0), c[0], c[1], c[2], c[3], pz}, true
 }
 
 // footprint: the box of pixels a particle touches, and its radius and streak
@@ -580,7 +601,7 @@ func EmitAccLayout(W, H int) (glow, src, field, stride int) {
 	glow = W * H * 4
 	src = glow + gw*gh*4
 	field = src + xw*xh
-	return glow, src, field, field + xw*xh
+	return glow, src, field, field + xw*xh + W*H // then the depth of its particles (a word per pixel)
 }
 
 // EmitLightGrid: the size of the light grid for W×H
@@ -739,6 +760,10 @@ func DrawEmitter(e *EmitFrame, W, H int) (*image.RGBA, *LightField) {
 	LW, LH := emitGrid(W, H, EmitGlowDiv)
 	acc := make([]uint32, GW*GH*4)
 	glow := make([]uint32, LW*LH*4)
+	var zacc []uint32 // their depth (× their weight) when it comes from their path
+	if p.ZTrack != nil {
+		zacc = make([]uint32, GW*GH)
+	}
 	XW, XH := emitGrid(W, H, EmitLightDiv)
 	var src []uint32
 	if p.LightOn {
@@ -757,7 +782,7 @@ func DrawEmitter(e *EmitFrame, W, H int) (*image.RGBA, *LightField) {
 					if !ok || pt.A <= 0 {
 						continue
 					}
-					splat(&pt, p.Streak, p.Softness, acc, GW, GH, div)
+					splat(&pt, p.Streak, p.Softness, acc, GW, GH, div, zacc)
 					if p.GlowI > 0 && p.GlowR > 0 {
 						splatGlow(&pt, float32(p.GlowR), glow, LW, LH)
 					}
@@ -778,6 +803,10 @@ func DrawEmitter(e *EmitFrame, W, H int) (*image.RGBA, *LightField) {
 	if p.Water && p.WaterLens > 0 {
 		e.Lens = make([]float32, W*H*2)
 	}
+	e.ZPlane = nil
+	if zacc != nil {
+		e.ZPlane = make([]float32, W*H)
+	}
 	parallelFor(H, func(y0, y1 int) {
 		for y := y0; y < y1; y++ {
 			for x := 0; x < W; x++ {
@@ -786,6 +815,9 @@ func DrawEmitter(e *EmitFrame, W, H int) (*image.RGBA, *LightField) {
 				copy(img.Pix[(y*W+x)*4:], c[:])
 				if e.Lens != nil {
 					e.Lens[(y*W+x)*2], e.Lens[(y*W+x)*2+1] = ln[0], ln[1]
+				}
+				if e.ZPlane != nil {
+					e.ZPlane[y*W+x] = zPlaneAt(acc, zacc, GW, GH, div, x, y)
 				}
 			}
 		}
@@ -823,7 +855,7 @@ func sumAt(acc []uint32, GW, GH, div int, px, py float32) [4]float32 {
 	return o
 }
 
-func splat(pt *Particle, streak, softness float64, acc []uint32, GW, GH, div int) {
+func splat(pt *Particle, streak, softness float64, acc []uint32, GW, GH, div int, zacc []uint32) {
 	r, sx, sy, x0, y0, x1, y1 := pt.footprint(float32(streak))
 	x0, y0 = max(x0/div, 0), max(y0/div, 0)
 	x1, y1 = min(x1/div+1, GW-1), min(y1/div+1, GH-1)
@@ -833,6 +865,11 @@ func splat(pt *Particle, streak, softness float64, acc []uint32, GW, GH, div int
 		for x := x0; x <= x1; x++ {
 			w := pt.weight((float32(x)+0.5)*d, (float32(y)+0.5)*d, r, sx, sy, float32(softness)) * a
 			addCell(acc, (y*GW+x)*4, pt, w)
+			if zacc != nil && pt.Z >= 0 && w > 0 {
+				if q := uint32(pt.Z*w*EmitFixed + 0.5); q > 0 {
+					atomic.AddUint32(&zacc[y*GW+x], q)
+				}
+			}
 		}
 	}
 }
@@ -1090,4 +1127,15 @@ func LightOnto(dst *image.RGBA, l *LightField, s *Scene) {
 			}
 		}
 	})
+}
+
+// zPlaneAt: the depth of the particles at pixel (x, y): their depths weighted as their alpha, in
+// the pixel's cell (-1 without any), as resolveOne in emit.comp
+func zPlaneAt(acc, zacc []uint32, GW, GH, div, x, y int) float32 {
+	cx, cy := min(x/div, GW-1), min(y/div, GH-1)
+	a := acc[(cy*GW+cx)*4+3]
+	if a == 0 {
+		return -1
+	}
+	return float32(zacc[cy*GW+cx]) / float32(a)
 }

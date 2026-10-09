@@ -45,7 +45,7 @@ const rot = (x, y, deg) => {
 };
 
 export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selClip, selEmit = false, onClip, inspector, onClose, marks = null, onKeys, kf = {},
-  tool: tool0 = 'select', selMask = null, editMask, onPainted, onNeedMask, selId, selClipIdx, selText, selTextIdx, onText, maskOwner = null, pathOwner = null, editPath }) {
+  tool: tool0 = 'select', selMask = null, editMask, onPainted, onNeedMask, selId, selClipIdx, selText, selTextIdx, onText, maskOwner = null, pathOwner = null, editPath, onPathNode, view = '' }) {
   const time = useStore(timeStore);
   const W = meta.width, H = meta.height;
   const viewRef = useRef();
@@ -85,7 +85,7 @@ export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selCli
   // Quality of the frames: full when zoomed in enough, reduced when the whole frame is small
   const dpr = window.devicePixelRatio || 1;
   const scale = v ? Math.max(1, Math.min(4, Math.floor(1 / Math.max(0.01, v.z * dpr)))) : 2;
-  const info = useFrameStream(canvas, { meta, time, scale, rev, playing });
+  const info = useFrameStream(canvas, { meta, time, scale, rev, playing, view });
 
   const rect = () => viewRef.current.getBoundingClientRect();
   const fit = () => {
@@ -257,7 +257,7 @@ export function Editor({ meta, timeStore, playing, setPlaying, seek, rev, selCli
             toFrame=${toFrame} onChange=${onClip} geo=${geoOf(info.layers, selId, selClipIdx)} />`}
           ${tool === 'path' && pathOwner && html`<${MaskOverlay} clip=${pathOwner.obj} k=${0} pathShape=${pathOwner.shape}
             time=${time} meta=${meta} tool=${curPath && !pathDraw ? 'nodes' : 'shape'} brush=${brush} toFrame=${toFrame} z=${v.z}
-            editMask=${(fn) => { setPathDraw(false); editPath(fn); }} />`}
+            editMask=${(fn) => { setPathDraw(false); editPath(fn); }} onSelNode=${onPathNode} />`}
           ${tool !== 'path' && maskOwner && (maskOwner.screen || showClip) && selMask != null && maskOwner.obj.masks && maskOwner.obj.masks[selMask] && html`<${MaskOverlay}
             clip=${maskOwner.obj} k=${selMask} screen=${maskOwner.screen}
             time=${time} meta=${meta} tool=${tool} brush=${brush} toFrame=${toFrame} z=${v.z} editMask=${editMask} onPainted=${onPainted}

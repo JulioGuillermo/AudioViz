@@ -41,10 +41,40 @@ const int XDIV = 32; // the light's cells
 int LW, LH, XW, XH;  // the glow grid, the light grid
 // Word offsets of emitter e's accumulation, its glow, its light sources and its light field
 // (as effects.EmitAccLayout)
-uint accBase(int e) { return uint(e) * uint(W * H * 4 + LW * LH * 4 + 2 * XW * XH); }
+uint accBase(int e) { return uint(e) * uint(W * H * 4 + LW * LH * 4 + 2 * XW * XH + W * H); }
 uint glowBase(int e) { return accBase(e) + uint(W * H * 4); }
 uint srcBase(int e) { return glowBase(e) + uint(LW * LH * 4); }
 uint fieldBase(int e) { return srcBase(e) + uint(XW * XH); }
+uint zBase(int e) { return fieldBase(e) + uint(XW * XH); } // its particles' depth × their weight
+
+// The easings of keys (as config.Ease) and a value along a path (as effects.PathTrack.At): at
+// off in the emitter data, n, then n lengths, values and easings
+float easeK(int e, float k) {
+    k = clamp(k, 0.0, 1.0);
+    if (e == 1) return 0.0;
+    if (e == 2) return k * k * k;
+    if (e == 3) return 1.0 - pow(1.0 - k, 3.0);
+    if (e == 4) return k < 0.5 ? 4.0 * k * k * k : 1.0 - pow(-2.0 * k + 2.0, 3.0) / 2.0;
+    if (e == 5) {
+        const float c = 1.70158 * 1.525;
+        if (k < 0.5) return (2.0 * k) * (2.0 * k) * ((c + 1.0) * 2.0 * k - c) / 2.0;
+        return ((2.0 * k - 2.0) * (2.0 * k - 2.0) * ((c + 1.0) * (2.0 * k - 2.0) + c) + 2.0) / 2.0;
+    }
+    if (e == 6) return k >= 1.0 ? 1.0 : 1.0 - exp(-6.0 * k) * cos(4.5 * 3.14159265 * k);
+    return k;
+}
+float trackAtE(int off, float s) {
+    int n = int(edf(off));
+    int so = off + 1, vo = off + 1 + n, eo = off + 1 + 2 * n;
+    if (s <= edf(so)) return edf(vo);
+    if (s >= edf(so + n - 1)) return edf(vo + n - 1);
+    int j = 1;
+    while (j < n - 1 && edf(so + j) < s) j++;
+    float k = (s - edf(so + j - 1)) / max(edf(so + j) - edf(so + j - 1), 1e-6);
+    return edf(vo + j - 1) + (edf(vo + j) - edf(vo + j - 1)) * easeK(int(edf(eo + j - 1)), k);
+}
+// a length along a path of length L, round when closed
+float wrapLen(float s, float L, bool closed) { return closed && L > 0.0 ? s - L * floor(s / L) : s; }
 
 // Every phase runs THREADS invocations (4096 groups of 64); phases 0 and 2 loop over their items
 const uint THREADS = 4096u * 64u;
@@ -180,6 +210,8 @@ void splatPhase() {
     vec4 mv = motionAt(age, v0l, acc2, k);
     vec2 dp = mv.xy, vel = mv.zw;
     int nsamp = int(ed[h + 70]);
+    int zt = int(ed[h + 95]); // the depth along their path (offset + 1; 0: none)
+    float pz = -1.0;
     uint flg = ed[h + 72];
     if (nsamp >= 2 && (flg & 4u) == 0u) {
         // along the motion path: as far as its speed takes it, its shape's cross offset, the forces
@@ -191,6 +223,7 @@ void splatPhase() {
         }
         float L = edf(h + 71);
         vec4 pt = pathPoint(int(ed[h + 69]), nsamp, L, (flg & 1u) != 0u, bP * L + along);
+        if (zt > 0) pz = trackAtE(zt - 1, wrapLen(bP * L + along, L, (flg & 1u) != 0u));
         vec4 fm = motionAt(age, vec2(0.0), acc2, k);
         x0 = pt.x - pt.w * ox;
         y0 = pt.y + pt.z * ox;
@@ -235,6 +268,7 @@ void splatPhase() {
         float sv = length(motionAt(age, v0l, acc2, k).zw);
         int po = int(ed[h + 69]);
         vec4 pt = pathPoint(po, nsamp, edf(h + 71), (flg & 1u) != 0u, along);
+        if (zt > 0) pz = trackAtE(zt - 1, wrapLen(along, edf(h + 71), (flg & 1u) != 0u));
         if ((flg & 8u) != 0u) pt.xy += vec2(bX, bY) - vec2(edf(po), edf(po + 1));
         vec2 rp = vec2(pt.x - pt.w * ox, pt.y + pt.z * ox);
         float m = min(rk, 1.0);
@@ -311,6 +345,10 @@ void splatPhase() {
             float dd = length(q);
             float w = (1.0 - smoothstep(r - edge, r, dd)) * alpha;
             addCell(base + uint(yy * GW + xx) * 4u, col.rgb, w);
+            if (pz >= 0.0) {
+                uint zq = uint(pz * w * FIXED + 0.5);
+                if (zq > 0u) atomicAdd(acc[zBase(e) + uint(yy * GW + xx)], zq);
+            }
         }
     }
     // its light source: its cell of the light grid
@@ -488,7 +526,16 @@ void resolveOne(uint id) {
         c.a = max(c.a, max(c.r, max(c.g, c.b)));
     }
     lay[v1.y + p] = packUnorm4x8(clamp(c, 0.0, 1.0));
-    if (ed[h + 43] == 3u && edf(h + 94) > 0.0) lay[v1.y + n + p] = packHalf2x16(gLens); // its lens, after its image
+    bool lensOn = ed[h + 43] == 3u && edf(h + 94) > 0.0;
+    if (lensOn) lay[v1.y + n + p] = packHalf2x16(gLens); // its lens, after its image
+    if (ed[h + 95] != 0u) {
+        // its particles' depth here (weighted as their alpha, in this pixel's cell; -1 without any),
+        // after its image (and lens), as effects.zPlaneAt
+        int cx = min(x / dv, GW - 1), cy = min(y / dv, GH - 1);
+        uint ca = acc[base + uint(cy * GW + cx) * 4u + 3u];
+        float zv = ca == 0u ? -1.0 : float(acc[zBase(e) + uint(cy * GW + cx)]) / float(ca);
+        lay[v1.y + n * (lensOn ? 2 : 1) + p] = floatBitsToUint(zv);
+    }
 }
 // The light at each light cell from all the sources (as effects.lightFrom)
 float lightFalloff(float d, float R, float E) {

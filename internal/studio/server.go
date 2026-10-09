@@ -573,7 +573,15 @@ func (s *Server) hFrame(w http.ResponseWriter, r *http.Request) {
 			tx := q.Get("text")
 			ti, _ := strconv.Atoi(tx)
 			ci, _ := strconv.Atoi(q.Get("clip"))
-			if z, soft, ok := sess.ObjectDepth(fs, tx != "", ti, q.Get("layer"), ci); ok {
+			if zs := q.Get("z"); zs != "" {
+				// a given depth (a path node's)
+				z, _ := strconv.ParseFloat(zs, 64)
+				soft, e := strconv.ParseFloat(q.Get("soft"), 64)
+				if e != nil {
+					soft = 0.03
+				}
+				obj = &[2]float32{float32(z), float32(soft)}
+			} else if z, soft, ok := sess.ObjectDepth(fs, tx != "", ti, q.Get("layer"), ci); ok {
 				obj = &[2]float32{float32(z), float32(soft)}
 			}
 		}

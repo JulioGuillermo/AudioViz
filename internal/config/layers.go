@@ -96,6 +96,41 @@ type MaskShape struct {
 	Points [][]float64 `yaml:"points"`
 	Open   bool        `yaml:"open,omitempty"`
 	Group  string      `yaml:"group,omitempty"` // shapes with the same group are selected and moved together
+	// Values on the nodes of a path (one per point, in their order; missing or empty: none): a
+	// depth and named values, each interpolated along the path only between the nodes that
+	// define it (see effects.PathTrack)
+	Vals []NodeVals `yaml:"vals,omitempty"`
+}
+
+// NodeVals: what a path's node defines (all optional). Z: the depth of what goes along the path
+// at this node (0 far … 1 near); Keys: named values for expressions (path.key / route.key). Each
+// one's easing goes from this node to the next node that defines the same value.
+type NodeVals struct {
+	Z     *float64           `yaml:"z,omitempty"`
+	ZEase string             `yaml:"z_ease,omitempty"`
+	Keys  map[string]NodeKey `yaml:"keys,omitempty"`
+}
+
+// NodeKey: a named value on a node and its easing to the next node that defines it
+type NodeKey struct {
+	V    float64 `yaml:"v"`
+	Ease string  `yaml:"ease,omitempty"`
+}
+
+// ValAt: what node i defines for key ("z": its depth), its easing, and whether it defines it
+func (s *MaskShape) ValAt(i int, key string) (float64, string, bool) {
+	if i < 0 || i >= len(s.Vals) {
+		return 0, "", false
+	}
+	v := &s.Vals[i]
+	if key == "z" {
+		if v.Z == nil {
+			return 0, "", false
+		}
+		return *v.Z, v.ZEase, true
+	}
+	k, ok := v.Keys[key]
+	return k.V, k.Ease, ok
 }
 
 // Motion moves a clip or a text along a path drawn on the screen: its center goes to the point at
@@ -109,6 +144,10 @@ type Motion struct {
 	// Bend (texts): its letters follow the path's shape, each at its distance from the anchor
 	// along it and turned with it, instead of the text moving as one block
 	Bend bool `yaml:"bend,omitempty"`
+	// Turned with the path (Orient, Bend) and going back (to the left): "" upside down as the
+	// path is; "mirror": it turns round like a card and is seen from behind; "readable": it turns
+	// round like a card and stays readable
+	Flip string `yaml:"flip,omitempty"`
 }
 
 // On: it has a path to follow

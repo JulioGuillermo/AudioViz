@@ -42,8 +42,7 @@ export function DepthSection({ cfg, onChange, ctx }) {
   useEffect(() => { setMissing(false); }, [cfg.path, d.source, d.model, d.detail, d.path]);
   const on = d.source && d.source !== 'none';
   const make = () => api('POST', '/api/depth', { image: cfg.path, source: d.source, model: d.model || 'small', detail: d.detail || 'high', file: d.path || '' }).catch(ctx.showErr);
-  return html`<${Section} id="depth" title=${t('Depth')}>
-    <p class="faint" style="margin:2px 0 8px;font-size:12px">${t('How near each point of the image is: the light of the emitters follows it, and things can go behind what is nearer.')}</p>
+  return html`<${Section} id="depth" title=${t('Depth')} help=${'How near each point of the image is: the light of the emitters follows it, and things can go behind what is nearer.'}>
     <${Form} fields=${DEPTH_FIELDS} value=${d} ctx=${ctx} onChange=${(nd) => onChange({ ...cfg, depth: nd })} />
     ${on && html`<div class="depth-box">
       ${!missing && cfg.path ? html`<img class="depth-img" src=${viewURL(cfg.path, d, ver)} onError=${() => setMissing(true)} onLoad=${() => setMissing(false)} />`

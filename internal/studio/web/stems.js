@@ -21,8 +21,7 @@ export function StemsSection({ ctx, hasAudio, audio, onAudio }) {
     if (doneKey && ctx.reloadAna) ctx.reloadAna(); // the timeline's curves of the instruments
   }, [doneKey, hasAudio]);
   const go = () => api('POST', '/api/stems', {}).catch(ctx.showErr);
-  return html`<${Section} id="stems" title=${t('Instruments (the song separated)')}>
-    <p class="faint" style="margin:2px 0 8px;font-size:12px">${t('Separates the song into drums, bass, vocals and the rest: then any effect, emitter or text can react to just one of them (Reacts to → Drums, Kick, Snare, Hi-hats, Bass line, Vocals, The rest).')}</p>
+  return html`<${Section} id="stems" title=${t('Instruments (the song separated)')} help=${'Separates the song into drums, bass, vocals and the rest: then any effect, emitter or text can react to just one of them (Reacts to → Drums, Kick, Snare, Hi-hats, Bass line, Vocals, The rest).'}>
     <${Form} fields=${FULL_FIELD} value=${audio || {}} onChange=${onAudio} ctx=${ctx} />
     <div class="row" style="flex-wrap:wrap;gap:6px">
       ${st && st.ready && !running ? html`<span class="faint" style="font-size:12px"><${Icon} name="check" size=${12} /> ${t(st.full ? 'Separated in full quality' : 'Separated (mono, for the effects)')}</span>

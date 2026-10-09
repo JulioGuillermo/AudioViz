@@ -7,7 +7,8 @@ import { Icon } from './icons.js';
 import { t } from './i18n.js';
 import { keyApi, valueAt, keyIndexAt, KEY_EPS, setIn } from './keys.js';
 import { MaskSection } from './masks.js';
-import { MotionSection, RouteSection, hasPath, movePath } from './motion.js';
+import { helpMenu } from './help.js';
+import { MotionSection, RouteSection, NodeSection, hasPath, movePath } from './motion.js';
 
 // Overlay layers (config.LayerConfig): proj.layers is bottom to top (drawing order); the studio
 // shows them front first, as a stack of cards.
@@ -267,7 +268,8 @@ export function LayerInspector({ proj, sel, setSel, update, time, meta, ctx }) {
       </div>
     </div>
     <div class="insp-b">
-      <div class="card">
+      <div class="card" onContextMenu=${helpMenu(t('Clip'), emit ? 'Drag its point on the preview to move it, the tip of its arrow to turn it.'
+        : 'Drag it on the preview to move it; its corners scale it and the round handle rotates it.')}>
         <div class="fld"><label>${t('Layer name')}</label><div class="ctl"><${Edit} type="text" class="grow" value=${layer.name || ''}
           placeholder=${layerName(layer, li)} onChange=${(e) => editLayer((l) => { l.name = e.target.value; })} /></div></div>
         ${c && html`
@@ -280,9 +282,7 @@ export function LayerInspector({ proj, sel, setSel, update, time, meta, ctx }) {
         <div class="fld"><label>${t('Ends at')}</label><div class="ctl">
           <${Edit} type="text" class="mono" style="width:96px" value=${fmtTime(c.end)}
             onChange=${(e) => editLayer((l) => { const cc = l.clips[j]; cc.end = Math.max(cc.start + 0.1, clampT(parseTime(e.target.value))); })} />
-          <span class="faint" style="font-size:11.5px">${t('{s} s', { s: (c.end - c.start).toFixed(2) })}</span></div></div>
-        <div class="card-note">${t(emit ? 'Drag its point on the preview to move it, the tip of its arrow to turn it.'
-          : 'Drag it on the preview to move it; its corners scale it and the round handle rotates it.')}</div>`}
+          <span class="faint" style="font-size:11.5px">${t('{s} s', { s: (c.end - c.start).toFixed(2) })}</span></div></div>`}
       </div>
       ${c && emit && html`<${Section} id="preset" title=${t('Preset')}>
         <${PresetPicker} clip=${c} onPick=${(k) => editLayer((l) => { const cc = l.clips[j];
@@ -294,10 +294,10 @@ export function LayerInspector({ proj, sel, setSel, update, time, meta, ctx }) {
         : html`<p class="faint" style="font-size:12px">${t('No clips yet. Add one at the cursor, or double-click the layer\'s track on the timeline.')}</p>`}
       ${c && emit && html`<${RouteSection} obj=${c} ctx=${ctx} kf=${kf} edit=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}
       ${c && html`<${MotionSection} obj=${c} kf=${kf} ctx=${ctx} edit=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}
+      ${c && ctx.pathNode && html`<${NodeSection} obj=${c} what=${ctx.pathNode.what} pi=${ctx.pathNode.pi} edit=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}
       ${c && html`<${MaskSection} clip=${c} kf=${kf} selMask=${ctx.selMask} setSelMask=${ctx.setSelMask} ctx=${ctx}
         openEditor=${ctx.openEditor} editClip=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}
-      <${Section} id="layer" title=${t('Layer')}>
-        <p class="faint" style="margin:2px 0 8px;font-size:12px">${t('Layers higher in the list are drawn in front. Drag them in the left panel to change the order.')}</p>
+      <${Section} id="layer" title=${t('Layer')} help=${'Layers higher in the list are drawn in front. Drag them in the left panel to change the order.'}>
         <button class="btn sm ghost danger" onClick=${() => { if (confirm(t('Delete the layer “{n}” and its clips?', { n: layerName(layer, li) }))) {
           update((p) => { p.layers = p.layers.filter((l) => l.id !== sel.id); }); setSel({ kind: 'output' }); } }}>
           <${Icon} name="trash-2" size=${14} /> ${t('Delete layer')}</button>

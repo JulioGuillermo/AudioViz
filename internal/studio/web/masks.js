@@ -138,6 +138,20 @@ function customize(pts, i, open, h) {
 }
 // Splits segment i at t (de Casteljau): a new node on the curve, the shape stays the same.
 // Returns the index of the new node.
+// A path's node values (config.NodeVals), one per point (padded): kept in line with the points by
+// every node operation
+export function nodeVals(shape) {
+  const v = (shape.vals || []).map((x) => (x ? { ...x, keys: x.keys ? { ...x.keys } : undefined } : {}));
+  while (v.length < shape.points.length) v.push({});
+  return v.slice(0, shape.points.length);
+}
+const hasVals = (shape) => (shape.vals || []).some((x) => x && (x.z != null || (x.keys && Object.keys(x.keys).length)));
+// sets a shape's values (none left: removed)
+export function setVals(shape, v) {
+  if (v.some((x) => x && (x.z != null || (x.keys && Object.keys(x.keys).length)))) shape.vals = v;
+  else delete shape.vals;
+}
+
 export function splitSegment(shape, i, t) {
   const pts = shape.points, open = !!shape.open, n = pts.length, j = (i + 1) % n;
   const [P0, C1, C2, P3] = segment(pts, i, open);
@@ -149,13 +163,16 @@ export function splitSegment(shape, i, t) {
   if (!cornerI) customize(pts, i, open, { in: hi.in, out: [Q0[0] - P0[0], Q0[1] - P0[1]] });
   if (!cornerJ) customize(pts, j, open, { in: [Q2[0] - P3[0], Q2[1] - P3[1]], out: hj.out });
   const node = [r5(S[0]), r5(S[1]), NODE.aligned, r5(R0[0] - S[0]), r5(R0[1] - S[1]), r5(R1[0] - S[0]), r5(R1[1] - S[1])];
-  pts.splice(i + 1, 0, node);
+  if (hasVals(shape)) { const v = nodeVals({ ...shape, points: pts }); pts.splice(i + 1, 0, node); v.splice(i + 1, 0, {}); setVals(shape, v); }
+  else pts.splice(i + 1, 0, node);
   return i + 1;
 }
 // The shape the other way round (handles swapped)
 export function reverseShape(shape) {
   const pts = shape.points.map((p) => (p.length >= 7 ? [p[0], p[1], p[2], p[5], p[6], p[3], p[4]] : [...p])).reverse();
-  return { ...shape, points: pts };
+  const out = { ...shape, points: pts };
+  if (hasVals(shape)) setVals(out, nodeVals(shape).reverse());
+  return out;
 }
 
 // Kept for other callers: a closed smooth curve through frame points
@@ -190,10 +207,9 @@ export function MaskSection({ clip, kf, selMask, setSelMask, editClip, ctx, open
     setSelMask(masks.length);
     openEditor(kind === 'raster' ? 'brush' : 'shape');
   };
-  return html`<${Section} id="masks" title=${t('Masks')}>
-    ${masks.length === 0 && html`<p class="faint" style="margin:2px 0 8px;font-size:12px">${t(screen
-      ? 'A mask limits where on the screen the text is seen (it stays still while the text moves). Draw it in the editor: a shape by hand (then its nodes), or paint it with the brush.'
-      : 'A mask limits where the clip is seen. Draw it in the editor: a shape by hand (then its nodes), or paint it with the brush.')}</p>`}
+  return html`<${Section} id="masks" title=${t('Masks')} help=${screen
+    ? 'A mask limits where on the screen the text is seen (it stays still while the text moves). Draw it in the editor: a shape by hand (then its nodes), or paint it with the brush.'
+    : 'A mask limits where the clip is seen. Draw it in the editor: a shape by hand (then its nodes), or paint it with the brush.'}>
     ${masks.map((m, k) => html`<div class=${'maskcard' + (selMask === k ? ' on' : '')} key=${m.id || k} onClick=${() => setSelMask(k)}>
       <div class="mh">
         <${Icon} name=${m.kind === 'raster' ? 'brush' : 'pen-tool'} size=${14} />
@@ -240,7 +256,7 @@ export function MaskSection({ clip, kf, selMask, setSelMask, editClip, ctx, open
 // tool: shape | nodes | brush | eraser; brush: { size, hardness, opacity, pSize, pOpacity }
 // pathShape (not undefined): edits a motion path instead (one open or closed line on the screen,
 // null = none yet; editMask then gets and returns [path])
-export function MaskOverlay({ clip, k, time, meta, tool, brush, toFrame, z, editMask, onPainted, geo, screen = false, pathShape }) {
+export function MaskOverlay({ clip, k, time, meta, tool, brush, toFrame, z, editMask, onPainted, geo, screen = false, pathShape, onSelNode }) {
   const pathMode = pathShape !== undefined;
   if (pathMode) screen = true;
   const natC = useNatural(screen ? null : clip.path);
@@ -250,6 +266,9 @@ export function MaskOverlay({ clip, k, time, meta, tool, brush, toFrame, z, edit
   const [paintVer, setPaintVer] = useState(0);
   const [selNodes, setSelNodes] = useState([]); // nodes tool: [{ si, pi }]
   const [selShapes, setSelShapes] = useState([]); // shapes tool: indices of the selected shapes
+  // a path: its selected node (alone) for the inspector's node section
+  useEffect(() => { if (onSelNode) onSelNode(selNodes.length === 1 ? selNodes[0].pi : null); }, [selNodes]);
+  useEffect(() => () => { if (onSelNode) onSelNode(null); }, []);
   const m = pathMode ? PATH_MASK : clip.masks && clip.masks[k];
   const W = meta.width, H = meta.height;
   // Raster: the painted image in an offscreen canvas (loaded from its file the first time)
@@ -406,13 +425,17 @@ export function MaskOverlay({ clip, k, time, meta, tool, brush, toFrame, z, edit
   };
 
   // Node operations (on a copy of the shapes, then saved). Selection: [{ si, pi }]
-  const copyShapes = () => shapes.map((s) => ({ ...s, points: s.points.map((p) => [...p]) }));
+  const copyShapes = () => shapes.map((s) => ({ ...s, points: s.points.map((p) => [...p]), ...(hasVals(s) ? { vals: nodeVals(s) } : {}) }));
   const isSel = (si, pi) => selNodes.some((x) => x.si === si && x.pi === pi);
   const save = (cur) => editMask(() => cur.filter((s) => s.points.length >= (s.open ? 2 : 3)));
   // Removes nodes (a closed shape left with 2 nodes becomes a line; shapes too small go)
   const removeNodes = (list) => {
     const cur = copyShapes();
-    [...list].sort((a, b) => b.pi - a.pi).forEach(({ si, pi }) => cur[si] && cur[si].points.splice(pi, 1));
+    [...list].sort((a, b) => b.pi - a.pi).forEach(({ si, pi }) => {
+      if (!cur[si]) return;
+      cur[si].points.splice(pi, 1);
+      if (cur[si].vals) cur[si].vals.splice(pi, 1);
+    });
     cur.forEach((s) => { if (!s.open && s.points.length === 2) s.open = true; });
     save(cur);
     setSelNodes([]);
@@ -442,11 +465,14 @@ export function MaskOverlay({ clip, k, time, meta, tool, brush, toFrame, z, edit
   // Deleting segment i (node i → next): a closed shape opens there; an open one splits in two
   const removeSegment = (si, i) => {
     const cur = copyShapes(), sh = cur[si], n = sh.points.length;
+    const v = sh.vals;
     if (!sh.open) {
       sh.points = [...sh.points.slice(i + 1), ...sh.points.slice(0, i + 1)];
+      if (v) sh.vals = [...v.slice(i + 1), ...v.slice(0, i + 1)];
       sh.open = true;
     } else {
       const a = { ...sh, points: sh.points.slice(0, i + 1) }, b = { ...sh, points: sh.points.slice(i + 1, n) };
+      if (v) { setVals(a, v.slice(0, i + 1)); setVals(b, v.slice(i + 1, n)); }
       cur.splice(si, 1, a, b);
     }
     save(cur);
@@ -470,6 +496,8 @@ export function MaskOverlay({ clip, k, time, meta, tool, brush, toFrame, z, edit
     if (x.pi === 0) A = reverseShape(A);              // the selected end of A last
     if (y.pi !== 0) B = reverseShape(B);              // the selected end of B first
     const merged = { ...A, points: [...A.points, ...B.points], open: true };
+    delete merged.vals;
+    if (hasVals(A) || hasVals(B)) setVals(merged, [...nodeVals(A), ...nodeVals(B)]);
     const rest = cur.filter((_, k) => k !== x.si && k !== y.si);
     save([...rest, merged]);
     setSelNodes([]);
@@ -529,6 +557,10 @@ export function MaskOverlay({ clip, k, time, meta, tool, brush, toFrame, z, edit
       { label: t('Symmetric handles'), icon: 'arrow-left-right', checked: typ === NODE.symmetric, onClick: () => setType(si, pi, NODE.symmetric) },
       { label: t('Aligned handles (own lengths)'), icon: 'minus', checked: typ === NODE.aligned, onClick: () => setType(si, pi, NODE.aligned) },
       { label: t('Free handles'), icon: 'move', checked: typ === NODE.free, onClick: () => setType(si, pi, NODE.free) },
+      ...(pathMode ? ['-', { label: t('Node values (depth, values)…'), icon: 'sliders-horizontal', onClick: () => {
+        setSelNodes([{ si, pi }]);
+        [120, 400].forEach((ms) => setTimeout(() => { const el = [...document.querySelectorAll('.node-sec')].reverse().find((x) => x.offsetParent); if (el) el.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }, ms));
+      } }] : []),
       '-',
       { label: t(multi ? 'Delete the selected nodes (Del)' : 'Delete node (Del)'), icon: 'minus', onClick: () => removeNodes(multi ? selNodes : [{ si, pi }]) },
       ...(shapes[si].open ? [{ label: t('Close the shape'), icon: 'circle', onClick: () => closeShape(si) }] : []),
@@ -707,6 +739,15 @@ export function MaskOverlay({ clip, k, time, meta, tool, brush, toFrame, z, edit
                 <circle class="mask-handle" cx=${q.x} cy=${q.y} r=${4 * hs} style=${{ strokeWidth: hs }} onPointerDown=${(e) => handleDown(e, si, pi, side)} /></g>`;
             });
           })}
+          ${pathMode && s.vals && s.points.map((p, pi) => {
+            const v = s.vals[pi], f = toF(p);
+            const keys = v && v.keys ? Object.keys(v.keys).length : 0;
+            if (!v || (v.z == null && !keys)) return null;
+            return html`<g key=${'v' + pi} class="node-val">
+              ${v.z != null && html`<circle cx=${f.x} cy=${f.y} r=${10 * hs} style=${{ fill: depthTint(v.z), strokeWidth: hs }} />`}
+              <text x=${f.x + 12 * hs} y=${f.y - 8 * hs} style=${{ fontSize: 11 * hs + 'px' }}>${v.z != null ? 'z ' + (+v.z).toFixed(2) : ''}${keys ? (v.z != null ? ' · ' : '') + keys + ' val' : ''}</text>
+            </g>`;
+          })}
           ${nodes && s.points.map((p, pi) => {
             const f = toF(p), typ = nodeType(p);
             const ev = { onPointerDown: (e) => nodeDown(e, si, pi), onContextMenu: (e) => nodeMenu(e, si, pi) };
@@ -776,3 +817,10 @@ function BrushCursor({ size, hs, toFrame }) {
 }
 
 export { getIn };
+
+// a depth as a color: blue far … orange near
+export function depthTint(z) {
+  const k = Math.max(0, Math.min(1, +z || 0));
+  const r = Math.round(60 + 195 * k), g = Math.round(120 + 40 * k), b = Math.round(255 - 205 * k);
+  return `rgba(${r},${g},${b},0.45)`;
+}

@@ -4,6 +4,7 @@ import { Icon } from './icons.js';
 import { t } from './i18n.js';
 import { createStore } from './store.js';
 import { openMenu } from './menu.js';
+import { helpItem, tHelp } from './help.js';
 import { animatable, valueAt, keyIndexAt } from './keys.js';
 
 // Generic form built from the schema. value = config object; onChange(newObject).
@@ -24,7 +25,7 @@ export function Form({ fields, value, onChange, ctx, isFirst = true, kf = null, 
     if (f.showIf && !f.showIf(value)) return null;
     if (f.firstOnly && !isFirst) return null;
     // A section only groups fields of this same object under a title
-    if (f.type === 'section') return html`<${Section} key=${f.key} id=${prefix + '|' + f.key} title=${t(f.label)}><${Form} fields=${f.fields} value=${value}
+    if (f.type === 'section') return html`<${Section} key=${f.key} id=${prefix + '|' + f.key} title=${t(f.label)} help=${f.help}><${Form} fields=${f.fields} value=${value}
       onChange=${onChange} ctx=${ctx} isFirst=${isFirst} kf=${kf} prefix=${prefix} /></${Section}>`;
     const path = prefix ? prefix + '.' + f.key : f.key;
     // dia: the keyframe diamond; 'gap' = a form with keyframes, field not animatable (aligned label)
@@ -107,10 +108,11 @@ function Row({ f, children, dia }) {
     onFocusIn: (e) => { if (e.target.type !== 'range') adjusting.set({ kind: f.adjust, keys: f.rangeKeys }); },
     onFocusOut: (e) => { if (e.target.type !== 'range') adjusting.set(null); },
   } : {};
-  return html`<div class=${'fld' + (dia ? ' kfable' : '') + (f.adjust ? ' adjust' : '')} ...${adj}>
-    <label title=${f.help ? t(f.help) : ''} for=${btn ? 'kf-none' : undefined}>${btn && dia}${t(f.label)}</label>
+  // right-click: its help (the element's explanation is not on screen)
+  const menu = f.help ? (e) => openMenu(e, [helpItem(t(f.label), tHelp(f.help))]) : undefined;
+  return html`<div class=${'fld' + (dia ? ' kfable' : '') + (f.adjust ? ' adjust' : '')} ...${adj} onContextMenu=${menu}>
+    <label for=${btn ? 'kf-none' : undefined}>${btn && dia}${t(f.label)}</label>
     <div class="ctl">${children}</div>
-    ${f.help && html`<div class="help">${t(f.help)}</div>`}
   </div>`;
 }
 
@@ -227,7 +229,7 @@ function Layers({ f, v, set, ctx, kf, path }) {
 // A folding section: closed until opened; which ones are open is remembered (by id) while the
 // studio is open, so they stay open when the selection changes
 const openSections = new Set();
-export function Section({ title, children, id, defOpen = false, extra = null }) {
+export function Section({ title, children, id, defOpen = false, extra = null, help = null }) {
   const key = id || title;
   const [open, setOpenState] = useState(() => openSections.has(key) || (defOpen && !openSections.has('!' + key)));
   const setOpen = (o) => {
@@ -236,7 +238,7 @@ export function Section({ title, children, id, defOpen = false, extra = null }) 
     setOpenState(o);
   };
   return html`<div class=${'section' + (open ? ' open' : '')}>
-    <div class="sh" onClick=${() => setOpen(!open)}><${Icon} name=${open ? 'chevron-down' : 'chevron-right'} size=${13} />${title}${extra}</div>
+    <div class="sh" onClick=${() => setOpen(!open)} onContextMenu=${help ? (e) => openMenu(e, [helpItem(title, tHelp(help))]) : undefined}><${Icon} name=${open ? 'chevron-down' : 'chevron-right'} size=${13} />${title}${extra}</div>
     ${open && html`<div class="sb">${children}</div>`}
   </div>`;
 }
@@ -283,9 +285,9 @@ function Field({ f, v, set, ctx, isFirst, kf, path, dia }) {
         ${v && html`<button class="btn icon ghost danger" title=${t('Remove')} onClick=${() => set('')}><${Icon} name="x" size=${15} /></button>`}
       </div></${Row}>`;
     case 'group':
-      return html`<${Section} id=${path + '|' + (f.id || '')} title=${t(f.label)}><${Form} fields=${f.fields} value=${v || {}} onChange=${set} ctx=${ctx} isFirst=${isFirst} kf=${kf} prefix=${path} /></${Section}>`;
+      return html`<${Section} id=${path + '|' + (f.id || '')} title=${t(f.label)} help=${f.help}><${Form} fields=${f.fields} value=${v || {}} onChange=${set} ctx=${ctx} isFirst=${isFirst} kf=${kf} prefix=${path} /></${Section}>`;
     case 'layers':
-      return html`<${Section} id=${path} title=${t(f.label)}><${Layers} f=${f} v=${v} set=${set} ctx=${ctx} kf=${kf} path=${path} /></${Section}>`;
+      return html`<${Section} id=${path} title=${t(f.label)} help=${f.help}><${Layers} f=${f} v=${v} set=${set} ctx=${ctx} kf=${kf} path=${path} /></${Section}>`;
   }
   return null;
 }

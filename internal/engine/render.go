@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"image"
 	"image/color"
@@ -180,6 +181,11 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		off int
 	}
 	var emits []emitAt
+	type trackAt struct {
+		off int
+		t   *effects.PathTrack
+	}
+	var tracks []trackAt
 	for i := range fs.Layers {
 		l := &fs.Layers[i]
 		iw, ih := r.s.W, r.s.H
@@ -191,17 +197,28 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		}
 		px := iw * ih
 		lens := l.Emit != nil && l.Emit.P.Water && l.Emit.P.WaterLens > 0
+		zplane := l.Emit != nil && l.Emit.P.ZTrack != nil && len(l.Emit.P.ZTrack.S) <= 256
+		planes := 1
 		if lens {
-			px *= 2 // its lens after its image (x, y as halves)
+			planes++ // its lens after its image (x, y as halves)
 		}
+		if zplane {
+			planes++ // its particles' depth (a float per pixel)
+		}
+		px *= planes
 		mwords := 0
 		if l.Mask != nil {
 			mwords = (len(l.Mask.Pix) + 3) / 4
 		}
-		if n == gpu.MaxLayers || off+px+mwords > g.LayerWords {
+		// its depth along its path after its mask: n, then n lengths, values and easings
+		twords := 0
+		if l.ZTrack != nil {
+			twords = 1 + 3*len(l.ZTrack.S)
+		}
+		if n == gpu.MaxLayers || off+px+mwords+twords > g.LayerWords {
 			break
 		}
-		vers = append(vers, l.Ver+"|"+l.MaskVer)
+		vers = append(vers, fmt.Sprintf("%s|%s|%d", l.Ver, l.MaskVer, twords))
 		lp := &p.Layers[n]
 		flags := int32(l.Blend & 15)
 		if l.Key {
@@ -209,6 +226,9 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		}
 		if lens {
 			flags |= 1 << 13
+		}
+		if zplane {
+			flags |= 1 << 14
 		}
 		w := &l.W
 		if w.GlitchBG {
@@ -265,6 +285,13 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 			lp.Mask = [4]int32{int32(off), int32(l.Mask.Rect.Dx()), int32(l.Mask.Rect.Dy()), 1}
 			off += mwords
 		}
+		lp.ZTrack = [4]float32{}
+		if t := l.ZTrack; t != nil {
+			// written every frame (below): it is small and moves with the path
+			lp.ZTrack = [4]float32{math.Float32frombits(uint32(off + 1)), l.ZS0, l.ZTX, l.ZTY}
+			tracks = append(tracks, trackAt{off, t})
+			off += twords
+		}
 		n++
 	}
 	// The texts' screen masks after the clips (each style with a mask: its offset in TStyles)
@@ -302,8 +329,11 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		for i := 0; i < n; i++ {
 			l := &fs.Layers[i]
 			if l.Emit != nil {
-				off += r.s.W * r.s.H // drawn there by the emitter pass (and its lens)
+				off += r.s.W * r.s.H // drawn there by the emitter pass (and its lens, its depth)
 				if l.Emit.P.Water && l.Emit.P.WaterLens > 0 {
+					off += r.s.W * r.s.H
+				}
+				if t := l.Emit.P.ZTrack; t != nil && len(t.S) <= 256 {
 					off += r.s.W * r.s.H
 				}
 			} else {
@@ -314,12 +344,53 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 				copy(buf[off*4:], m.Pix)
 				off += (len(m.Pix) + 3) / 4
 			}
+			if t := fs.Layers[i].ZTrack; t != nil {
+				off += 1 + 3*len(t.S)
+			}
 		}
 		for _, tm := range tms {
 			copy(buf[off*4:], tm.img.Pix)
 			off += (len(tm.img.Pix) + 3) / 4
 		}
 		r.layerVer[slot] = vers
+	}
+	for _, tr := range tracks {
+		putTrack(buf, tr.off, tr.t)
+	}
+	// the texts' depth along their paths and their twist as ribbons, after everything (written
+	// every frame)
+	for si := 0; si < min(len(fs.TextStyles), gpu.MaxTextStyles); si++ {
+		p.TStyles[si].ZTrack = [4]float32{}
+		st := &fs.TextStyles[si]
+		if t := st.ZTrack; t != nil {
+			if tw := 1 + 3*len(t.S); off+tw <= g.LayerWords {
+				putTrack(buf, off, t)
+				p.TStyles[si].ZTrack[0] = math.Float32frombits(uint32(off + 1))
+				p.TStyles[si].ZTrack[1] = float32(st.ZMargin)
+				off += tw
+			}
+		}
+		if st.Wrap {
+			p.TStyles[si].ZTrack[3] = 1
+		}
+		if rb := st.Ribbon; rb != nil {
+			// as ribbonAt in render.comp reads it: n, length, closed, then n × (K, O)
+			if tw := 3 + 2*len(rb.K); off+tw <= g.LayerWords {
+				put := func(i int, v float32) { binary.LittleEndian.PutUint32(buf[(off+i)*4:], math.Float32bits(v)) }
+				put(0, float32(len(rb.K)))
+				put(1, rb.L)
+				put(2, 0)
+				if rb.Closed {
+					put(2, 1)
+				}
+				for k := range rb.K {
+					put(3+2*k, rb.K[k])
+					put(4+2*k, rb.O[k])
+				}
+				p.TStyles[si].ZTrack[2] = math.Float32frombits(uint32(off + 1))
+				off += tw
+			}
+		}
 	}
 	// Stages beyond the clips drawn (n) go on top: render.comp clamps them to n
 	p.LayerN = [4]int32{int32(n)}
@@ -434,6 +505,17 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		f[h+94] = 0
 		if P.Water {
 			f[h+94] = float32(P.WaterLens)
+		}
+		// the depth along their path: after the collision grid
+		zo := co + effects.MaxCollideCells
+		u[h+95] = 0
+		if t := P.ZTrack; t != nil && len(t.S) <= 256 {
+			n := len(t.S)
+			f[zo] = float32(n)
+			for j := 0; j < n; j++ {
+				f[zo+1+j], f[zo+1+n+j], f[zo+1+2*n+j] = t.S[j], t.V[j], float32(t.E[j])
+			}
+			u[h+95] = uint32(zo + 1)
 		}
 		u[h+85] = 0
 		if P.Hidden {
@@ -1141,6 +1223,11 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 			p.TItemA[i] = [4]float32{it.AX, it.AY, it.AW, it.AH}
 			p.TItemB[i] = [4]float32{it.CX, it.CY, it.Scale, it.Alpha}
 			p.TItemC[i] = [4]float32{it.Fill, it.Pad, float32(it.Style), it.Rot}
+			fl := it.Flip
+			if it.Shear != 0 {
+				fl = it.Shear // wrapped round a cylinder (its style's ztrack.w): its slant
+			}
+			p.TItemD[i] = [4]float32{it.PS, float32(math.Atan2(float64(it.PTY), float64(it.PTX))), fl, it.FlipY}
 		}
 		f4 := func(c [4]float64) [4]float32 {
 			return [4]float32{float32(c[0]), float32(c[1]), float32(c[2]), float32(c[3])}
@@ -1205,5 +1292,18 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 		for c, v := range l.V {
 			p.TLightV[i*gpu.TextLightVec4+c/4][c%4] = v
 		}
+	}
+}
+
+// putTrack writes a path track (effects.PathTrack) as trackAt in render.comp reads it, at word off
+// of buf: n, then n lengths, values and easings (floats)
+func putTrack(buf []byte, off int, t *effects.PathTrack) {
+	put := func(i int, v float32) { binary.LittleEndian.PutUint32(buf[(off+i)*4:], math.Float32bits(v)) }
+	n := len(t.S)
+	put(0, float32(n))
+	for k := 0; k < n; k++ {
+		put(1+k, t.S[k])
+		put(1+n+k, t.V[k])
+		put(1+2*n+k, float32(t.E[k]))
 	}
 }

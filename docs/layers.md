@@ -108,13 +108,38 @@ segment, close it...) are the same as for the masks. *Draw again* replaces it.
   with a spring...). A closed path goes round again past 1 (2 = two laps).
 - **Turn with the path**: its rotation follows the direction of the path (added to its own
   rotation; 0° = moving right).
+- **Going back** (with *Turn with the path*): when the path goes back (to the left) it goes upside
+  down as the path is; or it **twists like a ribbon** (*mirror*: it keeps following the path, narrows
+  across it where the path goes up or down and then shows its back); or it **turns like a card**
+  (*readable*: it narrows along the path and opens again upright).
 - While it has a path its *Position* is not used; dragging it on the preview moves the whole path.
+
+### Values on the nodes
+
+Each node of a path can have (right-click a node → *Node values*, or select it: the *Path node*
+section at the end of the inspector) a **depth** and **named values**, all optional, each with
+its easing towards the next node that defines it. A value goes from node to node only between the
+nodes that define it (the ones in between take no part); before the first one it starts from 0 at
+the start of the path, after the last one it stays; when no node defines it, the object's own is
+used.
+
+- **Depth** (0 far … 1 near, with a background that has a depth map): what goes along the path takes
+  the depth of the point it is on — its start, its middle and its end each their own (texts per
+  pixel, letters of a bent text each theirs, particles each at their point of their route). It
+  goes behind what is nearer, is blurred by the depth of field and moved by the 2.5D camera as that
+  point is. While the depth of a node is adjusted the preview shows the scene's depth with what is
+  behind it in red; in the editor the nodes are tinted by their depth (blue far … orange near).
+- **Named values** (e.g. `glow`): numbers for the advanced settings (expressions) of any property.
 
 ```yaml
     motion:
-      path: { points: [[0.1, 0.8], [0.5, 0.4], [0.9, 0.8]], open: true }   # 0..1 of the frame
+      path:
+        points: [[0.1, 0.8], [0.5, 0.4], [0.9, 0.8]]   # 0..1 of the frame
+        open: true
+        vals: [{ z: 0.2, z_ease: ease_in_out }, {}, { z: 0.9, keys: { glow: { v: 1 } } }]
       progress: 0
       orient: true
+      flip: mirror          # going back: "" upside down, mirror, readable
     keys:
       motion.progress: [{ t: 0, v: 0, ease: ease_in_out }, { t: 6, v: 1 }]
 ```

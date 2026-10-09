@@ -172,12 +172,37 @@ func (m *Multi) Frame(t float64, feat *audio.FrameFeatures, lyr *config.LyricsCo
 				mo = k.Motion
 			}
 			bend := mo.On() && mo.Bend && tc.Motion.Bend // laid out letter by letter
+			var ztr *effects.PathTrack
+			var rib *effects.Ribbon
+			var zs0, ztx, zty float32
+			fsx, fsy := float32(1), float32(1) // turned round: its width and height (Motion.Flip)
 			if mo.On() && !bend {
 				// along its path: the anchor goes to the path's point
 				x, y, a := effects.PathAt(mo.Path, float64(m.w), float64(m.h), mo.Progress)
+				pa := a
+				ztr = effects.Track(mo.Path, "z", float64(m.w), float64(m.h))
+				if mo.Orient && effects.IsRibbon(mo.Flip) {
+					pts, L := effects.SamplePath(mo.Path, float64(m.w), float64(m.h))
+					rib = effects.NewRibbon(pts, L, !mo.Path.Open)
+				}
+				if ztr != nil || rib != nil {
+					_, L := effects.NodeLens(mo.Path, float64(m.w), float64(m.h))
+					p := mo.Progress
+					if mo.Path.Open {
+						p = math.Max(0, math.Min(1, p))
+					} else {
+						p -= math.Floor(p)
+					}
+					zs0, ztx, zty = float32(p*L), float32(math.Cos(a)), float32(math.Sin(a))
+				}
 				dx, dy = float32(x-tc.PositionX*float64(m.w)), float32(y-tc.PositionY*float64(m.h))
 				if mo.Orient {
-					rot += a * 180 / math.Pi
+					fr, kx, ky := effects.FlipTurn(math.Cos(pa), math.Sin(pa), mo.Flip)
+					rot += fr * 180 / math.Pi
+					fsx, fsy = float32(kx), float32(ky)
+					if rib != nil {
+						fsy = 1 // it twists per pixel (Style.Ribbon)
+					}
 				}
 			}
 			if bend {
@@ -188,14 +213,55 @@ func (m *Multi) Frame(t float64, feat *audio.FrameFeatures, lyr *config.LyricsCo
 				ax, ay := float32(tc.PositionX*float64(m.w)), float32(tc.PositionY*float64(m.h))
 				s0 := float32(mo.Progress) * L
 				r0 := float32(rot * math.Pi / 180)
+				// readable going back: the whole text turns round like a card where its middle is
+				// (its letters laid the other way along the path, so that it reads well)
+				var rdir, rk float32 = 1, 1
+				wrap := effects.IsWrap(mo.Flip)
+				if mo.Flip == "readable" {
+					_, _, tx0, _ := effects.PathPoint(pts, L, closed, s0)
+					rk = float32(math.Min(1, math.Abs(float64(tx0))/0.25))
+					if tx0 < 0 {
+						rdir = -1
+					}
+				}
 				for j := range its {
 					ox, oy := (its[j].CX-ax)*sc, (its[j].CY-ay)*sc
+					if mo.Flip == "readable" {
+						ox *= rk * rdir
+					}
 					px, py, tx, ty := effects.PathPoint(pts, L, closed, s0+ox)
+					fr, kx, ky := effects.FlipTurn(float64(tx), float64(ty), mo.Flip)
+					if mo.Flip == "readable" {
+						// upright as the text's middle is, all narrowed alike
+						fr, kx, ky = math.Atan2(float64(ty*rdir), float64(tx*rdir)), float64(rk), 1
+						oy *= rdir
+					}
+					// a ribbon: its lines across the path closer where it twists (its letters twist
+					// per pixel when drawn: Style.Ribbon)
+					oy *= float32(ky)
+					if effects.IsRibbon(mo.Flip) {
+						kx, ky = 1, 1
+					}
 					its[j].CX, its[j].CY = px-ty*oy, py+tx*oy
-					its[j].Rot = float32(math.Atan2(float64(ty), float64(tx))) + r0
+					its[j].Rot = float32(fr) + r0
+					its[j].Flip, its[j].FlipY = 1-float32(kx), 1-float32(ky)
+					if wrap {
+						// round a cylinder: its height upright (the text's own rotation), its
+						// length along the path
+						ux, uy := -math.Sin(float64(r0)), math.Cos(float64(r0))
+						wr, wk, wsh := effects.WrapFrame(float64(tx), float64(ty), ux, uy)
+						its[j].CX, its[j].CY = px+float32(ux)*oy, py+float32(uy)*oy
+						its[j].Rot, its[j].Flip, its[j].FlipY, its[j].Shear = float32(wr), 0, 1-float32(wk), float32(wsh)
+					}
 					its[j].Scale *= sc
+					its[j].PS, its[j].PTX, its[j].PTY = s0+ox, tx, ty
 				}
 				st := StyleFor(cfg, t, feat)
+				st.ZTrack = effects.Track(mo.Path, "z", float64(m.w), float64(m.h))
+				if effects.IsRibbon(mo.Flip) {
+					st.Ribbon = effects.NewRibbon(pts, L, closed)
+				}
+				st.Wrap = wrap
 				st.Z = cfg.ZIndex
 				px, py, tx, ty := effects.PathPoint(pts, L, closed, s0)
 				st.Text, st.AnchorX, st.AnchorY = i-m.nLyr, px, py
@@ -213,15 +279,24 @@ func (m *Multi) Frame(t float64, feat *audio.FrameFeatures, lyr *config.LyricsCo
 			ax, ay := float32(tc.PositionX*float64(m.w)), float32(tc.PositionY*float64(m.h))
 			r := rot * math.Pi / 180
 			st.Text, st.AnchorX, st.AnchorY, st.Rotation = i-m.nLyr, ax+dx, ay+dy, float32(r)
+			st.ZTrack, st.Ribbon = ztr, rib
 			styles = append(styles, st)
-			if dx != 0 || dy != 0 || sc != 1 || rot != 0 {
+			if dx != 0 || dy != 0 || sc != 1 || rot != 0 || fsx != 1 || fsy != 1 {
 				rc, rs := float32(math.Cos(r)), float32(math.Sin(r))
 				for j := range its {
-					ox, oy := (its[j].CX-ax)*sc, (its[j].CY-ay)*sc
+					ox, oy := (its[j].CX-ax)*sc*fsx, (its[j].CY-ay)*sc*fsy
 					its[j].CX = ax + dx + ox*rc - oy*rs
 					its[j].CY = ay + dy + ox*rs + oy*rc
 					its[j].Scale *= sc
 					its[j].Rot = float32(r)
+					its[j].Flip, its[j].FlipY = 1-fsx, 1-fsy
+				}
+			}
+			if ztr != nil || rib != nil {
+				for j := range its {
+					// along the path from its anchor (on the path) in the path's direction
+					its[j].PS = zs0 + (its[j].CX-ax-dx)*ztx + (its[j].CY-ay-dy)*zty
+					its[j].PTX, its[j].PTY = ztx, zty
 				}
 			}
 		}

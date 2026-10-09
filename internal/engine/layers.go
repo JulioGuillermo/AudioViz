@@ -119,7 +119,12 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx f
 					ox, oy = ef.Births[n-1].X, ef.Births[n-1].Y
 				}
 				z, ok := clipDepth(&c.Depth, scene, ox, oy)
-				s.placeInDepth(&lf, &c.Depth, scene, z, ox, oy, ok)
+				d := c.Depth
+				if t := ef.P.ZTrack; t != nil && scene.On() {
+					// its particles take the depth of their point on their path (its depth plane)
+					z, ok, d = float64(t.At(0)), true, pathDepthSettings(d)
+				}
+				s.placeInDepth(&lf, &d, scene, z, ox, oy, ok)
 				if e := c.Emitter; e != nil && e.Collide && scene.On() {
 					// what they go round: the scene at their depth (within the band), but where
 					// they are born
@@ -221,11 +226,13 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx f
 				op *= math.Min(1, (c.End-t)/c.FadeOut)
 			}
 			cx, cy, rot := c.X*W, c.Y*H, c.Rotation*math.Pi/180
+			var pathA float64
 			if c.Motion.On() {
-				var a float64
-				cx, cy, a = effects.PathAt(c.Motion.Path, W, H, c.Motion.Progress)
+				cx, cy, pathA = effects.PathAt(c.Motion.Path, W, H, c.Motion.Progress)
 				if c.Motion.Orient {
-					rot += a
+					r, kx, ky := effects.FlipTurn(math.Cos(pathA), math.Sin(pathA), c.Motion.Flip)
+					rot += r
+					sx, sy = sx*kx, sy*ky
 				}
 			}
 			lf := effects.LayerFrame{Img: img, Ver: fmt.Sprintf("%p:%d", m.r, ver),
@@ -244,7 +251,17 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx f
 				lf.Mask, lf.MaskVer = s.maskFor(c.Masks, int(tw), int(th))
 			}
 			z, ok := clipDepth(&c.Depth, scene, cx, cy)
-			s.placeInDepth(&lf, &c.Depth, scene, z, cx, cy, ok)
+			d := c.Depth
+			if c.Motion.On() && scene.On() {
+				if zt, zs := pathDepth(c.Motion.Path, c.Motion.Progress, W, H); zt != nil {
+					// its depth comes from its path, per point
+					lf.ZTrack, lf.ZS0 = zt, zs
+					lf.ZTX, lf.ZTY = float32(math.Cos(pathA)), float32(math.Sin(pathA))
+					z, ok = float64(zt.At(zs)), true
+					d = pathDepthSettings(d)
+				}
+			}
+			s.placeInDepth(&lf, &d, scene, z, cx, cy, ok)
 			out = append(out, lf)
 			stack = append(stack, li+1)
 		}
@@ -499,6 +516,9 @@ func (s *Session) placeInDepth(lf *effects.LayerFrame, d *config.ClipDepth, scen
 		lf.InDepth, lf.DepthZ, lf.DepthSoft = true, float32(z), float32(math.Max(d.Soft, 0.005))
 		lf.Behind = d.Behind
 	}
+	if lf.ZTrack != nil || (lf.Emit != nil && lf.Emit.P.ZTrack != nil) {
+		return // its depth changes along it: blurred and moved per point (DrawLayer, render.comp)
+	}
 	if ok && scene.On() && scene.DoF.On() {
 		// out of focus as its depth is
 		lf.Blur += float64(scene.DoF.CoC(float32(z)))
@@ -569,4 +589,29 @@ func (s *Session) ObjectDepth(fs *FrameState, isText bool, text int, layerID str
 		return z, soft(&c.Depth), ok
 	}
 	return 0, 0, false
+}
+
+// pathDepth: the depth along a path (nil when no node has one) and how far along it (px) the
+// point at progress p is
+func pathDepth(sh *config.MaskShape, p, W, H float64) (*effects.PathTrack, float32) {
+	t := effects.Track(sh, "z", W, H)
+	if t == nil {
+		return nil, 0
+	}
+	_, L := effects.NodeLens(sh, W, H)
+	if sh.Open {
+		p = math.Max(0, math.Min(1, p))
+	} else {
+		p -= math.Floor(p)
+	}
+	return t, float32(p * L)
+}
+
+// pathDepthSettings: a clip's depth settings when its path gives its depth: its own, or when its
+// depth is off, behind what is nearer with a soft edge
+func pathDepthSettings(d config.ClipDepth) config.ClipDepth {
+	if d.Mode == "" || d.Mode == "off" {
+		d.Behind, d.Soft = true, 0.03
+	}
+	return d
 }
