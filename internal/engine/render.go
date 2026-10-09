@@ -866,25 +866,6 @@ func Execute(cfg *config.ProjectConfig, opts RenderOptions) error {
 
 // ---------------------------------------------------------------- CPU
 
-// drawVizCPU draws the visualizer onto the frame (faded with VizAlpha)
-func (s *Session) drawVizCPU(frame *image.RGBA, dc *gg.Context, fs *FrameState) {
-	viz, err := visualizer.NewVisualizer(&fs.Viz, s.W, s.H)
-	if err != nil || fs.VizAlpha <= 0 {
-		return
-	}
-	if fs.VizAlpha >= 0.999 {
-		viz.Draw(dc, fs.VizFeat)
-		return
-	}
-	layer := image.NewRGBA(frame.Bounds())
-	copy(layer.Pix, frame.Pix)
-	viz.Draw(gg.NewContextForRGBA(layer), fs.VizFeat)
-	a := fs.VizAlpha
-	for i := range frame.Pix {
-		frame.Pix[i] = uint8(float64(frame.Pix[i])*(1-a) + float64(layer.Pix[i])*a + 0.5)
-	}
-}
-
 func (s *Session) cpuFrame(fs *FrameState) *image.RGBA {
 	frame := image.NewRGBA(image.Rect(0, 0, s.W, s.H))
 	par := fs.FX.par
@@ -947,7 +928,7 @@ func (s *Session) cpuFrame(fs *FrameState) *image.RGBA {
 			}
 		}
 		if fs.ZViz == st {
-			s.drawVizCPU(frame, dc, fs)
+			s.drawVizCPU(frame, fs)
 		}
 		var its []lyrics.Item
 		for _, it := range items {

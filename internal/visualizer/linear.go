@@ -55,23 +55,25 @@ func (lv *LinearVisualizer) Draw(dc *gg.Context, feat *audio.FrameFeatures) {
 		barGap = totalBarSpan * 0.25
 	}
 
-	// Glow if enabled
+	// Glow if enabled: each bar grown by a third of the reach more at each pass, where it is (as
+	// glowAlpha in render.comp)
 	if lv.cfg.Glow.Enabled {
 		glowPasses := 3
 		for p := glowPasses; p >= 1; p-- {
-			extraWidth := float64(p) * (lv.cfg.Glow.Radius / float64(glowPasses))
+			grow := float64(p) * (lv.cfg.Glow.Radius / float64(glowPasses)) / 2
 			alpha := (lv.cfg.Glow.Intensity / float64(glowPasses)) * 0.4
-			lv.renderBars(dc, feat, halfW, barWidth+extraWidth, barGap, alpha)
+			lv.renderBars(dc, feat, halfW, barWidth, totalBarSpan, grow, alpha)
 		}
 	}
 
 	// Sharp main bars
-	lv.renderBars(dc, feat, halfW, barWidth, barGap, 1.0)
+	lv.renderBars(dc, feat, halfW, barWidth, totalBarSpan, 0, 1.0)
 }
 
-func (lv *LinearVisualizer) renderBars(dc *gg.Context, feat *audio.FrameFeatures, centerX, barWidth, barGap, alpha float64) {
+// renderBars draws the bars barWidth wide every totalSpan px, grown by grow px all round (the
+// glow's passes)
+func (lv *LinearVisualizer) renderBars(dc *gg.Context, feat *audio.FrameFeatures, centerX, barWidth, totalSpan, grow, alpha float64) {
 	barCount := len(feat.LeftBars)
-	totalSpan := barWidth + barGap
 
 	// Left channel (L): from the center to the left
 	for i := 0; i < barCount; i++ {
@@ -82,17 +84,7 @@ func (lv *LinearVisualizer) renderBars(dc *gg.Context, feat *audio.FrameFeatures
 		t := float64(i) / float64(barCount)
 		col := lv.getColor(t, alpha)
 
-		// Bar upward
-		lv.pattern = AlongPattern(lv.cfg, x, lv.baseY, 0, -1, h, alpha)
-		lv.drawBar(dc, x, lv.baseY, barWidth, -h, col)
-
-		// Downward reflection if enabled
-		if lv.cfg.MirrorBottom {
-			mirrorCol := col
-			mirrorCol.A = uint8(float64(mirrorCol.A) * 0.35)
-			lv.pattern = AlongPattern(lv.cfg, x, lv.baseY, 0, 0.5, h, alpha*0.35)
-			lv.drawBar(dc, x, lv.baseY, barWidth, h*0.5, mirrorCol)
-		}
+		lv.barPair(dc, x, barWidth, h, grow, col, alpha)
 	}
 
 	// Right channel (R): from the center to the right
@@ -104,18 +96,42 @@ func (lv *LinearVisualizer) renderBars(dc *gg.Context, feat *audio.FrameFeatures
 		t := float64(i) / float64(barCount)
 		col := lv.getColor(t, alpha)
 
-		// Bar upward
-		lv.pattern = AlongPattern(lv.cfg, x, lv.baseY, 0, -1, h, alpha)
-		lv.drawBar(dc, x, lv.baseY, barWidth, -h, col)
-
-		// Downward reflection if enabled
-		if lv.cfg.MirrorBottom {
-			mirrorCol := col
-			mirrorCol.A = uint8(float64(mirrorCol.A) * 0.35)
-			lv.pattern = AlongPattern(lv.cfg, x, lv.baseY, 0, 0.5, h, alpha*0.35)
-			lv.drawBar(dc, x, lv.baseY, barWidth, h*0.5, mirrorCol)
-		}
+		lv.barPair(dc, x, barWidth, h, grow, col, alpha)
 	}
+}
+
+// barPair: a bar upward from the base (and its reflection downward), grown by grow px all round
+func (lv *LinearVisualizer) barPair(dc *gg.Context, x, barWidth, h, grow float64, col color.RGBA, alpha float64) {
+	lv.pattern = AlongPattern(lv.cfg, x, lv.baseY, 0, -1, h, alpha)
+	lv.drawBarGrown(dc, x, lv.baseY, barWidth, -h, grow, col)
+	if lv.cfg.MirrorBottom {
+		mirrorCol := col
+		mirrorCol.A = uint8(float64(mirrorCol.A) * 0.35)
+		lv.pattern = AlongPattern(lv.cfg, x, lv.baseY, 0, 0.5, h, alpha*0.35)
+		lv.drawBarGrown(dc, x, lv.baseY, barWidth, h*0.5, grow, mirrorCol)
+	}
+}
+
+// drawBarGrown: drawBar grown by g px all round (rounder by as much)
+func (lv *LinearVisualizer) drawBarGrown(dc *gg.Context, x, y, width, height, g float64, col color.RGBA) {
+	if g <= 0 {
+		lv.drawBar(dc, x, y, width, height, col)
+		return
+	}
+	r := math.Min(lv.cfg.Roundness, width/2)
+	if math.Abs(height) < r*2 {
+		r = math.Abs(height) / 2
+	}
+	top, bot := y, y+height
+	if height < 0 {
+		top, bot = y+height, y
+	}
+	dc.SetRGBA255(int(col.R), int(col.G), int(col.B), int(col.A))
+	if lv.pattern != nil {
+		dc.SetFillStyle(lv.pattern)
+	}
+	dc.DrawRoundedRectangle(x-g, top-g, width+2*g, bot-top+2*g, r+g)
+	dc.Fill()
 }
 
 func (lv *LinearVisualizer) drawBar(dc *gg.Context, x, y, width, height float64, col color.RGBA) {
