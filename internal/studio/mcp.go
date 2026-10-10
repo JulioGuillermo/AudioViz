@@ -399,6 +399,11 @@ func (m *mcpServer) callTool(ctx context.Context, name string, a map[string]any)
 
 // api calls the studio's own API in-process
 func (m *mcpServer) api(method, path string, body any) (int, []byte, http.Header) {
+	return m.apiAs("", method, path, body)
+}
+
+// apiAs: as api, on behalf of an MCP session (the jobs it starts show it)
+func (m *mcpServer) apiAs(sid, method, path string, body any) (int, []byte, http.Header) {
 	var rd io.Reader
 	if body != nil {
 		b, _ := json.Marshal(body)
@@ -406,6 +411,9 @@ func (m *mcpServer) api(method, path string, body any) (int, []byte, http.Header
 	}
 	req := httptest.NewRequest(method, path, rd)
 	req.Header.Set("Content-Type", "application/json")
+	if sid != "" {
+		req.Header.Set(clientHeader, sid)
+	}
 	rec := httptest.NewRecorder()
 	m.mux.ServeHTTP(rec, req)
 	return rec.Code, rec.Body.Bytes(), rec.Header()
@@ -413,7 +421,12 @@ func (m *mcpServer) api(method, path string, body any) (int, []byte, http.Header
 
 // apiJSON: the API's JSON answer, or its error
 func (m *mcpServer) apiJSON(method, path string, body any) (any, error) {
-	code, b, _ := m.api(method, path, body)
+	return m.apiJSONAs("", method, path, body)
+}
+
+// apiJSONAs: as apiJSON, on behalf of an MCP session
+func (m *mcpServer) apiJSONAs(sid, method, path string, body any) (any, error) {
+	code, b, _ := m.apiAs(sid, method, path, body)
 	var v any
 	_ = json.Unmarshal(b, &v)
 	if code >= 300 {
@@ -670,10 +683,10 @@ func init() {
 		{Name: "generate_lyrics", Title: "Sync the lyrics",
 			Desc:   "Synchronizes lyrics with the song (a job: see job_status): from their text (text), or transcribed from the voice (transcribe: true). lang: the language (e.g. es, en; default: detected).",
 			Schema: obj(map[string]any{"text": prop("string", "the lyrics' text, a line per row"), "transcribe": prop("boolean", "transcribe them from the voice"), "lang": prop("string", "language code"), "fast": prop("boolean", "a faster, rougher model")}),
-			Run: func(m *mcpServer, _ context.Context, a args) ([]any, error) {
+			Run: func(m *mcpServer, ctx context.Context, a args) ([]any, error) {
 				tr, _ := a["transcribe"].(bool)
 				fast, _ := a["fast"].(bool)
-				v, err := m.apiJSON("POST", "/api/lyrics/generate", map[string]any{"text": a.str("text"), "transcribe": tr, "lang": a.str("lang"), "fast": fast})
+				v, err := m.apiJSONAs(sessionOf(ctx), "POST", "/api/lyrics/generate", map[string]any{"text": a.str("text"), "transcribe": tr, "lang": a.str("lang"), "fast": fast})
 				if err != nil {
 					return nil, err
 				}
@@ -682,8 +695,8 @@ func init() {
 		{Name: "export_video", Title: "Export the video",
 			Desc:   "Renders the video (a job: see job_status). start / end: only that stretch (seconds; default all of it); path: the output file (default the project's).",
 			Schema: obj(map[string]any{"start": prop("number", "seconds"), "end": prop("number", "seconds"), "path": prop("string", "the .mp4 file")}),
-			Run: func(m *mcpServer, _ context.Context, a args) ([]any, error) {
-				v, err := m.apiJSON("POST", "/api/export", map[string]any{"path": a.str("path"), "start": a.num("start", 0), "end": a.num("end", 0)})
+			Run: func(m *mcpServer, ctx context.Context, a args) ([]any, error) {
+				v, err := m.apiJSONAs(sessionOf(ctx), "POST", "/api/export", map[string]any{"path": a.str("path"), "start": a.num("start", 0), "end": a.num("end", 0)})
 				if err != nil {
 					return nil, err
 				}
@@ -717,8 +730,8 @@ func init() {
 				"width": prop("integer", "px"), "height": prop("integer", "px"), "steps": prop("integer", ""), "seed": prop("integer", ""),
 				"negative": prop("string", ""), "cfg": prop("number", ""), "init": prop("string", "a starting image's path"),
 				"strength": prop("number", "0–1, how much it changes init"), "refs": map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}, "prompt"),
-			Run: func(m *mcpServer, _ context.Context, a args) ([]any, error) {
-				v, err := m.apiJSON("POST", "/api/images/generate", map[string]any(a))
+			Run: func(m *mcpServer, ctx context.Context, a args) ([]any, error) {
+				v, err := m.apiJSONAs(sessionOf(ctx), "POST", "/api/images/generate", map[string]any(a))
 				if err != nil {
 					return nil, err
 				}
@@ -737,8 +750,8 @@ func init() {
 		{Name: "separate_stems", Title: "Separate the song",
 			Desc:   "Separates the song into drums, bass, vocals and the rest (a job: see job_status), so that things can react to each (react_to: drums, kick, snare, hats, bassline, vocals, instruments) and audio_analysis gives their hits.",
 			Schema: obj(map[string]any{}),
-			Run: func(m *mcpServer, _ context.Context, a args) ([]any, error) {
-				v, err := m.apiJSON("POST", "/api/stems", map[string]any{})
+			Run: func(m *mcpServer, ctx context.Context, a args) ([]any, error) {
+				v, err := m.apiJSONAs(sessionOf(ctx), "POST", "/api/stems", map[string]any{})
 				if err != nil {
 					return nil, err
 				}
@@ -893,7 +906,7 @@ func init() {
 				"seed": prop("integer", ""), "width": prop("integer", "px"), "height": prop("integer", "px"),
 				"files":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "input files' paths, in order"},
 				"params": map[string]any{"type": "object", "description": "\"node|input\" → value"}}, "id"),
-			Run: func(m *mcpServer, _ context.Context, a args) ([]any, error) {
+			Run: func(m *mcpServer, ctx context.Context, a args) ([]any, error) {
 				v := map[string]any{}
 				for _, k := range []string{"prompt", "negative"} {
 					if s := a.str(k); strings.TrimSpace(s) != "" {
@@ -908,7 +921,7 @@ func init() {
 				if p, ok := a["params"].(map[string]any); ok {
 					v["params"] = p
 				}
-				r, err := m.apiJSON("POST", "/api/comfy/run", map[string]any{"id": a.str("id"), "values": v, "images": a["files"]})
+				r, err := m.apiJSONAs(sessionOf(ctx), "POST", "/api/comfy/run", map[string]any{"id": a.str("id"), "values": v, "images": a["files"]})
 				if err != nil {
 					return nil, err
 				}
@@ -918,12 +931,12 @@ func init() {
 			Desc: "Works out the depth map of a background image (a job: see job_status), for the 2.5D effects (things behind others, the camera's parallax, depth of field, light): with the local AI (detail: low, medium, high; model), or with a depth flow of the project's ComfyUI (flow: its id, list_comfy_flows; the segment's depth then needs source \"comfy\" and that flow). force: work it out again though it is cached.",
 			Schema: obj(map[string]any{"image": prop("string", "the image's path"), "detail": prop("string", "low | medium | high"), "model": prop("string", "the model (default: mono)"),
 				"flow": prop("string", "a ComfyUI depth flow's id (instead of the local AI)"), "force": prop("boolean", "work it out again")}, "image"),
-			Run: func(m *mcpServer, _ context.Context, a args) ([]any, error) {
+			Run: func(m *mcpServer, ctx context.Context, a args) ([]any, error) {
 				req := map[string]any{"image": a.str("image"), "source": "ai", "model": a.str("model"), "detail": a.str("detail"), "force": a["force"] == true}
 				if f := a.str("flow"); f != "" {
 					req["source"], req["flow"] = "comfy", f
 				}
-				v, err := m.apiJSON("POST", "/api/depth", req)
+				v, err := m.apiJSONAs(sessionOf(ctx), "POST", "/api/depth", req)
 				if err != nil {
 					return nil, err
 				}

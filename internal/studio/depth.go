@@ -103,6 +103,7 @@ func (s *Server) hDepth(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, err)
 		return
 	}
+	s.tagJob(j, r, req)
 	writeJSON(w, j.snapshot())
 }
 

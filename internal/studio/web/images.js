@@ -1,4 +1,4 @@
-import { flowsStore, loadFlows, FlowForm, Issues } from './comfy.js';
+import { flowsStore, loadFlows, FlowForm, Issues, JobConfig } from './comfy.js';
 import { useStore } from './store.js';
 import { html, useEffect, useRef, useState } from './vendor/preact-htm.js';
 import { api, basename } from './util.js';
@@ -313,7 +313,20 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onRun, onU
         <p style="max-width:340px;text-align:center">${t('Describe the image and press Generate. It forms here step by step and is saved in the project, in:')}</p>
         <div class="mono" style="font-size:11px">${data ? data.dir : ''}</div></div></div></div>`;
     }
-    body = html`<div class="ig">${form}${side}</div>`;
+    // (a generation running: what it was started with, maybe by someone else; after it, to reuse)
+    const useCfg = mine && mine.config && (() => {
+      const c = mine.config;
+      if (mine.kind === 'comfy') {
+        set('model', setModel)('comfy:' + c.flow);
+        const v = c.values || {};
+        setCvals({ prompt: v.prompt, negative: v.negative, seed: v.seed, params: v.params });
+        setCimgs(c.images || []);
+      } else reuse({ ...c, seed: c.seed >= 0 ? c.seed : '' });
+    });
+    const left = running && mine.config ? html`<div class="ig-form"><${JobConfig} job=${mine} /></div>`
+      : mine && mine.status !== 'running' && mine.config && view === 'create' && !picking
+        ? html`<div class="ig-form"><${JobConfig} job=${mine} onUse=${useCfg} />${form}</div>` : form;
+    body = html`<div class="ig">${left}${side}</div>`;
   }
 
   const back = view === 'create' || cur;

@@ -8,7 +8,7 @@ import { Modal, fmtDur } from './dialogs.js';
 import { createStore, useStore } from './store.js';
 import { Icon } from './icons.js';
 import { t } from './i18n.js';
-import { api } from './util.js';
+import { api, clientId } from './util.js';
 
 // the project's flows (shared by the section, the dialogs and the Images dialog)
 export const flowsStore = createStore([]);
@@ -364,8 +364,47 @@ export function ComfyRunDialog({ id, job, onClose, onCancel, onRun, onUseBackgro
     ${err && html`<div class="alert err" style="margin-bottom:10px"><${Icon} name="triangle-alert" size=${15} />${err}</div>`}
     <div class="ig"><div class="ig-form">
       <p class="faint ig-desc">${t(Object.fromEntries(KINDS)[flow.kind] || flow.kind)}</p>
-      <${Issues} issues=${flow.issues} />
-      <${FlowForm} flow=${flow} values=${vals} setValues=${setVals} images=${files} size=${size} pickImage=${pick} />
-    </div><div class="ig-side">${side}</div></div>
+      ${running && mine.config ? html`<${JobConfig} job=${mine} />` : html`
+        <${Issues} issues=${flow.issues} />
+        <${FlowForm} flow=${flow} values=${vals} setValues=${setVals} images=${files} size=${size} pickImage=${pick} />`}
+    </div><div class="ig-side">${!running && mine && mine.config && html`<${JobConfig} job=${mine} onUse=${() => {
+        const v = mine.config.values || {};
+        setVals({ prompt: v.prompt, negative: v.negative, seed: v.seed, width: v.width, height: v.height, params: v.params });
+        setFiles(mine.config.images || []);
+      }} />`}${side}</div></div>
   </${Modal}>`;
+}
+
+// ---- what a job was started with, and by whom (a person, an agent): shown in its dialog
+const base = (p) => String(p || '').split('/').pop();
+export function JobConfig({ job, onUse }) {
+  const c = job && job.config;
+  if (!c) return null;
+  const who = job.byId && job.byId === clientId() ? t('you') : job.by || '';
+  const rows = [];
+  const add = (k, v) => { if (v !== undefined && v !== null && v !== '') rows.push([k, v]); };
+  if (job.kind === 'comfy') {
+    const v = c.values || {};
+    add('Flow', c.name);
+    add('Prompt', v.prompt);
+    add('Negative prompt', v.negative);
+    add('Size', v.width && v.height ? `${v.width} × ${v.height}` : '');
+    add('Seed', v.seed ?? t('Random'));
+    add('Input files', (c.images || []).filter(Boolean).map(base).join(', '));
+    Object.entries(v.params || {}).forEach(([k, x]) => add(k.split('|').pop(), String(x)));
+  } else {
+    add('Model', c.model);
+    add('Prompt', c.prompt);
+    add('Negative prompt', c.negative);
+    add('Size', c.width && c.height ? `${c.width} × ${c.height}` : '');
+    add('Steps', c.steps || '');
+    add('Seed', c.seed >= 0 ? c.seed : t('Random'));
+    add('CFG', c.cfg || '');
+    add('Reference images', (c.refs || []).map(base).join(', '));
+    add('Initial image', c.init ? `${base(c.init)} · ${Math.round((c.strength || 0) * 100)} %` : '');
+  }
+  return html`<div class="jobcfg">
+    <div class="jobcfg-h"><${Icon} name="info" size=${13} /><span>${who ? t('Started by {who}', { who }) : t('Started with')}</span><span class="spacer"></span>
+      ${onUse && html`<button class="btn sm ghost" title=${t('Copy it to the form, to run it again or vary it')} onClick=${onUse}><${Icon} name="copy" size=${12} /> ${t('Use this configuration')}</button>`}</div>
+    <dl>${rows.map(([k, v]) => html`<dt>${t(k)}</dt><dd>${v}</dd>`)}</dl></div>`;
 }

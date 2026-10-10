@@ -106,6 +106,7 @@ func (s *Server) hStems(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, err)
 		return
 	}
+	s.tagJob(j, r, nil)
 	writeJSON(w, j.snapshot())
 }
 

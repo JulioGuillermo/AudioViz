@@ -564,5 +564,6 @@ func (s *Server) hComfyRun(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, err)
 		return
 	}
+	s.tagJob(j, r, map[string]any{"flow": f.ID, "name": f.Name, "kind": f.Kind, "values": req.Values, "images": req.Images})
 	writeJSON(w, j.snapshot())
 }

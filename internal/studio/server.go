@@ -934,6 +934,9 @@ type job struct {
 	Export   *exportStatus
 	Previews int    // image generation: previews received so far
 	Ref      string // what it runs (a ComfyUI flow's id)
+	By       string // who started it (a person's name, an agent's)
+	ByID     string // (their client: a studio's or an MCP session)
+	Config   any    // what it was started with (an image's prompt, model, size…)
 	cancel   context.CancelFunc
 }
 
@@ -962,7 +965,20 @@ func (j *job) snapshot() map[string]any {
 	}
 	return map[string]any{"id": j.ID, "kind": j.Kind, "status": j.Status, "progress": j.Progress,
 		"message": j.Message, "output": j.Output, "log": log, "elapsed": time.Since(j.Started).Seconds(), "gen": j.Gen,
-		"export": exp, "preview": j.preview(), "ref": j.Ref}
+		"export": exp, "preview": j.preview(), "ref": j.Ref,
+		"by": j.By, "byId": j.ByID, "config": j.Config}
+}
+
+// clientHeader: the studio (its id) or MCP session a request comes from
+const clientHeader = "X-AudioViz-Client"
+
+// tagJob: who started a job (the request's client) and with what, for everyone to see
+func (s *Server) tagJob(j *job, r *http.Request, config any) {
+	id := r.Header.Get(clientHeader)
+	j.mu.Lock()
+	j.ByID, j.By, j.Config = id, s.peerName(id), config
+	j.mu.Unlock()
+	s.hub.send("job", j.snapshot())
 }
 
 func (s *Server) startJob(kind string, run func(ctx context.Context, j *job) error) (*job, error) {
@@ -1064,6 +1080,7 @@ func (s *Server) hExport(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, err)
 		return
 	}
+	s.tagJob(j, r, nil)
 	writeJSON(w, j.snapshot())
 }
 
@@ -1204,6 +1221,7 @@ func (s *Server) hGenLyrics(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, err)
 		return
 	}
+	s.tagJob(j, r, nil)
 	writeJSON(w, j.snapshot())
 }
 

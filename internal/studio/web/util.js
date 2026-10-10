@@ -1,5 +1,10 @@
+// this studio's id (collaboration): the jobs it starts show who started them
+let client = '';
+export const setClient = (id) => { client = id || ''; };
+export const clientId = () => client;
+
 export async function api(method, url, body) {
-  const opt = { method, headers: {} };
+  const opt = { method, headers: client ? { 'X-AudioViz-Client': client } : {} };
   if (body !== undefined) {
     opt.headers['Content-Type'] = 'application/json';
     opt.body = JSON.stringify(body);

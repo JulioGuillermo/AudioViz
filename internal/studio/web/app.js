@@ -1,6 +1,6 @@
 import { html, render, useState, useEffect, useRef } from './vendor/preact-htm.js';
 import { TRACKS, ZONES, zoneOf, AUDIO_FIELDS, OUTPUT_FIELDS, trackById, TRANSITIONS, SIMPLE_TRANSITIONS, DIRECTED, DIRECTIONS, TEXT_FIELDS } from './schema.js';
-import { api, clone, fmtTime, parseTime, b64u8, basename, debounce } from './util.js';
+import { api, clone, fmtTime, parseTime, b64u8, basename, debounce, setClient } from './util.js';
 import { Form, Select, Edit, Section, adjusting } from './fields.js';
 import { Icon } from './icons.js';
 import { Timeline, segSummary } from './timeline.js';
@@ -487,7 +487,7 @@ function App() {
   // the song's lyrics: part of the project (its /lyrics: changed by parts like the rest, collab.js)
   const lyr = (proj && proj.lyrics) || NO_LYRICS;
   const [lyrSave, setLyrSave] = useState('');
-  const [sel, setSel] = useState({ kind: 'track', track: 'visualizer', seg: 0 });
+  const [sel, setSel] = useState({ kind: 'output' }); // (the project's settings first)
   const [lineSel, setLineSel] = useState([]);
   const [wordEdit, setWordEdit] = useState(false); // word blocks of the selected line on the timeline
   // Keyframes: the property whose keys the timeline shows alone (set by its diamond), per selection
@@ -508,7 +508,41 @@ function App() {
   const [rev, setRev] = useState(0);
   const [save, setSave] = useState({ kind: '', at: '' });
   const [job, setJob] = useState(null);
+  // A job's end as a browser notification (optional, per browser; when the tab isn't looked at)
+  const [notifyJobs, setNotifyJobsState] = useState(() => {
+    try { return localStorage.getItem('audioviz.notifyJobs') === '1' && 'Notification' in window && Notification.permission === 'granted'; } catch (e) { return false; }
+  });
+  const notifyRef = useRef(notifyJobs);
+  notifyRef.current = notifyJobs;
+  const toggleNotifyJobs = async () => {
+    if (notifyJobs) { try { localStorage.setItem('audioviz.notifyJobs', '0'); } catch (e) { /* none */ } setNotifyJobsState(false); return; }
+    if (!('Notification' in window)) { alert(t('This browser has no notifications')); return; }
+    const p = Notification.permission === 'granted' ? 'granted' : await Notification.requestPermission();
+    if (p === 'granted') { try { localStorage.setItem('audioviz.notifyJobs', '1'); } catch (e) { /* none */ } setNotifyJobsState(true); }
+  };
+  const lastJob = useRef({ id: '', status: '' });
+  const openJobRef = useRef(null);
+  const jobEnded = (j) => {
+    const was = lastJob.current;
+    lastJob.current = { id: j.id, status: j.status };
+    if (j.status === 'running' || (was.id === j.id && was.status === j.status)) return; // not an end, or one seen already
+    if (!notifyRef.current || (!document.hidden && document.hasFocus())) return;
+    const what = t({ export: 'Video export', image: 'Image', comfy: 'ComfyUI', depth: 'Depth', lyrics: 'Lyrics', stems: 'Stems' }[j.kind] || j.kind);
+    const title = t(j.status === 'done' ? '{what}: done' : j.status === 'canceled' ? '{what}: cancelled' : '{what}: failed', { what });
+    try {
+      const n = new Notification(title, { body: (j.by ? j.by + ' · ' : '') + (j.message || ''), tag: 'av-job-' + j.id });
+      n.onclick = () => { window.focus(); n.close(); if (openJobRef.current) openJobRef.current(j); };
+    } catch (e) { /* none */ }
+  };
   const [dlg, setDlg] = useState(null);
+  // a job's dialog (a ComfyUI flow's: the Images dialog for an image's, its own otherwise)
+  const openJob = (j) => {
+    const fl = j.kind === 'comfy' && flowsStore.get().find((f) => f.id === j.ref);
+    if (fl && fl.kind !== 'image' && fl.kind !== 'edit') { setDlg({ type: 'comfyrun', id: fl.id }); return; }
+    const d = { export: 'export', lyrics: 'genlyrics', image: 'images', comfy: 'images' }[j.kind];
+    if (d) setDlg({ type: d });
+  };
+  openJobRef.current = openJob;
   const [pick, setPick] = useState(null); // file browser: own layer, above any dialog
   const [toast, setToast] = useState('');
   // Layout: side panel widths and timeline height, adjustable with the dividers, remembered by the browser
@@ -637,7 +671,7 @@ function App() {
 
   // --- collaboration: who I am, who else is here, their cursors (collab.js, peers.js)
   const meRef = useRef(null);
-  if (!meRef.current) meRef.current = whoAmI();
+  if (!meRef.current) { meRef.current = whoAmI(); setClient(meRef.current.id); }
   const [peers, setPeers] = useState([]);
   const [cursors, setCursors] = useState({});
   const [showCursors, setShowCursorsState] = useState(() => { try { return localStorage.getItem('audioviz.cursors') !== '0'; } catch (e) { return true; } });
@@ -807,6 +841,7 @@ function App() {
       const msg = JSON.parse(ev.data);
       if (msg.type === 'job') {
         setJob(msg.data);
+        jobEnded(msg.data);
         if (msg.data.kind === 'lyrics' && msg.data.status === 'done') onLyricsGenerated(msg.data.output);
       }
       if (msg.type === 'ops') { receive(msg.data); if (msg.data.agent || msg.data.reverts) setAgentRev((x) => x + 1); }
@@ -1555,11 +1590,13 @@ function App() {
   if (sel.kind === 'audio') inspector = html`<div><div class="insp-h"><div class="insp-title"><${Icon} name="music" size=${16} cls="muted" />${t('Audio')}<span class="sub">${t('Project')}</span></div></div><div class="insp-b">
       <${Form} fields=${AUDIO_FIELDS} value=${proj.audio} onChange=${(v) => update((p) => { p.audio = v; })} ctx=${ctx} />
       <${StemsSection} ctx=${ctx} hasAudio=${meta.hasAudio} audio=${proj.audio} onAudio=${(v) => update((p) => { p.audio = v; })} /></div></div>`;
-  else if (sel.kind === 'output') inspector = html`<div><div class="insp-h"><div class="insp-title"><${Icon} name="monitor" size=${16} cls="muted" />${t('Output')}<span class="sub">${t('Project')}</span></div></div><div class="insp-b">
-      <${Form} fields=${OUTPUT_FIELDS} value=${proj.output} onChange=${(v) => update((p) => { p.output = v; })} ctx=${ctx} />
+  else if (sel.kind === 'output') inspector = html`<div><div class="insp-h"><div class="insp-title"><${Icon} name="settings" size=${16} cls="muted" />${t('Project settings')}</div></div><div class="insp-b">
+      <${Section} title=${t('Output')} id="output" defOpen=${true}>
+        <${Form} fields=${OUTPUT_FIELDS} value=${proj.output} onChange=${(v) => update((p) => { p.output = v; })} ctx=${ctx} />
+        <p class="faint" style="font-size:12px">${t('Current resolution')}: ${meta.width}×${meta.height} · ${meta.fps} fps · ${fmtTime(meta.duration)}</p>
+      </${Section}>
       <${LibrarySection} lib=${proj.expressions || {}} Section=${Section} Edit=${Edit} onChange=${(l) => update((p) => { p.expressions = l; })} />
-      <${ComfySection} comfy=${proj.comfy} onRun=${(id) => setDlg({ type: 'comfyrun', id })} onURL=${(u) => update((p) => { p.comfy = { ...(p.comfy || {}), url: u }; })} Section=${Section} Edit=${Edit} showErr=${showErr} />
-      <p class="faint" style="font-size:12px">${t('Current resolution')}: ${meta.width}×${meta.height} · ${meta.fps} fps · ${fmtTime(meta.duration)}</p></div></div>`;
+      <${ComfySection} comfy=${proj.comfy} onRun=${(id) => setDlg({ type: 'comfyrun', id })} onURL=${(u) => update((p) => { p.comfy = { ...(p.comfy || {}), url: u }; })} Section=${Section} Edit=${Edit} showErr=${showErr} /></div></div>`;
   else if (sel.kind === 'layer' && layerById_(sel.id)) inspector = html`<${LayerInspector} proj=${proj} sel=${sel} setSel=${setSel} update=${update} time=${time} meta=${meta} ctx=${ctx} />`;
   else if (sel.kind === 'text') inspector = html`<${TextsInspector} proj=${proj} sel=${sel} setSel=${setSel} update=${update} time=${time} meta=${meta} ctx=${ctx} />`;
   else if (sel.kind === 'line') inspector = html`<${LineEditor} lyr=${lyr} lines=${lineSel} time=${time} seek=${seek} saveState=${lyrSave}
@@ -1588,13 +1625,7 @@ function App() {
       <${PeersBar} peers=${peers} me=${meRef.current} show=${showCursors} setShow=${setShowCursors} onRename=${renameMe} />
       <button class=${'btn icon ghost chatbtn' + (chatOpen ? ' on' : '')} title=${t('Chat of the project')} onClick=${() => setChatOpen(!chatOpen)}>
         <${Icon} name="message-square" size=${16} />${(() => { const n = unreadCount(chatState.msgs, meRef.current, meta.path); return n > 0 && !chatOpen ? html`<i class="cbadge">${n > 99 ? '99+' : n}</i>` : null; })()}</button>
-      ${job && html`<div class="jobbar" title=${job.message} onClick=${() => {
-        // (a ComfyUI flow's job: the Images dialog for an image's, its own dialog otherwise)
-        const fl = job.kind === 'comfy' && flowsStore.get().find((f) => f.id === job.ref);
-        if (fl && fl.kind !== 'image' && fl.kind !== 'edit') { setDlg({ type: 'comfyrun', id: fl.id }); return; }
-        const d = { export: 'export', lyrics: 'genlyrics', image: 'images', comfy: 'images' }[job.kind];
-        if (d) setDlg({ type: d });
-      }}>
+      ${job && html`<div class="jobbar" title=${job.message} onClick=${() => openJob(job)}>
         <${Icon} name=${job.status === 'running' ? (job.kind === 'export' ? 'film' : 'wand-sparkles') : job.status === 'done' ? 'check' : 'triangle-alert'} size=${14}
           cls=${{ done: 'st-ok', error: 'st-err', canceled: 'st-warn' }[job.status] || 'muted'} />
         <div class="progress"><i style=${{ width: (job.progress * 100).toFixed(1) + '%' }}></i></div>
@@ -1602,6 +1633,8 @@ function App() {
           ? `${t(STEP_LABEL[job.gen.steps[job.gen.current].id])} · ${Math.round(job.gen.steps[job.gen.current].progress * 100)}%`
           : job.export && job.status === 'running'
             ? `${t(job.export.stage === 'mux' ? 'Writing the MP4' : 'Exporting')} · ${Math.round(job.progress * 100)}%` : job.message}</span>
+        <button class=${'btn icon ghost sm' + (notifyJobs ? '' : ' off')} title=${t(notifyJobs ? 'Notifying when a job ends (when this tab is not looked at)' : 'Notify me when a job ends')}
+          onClick=${(e) => { e.stopPropagation(); toggleNotifyJobs(); }}><${Icon} name=${notifyJobs ? 'bell' : 'bell-off'} size=${13} /></button>
       </div>`}
       <div class="btngroup">
         <button class="btn icon ghost" disabled=${!hist.current.past.length} title=${t('Undo (Ctrl+Z)')} onClick=${undo}><${Icon} name="undo-2" size=${15} /></button>
@@ -1618,7 +1651,7 @@ function App() {
     <div class="tracks">
       <div class="label-sm">${t('Project')}</div>
       <div class=${'trk' + (sel.kind === 'output' ? ' on' : '')} onClick=${() => setSel({ kind: 'output' })}>
-        <${Icon} name="monitor" size=${15} /><span class="lbl">${t('Output')}</span><span class="n">${meta.width}×${meta.height}</span></div>
+        <${Icon} name="settings" size=${15} /><span class="lbl">${t('Settings')}</span><span class="n">${meta.width}×${meta.height}</span></div>
       ${ZONES.map((z) => {
         const folded = view.collapsed.includes(z.id);
         const ids = zoneIds[z.id];

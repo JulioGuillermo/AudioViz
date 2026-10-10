@@ -122,6 +122,8 @@ input[type=color]::-moz-color-swatch { border: 0; border-radius: 3px; }
 .save.err { color: var(--err); }
 .jobbar { display: flex; align-items: center; gap: 8px; min-width: 240px; max-width: 380px; height: 28px; padding: 0 10px; border: 1px solid var(--border-2); border-radius: var(--r); cursor: pointer; }
 .jobbar:hover { background: var(--hover); }
+.jobbar > .btn { margin-right: -6px; height: 22px; width: 22px; }
+.jobbar > .btn.off { opacity: .55; }
 .progress { flex: 1; height: 4px; background: var(--surface-3); border-radius: 2px; overflow: hidden; min-width: 60px; }
 .progress i { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width .2s; }
 .jobbar .msg { font-size: 11.5px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
@@ -799,6 +801,11 @@ a.btn { text-decoration: none; }
 .cf-dot.unk { color: var(--text-3, #999); }
 @media (max-width: 640px) { .cf-slot { grid-template-columns: 1fr; } }
 .depth-ready { flex-direction: column; align-items: flex-start; gap: 6px; }
+.jobcfg { border: 1px solid var(--border, #2a2c33); border-radius: 6px; padding: 8px 10px; margin-bottom: 10px; font-size: 12.5px; background: var(--surface-2, #202227); }
+.jobcfg-h { display: flex; align-items: center; gap: 6px; font-weight: 600; margin-bottom: 6px; }
+.jobcfg dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; }
+.jobcfg dt { color: var(--text-3, #999); }
+.jobcfg dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; max-height: 160px; overflow-y: auto; }
 .cf-size { display: flex; align-items: center; gap: 6px; }
 .cf-size input { width: 80px; }
 .cf-audio { display: flex; flex-direction: column; align-items: center; gap: 14px; width: 100%; }
