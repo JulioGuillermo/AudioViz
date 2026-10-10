@@ -32,6 +32,7 @@ import (
 	"unsafe"
 
 	"audioviz/internal/aimodel"
+	"audioviz/internal/imagegen"
 	_ "audioviz/internal/ggml" // the shared Vulkan loader bridge
 )
 
@@ -161,9 +162,23 @@ type Raw struct {
 	Sky  []float32
 }
 
+// lastDev: the device set in DA_DEVICE from the engine setting (one set by hand is kept)
+var lastDev string
+
 // load: the model's context (kept between calls)
 func load(sp Spec, paths []string) error {
-	key := strings.Join(paths, "|")
+	// on the image engine's device (Settings › Plugins: the Intel plugin's SYCL), unless DA_DEVICE says
+	dev := os.Getenv("DA_DEVICE")
+	if dev == "" || dev == lastDev {
+		dev = imagegen.DeviceName()
+		if dev != "" {
+			os.Setenv("DA_DEVICE", dev)
+		} else {
+			os.Unsetenv("DA_DEVICE")
+		}
+		lastDev = dev
+	}
+	key := dev + "|" + strings.Join(paths, "|")
 	if ctx != nil && ctxFile == key {
 		return nil
 	}

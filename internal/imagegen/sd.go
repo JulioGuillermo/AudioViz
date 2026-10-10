@@ -257,6 +257,10 @@ func DefaultFlashAttn() bool { return os.Getenv("AUDIOVIZ_SD_FA") != "0" }
 // IntelGPU: the device is an Intel GPU (where large images are slow: see DefaultFlashAttn)
 func IntelGPU() bool { return strings.Contains(Device(), "Intel") }
 
+// DeviceName: the ggml device the engine setting picks ("SYCL0"…; "": the default GPU), for the
+// other models (depth) to run on the same one
+func DeviceName() string { setup(); return C.GoString(C.av_dev_name()) }
+
 // onSYCL: the models run on the Intel plugin's SYCL backend (plugins.go)
 func onSYCL() bool { setup(); return strings.HasPrefix(C.GoString(C.av_dev_name()), "SYCL") }
 
