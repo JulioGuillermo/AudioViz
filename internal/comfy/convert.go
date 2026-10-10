@@ -4,6 +4,7 @@
 package comfy
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -47,12 +48,124 @@ type NodeDef struct {
 	Display    string            `json:"display_name"`
 }
 
+// dynamicCombo: a choice whose options bring inputs of their own ("parent.child" in the prompt)
+const dynamicCombo = "COMFY_DYNAMICCOMBO_V3"
+
+// raw: an input's definition; a dynamic combo's ("mode.strategy") looked up in its options
+func (d *NodeDef) raw(name string) (json.RawMessage, bool) {
+	if raw, ok := d.Input.Required[name]; ok {
+		return raw, true
+	}
+	if raw, ok := d.Input.Optional[name]; ok {
+		return raw, true
+	}
+	k := strings.LastIndex(name, ".")
+	if k < 0 {
+		return nil, false
+	}
+	parent, ok := d.raw(name[:k])
+	if !ok {
+		return nil, false
+	}
+	for _, o := range comboOptions(parent) {
+		for _, m := range []map[string]json.RawMessage{o.Inputs.Required, o.Inputs.Optional} {
+			if raw, ok := m[name[k+1:]]; ok {
+				return raw, true
+			}
+		}
+	}
+	return nil, false
+}
+
+type comboOption struct {
+	Key    string `json:"key"`
+	Inputs struct {
+		Required map[string]json.RawMessage `json:"required"`
+		Optional map[string]json.RawMessage `json:"optional"`
+	} `json:"inputs"`
+	order []string // its inputs in their order
+}
+
+// comboOptions: a dynamic combo's options (none for another input)
+func comboOptions(raw json.RawMessage) []comboOption {
+	var arr []json.RawMessage
+	if json.Unmarshal(raw, &arr) != nil || len(arr) < 2 {
+		return nil
+	}
+	var typ string
+	if json.Unmarshal(arr[0], &typ) != nil || typ != dynamicCombo {
+		return nil
+	}
+	var o struct {
+		Options []json.RawMessage `json:"options"`
+	}
+	_ = json.Unmarshal(arr[1], &o)
+	var out []comboOption
+	for _, r := range o.Options {
+		var c comboOption
+		if json.Unmarshal(r, &c) != nil {
+			continue
+		}
+		var in struct {
+			Inputs struct {
+				Required json.RawMessage `json:"required"`
+				Optional json.RawMessage `json:"optional"`
+			} `json:"inputs"`
+		}
+		_ = json.Unmarshal(r, &in)
+		c.order = append(objectKeys(in.Inputs.Required), objectKeys(in.Inputs.Optional)...)
+		out = append(out, c)
+	}
+	return out
+}
+
+// objectKeys: a JSON object's keys in their order
+func objectKeys(raw json.RawMessage) []string {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return nil
+	}
+	var keys []string
+	for dec.More() {
+		t, err := dec.Token()
+		if err != nil {
+			return keys
+		}
+		k, _ := t.(string)
+		keys = append(keys, k)
+		var skip json.RawMessage
+		if dec.Decode(&skip) != nil {
+			return keys
+		}
+	}
+	return keys
+}
+
+// dynamicChildren: the widgets a dynamic combo's chosen option brings ("parent.child", in order)
+func (d *NodeDef) dynamicChildren(name string, chosen any) []string {
+	raw, ok := d.raw(name)
+	if !ok {
+		return nil
+	}
+	key := fmt.Sprint(chosen)
+	for _, o := range comboOptions(raw) {
+		if o.Key != key {
+			continue
+		}
+		var out []string
+		for _, c := range o.order {
+			if d.IsWidget(name + "." + c) {
+				out = append(out, name+"."+c)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
 // spec: an input's definition: its type ("INT", "IMAGE", "COMBO"…), its options; ok: it exists
 func (d *NodeDef) spec(name string) (typ string, opts map[string]any, ok bool) {
-	raw, ok := d.Input.Required[name]
-	if !ok {
-		raw, ok = d.Input.Optional[name]
-	}
+	raw, ok := d.raw(name)
 	if !ok {
 		return "", nil, false
 	}
@@ -76,7 +189,7 @@ func (d *NodeDef) IsWidget(name string) bool {
 		return false
 	}
 	switch typ {
-	case "INT", "FLOAT", "STRING", "BOOLEAN", "BOOL", "COMBO":
+	case "INT", "FLOAT", "STRING", "BOOLEAN", "BOOL", "COMBO", dynamicCombo:
 		return true
 	}
 	return false
@@ -232,6 +345,7 @@ type scope struct {
 	nodes  map[string]*uiNode
 	links  map[int]uiLink
 	inst   *uiNode
+	sg     *uiSubgraph // (its instance's subgraph)
 	parent *scope
 	// the values its instance shows of its nodes' widgets (proxyWidgets): node id → name → value
 	proxy map[string]map[string]any
@@ -340,7 +454,7 @@ func firstNonEmpty(xs ...string) string {
 
 // inner: the scope of a subgraph's instance n (in s)
 func (c *converter) inner(s *scope, n *uiNode, sg *uiSubgraph) *scope {
-	in := &scope{prefix: s.prefix + idStr(n.ID) + ":", nodes: map[string]*uiNode{}, links: parseLinks(sg.Links), inst: n, parent: s,
+	in := &scope{prefix: s.prefix + idStr(n.ID) + ":", nodes: map[string]*uiNode{}, links: parseLinks(sg.Links), inst: n, sg: sg, parent: s,
 		proxy: map[string]map[string]any{}}
 	for _, m := range sg.Nodes {
 		in.nodes[idStr(m.ID)] = m
@@ -422,15 +536,26 @@ func (c *converter) widgets(n *uiNode, def *NodeDef, an *APINode) {
 		names = append(names[:at], append([]string{w}, names[at:]...)...)
 	}
 	i := 0
-	for _, name := range names {
+	for x := 0; x < len(names); x++ {
+		name := names[x]
 		if i >= len(vals) {
 			break
 		}
 		v := vals[i]
 		i++
-		_, opts, inSpec := def.spec(name)
+		typ, opts, inSpec := def.spec(name)
 		if inSpec {
 			an.Inputs[name] = v
+		}
+		if typ == dynamicCombo {
+			// the chosen option's widgets come next (unless the node lists them already)
+			var add []string
+			for _, c := range def.dynamicChildren(name, v) {
+				if indexOf(names, c) < 0 {
+					add = append(add, c)
+				}
+			}
+			names = append(names[:x+1], append(add, names[x+1:]...)...)
 		}
 		if def.controlled(name) && i < len(vals) {
 			if s, ok := vals[i].(string); ok && (s == "fixed" || s == "increment" || s == "decrement" || s == "randomize") {
@@ -488,15 +613,22 @@ func (c *converter) resolveOrigin(s *scope, origin string, slot int, typ string,
 	}
 	if origin == sgInputNode {
 		// the subgraph's input: what its instance receives there (a link outside, or a value)
+		// (by its name: the instance may list only some of them)
 		inst, ps := s.inst, s.parent
-		if inst == nil || ps == nil || slot >= len(inst.Inputs) {
+		if inst == nil || ps == nil || s.sg == nil || slot >= len(s.sg.Inputs) {
 			return nil, false
 		}
-		in := inst.Inputs[slot]
-		if in.Link != nil {
-			return c.resolveLink(ps, *in.Link, depth)
+		name := s.sg.Inputs[slot].Name
+		for _, in := range inst.Inputs {
+			if in.Name != name {
+				continue
+			}
+			if in.Link != nil {
+				return c.resolveLink(ps, *in.Link, depth)
+			}
+			break
 		}
-		return c.promoted(inst, in.Name)
+		return c.promoted(inst, name)
 	}
 	n := s.nodes[origin]
 	if n == nil {

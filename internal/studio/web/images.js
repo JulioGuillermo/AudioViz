@@ -101,7 +101,9 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onRun, onU
     setErr('');
     if (flow) {
       // a ComfyUI flow: what its roles take
-      const v = { prompt: cvals.prompt ?? '', negative: cvals.negative ?? '', width: w, height: h, params: cvals.params || {} };
+      const v = { width: w, height: h, params: cvals.params || {} }; // (an empty prompt: the flow's own)
+      if ((cvals.prompt || '').trim()) v.prompt = cvals.prompt;
+      if ((cvals.negative || '').trim()) v.negative = cvals.negative;
       if (cvals.seed !== undefined && cvals.seed !== '') v.seed = +cvals.seed;
       remember('prompt', cvals.prompt || '');
       onRun({ id: flow.id, values: v, images: cimgs }).catch((e) => setErr(e.message));

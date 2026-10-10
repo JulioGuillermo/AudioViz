@@ -26,7 +26,7 @@ import { diff, applyOps, transformPair, deepEqual, me as whoAmI, saveMe } from '
 import { PeersBar, RemoteCursors, peerCursors, peerMarks } from './peers.js';
 import { ChatPanel, chatStore, loadChat, chatEvent, unreadCount, notifyMsg } from './chat.js';
 import { AgentChanges } from './review.js';
-import { ComfySection, loadFlows } from './comfy.js';
+import { ComfySection, ComfyRunDialog, loadFlows, flowsStore } from './comfy.js';
 
 // ------------------------------------------------------------------ preview
 
@@ -1363,6 +1363,11 @@ function App() {
         onStart=${(o) => api('POST', '/api/images/generate', o).then(setJob).catch(showErr)}
         onRun=${(o) => api('POST', '/api/comfy/run', o).then(setJob)}
         onUseBackground=${(p) => { ctx.setBackground(p, true); setSel({ kind: 'track', track: 'background', seg: 0 }); setDlg(null); }} />`}
+    ${dlg && dlg.type === 'comfyrun' && proj && html`<${ComfyRunDialog} id=${dlg.id} job=${job} pickFile=${ctx.pickFile}
+        onClose=${() => setDlg(null)} onCancel=${() => api('POST', '/api/job/cancel')}
+        onRun=${(o) => api('POST', '/api/comfy/run', o).then(setJob)}
+        onUseBackground=${(p) => { ctx.setBackground(p, true); setSel({ kind: 'track', track: 'background', seg: 0 }); setDlg(null); }}
+        onUseAudio=${(p) => { ctx.setAudio(p); setSel({ kind: 'audio' }); setDlg(null); }} />`}
     ${pick && html`<${FilePicker} kind=${pick.kind} start=${pick.start} hasProject=${!!proj}
         onPick=${pick.cb} onClose=${() => setPick(null)} />`}
     ${toast && html`<div class="toast" onClick=${() => setToast('')}><${Icon} name="triangle-alert" size=${16} />${toast}</div>`}`;
@@ -1553,7 +1558,7 @@ function App() {
   else if (sel.kind === 'output') inspector = html`<div><div class="insp-h"><div class="insp-title"><${Icon} name="monitor" size=${16} cls="muted" />${t('Output')}<span class="sub">${t('Project')}</span></div></div><div class="insp-b">
       <${Form} fields=${OUTPUT_FIELDS} value=${proj.output} onChange=${(v) => update((p) => { p.output = v; })} ctx=${ctx} />
       <${LibrarySection} lib=${proj.expressions || {}} Section=${Section} Edit=${Edit} onChange=${(l) => update((p) => { p.expressions = l; })} />
-      <${ComfySection} comfy=${proj.comfy} onURL=${(u) => update((p) => { p.comfy = { ...(p.comfy || {}), url: u }; })} Section=${Section} Edit=${Edit} showErr=${showErr} />
+      <${ComfySection} comfy=${proj.comfy} onRun=${(id) => setDlg({ type: 'comfyrun', id })} onURL=${(u) => update((p) => { p.comfy = { ...(p.comfy || {}), url: u }; })} Section=${Section} Edit=${Edit} showErr=${showErr} />
       <p class="faint" style="font-size:12px">${t('Current resolution')}: ${meta.width}×${meta.height} · ${meta.fps} fps · ${fmtTime(meta.duration)}</p></div></div>`;
   else if (sel.kind === 'layer' && layerById_(sel.id)) inspector = html`<${LayerInspector} proj=${proj} sel=${sel} setSel=${setSel} update=${update} time=${time} meta=${meta} ctx=${ctx} />`;
   else if (sel.kind === 'text') inspector = html`<${TextsInspector} proj=${proj} sel=${sel} setSel=${setSel} update=${update} time=${time} meta=${meta} ctx=${ctx} />`;
@@ -1583,7 +1588,13 @@ function App() {
       <${PeersBar} peers=${peers} me=${meRef.current} show=${showCursors} setShow=${setShowCursors} onRename=${renameMe} />
       <button class=${'btn icon ghost chatbtn' + (chatOpen ? ' on' : '')} title=${t('Chat of the project')} onClick=${() => setChatOpen(!chatOpen)}>
         <${Icon} name="message-square" size=${16} />${(() => { const n = unreadCount(chatState.msgs, meRef.current, meta.path); return n > 0 && !chatOpen ? html`<i class="cbadge">${n > 99 ? '99+' : n}</i>` : null; })()}</button>
-      ${job && html`<div class="jobbar" title=${job.message} onClick=${() => { const d = { export: 'export', lyrics: 'genlyrics', image: 'images', comfy: 'images' }[job.kind]; if (d) setDlg({ type: d }); }}>
+      ${job && html`<div class="jobbar" title=${job.message} onClick=${() => {
+        // (a ComfyUI flow's job: the Images dialog for an image's, its own dialog otherwise)
+        const fl = job.kind === 'comfy' && flowsStore.get().find((f) => f.id === job.ref);
+        if (fl && fl.kind !== 'image' && fl.kind !== 'edit') { setDlg({ type: 'comfyrun', id: fl.id }); return; }
+        const d = { export: 'export', lyrics: 'genlyrics', image: 'images', comfy: 'images' }[job.kind];
+        if (d) setDlg({ type: d });
+      }}>
         <${Icon} name=${job.status === 'running' ? (job.kind === 'export' ? 'film' : 'wand-sparkles') : job.status === 'done' ? 'check' : 'triangle-alert'} size=${14}
           cls=${{ done: 'st-ok', error: 'st-err', canceled: 'st-warn' }[job.status] || 'muted'} />
         <div class="progress"><i style=${{ width: (job.progress * 100).toFixed(1) + '%' }}></i></div>

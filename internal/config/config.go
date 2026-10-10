@@ -77,10 +77,11 @@ type BackgroundConfig struct {
 // out by Depth Anything 3 on the GPU, then kept in the project's cache), brightness (bright =
 // near, a quick guess without AI) or file (a depth map of your own: white = near)
 type DepthConfig struct {
-	Source string `yaml:"source,omitempty"` // none (default), ai, brightness, file
+	Source string `yaml:"source,omitempty"` // none (default), ai, brightness, file, comfy
 	Model  string `yaml:"model,omitempty"`  // ai: small (default, fast) or base (more detail)
 	Detail string `yaml:"detail,omitempty"` // ai: the size it works at: normal (504 px), high (1008, default), max (1512)
 	Path   string `yaml:"path,omitempty"`   // file: the depth map
+	Flow   string `yaml:"flow,omitempty"`   // comfy: the project's ComfyUI flow (its id)
 }
 
 // MotionConfig: slow camera motion over a background segment (Ken Burns style), so a still

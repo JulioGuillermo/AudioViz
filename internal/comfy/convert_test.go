@@ -57,3 +57,31 @@ func TestConvertSubgraphProxy(t *testing.T) {
 		t.Errorf("roles: %+v", roles)
 	}
 }
+
+func TestConvertDynamicCombo(t *testing.T) {
+	var info ObjectInfo
+	_ = json.Unmarshal([]byte(`{"Render": {"input": {"required": {
+		"geo": ["GEO", {}],
+		"output": ["COMFY_DYNAMICCOMBO_V3", {"options": [
+			{"key": "depth", "inputs": {"required": {"normalization": ["COMBO", {"options": ["v2", "minmax"]}], "sky_clip": ["BOOLEAN", {}]}}},
+			{"key": "mask", "inputs": {"required": {"colored": ["BOOLEAN", {}]}}}]}],
+		"scale": ["FLOAT", {}]}},
+		"input_order": {"required": ["geo", "output", "scale"]}}}`), &info)
+	ui := `{"nodes": [{"id": 1, "type": "Render", "inputs": [], "widgets_values": ["depth", "minmax", true, 2.5]},
+		{"id": 2, "type": "Render", "inputs": [], "widgets_values": ["mask", false, 0.5]}], "links": []}`
+	p, _, err := Convert([]byte(ui), info)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]map[string]any{
+		"1": {"output": "depth", "output.normalization": "minmax", "output.sky_clip": true, "scale": 2.5},
+		"2": {"output": "mask", "output.colored": false, "scale": 0.5},
+	}
+	for id, w := range want {
+		for k, v := range w {
+			if got := p[id].Inputs[k]; got != v {
+				t.Errorf("node %s %s = %v, want %v (%v)", id, k, got, v, p[id].Inputs)
+			}
+		}
+	}
+}

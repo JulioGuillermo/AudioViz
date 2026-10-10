@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"audioviz/internal/config"
+	"audioviz/internal/depth"
 	"audioviz/internal/engine"
 	"audioviz/internal/gpu"
 	"audioviz/internal/lyrics"
@@ -69,6 +70,7 @@ type Options struct {
 // Run starts the studio and blocks until the server is closed
 func Run(opt Options, ready func(url string)) error {
 	s := &Server{hub: newHub(), version: opt.Version, collab: &collab{peers: map[string]*peer{}}}
+	depth.Register(depth.SourceComfy, s.comfyDepth)
 	s.workspace = opt.Workspace
 	if s.workspace == "" {
 		s.workspace = DefaultWorkspace()
@@ -731,7 +733,8 @@ func (s *Server) hFrame(w http.ResponseWriter, r *http.Request) {
 // ---------------------------------------------------------------- files
 
 var kindExts = map[string][]string{
-	"audio":   {".flac", ".wav", ".mp3", ".ogg"},
+	"audio":   {".flac", ".wav", ".mp3", ".ogg", ".opus", ".m4a"},
+	"video":   {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".gif"},
 	"image":   {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"},
 	"bg":      {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"},
 	"lyrics":  {".lrc", ".srt"},
@@ -929,7 +932,8 @@ type job struct {
 	Started  time.Time `json:"started"`
 	Gen      *progress.Status
 	Export   *exportStatus
-	Previews int // image generation: previews received so far
+	Previews int    // image generation: previews received so far
+	Ref      string // what it runs (a ComfyUI flow's id)
 	cancel   context.CancelFunc
 }
 
@@ -958,7 +962,7 @@ func (j *job) snapshot() map[string]any {
 	}
 	return map[string]any{"id": j.ID, "kind": j.Kind, "status": j.Status, "progress": j.Progress,
 		"message": j.Message, "output": j.Output, "log": log, "elapsed": time.Since(j.Started).Seconds(), "gen": j.Gen,
-		"export": exp, "preview": j.preview()}
+		"export": exp, "preview": j.preview(), "ref": j.Ref}
 }
 
 func (s *Server) startJob(kind string, run func(ctx context.Context, j *job) error) (*job, error) {

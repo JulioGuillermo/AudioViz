@@ -1,10 +1,13 @@
 package studio
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,6 +18,10 @@ import (
 	"time"
 
 	"audioviz/internal/comfy"
+	"audioviz/internal/depth"
+
+	_ "golang.org/x/image/webp" // (a result may be WebP)
+	_ "image/jpeg"
 )
 
 // The project's ComfyUI flows (internal/comfy): the server it runs on (the project's comfy.url;
@@ -236,7 +243,7 @@ func flowView(f *comfy.Flow, full bool, info comfy.ObjectInfo) map[string]any {
 			ID     string         `json:"id"`
 			Class  string         `json:"class"`
 			Title  string         `json:"title"`
-			Inputs map[string]any `json:"inputs"` // its values (links left out)
+			Inputs map[string]any `json:"inputs"`           // its values (links left out)
 			Output bool           `json:"output,omitempty"` // it saves or shows a result
 		}
 		var ns []nodeView
@@ -269,9 +276,29 @@ func (s *Server) comfyInfoNow(r *http.Request, fresh bool) comfy.ObjectInfo {
 	return info
 }
 
+// reconvert: a flow kept as ComfyUI's interface saved it converted again (with what AudioViz
+// converts better since, or the nodes installed since); its roles kept
+func (s *Server) reconvert(f *comfy.Flow, info comfy.ObjectInfo) {
+	if len(f.UI) == 0 {
+		return
+	}
+	p, warn, err := comfy.Convert(f.UI, info)
+	if err != nil {
+		return
+	}
+	a, _ := json.Marshal(p)
+	b, _ := json.Marshal(f.API)
+	if bytes.Equal(a, b) && fmt.Sprint(warn) == fmt.Sprint(f.Warnings) {
+		return
+	}
+	f.API, f.Warnings = p, warn
+	_ = s.saveFlow(f)
+}
+
 // hComfyFlows: the project's flows (?fresh=1: checked against ComfyUI asked again)
 func (s *Server) hComfyFlows(w http.ResponseWriter, r *http.Request) {
-	info := s.comfyInfoNow(r, r.URL.Query().Get("fresh") != "")
+	fresh := r.URL.Query().Get("fresh") != ""
+	info := s.comfyInfoNow(r, fresh)
 	d := s.comfyDir()
 	out := []map[string]any{}
 	if d != "" {
@@ -281,6 +308,9 @@ func (s *Server) hComfyFlows(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			if f, err := s.loadFlow(strings.TrimSuffix(e.Name(), ".json")); err == nil {
+				if fresh && info != nil {
+					s.reconvert(f, info)
+				}
 				out = append(out, flowView(f, false, info))
 			}
 		}
@@ -347,8 +377,73 @@ func (s *Server) hComfyFlow(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// hComfyRun: {id, values, images: [project files]}: the flow run in ComfyUI (a job); its result
-// (an image) saved in the project's images
+// where a flow's results are kept in the project, by what it makes
+func resultsDir(kind string) string {
+	switch kind {
+	case comfy.KindVideo:
+		return "videos"
+	case comfy.KindAudio:
+		return "audio"
+	}
+	return imagesDir
+}
+
+// comfyDepth: a depth map made by a flow of the project (depth.SourceComfy; it runs when the
+// map isn't in the cache): the background's image to its first input image, its result back
+func (s *Server) comfyDepth(ctx context.Context, r depth.Request, img *image.RGBA, stage func(string, float64)) (image.Image, error) {
+	b, err := os.ReadFile(r.File)
+	if err != nil {
+		return nil, fmt.Errorf("the project has no ComfyUI flow %q", r.Model)
+	}
+	var f comfy.Flow
+	if err := json.Unmarshal(b, &f); err != nil {
+		return nil, err
+	}
+	takes := false
+	for _, ro := range f.Roles {
+		takes = takes || ro.Kind == comfy.RoleImage
+	}
+	if !takes {
+		return nil, fmt.Errorf("the flow %q takes no image (give it an input image in its roles)", f.Name)
+	}
+	c, _ := s.comfyClient()
+	var pb bytes.Buffer
+	if err := png.Encode(&pb, img); err != nil {
+		return nil, err
+	}
+	stage("comfy", 0)
+	name, err := c.Upload(ctx, "depth-in.png", pb.Bytes())
+	if err != nil {
+		return nil, err
+	}
+	p, _, err := f.Build(comfy.Values{Images: []string{name}})
+	if err != nil {
+		return nil, err
+	}
+	files, err := c.Run(ctx, p, f.OutputNode(), func(frac float64, _ string, preview []byte) {
+		if preview == nil {
+			stage("comfy", frac)
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(files) == 0 {
+		return nil, fmt.Errorf("the flow %q made no image in its output node", f.Name)
+	}
+	data, err := c.Download(ctx, files[0])
+	if err != nil {
+		return nil, err
+	}
+	out, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("the flow %q's result is not an image: %w", f.Name, err)
+	}
+	return out, nil
+}
+
+// hComfyRun: {id, values, images: [project files]}: the flow run in ComfyUI (a job); its results
+// saved in the project (images/, videos/ or audio/, by what it makes)
 func (s *Server) hComfyRun(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		ID     string       `json:"id"`
@@ -372,8 +467,11 @@ func (s *Server) hComfyRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	c, _ := s.comfyClient()
-	dir := filepath.Join(cfg.Dir, imagesDir)
+	dir := filepath.Join(cfg.Dir, resultsDir(f.Kind))
 	j, err := s.startJob("comfy", func(ctx context.Context, j *job) error {
+		j.mu.Lock()
+		j.Ref = f.ID
+		j.mu.Unlock()
 		t0 := time.Now()
 		say := func(p float64, msg string) {
 			j.mu.Lock()

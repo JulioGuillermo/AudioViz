@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/draw"
 	"image/png"
 	"math"
 	"os"
@@ -15,7 +16,6 @@ import (
 	"sync"
 
 	"audioviz/internal/video"
-
 )
 
 // Sources of a depth map (config.DepthConfig.Source)
@@ -23,7 +23,28 @@ const (
 	SourceAI         = "ai"
 	SourceBrightness = "brightness"
 	SourceFile       = "file"
+	SourceComfy      = "comfy" // a ComfyUI flow of the project (Request.Model: its id, File: its file)
 )
+
+// Maker: a depth map made elsewhere (a ComfyUI flow: the studio registers it), any size
+type Maker func(ctx context.Context, r Request, img *image.RGBA, stage func(string, float64)) (image.Image, error)
+
+var (
+	makersMu sync.Mutex
+	makers   = map[string]Maker{}
+)
+
+// Register: who makes the maps of a source
+func Register(source string, m Maker) {
+	makersMu.Lock()
+	makers[source] = m
+	makersMu.Unlock()
+}
+
+// FlowFile: where a project keeps its ComfyUI flow id
+func FlowFile(projectDir, id string) string {
+	return filepath.Join(projectDir, "comfy", filepath.Base(id)+".json")
+}
 
 // rows runs f over [0, n) in parallel blocks
 func rows(n int, f func(y0, y1 int)) {
@@ -179,6 +200,16 @@ func FromFile(path string, W, H int) (*Map, error) {
 	if err != nil {
 		return nil, err
 	}
+	return FromImage(img, W, H), nil
+}
+
+// FromImage: a depth map in an image (white = near), at size W×H
+func FromImage(src image.Image, W, H int) *Map {
+	img, ok := src.(*image.RGBA)
+	if !ok || img.Bounds().Min != (image.Point{}) {
+		img = image.NewRGBA(image.Rect(0, 0, src.Bounds().Dx(), src.Bounds().Dy()))
+		draw.Draw(img, img.Bounds(), src, src.Bounds().Min, draw.Src)
+	}
 	sw, sh := img.Bounds().Dx(), img.Bounds().Dy()
 	m := &Map{W: W, H: H, V: make([]float32, W*H)}
 	rows(H, func(y0, y1 int) {
@@ -189,7 +220,7 @@ func FromFile(path string, W, H int) (*Map, error) {
 			}
 		}
 	})
-	return m, nil
+	return m
 }
 
 // Save writes the map as a 16-bit grey PNG (white = near)
@@ -247,6 +278,7 @@ type Request struct {
 	Model  string // ai: small or base
 	Detail string // ai: normal, high, max (DetailSize)
 	File   string // file: the depth map
+	Force  bool   // worked out again though it is in the cache
 }
 
 // CachePath: where the map of a request is kept in the project's cache folder (it changes with
@@ -260,10 +292,12 @@ func CachePath(cacheDir string, r Request) string {
 		}
 	}
 	model := r.Model
-	if r.Source != SourceAI {
-		model = ""
-	} else {
+	switch r.Source {
+	case SourceAI:
 		model += "|" + fmt.Sprint(DetailSize(r.Detail))
+	case SourceComfy: // (its flow, File, counts with its date)
+	default:
+		model = ""
 	}
 	fmt.Fprintf(h, "%s|%s|v2", r.Source, model)
 	return filepath.Join(cacheDir, "depth", hex.EncodeToString(h.Sum(nil))[:20]+".png")
@@ -278,7 +312,7 @@ func Cached(cacheDir string, r Request) (*Map, bool) {
 // Make works out the map of a request (the image's size), keeps it in the cache and returns it.
 // stage(label, progress 0..1) reports what it is doing (downloading the model, working out...).
 func Make(ctx context.Context, cacheDir string, r Request, stage func(string, float64)) (*Map, error) {
-	if m, ok := Cached(cacheDir, r); ok {
+	if m, ok := Cached(cacheDir, r); ok && !r.Force {
 		return m, nil
 	}
 	img, err := firstFrame(r.Image)
@@ -296,6 +330,18 @@ func Make(ctx context.Context, cacheDir string, r Request, stage func(string, fl
 		if m, err = FromFile(r.File, W, H); err != nil {
 			return nil, err
 		}
+	case SourceComfy:
+		makersMu.Lock()
+		mk := makers[r.Source]
+		makersMu.Unlock()
+		if mk == nil {
+			return nil, fmt.Errorf("a ComfyUI depth map is made from the studio (Depth section: Work out the depth)")
+		}
+		out, err := mk(ctx, r, img, stage)
+		if err != nil {
+			return nil, err
+		}
+		m = FromImage(out, W, H)
 	default:
 		if m, err = aiMap(ctx, img, r, stage); err != nil {
 			return nil, err

@@ -26,10 +26,20 @@ type depthReq struct {
 	Model  string `json:"model"`
 	Detail string `json:"detail"`
 	File   string `json:"file"`
+	Flow   string `json:"flow"`  // comfy: the project's flow
+	Force  bool   `json:"force"` // worked out again (it is in the cache)
 }
 
-func (r depthReq) request() depth.Request {
-	return depth.Request{Image: r.Image, Source: r.Source, Model: r.Model, Detail: r.Detail, File: r.File}
+func (s *Server) depthRequest(r depthReq) depth.Request {
+	q := depth.Request{Image: r.Image, Source: r.Source, Model: r.Model, Detail: r.Detail, File: r.File, Force: r.Force}
+	if r.Source == depth.SourceComfy {
+		s.mu.Lock()
+		if s.cfg != nil {
+			q.Model, q.File = r.Flow, depth.FlowFile(s.cfg.Dir, r.Flow)
+		}
+		s.mu.Unlock()
+	}
+	return q
 }
 
 // cacheDir: the project's cache folder ("" without a project)
@@ -59,10 +69,16 @@ func (s *Server) hDepth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	labels := map[string]string{"download": "Downloading the depth model", "estimate": "Working out the depth",
-		"refine": "Following the image's edges", "brightness": "Depth from the brightness", "file": "Reading the depth map"}
+		"refine": "Following the image's edges", "brightness": "Depth from the brightness", "file": "Reading the depth map",
+		"comfy": "Working out the depth in ComfyUI"}
+	if req.Source == depth.SourceComfy && req.Flow == "" {
+		fail(w, 400, errors.New("choose the ComfyUI flow that makes the depth map"))
+		return
+	}
+	dreq := s.depthRequest(req)
 	j, err := s.startJob("depth", func(ctx context.Context, j *job) error {
 		t0 := time.Now()
-		_, err := depth.Make(ctx, dir, req.request(), func(st string, p float64) {
+		_, err := depth.Make(ctx, dir, dreq, func(st string, p float64) {
 			j.mu.Lock()
 			if l, ok := labels[st]; ok {
 				j.Message = l
@@ -70,7 +86,7 @@ func (s *Server) hDepth(w http.ResponseWriter, r *http.Request) {
 					j.Message = fmt.Sprintf("%s · %d %%", l, int(p*100))
 				}
 			}
-			j.Progress = map[string]float64{"download": 0.5 * p, "estimate": 0.5 + 0.4*p, "refine": 0.92, "brightness": 0.5, "file": 0.5, "done": 1}[st]
+			j.Progress = map[string]float64{"download": 0.5 * p, "estimate": 0.5 + 0.4*p, "refine": 0.92, "brightness": 0.5, "file": 0.5, "comfy": 0.95 * p, "done": 1}[st]
 			j.mu.Unlock()
 			s.hub.send("job", j.snapshot())
 		})
@@ -78,7 +94,7 @@ func (s *Server) hDepth(w http.ResponseWriter, r *http.Request) {
 			return err
 		}
 		j.mu.Lock()
-		j.Output = depth.CachePath(dir, req.request())
+		j.Output = depth.CachePath(dir, dreq)
 		j.Message = fmt.Sprintf("Depth ready in %s", fmtSecs(time.Since(t0).Seconds()))
 		j.mu.Unlock()
 		return nil
@@ -94,9 +110,9 @@ func (s *Server) hDepth(w http.ResponseWriter, r *http.Request) {
 // (white = near), at most 640 px wide; 404 if not in the cache yet
 func (s *Server) hDepthView(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	req := depthReq{Image: q.Get("image"), Source: q.Get("source"), Model: q.Get("model"), Detail: q.Get("detail"), File: q.Get("file")}
+	req := depthReq{Image: q.Get("image"), Source: q.Get("source"), Model: q.Get("model"), Detail: q.Get("detail"), File: q.Get("file"), Flow: q.Get("flow")}
 	dir := s.cacheDir()
-	m, ok := depth.Cached(dir, req.request())
+	m, ok := depth.Cached(dir, s.depthRequest(req))
 	if dir == "" || !ok {
 		http.Error(w, "not worked out yet", 404)
 		return

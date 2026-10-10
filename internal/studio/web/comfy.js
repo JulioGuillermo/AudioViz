@@ -4,6 +4,7 @@
 // from), and the form a flow gets in the Images dialog.
 
 import { html, useEffect, useState } from './vendor/preact-htm.js';
+import { Modal, fmtDur } from './dialogs.js';
 import { createStore, useStore } from './store.js';
 import { Icon } from './icons.js';
 import { t } from './i18n.js';
@@ -14,7 +15,18 @@ export const flowsStore = createStore([]);
 // (fresh: checked against ComfyUI asked again, so a model installed since counts)
 export const loadFlows = (fresh) => api('GET', '/api/comfy/flows' + (fresh ? '?fresh=1' : '')).then((r) => flowsStore.set(r.flows || [])).catch(() => flowsStore.set([]));
 
-export const KINDS = [['image', 'Image (from a prompt)'], ['edit', 'Image edit (from images)'], ['depth', 'Depth map'], ['video', 'Video']];
+export const KINDS = [['image', 'Image (from a prompt)'], ['edit', 'Image edit (from images)'], ['depth', 'Depth map'], ['video', 'Video'],
+  ['audio', 'Audio (music, voice…)']];
+const MEDIA = [['image', 'Image'], ['video', 'Video'], ['audio', 'Audio']];
+// the file picker's kind for an input of a flow
+const PICK_KIND = { image: 'image', video: 'video', audio: 'audio' };
+// an input file's name in the form (its own, or Image 1, Video 1…)
+const fileLabel = (roles, r) => {
+  if (r.label) return r.label;
+  const same = roles.filter((x) => x.kind === 'image' && (x.media || 'image') === (r.media || 'image'));
+  const n = same.indexOf(r) + 1;
+  return t({ video: 'Video {n}', audio: 'Audio {n}' }[r.media] || 'Image {n}', { n });
+};
 const ROLE_LABEL = { prompt: 'Prompt', negative: 'Negative prompt', seed: 'Seed', width: 'Width', height: 'Height', image: 'Input image', param: 'Parameter', output: 'Result' };
 
 // what keeps a flow from running in ComfyUI, in words
@@ -47,7 +59,7 @@ function FlowState({ f }) {
 }
 
 // ---- the section in the Project panel
-export function ComfySection({ comfy, onURL, Section, Edit, showErr }) {
+export function ComfySection({ comfy, onURL, onRun, Section, Edit, showErr }) {
   const flows = useStore(flowsStore);
   const [st, setSt] = useState(null);
   const [dlg, setDlg] = useState(null); // 'import' | {edit: id}
@@ -70,10 +82,13 @@ export function ComfySection({ comfy, onURL, Section, Edit, showErr }) {
     <div class="cf-flows">
       ${!flows.length && html`<p class="faint">${t('No flows yet: import your ComfyUI workflows or its templates.')}</p>`}
       ${flows.map((f) => html`<div class="cf-flow" key=${f.id}>
-        <${FlowState} f=${f} /><span class="cf-kind">${t(Object.fromEntries(KINDS)[f.kind] || f.kind)}</span><b>${f.name}</b>
+        <b class="cf-name" title=${f.name}>${f.name}</b>
+        <div class="cf-line"><${FlowState} f=${f} /><span class="cf-kind">${t(Object.fromEntries(KINDS)[f.kind] || f.kind)}</span>
         <span class="spacer"></span>
+        ${f.kind === 'depth' ? html`<span class="cf-dot unk" title=${t('Used from a background segment: its Depth section, “Depth from: ComfyUI”')}><${Icon} name="info" size=${13} /></span>`
+          : html`<button class="btn icon ghost sm" title=${t('Run it…')} onClick=${() => onRun(f.id)}><${Icon} name="play" size=${13} /></button>`}
         <button class="btn icon ghost sm" title=${t('Edit its roles')} onClick=${() => setDlg({ edit: f.id })}><${Icon} name="pencil" size=${13} /></button>
-        <button class="btn icon ghost sm" title=${t('Remove')} onClick=${() => del(f)}><${Icon} name="trash-2" size=${13} /></button></div>`)}
+        <button class="btn icon ghost sm" title=${t('Remove')} onClick=${() => del(f)}><${Icon} name="trash-2" size=${13} /></button></div></div>`)}
     </div>
     <div class="row" style="gap:6px"><button class="btn sm" onClick=${() => setDlg('import')}><${Icon} name="download" size=${13} /> ${t('Import a flow…')}</button>
       ${flows.length > 0 && html`<button class="btn sm ghost" title=${t('Check the flows again against ComfyUI (after installing models or nodes)')}
@@ -174,13 +189,13 @@ function FlowEditor({ id, onClose, showErr }) {
   const nodeLabel = (n) => n.title + (n.title !== n.class ? ' · ' + n.class : '') + '  #' + n.id;
 
   // one place: its node, its input, what it holds now
-  const where = (r, i, want, tail) => {
+  const where = (r, i, want, tail, head) => {
     const n = nodeOf(r.node);
     const ns = nodes.filter((x) => x.id === r.node || (want === 'output' ? x.output : inputsOf(x, want).length));
     const val = n && r.input ? n.inputs[r.input] : undefined;
     const sv = val === undefined ? '' : String(val);
     const k = r.node + '|' + r.input;
-    return html`<select class="cf-node" value=${r.node} onChange=${(e) => {
+    return html`${head}<select class="cf-node" value=${r.node} onChange=${(e) => {
         const nn = nodeOf(e.target.value);
         const inp = want === 'output' ? '' : inputsOf(nn, want)[0] || '';
         setRole(i, { node: e.target.value, input: inp, value: nn && nn.inputs[inp] });
@@ -202,7 +217,9 @@ function FlowEditor({ id, onClose, showErr }) {
   const many = (kind, want, title, hint, addLabel, namePh) => html`<div class="cf-group"><div class="cf-gh"><b>${t(title)}</b><span class="faint">${t(hint)}</span></div>
     ${roles.map((r, i) => r.kind === kind && html`<div class="cf-slot" key=${i}>
       <div class="cf-sl"><input type="text" placeholder=${t(namePh)} value=${r.label || ''} onInput=${(e) => setRole(i, { label: e.target.value })} /></div>
-      <div class="cf-sw">${where(r, i, want, html`<button class="btn icon ghost sm" title=${t('Remove')} onClick=${() => del(i)}><${Icon} name="x" size=${13} /></button>`)}</div></div>`)}
+      <div class="cf-sw">${where(r, i, want, html`<button class="btn icon ghost sm" title=${t('Remove')} onClick=${() => del(i)}><${Icon} name="x" size=${13} /></button>`,
+        kind === 'image' && html`<select class="cf-media" title=${t('What file it takes')} value=${r.media || 'image'} onChange=${(e) => setRole(i, { media: e.target.value })}>
+          ${MEDIA.map(([k, l]) => html`<option value=${k}>${t(l)}</option>`)}</select>`)}</div></div>`)}
     <button class="btn sm ghost" onClick=${() => add(kind, want)}><${Icon} name="plus" size=${12} /> ${t(addLabel)}</button></div>`;
   const oi = roles.findIndex((r) => r.kind === 'output');
   return html`<div class="modal-bg" onMouseDown=${(e) => e.target === e.currentTarget && onClose()}>
@@ -217,7 +234,7 @@ function FlowEditor({ id, onClose, showErr }) {
         ${f.warnings && f.warnings.length > 0 && html`<div class="cf-warn">${f.warnings.map((w) => html`<p><${Icon} name="triangle-alert" size=${12} /> ${w}</p>`)}</div>`}
         <p class="faint cf-hint">${t('When you generate, AudioViz writes what you give it (in the Images dialog) into these places of the flow, runs it in ComfyUI and keeps the image of its result. They were guessed on import: check that they point where you expect. Each one is a node of the flow (as titled in ComfyUI, #its number) and one of its fields.')}</p>
         <div class="cf-group">${SLOTS.map(slot)}</div>
-        ${many('image', 'any', 'Input images', 'The images you choose go to these image loaders, in order.', 'Input image', 'Its name')}
+        ${many('image', 'any', 'Input files', 'The images, videos or audio you choose go to these loaders, in order.', 'Input file', 'Its name')}
         ${many('param', 'any', 'More values in the form', 'Fields of the flow you want to change from AudioViz (steps, strength…).', 'Expose a value', 'Its name in the form')}
         <div class="cf-group"><div class="cf-slot"><div class="cf-sl"><b>${t('The result is taken from')}</b></div>
           ${oi < 0 ? html`<div class="cf-sw"><span class="st-err">${t('Nothing: choose the node that saves the image')}</span>
@@ -234,20 +251,27 @@ function FlowEditor({ id, onClose, showErr }) {
 export function FlowForm({ flow, values, setValues, images, pickImage, size }) {
   const has = (k) => (flow.roles || []).some((r) => r.kind === k);
   const imgRoles = (flow.roles || []).filter((r) => r.kind === 'image');
+  const anyFiles = imgRoles.some((r) => r.media && r.media !== 'image');
   const params = (flow.roles || []).filter((r) => r.kind === 'param');
-  const set = (k, v) => setValues({ ...values, [k]: v });
+  const set = (k, v) => setValues((o) => ({ ...o, [k]: v }));
+  const roleText = (k) => { const r = (flow.roles || []).find((x) => x.kind === k); return r && typeof r.value === 'string' ? r.value : ''; };
   return html`<div class="cf-form">
     ${has('prompt') && html`<label class="ig-l">${t('Prompt')}</label>
-      <textarea class="ig-prompt" rows="6" value=${values.prompt || ''} onInput=${(e) => set('prompt', e.target.value)}></textarea>`}
+      <textarea class="ig-prompt" rows="6" value=${values.prompt || ''} placeholder=${roleText('prompt').slice(0, 400)}
+        title=${t('Empty: the flow’s own')} onInput=${(e) => set('prompt', e.target.value)}></textarea>`}
     ${has('negative') && html`<label class="ig-l">${t('Negative prompt')}</label>
-      <textarea class="ig-neg" rows="2" value=${values.negative || ''} onInput=${(e) => set('negative', e.target.value)}></textarea>`}
-    ${imgRoles.length > 0 && html`<label class="ig-l">${t('Input images')}</label><div class="ig-refs">
+      <textarea class="ig-neg" rows="2" value=${values.negative ?? ''} placeholder=${roleText('negative').slice(0, 300)}
+        title=${t('Empty: the flow’s own')} onInput=${(e) => set('negative', e.target.value)}></textarea>`}
+    ${imgRoles.length > 0 && html`<label class="ig-l">${t(anyFiles ? 'Input files' : 'Input images')}</label><div class="ig-refs">
       ${imgRoles.map((r, i) => {
         const p = (images || [])[i];
-        return html`<div class="cf-in" key=${i}><span class="faint">${r.label || t('Image {n}', { n: i + 1 })}</span>
-          ${p ? html`<div class="ig-ref" title=${p}><img src=${'/api/thumb?s=320&path=' + encodeURIComponent(p)} alt="" />
-            <button class="btn icon sm" onClick=${() => pickImage(i, '')}><${Icon} name="x" size=${12} /></button></div>`
-            : html`<button class="ig-add" onClick=${() => pickImage(i, null)}><${Icon} name="plus" size=${18} /></button>`}</div>`;
+        const media = r.media || 'image';
+        return html`<div class="cf-in" key=${i}><span class="faint">${fileLabel(flow.roles, r)}</span>
+          ${p ? html`<div class="ig-ref" title=${p}>${media === 'audio' ? html`<div class="cf-file-in"><${Icon} name="music" size=${18} /><span>${p.split('/').pop()}</span></div>`
+              : html`<img src=${'/api/thumb?s=320&path=' + encodeURIComponent(p)} alt="" />`}
+            <button class="btn icon sm" onClick=${() => pickImage(i, '', media)}><${Icon} name="x" size=${12} /></button></div>`
+            : html`<button class="ig-add" title=${t({ video: 'Choose a video', audio: 'Choose an audio file' }[media] || 'Choose an image')} onClick=${() => pickImage(i, null, media)}>
+              <${Icon} name=${{ video: 'film', audio: 'music' }[media] || 'plus'} size=${18} /></button>`}</div>`;
       })}</div>`}
     ${has('width') && size}
     ${has('seed') && html`<div class="fld"><label>${t('Seed')}</label><div class="ctl"><input type="number" min="0" value=${values.seed ?? ''} placeholder=${t('Random')}
@@ -257,10 +281,91 @@ export function FlowForm({ flow, values, setValues, images, pickImage, size }) {
       const cur = (values.params || {})[k];
       const v = cur ?? r.value;
       const num = typeof r.value === 'number';
-      const setP = (x) => setValues({ ...values, params: { ...(values.params || {}), [k]: x } });
-      return html`<div class="fld" key=${k}><label>${r.label || r.input}</label><div class="ctl">
+      const setP = (x) => setValues((o) => ({ ...o, params: { ...(o.params || {}), [k]: x } }));
+      const long = typeof r.value === 'string' && (r.input === 'lyrics' || r.value.length > 60 || r.value.includes('\n'));
+      if (long) {
+        return html`<div key=${k}><label class="ig-l">${t(r.label || r.input)}</label>
+          <textarea class="ig-neg" rows="5" value=${v ?? ''} onInput=${(e) => setP(e.target.value)}></textarea></div>`;
+      }
+      return html`<div class="fld" key=${k}><label>${t(r.label || r.input)}</label><div class="ctl">
         ${typeof r.value === 'boolean' ? html`<input type="checkbox" checked=${!!v} onChange=${(e) => setP(e.target.checked)} />`
           : html`<input type=${num ? 'number' : 'text'} step="any" value=${v ?? ''} onInput=${(e) => setP(num ? +e.target.value : e.target.value)} />`}</div></div>`;
     })}
   </div>`;
+}
+
+// ---- running a flow (any kind but depth): its form, its progress, its result (an image, a
+// video or audio kept in the project), and what to do with it
+const extOf = (p) => (p.match(/\.([a-z0-9]+)$/i) || [])[1]?.toLowerCase() || '';
+const mediaOf = (p) => (['mp4', 'webm', 'mov', 'mkv', 'avi', 'm4v'].includes(extOf(p)) ? 'video'
+  : ['flac', 'wav', 'mp3', 'ogg', 'opus', 'm4a'].includes(extOf(p)) ? 'audio' : 'image'); // (a GIF shows as an image)
+const mediaURL = (p) => '/api/media?path=' + encodeURIComponent(p);
+
+export function ComfyRunDialog({ id, job, onClose, onCancel, onRun, onUseBackground, onUseAudio, pickFile }) {
+  const flows = useStore(flowsStore);
+  const flow = flows.find((f) => f.id === id);
+  const [vals, setVals] = useState({});
+  const [files, setFiles] = useState([]);
+  const [err, setErr] = useState('');
+  useEffect(() => { loadFlows(true); }, []);
+  if (!flow) return html`<${Modal} title=${t('ComfyUI')} icon="play" onClose=${onClose}><p class="faint">${t('Asking ComfyUI…')}</p></${Modal}>`;
+  const mine = job && job.kind === 'comfy' && job.ref === id ? job : null;
+  const running = mine && mine.status === 'running';
+  const roleVal = (k) => (flow.roles.find((r) => r.kind === k) || {}).value;
+  const has = (k) => flow.roles.some((r) => r.kind === k);
+  const blocked = !!(flow.issues && flow.issues.length);
+  const setFile = (i, p) => { const a = [...files]; a[i] = p; setFiles(a); };
+  const pick = (i, p, media) => {
+    if (p !== null) { setFile(i, p); return; }
+    pickFile(PICK_KIND[media] || 'image', (x) => setFile(i, x));
+  };
+  const run = () => {
+    setErr('');
+    // (an empty prompt: the flow's own)
+    const v = { params: vals.params || {} };
+    if ((vals.prompt || '').trim()) v.prompt = vals.prompt;
+    if ((vals.negative || '').trim()) v.negative = vals.negative;
+    if (has('width')) { v.width = +(vals.width ?? roleVal('width')) || 0; v.height = +(vals.height ?? roleVal('height')) || 0; }
+    if (vals.seed !== undefined && vals.seed !== '') v.seed = +vals.seed;
+    onRun({ id, values: v, images: files }).catch((e) => setErr(e.message));
+  };
+  const size = has('width') && html`<div class="fld"><label>${t('Size')}</label><div class="ctl cf-size">
+    <input type="number" min="64" step="8" title=${t('Width')} value=${vals.width ?? roleVal('width') ?? ''} onInput=${(e) => { const x = e.target.value; setVals((o) => ({ ...o, width: x })); }} />
+    <span class="faint">×</span>
+    <input type="number" min="64" step="8" title=${t('Height')} value=${vals.height ?? roleVal('height') ?? ''} onInput=${(e) => { const x = e.target.value; setVals((o) => ({ ...o, height: x })); }} /></div></div>`;
+  const out = mine && mine.status === 'done' && mine.output;
+  const m = out && mediaOf(out);
+  let side;
+  if (mine && mine.status !== 'done') {
+    side = html`<div class="ig-stage">${mine.preview ? html`<img class="pv" src=${mine.preview} alt="" />`
+      : html`<div class="faint ig-wait"><${Icon} name=${running ? 'loader-circle' : 'triangle-alert'} size=${28} cls=${running ? 'spin' : ''} /></div>`}</div>
+      <div class="gen"><div class="gen-row"><span class="gen-l">${t('Total')}</span>
+        <div class="progress"><i style=${{ width: ((mine.progress || 0) * 100).toFixed(1) + '%' }}></i></div>
+        <span class="gen-v mono">${Math.round((mine.progress || 0) * 100)}%</span><span class="gen-t mono">${fmtDur(mine.elapsed || 0)}</span></div>
+        <div class=${mine.status === 'error' ? 'st-err' : 'faint'} style="font-size:12px;margin-top:6px">${mine.message}</div></div>`;
+  } else if (out) {
+    side = html`<div class="ig-stage">${m === 'video' ? html`<video src=${mediaURL(out)} controls autoplay loop muted playsinline></video>`
+        : m === 'audio' ? html`<div class="cf-audio"><${Icon} name="music" size=${40} cls="muted" /><audio src=${mediaURL(out)} controls></audio></div>`
+          : html`<img src=${mediaURL(out)} alt="" />`}</div>
+      <p class="faint" style="font-size:12px">${mine.message} · <span class="mono">${out}</span></p>
+      <div class="row" style="gap:6px">
+        ${m !== 'audio' && html`<button class="btn sm" onClick=${() => onUseBackground(out)}><${Icon} name="image" size=${13} /> ${t('Use as background')}</button>`}
+        ${m === 'audio' && html`<button class="btn sm" onClick=${() => onUseAudio(out)}><${Icon} name="music" size=${13} /> ${t('Use as the project’s audio')}</button>`}
+        <a class="btn sm ghost" href=${mediaURL(out) + '&download=1'}><${Icon} name="download" size=${13} /> ${t('Download')}</a></div>`;
+  } else {
+    side = html`<div class="ig-stage"><div class="faint ig-wait"><${Icon} name="play" size=${28} />
+      <p style="max-width:340px;text-align:center">${t('It runs in ComfyUI and what it makes is kept in the project.')}</p></div></div>`;
+  }
+  return html`<${Modal} title=${'ComfyUI · ' + flow.name} icon="play" onClose=${onClose} width="min(1000px,96vw)"
+    footer=${html`<span class="spacer"></span>
+      <button class="btn" onClick=${onClose}>${t(running ? 'Keep running in the background' : 'Close')}</button>
+      ${running ? html`<button class="btn danger" onClick=${onCancel}><${Icon} name="x" size=${15} /> ${t('Cancel')}</button>`
+        : html`<button class="btn primary" disabled=${blocked || (job && job.status === 'running')} onClick=${run}><${Icon} name="play" size=${15} /> ${t('Run')}</button>`}`}>
+    ${err && html`<div class="alert err" style="margin-bottom:10px"><${Icon} name="triangle-alert" size=${15} />${err}</div>`}
+    <div class="ig"><div class="ig-form">
+      <p class="faint ig-desc">${t(Object.fromEntries(KINDS)[flow.kind] || flow.kind)}</p>
+      <${Issues} issues=${flow.issues} />
+      <${FlowForm} flow=${flow} values=${vals} setValues=${setVals} images=${files} size=${size} pickImage=${pick} />
+    </div><div class="ig-side">${side}</div></div>
+  </${Modal}>`;
 }

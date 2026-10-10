@@ -6,11 +6,11 @@ import { t } from './i18n.js';
 
 const KIND_LABEL = {
   audio: 'Choose audio', bg: 'Choose background', lyrics: 'Choose lyrics', txt: 'Choose lyrics text',
-  font: 'Choose font', image: 'Choose image', project: 'Open project', dir: 'Choose folder', zip: 'Import project package',
+  font: 'Choose font', image: 'Choose image', video: 'Choose a video', project: 'Open project', dir: 'Choose folder', zip: 'Import project package',
 };
 const KIND_HINT = {
   audio: 'FLAC, WAV, MP3 or OGG', bg: 'Image, GIF or video (MP4, MOV, MKV, WebM, AVI)', lyrics: '.lrc or .srt',
-  txt: '.txt (Suno format works)', font: '.ttf or .otf', image: 'PNG, JPG, WebP or GIF', project: 'project.yaml', zip: 'A project exported as .zip',
+  txt: '.txt (Suno format works)', font: '.ttf or .otf', image: 'PNG, JPG, WebP or GIF', video: 'MP4, MOV, MKV, WebM, AVI or GIF', project: 'project.yaml', zip: 'A project exported as .zip',
   dir: 'Browse to the folder and press “Use this folder”',
 };
 
@@ -41,7 +41,7 @@ const VIDEO_EXT = /\.(mp4|mov|mkv|webm|avi|m4v)$/i;
 export function FilePicker({ kind, start, onPick, onClose, hasProject }) {
   const [dir, setDir] = useState(null);
   // Images and videos: thumbnail grid (or list), remembered by the browser
-  const canGrid = kind === 'bg' || kind === 'image';
+  const canGrid = kind === 'bg' || kind === 'image' || kind === 'video';
   const [view, setViewState] = useState(() => { try { return localStorage.getItem('audioviz.pickerView') || 'grid'; } catch (e) { return 'grid'; } });
   const setView = (v) => { setViewState(v); try { localStorage.setItem('audioviz.pickerView', v); } catch (e) { /* ignore */ } };
   const grid = canGrid && view === 'grid';

@@ -15,6 +15,7 @@ type Role struct {
 	Node  string `json:"node"`
 	Input string `json:"input,omitempty"`
 	Label string `json:"label,omitempty"`
+	Media string `json:"media,omitempty"` // an input file's: image, video, audio
 	// what it holds in the flow (the default when AudioViz gives none)
 	Value any `json:"value,omitempty"`
 }
@@ -31,13 +32,21 @@ const (
 	RoleOutput   = "output"
 )
 
-// output nodes AudioViz takes results from, the preferred first
-var outputClasses = []string{"SaveImage", "VHS_VideoCombine", "SaveVideo", "SaveAnimatedWEBP", "SaveAnimatedPNG",
-	"SaveAudio", "SaveAudioMP3", "PreviewImage", "PreviewAudio"}
+// output nodes AudioViz takes results from, the preferred first (a video's or a song's before
+// an image, which in such a flow is mostly a frame or a cover)
+var outputClasses = []string{"VHS_VideoCombine", "SaveVideo", "SaveWEBM", "SaveAnimatedWEBP", "SaveAnimatedPNG",
+	"SaveAudio", "SaveAudioMP3", "SaveAudioOpus", "SaveImage", "PreviewImage", "PreviewAudio"}
 
-// image loaders: their input (the file's name in ComfyUI's input folder)
-var imageLoaders = map[string]string{"LoadImage": "image", "LoadImageMask": "image", "LoadImageOutput": "image",
-	"VHS_LoadImagePath": "image", "VHS_LoadVideo": "video", "LoadVideo": "file"}
+// file loaders: their input (the file's name in ComfyUI's input folder) and what it takes
+var fileLoaders = map[string]struct{ input, media string }{
+	"LoadImage": {"image", "image"}, "LoadImageMask": {"image", "image"}, "LoadImageOutput": {"image", "image"},
+	"VHS_LoadVideo": {"video", "video"}, "LoadVideo": {"file", "video"},
+	"LoadAudio": {"audio", "audio"}, "VHS_LoadAudioUpload": {"audio", "audio"}}
+
+// values offered in the form when a flow has them (videos' and songs' length…)
+var commonParams = []struct{ input, label string }{
+	{"length", "Length (frames)"}, {"num_frames", "Frames"}, {"frame_rate", "Frames per second"}, {"fps", "Frames per second"},
+	{"seconds", "Duration (s)"}, {"duration", "Duration (s)"}, {"lyrics", "Lyrics"}, {"steps", "Steps"}}
 
 func sortedIDs(p Prompt) []string {
 	ids := make([]string, 0, len(p))
@@ -127,17 +136,31 @@ func Detect(p Prompt, info ObjectInfo) []Role {
 			}
 		}
 	}
-	// the input images, in order
-	k := 0
+	// the input files, in order
 	for _, id := range ids {
 		n := p[id]
-		if in, ok := imageLoaders[n.Class]; ok {
-			k++
+		if l, ok := fileLoaders[n.Class]; ok {
 			label := n.Title()
 			if label == n.Class {
-				label = "Image " + strconv.Itoa(k)
+				label = "" // (the studio names it: Image 1…)
 			}
-			roles = append(roles, Role{Kind: RoleImage, Node: id, Input: in, Label: label, Value: n.Inputs[in]})
+			roles = append(roles, Role{Kind: RoleImage, Node: id, Input: l.input, Label: label, Media: l.media, Value: n.Inputs[l.input]})
+		}
+	}
+	// common values (a video's length, a song's lyrics…), the first of each
+	taken := map[string]bool{}
+	for _, r := range roles {
+		taken[r.Node+"|"+r.Input] = true
+	}
+	for _, cp := range commonParams {
+		for _, id := range ids {
+			v, ok := p[id].Inputs[cp.input]
+			if !ok || isLinkValue(v) || taken[id+"|"+cp.input] || hasLabel(roles, cp.label) {
+				continue
+			}
+			taken[id+"|"+cp.input] = true
+			roles = append(roles, Role{Kind: RoleParam, Node: id, Input: cp.input, Label: cp.label, Value: v})
+			break
 		}
 	}
 	// the output: the preferred kind of save node there is
@@ -156,6 +179,15 @@ func Detect(p Prompt, info ObjectInfo) []Role {
 		}
 	}
 	return roles
+}
+
+func hasLabel(rs []Role, label string) bool {
+	for _, r := range rs {
+		if r.Kind == RoleParam && r.Label == label {
+			return true
+		}
+	}
+	return false
 }
 
 func hasRole(rs []Role, kind string) bool {
@@ -182,7 +214,7 @@ func findText(p Prompt, id string, depth int) (string, string, any, bool) {
 	if n == nil || n.Class == "ConditioningZeroOut" {
 		return "", "", nil, false
 	}
-	keys := []string{"text", "prompt", "text_g", "positive", "string", "value"}
+	keys := []string{"text", "prompt", "text_g", "positive", "tags", "string", "value"}
 	// then any text input called so (input_string, text_a…)
 	var more []string
 	for k := range n.Inputs {

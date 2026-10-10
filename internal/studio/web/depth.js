@@ -3,13 +3,16 @@ import { Form, Section } from './fields.js';
 import { Icon } from './icons.js';
 import { t } from './i18n.js';
 import { api } from './util.js';
+import { useStore } from './store.js';
+import { flowsStore, loadFlows } from './comfy.js';
 
 // The depth map of a background segment (config.DepthConfig): where it comes from, working it
 // out (a job: Depth Anything 3 on the GPU, the model downloaded the first time) and a look at it.
 
 export const DEPTH_FIELDS = [
   { key: 'source', label: 'Depth from', type: 'enum', def: 'none', anim: false, options: [['none', 'None'],
-    ['ai', 'AI (Depth Anything 3)'], ['brightness', 'Brightness (quick, without AI)'], ['file', 'A depth map of my own']] },
+    ['ai', 'AI (Depth Anything 3)'], ['comfy', 'ComfyUI (a depth flow of the project)'], ['brightness', 'Brightness (quick, without AI)'],
+    ['file', 'A depth map of my own']] },
   { key: 'model', label: 'Model', type: 'enum', def: 'small', anim: false, showIf: (c) => c.source === 'ai',
     options: [['small', 'DA3 Small (fast, 105 MB)'], ['base', 'DA3 Base (149 MB)'],
       ['mono', 'DA3 Mono Large: made for one image, the sky at the back (1.3 GB)'], ['metric', 'DA3 Metric Large (1.3 GB)'],
@@ -27,10 +30,22 @@ export const DEPTH_FIELDS = [
 ];
 
 const viewURL = (image, d, v) => '/api/depth/view?' + new URLSearchParams({ image, source: d.source || '', model: d.model || 'small',
-  detail: d.detail || 'high', file: d.path || '', v }).toString();
+  detail: d.detail || 'high', file: d.path || '', flow: d.flow || '', v }).toString();
+
+// the fields with the project's depth flows to choose from (with source ComfyUI)
+const depthFields = (flows) => {
+  const opts = flows.filter((f) => f.kind === 'depth').map((f) => [f.id, f.name]);
+  const i = DEPTH_FIELDS.findIndex((f) => f.key === 'model');
+  return [...DEPTH_FIELDS.slice(0, i), { key: 'flow', label: 'Flow', type: 'enum', def: '', anim: false, showIf: (c) => c.source === 'comfy',
+    options: [['', opts.length ? '—' : 'No depth flows: import one (Project › ComfyUI)'], ...opts],
+    help: 'It gets the segment’s image as its first input image; its result (white = near) is the depth map. ComfyUI must be running' },
+  ...DEPTH_FIELDS.slice(i)];
+};
 
 export function DepthSection({ cfg, onChange, ctx }) {
   const d = cfg.depth || {};
+  const flows = useStore(flowsStore);
+  useEffect(() => { if (d.source === 'comfy') loadFlows(); }, [d.source]);
   const [ver, setVer] = useState(0);
   const [missing, setMissing] = useState(false);
   const job = ctx.job && ctx.job.kind === 'depth' ? ctx.job : null;
@@ -39,20 +54,23 @@ export function DepthSection({ cfg, onChange, ctx }) {
   const doneKey = job && job.status === 'done' ? job.id : '';
   useEffect(() => { if (doneKey) { setVer((x) => x + 1); setMissing(false); } }, [doneKey]);
   // another source or model: look again
-  useEffect(() => { setMissing(false); }, [cfg.path, d.source, d.model, d.detail, d.path]);
+  useEffect(() => { setMissing(false); }, [cfg.path, d.source, d.model, d.detail, d.path, d.flow]);
   const on = d.source && d.source !== 'none';
-  const make = () => api('POST', '/api/depth', { image: cfg.path, source: d.source, model: d.model || 'small', detail: d.detail || 'high', file: d.path || '' }).catch(ctx.showErr);
+  const make = (force) => api('POST', '/api/depth', { image: cfg.path, source: d.source, model: d.model || 'small', detail: d.detail || 'high',
+    file: d.path || '', flow: d.flow || '', force: !!force }).catch(ctx.showErr);
   return html`<${Section} id="depth" title=${t('Depth')} help=${'How near each point of the image is: the light of the emitters follows it, and things can go behind what is nearer.'}>
-    <${Form} fields=${DEPTH_FIELDS} value=${d} ctx=${ctx} onChange=${(nd) => onChange({ ...cfg, depth: nd })} />
+    <${Form} fields=${depthFields(flows)} value=${d} ctx=${ctx} onChange=${(nd) => onChange({ ...cfg, depth: nd })} />
     ${on && html`<div class="depth-box">
       ${!missing && cfg.path ? html`<img class="depth-img" src=${viewURL(cfg.path, d, ver)} onError=${() => setMissing(true)} onLoad=${() => setMissing(false)} />`
         : html`<div class="depth-none faint">${t(cfg.path ? 'Not worked out yet' : 'The segment has no image')}</div>`}
-      <div class="row" style="margin-top:6px">
-        ${missing || running ? html`<button class="btn sm primary" disabled=${running || !cfg.path} onClick=${make}>
-          <${Icon} name=${running ? 'loader-circle' : 'wand-sparkles'} size=${13} cls=${running ? 'spin' : ''} /> ${t('Work out the depth')}</button>`
-          : html`<span class="faint" style="font-size:12px"><${Icon} name="check" size=${12} /> ${t('Ready (kept in the project\'s cache)')}</span>`}
-        ${running && html`<span class="faint" style="font-size:12px">${job.message} · ${Math.round((job.progress || 0) * 100)} %</span>`}
+      <div class="row depth-ready" style="margin-top:6px">
+        ${running ? html`<span class="faint" style="font-size:12px">${job.message} · ${Math.round((job.progress || 0) * 100)} %</span>`
+          : !missing && html`<span class="faint" style="font-size:12px"><${Icon} name="check" size=${12} /> ${t('Ready (kept in the project\'s cache)')}</span>`}
         ${job && job.status === 'error' && html`<span class="danger" style="font-size:12px">${job.message}</span>`}
+        ${missing || running ? html`<button class="btn sm primary" disabled=${running || !cfg.path} onClick=${() => make(false)}>
+          <${Icon} name=${running ? 'loader-circle' : 'wand-sparkles'} size=${13} cls=${running ? 'spin' : ''} /> ${t('Work out the depth')}</button>`
+          : html`<button class="btn sm ghost" disabled=${ctx.job && ctx.job.status === 'running'} title=${t('Work it out again (another model or flow version, a better result…)')}
+              onClick=${() => make(true)}><${Icon} name="rotate-ccw" size=${13} /> ${t('Work out again')}</button>`}
       </div>
     </div>`}
   </${Section}>`;

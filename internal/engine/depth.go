@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -32,8 +33,15 @@ func (s *Session) depthFor(bg *config.BackgroundConfig) ([]uint16, string) {
 		return nil, ""
 	}
 	req := depth.Request{Image: bg.Path, Source: d.Source, Model: d.Model, Detail: d.Detail, File: d.Path}
+	if d.Source == depth.SourceComfy {
+		req.Model, req.File = d.Flow, depth.FlowFile(s.Cfg.Dir, d.Flow)
+	}
 	cache := filepath.Join(s.Cfg.Dir, "cache")
-	key := fmt.Sprintf("%s|%dx%d|%s", depth.CachePath(cache, req), s.W, s.H, bg.FitMode)
+	cp := depth.CachePath(cache, req)
+	key := fmt.Sprintf("%s|%dx%d|%s", cp, s.W, s.H, bg.FitMode)
+	if st, err := os.Stat(cp); err == nil {
+		key += fmt.Sprint("|", st.ModTime().UnixNano()) // (worked out again: the new one)
+	}
 	if e, ok := s.depths[key]; ok {
 		return e.img, e.ver
 	}

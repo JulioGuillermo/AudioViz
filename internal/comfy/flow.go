@@ -16,7 +16,7 @@ import (
 type Flow struct {
 	ID       string          `json:"id"`
 	Name     string          `json:"name"`
-	Kind     string          `json:"kind"`             // image, edit, depth, video
+	Kind     string          `json:"kind"`             // image, edit, depth, video, audio
 	Source   string          `json:"source,omitempty"` // where it came from (workflows/…, template:…, a file)
 	UI       json.RawMessage `json:"ui,omitempty"`
 	API      Prompt          `json:"api"`
@@ -30,6 +30,7 @@ const (
 	KindEdit  = "edit"  // an image from images and a prompt
 	KindDepth = "depth" // a depth map of an image
 	KindVideo = "video"
+	KindAudio = "audio" // a song, a voice, sounds
 )
 
 // GuessKind: what a flow most likely makes, from its roles and nodes
@@ -47,8 +48,13 @@ func GuessKind(p Prompt, roles []Role) string {
 		}
 	}
 	for _, n := range p {
+		if strings.HasPrefix(strings.ToLower(n.Class), "saveaudio") {
+			return KindAudio
+		}
+	}
+	for _, n := range p {
 		c := strings.ToLower(n.Class + " " + n.Title())
-		if strings.Contains(c, "depth") && images > 0 {
+		if images > 0 && (strings.Contains(c, "depth") || strings.HasPrefix(c, "da3") || strings.HasPrefix(c, "moge") || strings.Contains(c, "marigold")) {
 			return KindDepth
 		}
 	}
@@ -93,7 +99,7 @@ type Values struct {
 	Seed     *int64         `json:"seed,omitempty"` // nil: a new one each run
 	Width    int            `json:"width,omitempty"`
 	Height   int            `json:"height,omitempty"`
-	Images   []string       `json:"images,omitempty"`
+	Images   []string       `json:"images,omitempty"` // (the files of all its input roles: images, videos, audio)
 	Params   map[string]any `json:"params,omitempty"`
 }
 
