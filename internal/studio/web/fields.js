@@ -138,7 +138,7 @@ function Row({ f, children, dia, kf, path }) {
   if (f.help) items.push(...(items.length ? ['-'] : []), helpItem(t(f.label), tHelp(f.help)));
   const menu = items.length ? (e) => openMenu(e, items) : undefined;
   const noValue = src && xinfo && !xinfo.error && !xinfo.uses_value;
-  return html`<div class=${'fld' + (dia ? ' kfable' : '') + (f.adjust ? ' adjust' : '') + (src ? ' has-expr' : '') + (noValue ? ' expr-novalue' : '')} ...${adj} onContextMenu=${menu}>
+  return html`<div class=${'fld' + (f.type === 'bool' ? ' fld-bool' : '') + (dia ? ' kfable' : '') + (f.adjust ? ' adjust' : '') + (src ? ' has-expr' : '') + (noValue ? ' expr-novalue' : '')} ...${adj} onContextMenu=${menu}>
     <label for=${btn ? 'kf-none' : undefined}>${btn && dia}${src && html`<span class="xbadge" title=${t('It has an expression (right-click: Advanced settings)')}
       onClick=${(e) => { e.preventDefault(); e.stopPropagation(); openAdv(); }}>ƒ</span>`}${t(f.label)}</label>
     <div class="ctl">${children}</div>

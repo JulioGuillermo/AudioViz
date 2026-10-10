@@ -123,6 +123,7 @@ export const ES = {
   'Installed: restart AudioViz to use the new version.': 'Instalado: reinicia AudioViz para usar la versión nueva.', 'Installed.': 'Instalado.',
   'Remove the plugin “{n}”?': '¿Quitar el plugin «{n}»?', 'It goes when AudioViz restarts (it is in use).': 'Se quitará al reiniciar AudioViz (está en uso).',
   'Installing…': 'Instalando…', 'Install a plugin…': 'Instalar un plugin…',
+  'Not separated yet': 'Aún sin separar', 'The project has no song': 'El proyecto no tiene canción',
   'Result (output)': 'Resultado (salida)', 'Its name': 'Su nombre', 'Expose a value': 'Exponer un valor', 'Input images': 'Imágenes de entrada', 'Image {n}': 'Imagen {n}',
   'A ComfyUI flow of the project: it runs in ComfyUI (it must be started).': 'Un flujo de ComfyUI del proyecto: se ejecuta en ComfyUI (tiene que estar arrancado).', 'What the agents changed: accept or undo it': 'Lo que cambiaron los agentes: acéptalo o deshazlo', '{n} to review': '{n} por revisar',
   'Changes': 'Cambios', 'Agents’ changes': 'Cambios de los agentes', 'reviewed too': 'también los revisados', 'Accept all': 'Aceptar todo', 'Undo all': 'Deshacer todo',
