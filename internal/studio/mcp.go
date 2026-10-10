@@ -837,11 +837,93 @@ func init() {
 					"thread": thread, "conversation": th,
 					"answer_with": map[string]any{"tool": "post_chat", "thread": thread}}), nil
 			}},
-		{Name: "compute_depth", Title: "Depth of an image",
-			Desc:   "Works out the depth map of a background image with the local AI (a job: see job_status), for the 2.5D effects (things behind others, the camera's parallax, depth of field, light). detail: low, medium, high.",
-			Schema: obj(map[string]any{"image": prop("string", "the image's path"), "detail": prop("string", "low | medium | high"), "model": prop("string", "the model (default: mono)")}, "image"),
+		{Name: "list_comfy_flows", Title: "List the ComfyUI flows",
+			Desc:   "The project's ComfyUI flows (ComfyUI runs them; the user starts it): id, name, kind (image, edit, depth, video, audio), what each takes (prompt, negative, seed, size, input files in order with their media, params by key \"node|input\" with their label and current value) and issues (what it lacks in ComfyUI: missing models or nodes; it can't run until fixed by the user). Run one with run_comfy_flow.",
+			Schema: obj(map[string]any{}),
 			Run: func(m *mcpServer, _ context.Context, a args) ([]any, error) {
-				v, err := m.apiJSON("POST", "/api/depth", map[string]any{"image": a.str("image"), "source": "ai", "model": a.str("model"), "detail": a.str("detail")})
+				v, err := m.apiJSON("GET", "/api/comfy/flows?fresh=1", nil)
+				if err != nil {
+					return nil, err
+				}
+				r, _ := v.(map[string]any)
+				fs, _ := r["flows"].([]any)
+				var out []any
+				for _, x := range fs {
+					f, _ := x.(map[string]any)
+					takes := map[string]any{}
+					var files, params []any
+					roles, _ := f["roles"].([]any)
+					for _, y := range roles {
+						ro, _ := y.(map[string]any)
+						switch k, _ := ro["kind"].(string); k {
+						case "prompt", "negative", "seed", "width", "height":
+							takes[k] = ro["value"]
+						case "image":
+							media := ro["media"]
+							if media == nil {
+								media = "image"
+							}
+							files = append(files, map[string]any{"label": ro["label"], "media": media})
+						case "param":
+							params = append(params, map[string]any{"key": fmt.Sprint(ro["node"], "|", ro["input"]), "label": ro["label"], "value": ro["value"]})
+						}
+					}
+					if files != nil {
+						takes["files"] = files
+					}
+					if params != nil {
+						takes["params"] = params
+					}
+					e := map[string]any{"id": f["id"], "name": f["name"], "kind": f["kind"], "takes": takes}
+					if is, ok := f["issues"]; ok {
+						e["issues"] = is
+					} else {
+						e["issues"] = "unknown: ComfyUI is not answering"
+					}
+					out = append(out, e)
+				}
+				if len(out) == 0 {
+					return textOut("The project has no ComfyUI flows (the user imports them: Project › ComfyUI)."), nil
+				}
+				return jsonOut(out), nil
+			}},
+		{Name: "run_comfy_flow", Title: "Run a ComfyUI flow",
+			Desc: "Runs a flow of the project in ComfyUI (a job: see job_status; its output, an image, video or audio, lands in the project's images/, videos/ or audio/). Give what it takes (list_comfy_flows): prompt, negative (empty: the flow's own), seed (none: random), width/height, files (project paths, in the order of its input files), params ({\"node|input\": value}). A depth flow is used through compute_depth instead.",
+			Schema: obj(map[string]any{"id": prop("string", "the flow's id"), "prompt": prop("string", ""), "negative": prop("string", ""),
+				"seed": prop("integer", ""), "width": prop("integer", "px"), "height": prop("integer", "px"),
+				"files":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "input files' paths, in order"},
+				"params": map[string]any{"type": "object", "description": "\"node|input\" → value"}}, "id"),
+			Run: func(m *mcpServer, _ context.Context, a args) ([]any, error) {
+				v := map[string]any{}
+				for _, k := range []string{"prompt", "negative"} {
+					if s := a.str(k); strings.TrimSpace(s) != "" {
+						v[k] = s
+					}
+				}
+				for _, k := range []string{"seed", "width", "height"} {
+					if a.has(k) {
+						v[k] = int64(a.num(k, 0))
+					}
+				}
+				if p, ok := a["params"].(map[string]any); ok {
+					v["params"] = p
+				}
+				r, err := m.apiJSON("POST", "/api/comfy/run", map[string]any{"id": a.str("id"), "values": v, "images": a["files"]})
+				if err != nil {
+					return nil, err
+				}
+				return jsonOut(r), nil
+			}},
+		{Name: "compute_depth", Title: "Depth of an image",
+			Desc: "Works out the depth map of a background image (a job: see job_status), for the 2.5D effects (things behind others, the camera's parallax, depth of field, light): with the local AI (detail: low, medium, high; model), or with a depth flow of the project's ComfyUI (flow: its id, list_comfy_flows; the segment's depth then needs source \"comfy\" and that flow). force: work it out again though it is cached.",
+			Schema: obj(map[string]any{"image": prop("string", "the image's path"), "detail": prop("string", "low | medium | high"), "model": prop("string", "the model (default: mono)"),
+				"flow": prop("string", "a ComfyUI depth flow's id (instead of the local AI)"), "force": prop("boolean", "work it out again")}, "image"),
+			Run: func(m *mcpServer, _ context.Context, a args) ([]any, error) {
+				req := map[string]any{"image": a.str("image"), "source": "ai", "model": a.str("model"), "detail": a.str("detail"), "force": a["force"] == true}
+				if f := a.str("flow"); f != "" {
+					req["source"], req["flow"] = "comfy", f
+				}
+				v, err := m.apiJSON("POST", "/api/depth", req)
 				if err != nil {
 					return nil, err
 				}
@@ -853,7 +935,8 @@ func init() {
 const mcpInstructions = `AudioViz makes audio-reactive music videos. This server drives its studio (everyone with the project open sees the agent's changes live; they show the agent among those connected).
 Start with studio_state (is a project open?) and get_project. The project: audio (the song), output (size, fps, file), tracks (background, lyrics, visualizer, particles and the effects: lists of segments; the first, at 0, is the base), texts (fixed texts: titles), layers (overlay clips: images, videos; or particle emitters), markers.
 Change it with edit_project (JSON Pointer operations); any number, color or switch can have keyframes (keys) or an expression (exprs: the language in expressions.md: audio bands like bass, kick; time; per letter / pixel …). Check visually with render_frame, and place things on the music with audio_analysis. Read the documentation with get_docs (index.md first).
-Long work (export_video, generate_image, generate_lyrics, separate_stems, compute_depth) runs as one job at a time: follow it with job_status.
+Long work (export_video, generate_image, generate_lyrics, separate_stems, compute_depth, run_comfy_flow) runs as one job at a time: follow it with job_status.
+The project may have ComfyUI flows (list_comfy_flows): images, videos, audio made by the user's ComfyUI (run_comfy_flow), depth maps (compute_depth with flow).
 The project has a chat (read_chat, post_chat): the people working on it may ask you things there; wait_for_mention waits until someone writes @you, then answer in that thread (show results with frame_time).`
 
 // ---------------------------------------------------------------- helpers
