@@ -175,6 +175,7 @@ input[type=color]::-moz-color-swatch { border: 0; border-radius: 3px; }
 .fld > label { color: var(--text-2); font-size: 12.5px; }
 /* a switch: its label as wide as it needs (a short one stays in the column) */
 .fld.fld-bool { grid-template-columns: minmax(130px, max-content) 1fr; }
+.fld.fld-bool .ctl { justify-content: flex-end; } /* (at the right edge, as the other controls end) */
 .fld .ctl { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .fld .help { grid-column: 2; font-size: 11.5px; color: var(--text-3); line-height: 1.35; margin: 2px 0 2px; }
 .section { border-top: 1px solid var(--border); margin: 8px -14px 0; }
@@ -815,7 +816,6 @@ a.btn { text-decoration: none; }
 .pl-name .faint { font-size: 11px; }
 .pl-line { display: flex; align-items: center; gap: 6px; font-size: 11.5px; }
 .pl-note { font-size: 12px; }
-.stems-box .fld-bool .ctl { justify-content: flex-end; }
 .stems-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-height: 30px; font-size: 12px; }
 .cf-size { display: flex; align-items: center; gap: 6px; }
 .cf-size input { width: 80px; }
