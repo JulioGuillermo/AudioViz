@@ -64,8 +64,9 @@ type Result struct {
 
 var stepWeights = map[string]float64{"models": 0.05, "load": 0.02, "refs": 0.04, "prompt": 0.04, "generate": 0.8, "decode": 0.05}
 
-// vaeTileAbove: from this many pixels on, the VAE works in tiles
-const vaeTileAbove = 1536 * 1024
+// vaeTileAbove: from this many pixels on, the VAE works in tiles (in one piece its buffers outgrow
+// what Vulkan can map: at 1024×1024 on Intel 40 s instead of 12 s in tiles)
+const vaeTileAbove = 512 * 512
 
 // maxRef: reference images are scaled down to at most this many pixels (about 1024×1024): more
 // only costs memory and time

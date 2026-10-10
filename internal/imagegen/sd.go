@@ -225,6 +225,11 @@ func Tokens(w, h, refs int) int { return (round32(w) / 16) * (round32(h) / 16) *
 // load opens the models (if not already loaded); paths: diffusion, text encoder, vision (or ""), VAE
 func (e *engine) load(key, diff, llm, vision, vae string, fa bool) error {
 	setup()
+	// Z-Image's feed-forward output in f16 on Intel (scripts/ml/patches-sd): its forced f32
+	// accumulation is 3× slower there, and its 1/128 scale keeps f16 in range (checked on Xe2)
+	if IntelGPU() && os.Getenv("SD_ZIMAGE_W2_F16ACC") == "" {
+		os.Setenv("SD_ZIMAGE_W2_F16ACC", "1")
+	}
 	if e.ctx != nil && e.key == key {
 		return nil
 	}
