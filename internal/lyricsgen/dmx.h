@@ -5,6 +5,9 @@ extern "C" {
 #endif
 void *dmx_load(const char *path, char *err, int errlen);
 void dmx_free(void *model);
+// The model's cross-transformer on the GPU (dmx_gpu.cpp): 1 when there is one (AUDIOVIZ_DEMUCS_GPU=0: never)
+int dmx_gpu_attach(void *model);
+void dmx_gpu_detach(void *model);
 // stereo/out: interleaved L,R samples at 44100 Hz. progress: one float per thread.
 int dmx_vocals(void *model, const float *stereo, long n, int threads, float *out,
                float *progress, volatile int *cancel, char *err, int errlen);

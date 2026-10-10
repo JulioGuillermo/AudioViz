@@ -26,10 +26,14 @@ extern "C" void *dmx_load(const char *path, char *err, int errlen) {
         delete m;
         return nullptr;
     }
+    dmx_gpu_attach(m);
     return m;
 }
 
-extern "C" void dmx_free(void *model) { delete static_cast<demucscpp::demucs_model *>(model); }
+extern "C" void dmx_free(void *model) {
+    dmx_gpu_detach(model);
+    delete static_cast<demucscpp::demucs_model *>(model);
+}
 
 // separate: the stems' audio blended across the threads' chunks. all: the four stems (model
 // order), else the vocals only; mono: each as (L+R)/2 (n samples), else stereo interleaved (2n).

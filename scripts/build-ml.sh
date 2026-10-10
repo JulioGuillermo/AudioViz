@@ -97,12 +97,18 @@ EOF
   echo "$ML_STAMP" > "$OUT/lib/.ml-stamp"
 fi
 
-if [ ! -f "$OUT/lib/libdemucs.a" ]; then
+# demucs.cpp with our patches (scripts/ml/patches-demucs: its cross-transformer can run on the GPU)
+DEMUCS_STAMP="$DEMUCS_REV $(cat "$ROOT"/scripts/ml/patches-demucs/*.patch 2>/dev/null | cksum)"
+if [ ! -f "$OUT/lib/libdemucs.a" ] || [ "$(cat "$OUT/lib/.demucs-stamp" 2>/dev/null)" != "$DEMUCS_STAMP" ]; then
   if [ ! -d "$TP/demucs.cpp" ]; then
     git clone https://github.com/sevagh/demucs.cpp "$TP/demucs.cpp"
   fi
   git -C "$TP/demucs.cpp" checkout -q "$DEMUCS_REV"
   git -C "$TP/demucs.cpp" submodule update --init --depth 1 vendor/eigen
+  git -C "$TP/demucs.cpp" checkout -q -- src
+  for p in "$ROOT"/scripts/ml/patches-demucs/*.patch; do
+    [ -f "$p" ] && git -C "$TP/demucs.cpp" apply "$p"
+  done
   OBJ="$OBJDIR/demucs"
   mkdir -p "$OBJ"
   FL="-O3 $CPUFLAGS -ffast-math -fno-finite-math-only -DNDEBUG -std=c++17 -w \
@@ -113,6 +119,8 @@ if [ ! -f "$OUT/lib/libdemucs.a" ]; then
     $CXX $FL -c "$f" -o "$OBJ/$(basename "$f").o" & pids+=($!)
   done
   for p in "${pids[@]}"; do wait "$p"; done
+  rm -f "$OUT/lib/libdemucs.a"
   $AR rcs "$OUT/lib/libdemucs.a" "$OBJ/"*.o
+  echo "$DEMUCS_STAMP" > "$OUT/lib/.demucs-stamp"
 fi
 echo "AI libraries ready in $OUT/lib ($TARGET_OS/$TARGET_ARCH)"

@@ -1,7 +1,11 @@
 package lyricsgen
 
 /*
-#cgo CXXFLAGS: -std=c++17 -O3 -DNDEBUG -w -I${SRCDIR}/../../third_party/demucs.cpp/src -I${SRCDIR}/../../third_party/demucs.cpp/vendor/eigen
+#cgo CXXFLAGS: -std=c++17 -O3 -DNDEBUG -w -DGGML_MAX_NAME=160 -I${SRCDIR}/../../third_party/demucs.cpp/src -I${SRCDIR}/../../third_party/demucs.cpp/vendor/eigen
+#cgo linux CXXFLAGS: -I${SRCDIR}/../../third_party/build/include
+#cgo windows CXXFLAGS: -I${SRCDIR}/../../third_party/build-windows-amd64/include
+#cgo darwin,arm64 CXXFLAGS: -I${SRCDIR}/../../third_party/build-darwin-arm64/include
+#cgo darwin,amd64 CXXFLAGS: -I${SRCDIR}/../../third_party/build-darwin-amd64/include
 #cgo linux,amd64 darwin,amd64 CXXFLAGS: -march=x86-64-v3
 #cgo windows,amd64 CXXFLAGS: -mcpu=x86_64_v3
 // C++ runtime for demucs and whisper: static libstdc++ (Linux/gcc), zig's libc++ (Windows), libc++ (macOS)

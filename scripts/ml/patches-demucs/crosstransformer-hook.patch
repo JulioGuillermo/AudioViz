@@ -1,0 +1,58 @@
+diff --git a/src/crosstransformer.cpp b/src/crosstransformer.cpp
+index d649b95..6ef67c4 100644
+--- a/src/crosstransformer.cpp
++++ b/src/crosstransformer.cpp
+@@ -4,6 +4,8 @@
+ #include "tensor.hpp"
+ #include <Eigen/Dense>
+ 
++demucscpp::crosstransformer_layers_fn demucscpp::crosstransformer_layers_hook = nullptr;
++
+ static Eigen::Tensor3dXf create_2d_sin_embedding(int d_model, int height,
+                                                  int width,
+                                                  float max_period = 10000.0)
+@@ -265,6 +267,10 @@ void demucscpp::apply_crosstransformer(
+     cb(current_progress + segment_progress * 8.0f / 26.0f,
+        "Time (crosstransformer): norm + pos_embed");
+ 
++    if (!(demucscpp::crosstransformer_layers_hook &&
++          demucscpp::crosstransformer_layers_hook(model, x, xt)))
++    {
++
+     // actual crosstransformer layers here
+ 
+     // layer 0 for freq and time is the first MyTransformerEncoderLayer
+@@ -326,6 +332,13 @@ void demucscpp::apply_crosstransformer(
+        "Time (crosstransformer): layer 4");
+ 
+     // permute last two dims of xt
++    }
++    else
++    {
++        cb(current_progress + segment_progress * 18.0f / 26.0f,
++           "Time (crosstransformer): layer 4");
++    }
++
+     Eigen::array<int, 3> permute_dims = {0, 2, 1};
+     Eigen::Tensor3dXf xt_ret = xt.shuffle(permute_dims);
+     xt = xt_ret;
+diff --git a/src/crosstransformer.hpp b/src/crosstransformer.hpp
+index 5085dd9..267f2a9 100644
+--- a/src/crosstransformer.hpp
++++ b/src/crosstransformer.hpp
+@@ -14,4 +14,15 @@ void apply_crosstransformer(
+     ProgressCallback cb, float current_progress, float segment_progress);
+ } // namespace demucscpp
+ 
++namespace demucscpp
++{
++// Optional: the cross-transformer's layers run elsewhere (a GPU). x: (1, T, C) the frequency
++// tokens, xt: (1, S, C) the time tokens, after norm_in and the positions; updated in place.
++// It returns false to leave them to the code here.
++typedef bool (*crosstransformer_layers_fn)(const struct demucs_model &model,
++                                           Eigen::Tensor3dXf &x,
++                                           Eigen::Tensor3dXf &xt);
++extern crosstransformer_layers_fn crosstransformer_layers_hook;
++} // namespace demucscpp
++
+ #endif // CROSSTRANSFORMER_HPP
