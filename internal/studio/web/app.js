@@ -27,6 +27,7 @@ import { PeersBar, RemoteCursors, peerCursors, peerMarks } from './peers.js';
 import { ChatPanel, chatStore, loadChat, chatEvent, unreadCount, notifyMsg } from './chat.js';
 import { AgentChanges } from './review.js';
 import { ComfySection, ComfyRunDialog, loadFlows, flowsStore } from './comfy.js';
+import { PluginsSection } from './plugins.js';
 
 // ------------------------------------------------------------------ preview
 
@@ -1596,7 +1597,8 @@ function App() {
         <p class="faint" style="font-size:12px">${t('Current resolution')}: ${meta.width}×${meta.height} · ${meta.fps} fps · ${fmtTime(meta.duration)}</p>
       </${Section}>
       <${LibrarySection} lib=${proj.expressions || {}} Section=${Section} Edit=${Edit} onChange=${(l) => update((p) => { p.expressions = l; })} />
-      <${ComfySection} comfy=${proj.comfy} onRun=${(id) => setDlg({ type: 'comfyrun', id })} onURL=${(u) => update((p) => { p.comfy = { ...(p.comfy || {}), url: u }; })} Section=${Section} Edit=${Edit} showErr=${showErr} /></div></div>`;
+      <${ComfySection} comfy=${proj.comfy} onRun=${(id) => setDlg({ type: 'comfyrun', id })} onURL=${(u) => update((p) => { p.comfy = { ...(p.comfy || {}), url: u }; })} Section=${Section} Edit=${Edit} showErr=${showErr} />
+      <${PluginsSection} Section=${Section} showErr=${showErr} /></div></div>`;
   else if (sel.kind === 'layer' && layerById_(sel.id)) inspector = html`<${LayerInspector} proj=${proj} sel=${sel} setSel=${setSel} update=${update} time=${time} meta=${meta} ctx=${ctx} />`;
   else if (sel.kind === 'text') inspector = html`<${TextsInspector} proj=${proj} sel=${sel} setSel=${setSel} update=${update} time=${time} meta=${meta} ctx=${ctx} />`;
   else if (sel.kind === 'line') inspector = html`<${LineEditor} lyr=${lyr} lines=${lineSel} time=${time} seek=${seek} saveState=${lyrSave}

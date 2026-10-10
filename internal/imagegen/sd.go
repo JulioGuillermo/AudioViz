@@ -102,7 +102,42 @@ static void av_setup(int debug) {
     sd_set_preview_callback(av_preview, PREVIEW_PROJ, 1, true, false, NULL);
 }
 
+// What the backend plugins take from ggml-base besides what AudioViz itself uses (exported with the
+// rest of ggml, scripts/ggml-exports.list): kept in the binary by referring to them
+#define AV_KEEP(f) extern void f(void);
+#define AV_KEEP_LIST(X) X(quantize_iq1_m) X(quantize_iq1_s) X(quantize_iq2_s) X(quantize_iq2_xs) X(quantize_iq2_xxs) \
+    X(quantize_row_iq3_s_ref) X(quantize_row_iq3_xxs_ref) X(quantize_row_iq4_xs_ref) X(quantize_row_q2_K_ref) \
+    X(quantize_row_q3_K_ref) X(quantize_row_q4_K_ref) X(quantize_row_q5_K_ref) X(quantize_row_q6_K_ref)
+AV_KEEP_LIST(AV_KEEP)
+#define AV_KEEP_PTR(f) (void *) f,
+__attribute__((used)) void *av_keep[] = { AV_KEEP_LIST(AV_KEEP_PTR) };
+
+// Backend plugins (plugins.go): loaded into ggml's registry; av_dev: the device the models use
+// ("" = stable-diffusion.cpp's choice, the first GPU)
+static char av_dev[64];
+int av_load_backend(const char *path) { return ggml_backend_load(path) != NULL; }
+static const char *av_dev_name(void) { return av_dev; }
+// av_use: the first GPU whose device name starts with prefix ("SYCL", "Vulkan") is used; 0: none
+int av_use(const char *prefix) {
+    av_dev[0] = 0;
+    if (!prefix || !*prefix) return 1;
+    for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
+        ggml_backend_dev_t d = ggml_backend_dev_get(i);
+        const char *n = ggml_backend_dev_name(d);
+        enum ggml_backend_dev_type t = ggml_backend_dev_type(d);  // (an integrated GPU: IGPU)
+        if ((t == GGML_BACKEND_DEVICE_TYPE_GPU || t == GGML_BACKEND_DEVICE_TYPE_IGPU) && strncmp(n, prefix, strlen(prefix)) == 0) {
+            strncpy(av_dev, n, sizeof av_dev - 1);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static const char *av_device(void) {
+    if (av_dev[0]) {
+        ggml_backend_dev_t d = ggml_backend_dev_by_name(av_dev);
+        if (d) return ggml_backend_dev_description(d);
+    }
     for (size_t i = 0; i < ggml_backend_dev_count(); i++) {
         ggml_backend_dev_t d = ggml_backend_dev_get(i);
         enum ggml_backend_dev_type t = ggml_backend_dev_type(d);
@@ -120,6 +155,7 @@ static sd_ctx_t *av_open(const char *diff, const char *llm, const char *vision, 
     p.vae_path = vae;
     p.n_threads = sd_get_num_physical_cores();
     p.diffusion_flash_attn = fa;
+    if (av_dev[0]) p.backend = av_dev;
     av_err[0] = 0;
     return new_sd_ctx(&p);
 }
@@ -199,7 +235,10 @@ func lastErr(def string) error {
 }
 
 func setup() {
-	setupOnce.Do(func() { C.av_setup(C.int(btoi(os.Getenv("AUDIOVIZ_DEBUG_SD") != ""))) })
+	setupOnce.Do(func() {
+		C.av_setup(C.int(btoi(os.Getenv("AUDIOVIZ_DEBUG_SD") != "")))
+		loadPlugins()
+	})
 }
 
 // Device is the GPU used (or "CPU")
@@ -217,6 +256,9 @@ func DefaultFlashAttn() bool { return os.Getenv("AUDIOVIZ_SD_FA") != "0" }
 
 // IntelGPU: the device is an Intel GPU (where large images are slow: see DefaultFlashAttn)
 func IntelGPU() bool { return strings.Contains(Device(), "Intel") }
+
+// onSYCL: the models run on the Intel plugin's SYCL backend (plugins.go)
+func onSYCL() bool { setup(); return strings.HasPrefix(C.GoString(C.av_dev_name()), "SYCL") }
 
 // Tokens: how many the model processes for an image of w×h with n reference images (the
 // references are resized to the image size; 16×16 pixels per token)

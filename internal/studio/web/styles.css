@@ -806,6 +806,13 @@ a.btn { text-decoration: none; }
 .jobcfg dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; margin: 0; }
 .jobcfg dt { color: var(--text-3, #999); }
 .jobcfg dd { margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; max-height: 160px; overflow-y: auto; }
+.pl-dev { font-size: 11.5px; margin: 0 0 8px; }
+.pl-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+.pl-row { display: flex; flex-direction: column; gap: 2px; font-size: 12.5px; padding: 5px 6px 3px; border: 1px solid var(--border, #2a2c33); border-radius: 5px; }
+.pl-name { display: flex; gap: 6px; align-items: baseline; }
+.pl-name .faint { font-size: 11px; }
+.pl-line { display: flex; align-items: center; gap: 6px; font-size: 11.5px; }
+.pl-note { font-size: 12px; }
 .cf-size { display: flex; align-items: center; gap: 6px; }
 .cf-size input { width: 80px; }
 .cf-audio { display: flex; flex-direction: column; align-items: center; gap: 14px; width: 100%; }

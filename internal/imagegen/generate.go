@@ -64,9 +64,15 @@ type Result struct {
 
 var stepWeights = map[string]float64{"models": 0.05, "load": 0.02, "refs": 0.04, "prompt": 0.04, "generate": 0.8, "decode": 0.05}
 
-// vaeTileAbove: from this many pixels on, the VAE works in tiles (in one piece its buffers outgrow
-// what Vulkan can map: at 1024×1024 on Intel 40 s instead of 12 s in tiles)
-const vaeTileAbove = 512 * 512
+// vaeTileAbove: from this many pixels on, the VAE works in tiles. On Vulkan from 512×512 (in one
+// piece its buffers outgrow what Vulkan can map: at 1024×1024 on Intel 40 s instead of 12 s in
+// tiles); on SYCL in one piece is faster (7 s instead of 27 s) until it no longer fits
+func vaeTileAbove() int {
+	if onSYCL() {
+		return 1536 * 1024
+	}
+	return 512 * 512
+}
 
 // maxRef: reference images are scaled down to at most this many pixels (about 1024×1024): more
 // only costs memory and time
@@ -190,7 +196,7 @@ func Generate(ctx context.Context, req Request, report func(progress.Status), on
 		init = &r
 	}
 	sp := sampling{negative: req.Negative, w: w, h: h, steps: steps, cfg: cfg, sampler: req.Sampler, scheduler: req.Scheduler,
-		euler: f.Euler, seed: seed, strength: strength, tile: w*h > vaeTileAbove}
+		euler: f.Euler, seed: seed, strength: strength, tile: w*h > vaeTileAbove()}
 	type res struct {
 		img *image.NRGBA
 		err error

@@ -27,12 +27,15 @@ done
 tags=netgo,osusergo
 bin=audioviz
 case "$TARGET_OS" in
-  linux) ldx="-extldflags '-static-libstdc++ -static-libgcc'" ;;  # depends only on libc
+  # depends only on libc; exports ggml's symbols for the backend plugins (scripts/ggml-exports.list)
+  linux) ldx="-extldflags '-static-libstdc++ -static-libgcc -Wl,--dynamic-list=$ROOT/scripts/ggml-exports.list'" ;;
   windows) bin=audioviz.exe; ldx="-extldflags '-static'" ;;       # a single static .exe
   darwin)
     ldx=""
     [ -f "$OUT/lib/libMoltenVK.a" ] || tags="$tags,nomoltenvk" ;;
 esac
+# the ML libraries' version: a backend plugin must have been built for the same one
+[ -f "$OUT/lib/.ml-stamp" ] && ldx="$ldx -X audioviz/internal/imagegen.mlStamp=$(cksum < "$OUT/lib/.ml-stamp" | cut -d' ' -f1)"
 if [ "${1:-}" = install ]; then
   # ./build.sh install: same build, installed as "audioviz" in $(go env GOBIN) or ~/go/bin,
   # so it can be run from any folder (that folder must be in PATH)
