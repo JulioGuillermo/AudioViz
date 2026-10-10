@@ -276,6 +276,35 @@ func (s *Server) isAgent(id string) bool {
 	return p != nil && p.Agent
 }
 
+// reloadLyrics: a lyrics file written outside the project's operations (generated, aligned
+// again) taken into it: the lyrics track reads it and /lyrics is its lines, for every studio
+// (else they keep the lines they had, and the next edit would write them over the new file)
+func (s *Server) reloadLyrics(path string) {
+	lines, err := readLyricsJSON(path)
+	if err != nil {
+		return
+	}
+	var lv any
+	b, _ := json.Marshal(LyricsJSON{Path: path, Lines: lines})
+	_ = json.Unmarshal(b, &lv)
+	ops := []jsonOp{{Op: "set", Path: "/lyrics", Value: lv}}
+	s.mu.Lock()
+	n := 0
+	if s.cfg != nil {
+		n = len(s.cfg.Timeline.Lyrics)
+	}
+	s.mu.Unlock()
+	for i := 0; i < n; i++ {
+		ops = append(ops, jsonOp{Op: "set", Path: fmt.Sprintf("/tracks/lyrics/%d/cfg/path", i), Value: path})
+	}
+	if n > 0 {
+		ops = append(ops, jsonOp{Op: "set", Path: "/tracks/lyrics/0/cfg/enabled", Value: true})
+	}
+	if _, err := s.applyOps("", -1, ops, "", "", "AudioViz", false); err != nil {
+		s.logf("⚠️  lyrics not taken into the project: %v", err)
+	}
+}
+
 // lyricsShape: the lyrics' file and how many lines
 func lyricsShape(m map[string]any) string {
 	l, _ := m["lyrics"].(map[string]any)

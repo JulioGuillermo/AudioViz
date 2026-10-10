@@ -1214,6 +1214,7 @@ func (s *Server) hGenLyrics(w http.ResponseWriter, r *http.Request) {
 		if err := os.WriteFile(out, []byte(res.LRC), 0644); err != nil {
 			return err
 		}
+		s.reloadLyrics(out)
 		j.mu.Lock()
 		j.Output = out
 		j.Message = fmt.Sprintf("Lyrics generated: %d lines", len(res.Lines))
