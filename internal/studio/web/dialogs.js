@@ -258,15 +258,19 @@ export function GenLyricsDialog({ meta, job, models, pickFile, onStart, onCancel
   const [src, setSrc] = useState('text');
   const [lang, setLang] = useState('en');
   const [mode, setMode] = useState('precise');
+  // How the text gets its timing (remembered with the last generation)
+  const [aligner, setAligner] = useState(() => { try { return (JSON.parse(localStorage.getItem('audioviz.lastGen')) || {}).aligner || 'sylla'; } catch (e) { return 'sylla'; } });
+  const sylla = src === 'text' && aligner === 'sylla';
   const mine = job && job.kind === 'lyrics' ? job : null;
   const running = mine && mine.status === 'running';
-  const toDownload = (models && !models.whisper ? 574 : 0) + (models && !models.demucs && mode === 'precise' ? 84 : 0);
+  const toDownload = (models && !sylla && !models.whisper ? 574 : 0) + (models && sylla && !models.sylla ? 2326 : 0)
+    + (models && !models.demucs && mode === 'precise' ? 84 : 0);
   return html`<${Modal} title=${t('Generate synced lyrics')} icon="wand-sparkles" onClose=${onClose}
     footer=${html`
       <button class="btn" onClick=${onClose}>${t(running ? 'Keep running in the background' : 'Close')}</button>
       ${running ? html`<button class="btn danger" onClick=${onCancel}><${Icon} name="x" size=${15} /> ${t('Cancel')}</button>`
         : html`<button class="btn primary" disabled=${(src === 'text' && !txt) || !meta.hasAudio}
-            onClick=${() => onStart({ txt: src === 'text' ? txt : '', transcribe: src === 'transcribe', lang, fast: mode === 'fast' })}>
+            onClick=${() => onStart({ txt: src === 'text' ? txt : '', transcribe: src === 'transcribe', lang, fast: mode === 'fast', aligner })}>
           <${Icon} name="wand-sparkles" size=${15} /> ${t(mine && mine.status === 'done' ? 'Generate again' : 'Generate')}</button>`}`}>
     ${!running && html`
       <div class="fld"><label>${t('Source')}</label><div class="ctl"><${Select} value=${src} onChange=${setSrc}
@@ -278,6 +282,9 @@ export function GenLyricsDialog({ meta, job, models, pickFile, onStart, onCancel
         <div class="fn"><${Icon} name="file-text" size=${14} cls="faint" /><span>${txt ? basename(txt) : html`<span class="faint">${t('None')}</span>`}</span></div>
         <button class="btn icon" title=${t('Choose file')} onClick=${() => pickFile('txt', setTxt, txt)}><${Icon} name="folder-open" size=${15} /></button></div></div>`}
       <div class="fld"><label>${t('Language')}</label><div class="ctl"><${Select} value=${lang} options=${src === 'transcribe' ? GEN_LANGS : LYRIC_LANGS} onChange=${setLang} /></div></div>
+      ${src === 'text' && html`<div class="fld"><label>${t('Timing')}</label><div class="ctl"><${Select} value=${aligner} onChange=${setAligner}
+        options=${[['sylla', 'Sylla: a model made for sung lyrics (most precise)'], ['whisper', 'Whisper: speech recognition']]} /></div></div>`}
+      ${sylla && html`<p class="faint" style="margin-top:0">${t('Sylla times every word straight from the vocals. Its weights (2.3 GB, GPL-3.0 licence) are downloaded from their authors the first time.')}</p>`}
       <div class="fld"><label>${t('Mode')}</label><div class="ctl"><${Select} value=${mode} onChange=${setMode}
         options=${[['precise', 'Precise: separates the vocals first (≈ song length)'], ['fast', 'Fast: on the full mix (seconds, less reliable)']]} /></div></div>
       ${toDownload > 0 && html`<div class="alert" style="margin-top:8px"><${Icon} name="info" size=${15} />

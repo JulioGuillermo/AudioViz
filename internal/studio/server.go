@@ -261,7 +261,7 @@ func (s *Server) hState(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	st := map[string]any{"version": s.version, "project": s.meta(), "startDir": s.startDir, "workspace": s.workspace,
-		"lyricsTool": true, "models": map[string]bool{"whisper": lyricsgen.WhisperModel.Present(), "demucs": lyricsgen.DemucsModel.Present()}, "logs": s.logs, "gpu": gpu.ListDevices(), "home": userHome()}
+		"lyricsTool": true, "models": map[string]bool{"whisper": lyricsgen.WhisperModel.Present(), "demucs": lyricsgen.DemucsModel.Present(), "sylla": lyricsgen.SyllaModel.Present()}, "logs": s.logs, "gpu": gpu.ListDevices(), "home": userHome()}
 	if s.job != nil {
 		st["job"] = s.job.snapshot()
 	}
@@ -1154,6 +1154,7 @@ func (s *Server) hGenLyrics(w http.ResponseWriter, r *http.Request) {
 		Transcribe bool   `json:"transcribe"`
 		Lang       string `json:"lang"`
 		Fast       bool   `json:"fast"`
+		Aligner    string `json:"aligner"` // "sylla" or "whisper" (the default)
 	}
 	if err := readJSON(r, &req); err != nil {
 		fail(w, 400, err)
@@ -1191,7 +1192,7 @@ func (s *Server) hGenLyrics(w http.ResponseWriter, r *http.Request) {
 			stereo[i] = float32(v) * sc
 		}
 		res, err := lyricsgen.Generate(ctx, lyricsgen.Options{Stereo: stereo, SampleRate: d.SampleRate, AudioKey: key,
-			Lyrics: string(txt), Lang: req.Lang, Separate: !req.Fast, StemsDir: sess.StemsDir(), StemsFull: cfg.Audio.StemsFull}, func(st lyricsgen.Status) {
+			Lyrics: string(txt), Lang: req.Lang, Separate: !req.Fast, StemsDir: sess.StemsDir(), StemsFull: cfg.Audio.StemsFull, Aligner: req.Aligner}, func(st lyricsgen.Status) {
 			j.mu.Lock()
 			j.Gen = &st
 			j.Progress = st.Progress

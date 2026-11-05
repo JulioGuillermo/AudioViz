@@ -181,6 +181,7 @@ func runLyrics(args []string) {
 	out := fs.String("o", "lyrics.lrc", "Output .lrc file")
 	lang := fs.String("lang", "en", "Lyrics language (en, es, fr..., auto = detect)")
 	fast := fs.Bool("fast", false, "Fast mode: skip vocal separation (less accurate)")
+	aligner := fs.String("aligner", "whisper", "How the lyrics are timed: whisper (recognition) or sylla (lyrics alignment model, 2.3 GB)")
 	var pos []string
 	for len(args) > 0 {
 		if strings.HasPrefix(args[0], "-") {
@@ -192,7 +193,7 @@ func runLyrics(args []string) {
 		args = args[1:]
 	}
 	if len(pos) < 1 || len(pos) > 2 {
-		fmt.Println("Usage: audioviz lyrics <audio> [lyrics.txt] [-o lyrics.lrc] [--lang en|auto] [--fast]")
+		fmt.Println("Usage: audioviz lyrics <audio> [lyrics.txt] [-o lyrics.lrc] [--lang en|auto] [--fast] [--aligner whisper|sylla]")
 		fmt.Println("       without lyrics.txt the lyrics are transcribed from the audio")
 		os.Exit(1)
 	}
@@ -222,7 +223,7 @@ func runLyrics(args []string) {
 	}
 	lastLine := ""
 	res, err := lyricsgen.Generate(context.Background(), lyricsgen.Options{Stereo: stereo, SampleRate: dec.SampleRate, AudioKey: key,
-		Lyrics: string(txt), Lang: *lang, Separate: !*fast}, func(s lyricsgen.Status) {
+		Lyrics: string(txt), Lang: *lang, Separate: !*fast, Aligner: *aligner}, func(s lyricsgen.Status) {
 		step := s.Steps[s.Current]
 		eta := ""
 		if step.ETA > 0 {
@@ -294,7 +295,7 @@ func printHelp() {
 Usage:
   audioviz [path_to_project.yaml] [options]
   audioviz studio [project] [--addr 127.0.0.1:8787] [--no-open] [--mcp-token T]   # GUI (+ MCP server at /mcp)
-  audioviz lyrics <audio> [lyrics.txt] [-o lyrics.lrc] [--lang en] [--fast]   # synced lyrics (transcribed if no .txt)
+  audioviz lyrics <audio> [lyrics.txt] [-o lyrics.lrc] [--lang en] [--fast] [--aligner sylla]   # synced lyrics (transcribed if no .txt)
 
 Examples:
   audioviz project.yaml                       # Render the full video (Vulkan GPU if available)

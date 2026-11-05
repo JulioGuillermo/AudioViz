@@ -1101,7 +1101,7 @@ function App() {
   // the cached recognition
   const lastGen = () => { try { return JSON.parse(localStorage.getItem('audioviz.lastGen')) || {}; } catch (e) { return {}; } };
   const genLyrics = (o) => {
-    try { localStorage.setItem('audioviz.lastGen', JSON.stringify({ lang: o.lang, fast: !!o.fast })); } catch (e) { /* ignore */ }
+    try { localStorage.setItem('audioviz.lastGen', JSON.stringify({ lang: o.lang, fast: !!o.fast, aligner: o.aligner || 'whisper' })); } catch (e) { /* ignore */ }
     api('POST', '/api/lyrics/generate', o).then(setJob).catch(showErr);
   };
 
@@ -1397,7 +1397,7 @@ function App() {
         onEditText=${() => setDlg({ type: 'lyrtext' })}
         onStart=${(o) => { if (o.lang !== 'auto') setLyricLang(o.lang); genLyrics(o); }} />`}
     ${dlg && dlg.type === 'lyrtext' && proj && html`<${LyricsTextDialog} lines=${lyr.lines} lang=${lastGen().lang} onClose=${() => setDlg(null)}
-        onAlign=${(text, lang) => { genLyrics({ text, lang, fast: lastGen().fast }); setDlg({ type: 'genlyrics' }); }} />`}
+        onAlign=${(text, lang) => { genLyrics({ text, lang, fast: lastGen().fast, aligner: lastGen().aligner || 'whisper' }); setDlg({ type: 'genlyrics' }); }} />`}
     ${dlg && dlg.type === 'images' && proj && html`<${ImagesDialog} meta=${meta} job=${job} pickFile=${ctx.pickFile}
         onClose=${() => setDlg(null)} onCancel=${() => api('POST', '/api/job/cancel')}
         onStart=${(o) => api('POST', '/api/images/generate', o).then(setJob).catch(showErr)}

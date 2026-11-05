@@ -36,6 +36,9 @@ type Options struct {
 	// (StemsFull) or as mono for their analysis
 	StemsDir  string
 	StemsFull bool
+	// How the known lyrics are timed: AlignerWhisper (recognition, the default) or AlignerSylla
+	// (a lyrics alignment model). Transcribing always uses Whisper.
+	Aligner string
 }
 
 type Result struct {
@@ -103,15 +106,20 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 	if opt.Lang == "" {
 		opt.Lang = "en"
 	}
+	sylla := !transcribe && opt.Aligner == AlignerSylla
 	last := Step{ID: "align", Label: "Align with the lyrics"}
 	if transcribe {
 		last = Step{ID: "lines", Label: "Build the lines"}
+	}
+	listen := Step{ID: "recognize", Label: "Recognize the vocals"}
+	if sylla {
+		listen.Label = "Listen to the vocals (Sylla)"
 	}
 	t := progress.NewTracker([]Step{
 		{ID: "models", Label: "Models"},
 		{ID: "prepare", Label: "Prepare audio"},
 		{ID: "separate", Label: "Separate the vocals"},
-		{ID: "recognize", Label: "Recognize the vocals"},
+		listen,
 		last,
 	}, stepWeights, report)
 	cachePath := vocalsCachePath(fmt.Sprintf("%s|%d|%d", opt.AudioKey, opt.SampleRate, len(opt.Stereo)))
@@ -130,6 +138,9 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 	// 1. Models (downloaded the first time)
 	t.Start("models", "Checking…")
 	need := []Model{WhisperModel}
+	if sylla {
+		need = []Model{SyllaVocab, SyllaModel}
+	}
 	if opt.Separate && vocals16 == nil {
 		need = append(need, DemucsModel)
 	}
@@ -226,6 +237,9 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 	}
 	total := float64(len(vocals16)) / 16000
 	v := newVoice(vocals16)
+	if sylla {
+		return syllaAlign(ctx, t, lines, vocals16, v, total, cachePath, opt.Separate)
+	}
 
 	// 4. Recognize (the result is cached with the vocals: correcting the text and aligning
 	// again then takes seconds). Whisper is opened only when it is needed.
