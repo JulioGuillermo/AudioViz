@@ -667,7 +667,7 @@ function App() {
     const src = p.audio.path ? '/api/media?path=' + encodeURIComponent(p.audio.path) : '';
     if (a.dataset.src !== src) { a.src = src; a.dataset.src = src; a.load(); }
     scrubber.current.setSource(src);
-    if (scrubRef.current && src) scrubber.current.preload();
+    if (src) scrubber.current.preload(); // (decoded for the playback too)
   };
 
   // --- collaboration: who I am, who else is here, their cursors (collab.js, peers.js)
@@ -943,8 +943,9 @@ function App() {
     const d = meta ? meta.duration : 0;
     tt = Math.max(0, Math.min(d, tt));
     timeStore.set(tt);
-    if (playing && audio.current.src) audio.current.currentTime = tt;
-    else if (!playing && scrubRef.current) scrubber.current.play(tt);
+    if (playing && audio.current.src) {
+      if (scrubber.current.position() != null) scrubber.current.startPlay(tt); else audio.current.currentTime = tt;
+    } else if (!playing && scrubRef.current) scrubber.current.play(tt);
   };
   useEffect(() => {
     if (!playing) return;
@@ -952,15 +953,18 @@ function App() {
     let raf;
     scrubber.current.stop();
     const base = performance.now(), t0 = timeStore.get();
-    if (a.src) { a.currentTime = t0; a.play().catch(showErr); }
+    // the decoded song (exact), else the <audio> element (while it is being decoded)
+    const decoded = !!a.src && scrubber.current.startPlay(t0);
+    if (a.src && !decoded) { a.currentTime = t0; a.play().catch(showErr); }
     const tick = () => {
-      const tt = a.src ? a.currentTime : t0 + (performance.now() - base) / 1000;
+      const pos = scrubber.current.position();
+      const tt = pos != null ? pos : a.src ? a.currentTime : t0 + (performance.now() - base) / 1000;
       if (meta && tt >= meta.duration) { setPlaying(false); return; }
       timeStore.set(tt);
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
-    return () => { cancelAnimationFrame(raf); a.pause(); };
+    return () => { cancelAnimationFrame(raf); a.pause(); scrubber.current.stopPlay(); };
   }, [playing]);
 
   // --- actions
