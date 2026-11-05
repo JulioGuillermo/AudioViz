@@ -42,12 +42,12 @@ const (
 )
 
 const (
-	sylVocab  = 921
-	sylFeat   = 160
-	sylWin    = 30.0 // seconds per window, plus sylCtx of context on each side (dropped)
-	sylCtx    = 5.0
-	sylBlank  = 0
-	sylDelim  = 1
+	sylVocab = 921
+	sylFeat  = 160
+	sylWin   = 30.0 // seconds per window, plus sylCtx of context on each side (dropped)
+	sylCtx   = 5.0
+	sylBlank = 0
+	sylDelim = 1
 )
 
 // Sylla is the loaded model
@@ -338,7 +338,12 @@ func fft(a []complex128) {
 // ctcAlign times the lyrics words lw (Start/End, all anchored) by Viterbi over the CTC
 // log-probabilities (T frames of frame seconds): the characters of each word, words separated
 // by the delimiter
-func ctcAlign(vocab map[rune]int, lw []LWord, lp []float32, T int, frame float64) error {
+//
+// free: the words may start and end anywhere in the frames (a window of the song that also
+// holds other singing). A frame outside them scores as "anything" (its most likely token) less
+// a penalty: other singing there costs little, but skipping a stretch that the words' own
+// blanks explain as well does not pay (else a line would be squeezed past an instrumental gap).
+func ctcAlign(vocab map[rune]int, lw []LWord, lp []float32, T int, frame float64, free bool) error {
 	var toks []int
 	span := make([][2]int, len(lw))
 	for wi, w := range lw {
@@ -377,6 +382,27 @@ func ctcAlign(vocab map[rune]int, lw []LWord, lp []float32, T int, frame float64
 	dp[0] = float64(lp[sylBlank])
 	dp[1] = float64(lp[ext[1]])
 	bp := make([]int8, T*S)
+	// pre[t]: the score of frames 0..t-1 left outside (free mode)
+	const outside = 1.0
+	pre := make([]float64, T+1)
+	if free {
+		for t := 0; t < T; t++ {
+			row := lp[t*sylVocab : (t+1)*sylVocab]
+			m := row[0]
+			for _, x := range row {
+				m = max(m, x)
+			}
+			pre[t+1] = pre[t] + float64(m) - outside
+		}
+	}
+	endScore, endT, endSt := math.Inf(-1), -1, 0
+	if free {
+		endScore, endT = max(dp[S-1], dp[S-2])+pre[T]-pre[1], 0
+		endSt = S - 1
+		if dp[S-2] > dp[S-1] {
+			endSt = S - 2
+		}
+	}
 	for t := 1; t < T; t++ {
 		row := lp[t*sylVocab : (t+1)*sylVocab]
 		for i := 0; i < S; i++ {
@@ -387,26 +413,43 @@ func ctcAlign(vocab map[rune]int, lw []LWord, lp []float32, T int, frame float64
 			if skip[i] && dp[i-2] > best {
 				best, arg = dp[i-2], 2
 			}
+			if free && i < 2 && pre[t] > best { // start here (the frames before left outside)
+				best, arg = pre[t], 3
+			}
 			nd[i] = best + float64(row[ext[i]])
 			bp[t*S+i] = arg
 		}
 		dp, nd = nd, dp
+		if e := max(dp[S-1], dp[S-2]) + pre[T] - pre[t+1]; free && e > endScore { // end here (the frames after left outside)
+			endScore, endT = e, t
+			endSt = S - 1
+			if dp[S-2] > dp[S-1] {
+				endSt = S - 2
+			}
+		}
 	}
 	st := S - 1
 	if dp[S-2] > dp[S-1] {
 		st = S - 2
 	}
+	tEnd := T - 1
+	if free && endT >= 0 {
+		tEnd, st = endT, endSt
+	}
 	first, last := make([]int, L), make([]int, L)
 	for k := range first {
 		first[k], last[k] = -1, -1
 	}
-	for t := T - 1; t >= 0; t-- {
+	for t := tEnd; t >= 0; t-- {
 		if st%2 == 1 {
 			k := st / 2
 			first[k] = t
 			if last[k] < 0 {
 				last[k] = t
 			}
+		}
+		if bp[t*S+st] == 3 {
+			break
 		}
 		st -= int(bp[t*S+st])
 	}
@@ -439,7 +482,7 @@ func syllaAlign(ctx context.Context, t *progress.Tracker, lines []string, vocals
 		if separate {
 			mode = "vocals"
 		}
-		lpPath = strings.TrimSuffix(cachePath, ".f32") + ".sylla." + mode + ".f32"
+		lpPath = syllaCachePath(cachePath, mode)
 	}
 	device := "cache"
 	var lp []float32
@@ -473,11 +516,106 @@ func syllaAlign(ctx context.Context, t *progress.Tracker, lines []string, vocals
 	t.Start("align", "Aligning…")
 	T := len(lp) / sylVocab
 	lw := lyricWords(lines)
-	if err := ctcAlign(vocab, lw, lp, T, total/float64(max(1, T))); err != nil {
+	if err := ctcAlign(vocab, lw, lp, T, total/float64(max(1, T)), false); err != nil {
 		t.End("align", "error", err.Error())
 		return nil, err
 	}
 	out := finish(lw, v, total)
 	t.End("align", "done", fmt.Sprintf("%d lines · %d words timed by Sylla", len(out), len(lw)))
 	return &Result{Lines: out, LRC: LRC(out), Device: device}, nil
+}
+
+// syllaCachePath: the song's log-probabilities next to its separated vocals (mode: vocals | mix)
+func syllaCachePath(vocalsCache, mode string) string {
+	return strings.TrimSuffix(vocalsCache, ".f32") + ".sylla." + mode + ".f32"
+}
+
+// syllaWindow times some lines inside a window of the song (Resync): from the song's cached
+// log-probabilities when a generation left them, else running the model on the window
+type syllaWindow struct {
+	vocab map[rune]int
+	lp    []float32 // the whole song (cache) or nil
+	frame float64
+	s     *Sylla
+}
+
+func newSyllaWindow(cachePath, mode string, total float64) (*syllaWindow, error) {
+	vocab, err := loadSyllaVocab(SyllaVocab.Path())
+	if err != nil {
+		return nil, err
+	}
+	sw := &syllaWindow{vocab: vocab}
+	if cachePath != "" {
+		if lp := loadF32(syllaCachePath(cachePath, mode)); len(lp) > 0 && len(lp)%sylVocab == 0 {
+			sw.lp, sw.frame = lp, total/float64(len(lp)/sylVocab)
+		}
+	}
+	return sw, nil
+}
+
+// align times the words lw (absolute seconds) around [lo, hi]. The neighbouring lines
+// (before, after: as they are now) are aligned with them, so that each claims its own singing
+// (a line dragged over its neighbour would otherwise match the neighbour's similar words);
+// the window grows to hold them.
+func (sw *syllaWindow) align(ctx context.Context, lw, before, after []LWord, vocals16 []float32, lo, hi float64) error {
+	total := float64(len(vocals16)) / 16000
+	if len(before) > 0 {
+		lo = math.Max(0, math.Min(lo, before[0].Start-1))
+	}
+	if len(after) > 0 {
+		hi = math.Min(total, math.Max(hi, after[len(after)-1].End+1))
+	}
+	all := make([]LWord, 0, len(before)+len(lw)+len(after))
+	for _, w := range before {
+		all = append(all, LWord{Text: w.Text})
+	}
+	all = append(all, lw...)
+	for _, w := range after {
+		all = append(all, LWord{Text: w.Text})
+	}
+	var lp []float32
+	var T int
+	var frame, off float64
+	if sw.lp != nil {
+		n := len(sw.lp) / sylVocab
+		f0, f1 := max(0, int(lo/sw.frame)), min(n, int(math.Ceil(hi/sw.frame)))
+		if f1 <= f0 {
+			return fmt.Errorf("empty window")
+		}
+		lp, T, frame, off = sw.lp[f0*sylVocab:f1*sylVocab], f1-f0, sw.frame, float64(f0)*sw.frame
+	} else {
+		if sw.s == nil {
+			s, err := OpenSylla(SyllaModel.Path())
+			if err != nil {
+				return err
+			}
+			sw.s = s
+		}
+		const sr = 16000
+		a, b := math.Max(0, lo-sylCtx), math.Min(total, hi+sylCtx)
+		all, n, err := sw.s.LogProbs(ctx, vocals16[int(a*sr):min(len(vocals16), int(b*sr))], nil)
+		if err != nil || n == 0 {
+			return fmt.Errorf("sylla: no frames (%v)", err)
+		}
+		fr := (b - a) / float64(n)
+		f0, f1 := max(0, int((lo-a)/fr)), min(n, int(math.Ceil((hi-a)/fr)))
+		if f1 <= f0 {
+			return fmt.Errorf("empty window")
+		}
+		lp, T, frame, off = all[f0*sylVocab:f1*sylVocab], f1-f0, fr, a+float64(f0)*fr
+	}
+	if err := ctcAlign(sw.vocab, all, lp, T, frame, true); err != nil {
+		return err
+	}
+	for i := range lw {
+		w := all[len(before)+i]
+		lw[i].Start, lw[i].End, lw[i].anchored = w.Start+off, w.End+off, true
+	}
+	return nil
+}
+
+func (sw *syllaWindow) close() {
+	if sw.s != nil {
+		sw.s.Close()
+	}
 }

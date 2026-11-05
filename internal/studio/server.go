@@ -1094,6 +1094,7 @@ func (s *Server) hResync(w http.ResponseWriter, r *http.Request) {
 		Lines   []lineJSON `json:"lines"`
 		Targets []int      `json:"targets"`
 		Lang    string     `json:"lang"`
+		Aligner string     `json:"aligner"` // "sylla" or "whisper" (the default)
 	}
 	if err := readJSON(r, &req); err != nil {
 		fail(w, 400, err)
@@ -1119,7 +1120,7 @@ func (s *Server) hResync(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out, source, err := lyricsgen.Resync(r.Context(), lyricsgen.ResyncOptions{Stereo: stereo, SampleRate: d.SampleRate,
-		AudioKey: audioKey(cfg.Audio.Path), Lang: req.Lang, Lines: in, Targets: req.Targets})
+		AudioKey: audioKey(cfg.Audio.Path), Lang: req.Lang, Lines: in, Targets: req.Targets, Aligner: req.Aligner})
 	if err != nil {
 		fail(w, 500, err)
 		return

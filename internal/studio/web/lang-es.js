@@ -221,6 +221,7 @@ export const ES = {
   'Listen to the vocals (Sylla)': 'Escuchar la voz (Sylla)', 'Timing': 'Sincronización',
   'Sylla: a model made for sung lyrics (most precise)': 'Sylla: un modelo hecho para letras cantadas (lo más preciso)',
   'Whisper: speech recognition': 'Whisper: reconocimiento de voz',
+  'Timing model: Sylla (made for sung lyrics, most precise) or Whisper (speech recognition)': 'Modelo de sincronización: Sylla (hecho para letras cantadas, lo más preciso) o Whisper (reconocimiento de voz)',
   'Sylla times every word straight from the vocals. Its weights (2.3 GB, GPL-3.0 licence) are downloaded from their authors the first time.': 'Sylla sincroniza cada palabra directamente desde la voz. Sus pesos (2,3 GB, licencia GPL-3.0) se descargan de sus autores la primera vez.',
   'Add a reference image': 'Añadir una imagen de referencia',
   'All images': 'Todas las imágenes',

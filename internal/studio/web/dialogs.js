@@ -238,17 +238,21 @@ const GEN_LANGS = [['auto', 'Detect automatically'], ...LYRIC_LANGS];
 // Lyrics as plain text, one line per row: correct the words (a transcription, typos), add or
 // remove lines, then align the text again. The recognition of the song is cached, so this
 // takes seconds.
-export function LyricsTextDialog({ lines, lang: lang0, onAlign, onClose }) {
+const ALIGNERS = [['sylla', 'Sylla: a model made for sung lyrics (most precise)'], ['whisper', 'Whisper: speech recognition']];
+
+export function LyricsTextDialog({ lines, lang: lang0, aligner: al0, onAlign, onClose }) {
   const [text, setText] = useState(() => (lines || []).map((l) => l.words.map((w) => w.text).join(' ')).join('\n'));
   const [lang, setLang] = useState(lang0 || 'en');
+  const [aligner, setAligner] = useState(al0 || 'sylla');
   const n = text.split('\n').filter((s) => s.trim()).length;
   return html`<${Modal} wide title=${t('Edit the lyrics text')} icon="pencil" onClose=${onClose}
     footer=${html`<span class="faint" style="font-size:12px">${n} ${t('lines')}</span><span class="spacer"></span>
       <button class="btn" onClick=${onClose}>${t('Cancel')}</button>
-      <button class="btn primary" disabled=${!n} onClick=${() => onAlign(text, lang)}><${Icon} name="wand-sparkles" size=${15} /> ${t('Align again')}</button>`}>
+      <button class="btn primary" disabled=${!n} onClick=${() => onAlign(text, lang, aligner)}><${Icon} name="wand-sparkles" size=${15} /> ${t('Align again')}</button>`}>
     <p class="faint" style="margin-top:0">${t('One line of the lyrics per row. Fix misheard words, split or join lines, then align: the words get their times again from the song (the recognition is reused, so it takes seconds). Manual timing changes are replaced.')}</p>
     <textarea class="lyrtext" spellcheck="false" value=${text} onInput=${(e) => setText(e.target.value)}></textarea>
     <div class="fld"><label>${t('Language')}</label><div class="ctl"><${Select} value=${lang} options=${GEN_LANGS} onChange=${setLang} /></div></div>
+    <div class="fld"><label>${t('Timing')}</label><div class="ctl"><${Select} value=${aligner} onChange=${setAligner} options=${ALIGNERS} /></div></div>
   </${Modal}>`;
 }
 
@@ -283,7 +287,7 @@ export function GenLyricsDialog({ meta, job, models, pickFile, onStart, onCancel
         <button class="btn icon" title=${t('Choose file')} onClick=${() => pickFile('txt', setTxt, txt)}><${Icon} name="folder-open" size=${15} /></button></div></div>`}
       <div class="fld"><label>${t('Language')}</label><div class="ctl"><${Select} value=${lang} options=${src === 'transcribe' ? GEN_LANGS : LYRIC_LANGS} onChange=${setLang} /></div></div>
       ${src === 'text' && html`<div class="fld"><label>${t('Timing')}</label><div class="ctl"><${Select} value=${aligner} onChange=${setAligner}
-        options=${[['sylla', 'Sylla: a model made for sung lyrics (most precise)'], ['whisper', 'Whisper: speech recognition']]} /></div></div>`}
+        options=${ALIGNERS} /></div></div>`}
       ${sylla && html`<p class="faint" style="margin-top:0">${t('Sylla times every word straight from the vocals. Its weights (2.3 GB, GPL-3.0 licence) are downloaded from their authors the first time.')}</p>`}
       <div class="fld"><label>${t('Mode')}</label><div class="ctl"><${Select} value=${mode} onChange=${setMode}
         options=${[['precise', 'Precise: separates the vocals first (≈ song length)'], ['fast', 'Fast: on the full mix (seconds, less reliable)']]} /></div></div>

@@ -370,7 +370,7 @@ function TrackInspector({ proj, track, segIdx, time, meta, update, setSel, ctx, 
   </div>`;
 }
 
-function LineEditor({ lyr, lines, time, onChange, seek, saveState, onResync, resyncing, lyricLang, setLyricLang, wordEdit, setWordEdit, onEditText }) {
+function LineEditor({ lyr, lines, time, onChange, seek, saveState, onResync, resyncing, lyricLang, setLyricLang, aligner, setAligner, wordEdit, setWordEdit, onEditText }) {
   const idx = lines[0];
   const line = lyr.lines[idx];
   if (!line) return html`<div class="insp-b faint" style="padding-top:14px">${t('Select a line in the lyrics track.')}</div>`;
@@ -424,6 +424,7 @@ function LineEditor({ lyr, lines, time, onChange, seek, saveState, onResync, res
         <button class="btn sm primary" disabled=${resyncing} title=${t('Recognize this part of the song again and re-align the words (around their current position)')}
           onClick=${onResync}><${Icon} name=${resyncing ? 'loader-circle' : 'wand-sparkles'} size=${14} cls=${resyncing ? 'spin' : ''} /> ${t(multi ? 'Resync lines' : 'Resync line')}</button>
         <${Select} cls="" value=${lyricLang} options=${LYRIC_LANGS} onChange=${setLyricLang} title=${t('Lyrics language')} />
+        <${Select} cls="" value=${aligner} options=${[['sylla', 'Sylla'], ['whisper', 'Whisper']]} onChange=${setAligner} title=${t('Timing model: Sylla (made for sung lyrics, most precise) or Whisper (speech recognition)')} />
       </div>
       ${!multi && html`<div class="row" style="margin-top:8px">
         <button class="btn sm" disabled=${splitAt < 0} title=${t('Split the line before the first word after the cursor')} onClick=${() => split(splitAt)}>
@@ -579,6 +580,12 @@ function App() {
   const [hideSetup, setHideSetup] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [resyncing, setResyncing] = useState(false);
+  // How lyrics get their timing (generate, align again, resync): shared, remembered with the last generation
+  const [aligner, setAlignerState] = useState(() => { try { return (JSON.parse(localStorage.getItem('audioviz.lastGen')) || {}).aligner || 'sylla'; } catch (e) { return 'sylla'; } });
+  const setAligner = (a) => {
+    setAlignerState(a);
+    try { localStorage.setItem('audioviz.lastGen', JSON.stringify({ ...(JSON.parse(localStorage.getItem('audioviz.lastGen')) || {}), aligner: a })); } catch (e) { /* ignore */ }
+  };
   const [lyricLang, setLyricLangState] = useState(() => { try { return localStorage.getItem('audioviz.lyricLang') || 'en'; } catch (e) { return 'en'; } });
   const timeStore = useRef(createStore(0)).current;
   // Slow copy of the time for everything that doesn't need 60 updates per second
@@ -1101,7 +1108,8 @@ function App() {
   // the cached recognition
   const lastGen = () => { try { return JSON.parse(localStorage.getItem('audioviz.lastGen')) || {}; } catch (e) { return {}; } };
   const genLyrics = (o) => {
-    try { localStorage.setItem('audioviz.lastGen', JSON.stringify({ lang: o.lang, fast: !!o.fast, aligner: o.aligner || 'whisper' })); } catch (e) { /* ignore */ }
+    try { localStorage.setItem('audioviz.lastGen', JSON.stringify({ lang: o.lang, fast: !!o.fast, aligner: o.aligner || 'whisper' }));
+    if (o.aligner) setAlignerState(o.aligner); } catch (e) { /* ignore */ }
     api('POST', '/api/lyrics/generate', o).then(setJob).catch(showErr);
   };
 
@@ -1289,7 +1297,7 @@ function App() {
     setResyncing(true);
     try {
       const before = lyrRef.current.lines;
-      const r = await api('POST', '/api/lyrics/resync', { lines: before, targets: lineSel, lang: lyricLang });
+      const r = await api('POST', '/api/lyrics/resync', { lines: before, targets: lineSel, lang: lyricLang, aligner });
       editLyrics((all) => { for (const i of lineSel) if (r.lines[i]) all[i] = r.lines[i]; });
       // Lines whose voice wasn't recognized clearly enough are returned untouched
       const same = (a, b) => a && b && a.words.length === b.words.length && a.words.every((w, k) => Math.abs(w.start - b.words[k].start) < 1e-6);
@@ -1397,7 +1405,7 @@ function App() {
         onEditText=${() => setDlg({ type: 'lyrtext' })}
         onStart=${(o) => { if (o.lang !== 'auto') setLyricLang(o.lang); genLyrics(o); }} />`}
     ${dlg && dlg.type === 'lyrtext' && proj && html`<${LyricsTextDialog} lines=${lyr.lines} lang=${lastGen().lang} onClose=${() => setDlg(null)}
-        onAlign=${(text, lang) => { genLyrics({ text, lang, fast: lastGen().fast, aligner: lastGen().aligner || 'whisper' }); setDlg({ type: 'genlyrics' }); }} />`}
+        aligner=${aligner} onAlign=${(text, lang, al) => { genLyrics({ text, lang, fast: lastGen().fast, aligner: al }); setDlg({ type: 'genlyrics' }); }} />`}
     ${dlg && dlg.type === 'images' && proj && html`<${ImagesDialog} meta=${meta} job=${job} pickFile=${ctx.pickFile}
         onClose=${() => setDlg(null)} onCancel=${() => api('POST', '/api/job/cancel')}
         onStart=${(o) => api('POST', '/api/images/generate', o).then(setJob).catch(showErr)}
@@ -1606,7 +1614,7 @@ function App() {
   else if (sel.kind === 'layer' && layerById_(sel.id)) inspector = html`<${LayerInspector} proj=${proj} sel=${sel} setSel=${setSel} update=${update} time=${time} meta=${meta} ctx=${ctx} />`;
   else if (sel.kind === 'text') inspector = html`<${TextsInspector} proj=${proj} sel=${sel} setSel=${setSel} update=${update} time=${time} meta=${meta} ctx=${ctx} />`;
   else if (sel.kind === 'line') inspector = html`<${LineEditor} lyr=${lyr} lines=${lineSel} time=${time} seek=${seek} saveState=${lyrSave}
-      onChange=${(fn) => editLyrics(fn)} onResync=${resync} resyncing=${resyncing} lyricLang=${lyricLang} setLyricLang=${setLyricLang} wordEdit=${wordEdit} setWordEdit=${setWordEdit}
+      onChange=${(fn) => editLyrics(fn)} onResync=${resync} resyncing=${resyncing} lyricLang=${lyricLang} setLyricLang=${setLyricLang} aligner=${aligner} setAligner=${setAligner} wordEdit=${wordEdit} setWordEdit=${setWordEdit}
       onEditText=${() => setDlg({ type: 'lyrtext' })} />`;
   else inspector = html`<${TrackInspector} proj=${proj} track=${sel.track} segIdx=${sel.seg} time=${time} meta=${meta}
       update=${update} setSel=${setSel} ctx=${ctx} onGenLyrics=${() => setDlg({ type: 'genlyrics' })}

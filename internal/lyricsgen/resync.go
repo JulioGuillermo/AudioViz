@@ -16,6 +16,7 @@ type ResyncOptions struct {
 	Lang       string
 	Lines      []LLine // current lyric (all lines, in order)
 	Targets    []int   // indices of the lines to re-sync
+	Aligner    string  // AlignerWhisper (recognition, the default) or AlignerSylla
 }
 
 // Resync recognizes again only the audio around the target lines (without a prompt, see
@@ -28,22 +29,41 @@ func Resync(ctx context.Context, opt ResyncOptions) ([]LLine, string, error) {
 	if opt.Lang == "" {
 		opt.Lang = "en"
 	}
-	if _, err := WhisperModel.Ensure(ctx, nil); err != nil {
-		return nil, "", err
+	useSylla := opt.Aligner == AlignerSylla
+	need := []Model{WhisperModel}
+	if useSylla {
+		need = []Model{SyllaVocab, SyllaModel}
 	}
-	source := "separated vocals (cache)"
-	vocals16 := loadF32(vocalsCachePath(fmt.Sprintf("%s|%d|%d", opt.AudioKey, opt.SampleRate, len(opt.Stereo))))
+	for _, m := range need {
+		if _, err := m.Ensure(ctx, nil); err != nil {
+			return nil, "", err
+		}
+	}
+	source, mode := "separated vocals (cache)", "vocals"
+	cachePath := vocalsCachePath(fmt.Sprintf("%s|%d|%d", opt.AudioKey, opt.SampleRate, len(opt.Stereo)))
+	vocals16 := loadF32(cachePath)
 	if vocals16 == nil {
-		source = "full mix (no separated vocals cached)"
+		source, mode = "full mix (no separated vocals cached)", "mix"
 		vocals16 = ToMono(Resample(opt.Stereo, 2, opt.SampleRate, 16000))
 	}
 	total := float64(len(vocals16)) / 16000
 	v := newVoice(vocals16)
-	w, err := OpenWhisper(WhisperModel.Path(), aheadsLargeV3Turbo, true)
-	if err != nil {
-		return nil, "", err
+	var w *Whisper
+	var sy *syllaWindow
+	if useSylla {
+		var err error
+		if sy, err = newSyllaWindow(cachePath, mode, total); err != nil {
+			return nil, "", err
+		}
+		defer sy.close()
+		source += " · Sylla"
+	} else {
+		var err error
+		if w, err = OpenWhisper(WhisperModel.Path(), aheadsLargeV3Turbo, true); err != nil {
+			return nil, "", err
+		}
+		defer w.Close()
 	}
-	defer w.Close()
 
 	lines := make([]LLine, len(opt.Lines))
 	for i, l := range opt.Lines {
@@ -95,33 +115,50 @@ func Resync(ctx context.Context, opt ResyncOptions) ([]LLine, string, error) {
 				orig = append(orig, wd)
 			}
 		}
-		// No prompt: Whisper takes it as what was said *before* the window and skips it
-		// (the target text makes it skip the line; the previous line, whose audio may be
-		// inside the window, gets its time lumped into the first word). Everything in the
-		// window is transcribed and alignFit picks the right run.
-		seg := vocals16[int(lo*16000):min(len(vocals16), int(hi*16000))]
-		rec, err := w.Transcribe(ctx, seg, lo, opt.Lang, "", nil)
-		if err != nil {
-			return nil, "", err
-		}
-		rec = dropSilent(rec, v)
-		// The window also holds words of the neighbouring lines: the target words must
-		// match one compact run of recognized words (the one closest to where they are now)
-		n := alignFit(sub, rec, (start+end)/2)
-		if dbg := os.Getenv("AUDIOVIZ_DEBUG_REC"); dbg != "" {
-			if f, err := os.OpenFile(dbg, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
-				fmt.Fprintf(f, "lines %d-%d window %.2f-%.2f anchored %d/%d\n", a, b, lo, hi, n, len(sub))
-				for _, x := range rec {
-					fmt.Fprintf(f, "  %.2f\t%.2f\t%s\n", x.Start, x.End, x.Text)
-				}
-				f.Close()
+		if sy != nil {
+			// Sylla: the target words over the window, every word timed (CTC alignment)
+			var before, after []LWord
+			if a > 0 {
+				before = lines[a-1].Words
 			}
+			if b+1 < len(lines) {
+				after = lines[b+1].Words
+			}
+			if err := sy.align(ctx, sub, before, after, vocals16, lo, hi); err != nil {
+				if ctx.Err() != nil {
+					return nil, "", ctx.Err()
+				}
+				continue
+			}
+		} else {
+			// No prompt: Whisper takes it as what was said *before* the window and skips it
+			// (the target text makes it skip the line; the previous line, whose audio may be
+			// inside the window, gets its time lumped into the first word). Everything in the
+			// window is transcribed and alignFit picks the right run.
+			seg := vocals16[int(lo*16000):min(len(vocals16), int(hi*16000))]
+			rec, err := w.Transcribe(ctx, seg, lo, opt.Lang, "", nil)
+			if err != nil {
+				return nil, "", err
+			}
+			rec = dropSilent(rec, v)
+			// The window also holds words of the neighbouring lines: the target words must
+			// match one compact run of recognized words (the one closest to where they are now)
+			n := alignFit(sub, rec, (start+end)/2)
+			if dbg := os.Getenv("AUDIOVIZ_DEBUG_REC"); dbg != "" {
+				if f, err := os.OpenFile(dbg, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+					fmt.Fprintf(f, "lines %d-%d window %.2f-%.2f anchored %d/%d\n", a, b, lo, hi, n, len(sub))
+					for _, x := range rec {
+						fmt.Fprintf(f, "  %.2f\t%.2f\t%s\n", x.Start, x.End, x.Text)
+					}
+					f.Close()
+				}
+			}
+			if n < min(len(sub), max(2, int(math.Ceil(0.4*float64(len(sub)))))) {
+				continue // too little recognized: better to leave the line as it was
+			}
+			placeEdges(sub, orig, lo, hi)
+			fillUnanchored(sub, v, hi)
 		}
-		if n < min(len(sub), max(2, int(math.Ceil(0.4*float64(len(sub)))))) {
-			continue // too little recognized: better to leave the line as it was
-		}
-		placeEdges(sub, orig, lo, hi)
-		fillUnanchored(sub, v, hi)
 		// The last word may last until the voice fades, but not into the next line
 		limit := hi
 		if b+1 < len(lines) && len(lines[b+1].Words) > 0 {
