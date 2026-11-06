@@ -27,6 +27,16 @@ import (
 	"unsafe"
 )
 
+// DemucsDevice: where the separation runs, for the progress ("CPU + <GPU>": the attention
+// layers on the GPU, the convolutions on the CPU)
+func DemucsDevice() string {
+	var buf [128]C.char
+	if C.dmx_gpu_name(&buf[0], 128) == 0 {
+		return "CPU"
+	}
+	return "CPU + " + C.GoString(&buf[0])
+}
+
 // SeparateVocals extracts the vocals from an interleaved stereo song at 44.1 kHz with Demucs (htdemucs).
 // progress receives 0..1.
 func SeparateVocals(ctx context.Context, modelPath string, stereo44 []float32, progress func(float64)) ([]float32, error) {

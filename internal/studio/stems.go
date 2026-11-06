@@ -82,13 +82,14 @@ func (s *Server) hStems(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		stereo44 := lyricsgen.Resample(st, 2, d.SampleRate, 44100)
-		say("Separating drums, bass, vocals and the rest", 0.12)
+		sep := "Separating drums, bass, vocals and the rest · " + lyricsgen.DemucsDevice()
+		say(sep, 0.12)
 		ch := 1
 		if full {
 			ch = 2
 		}
 		err = lyricsgen.SeparateStemsTo(ctx, mp, stereo44, full, func(p float64) {
-			say("Separating drums, bass, vocals and the rest", 0.12+0.83*p)
+			say(sep, 0.12+0.83*p)
 		}, func(i int, x []float32) error {
 			say("Saving the parts", 0.96)
 			return audio.SaveStem(filepath.Join(dir, audio.StemNames[i]+".wav"), x, ch, 44100, full)

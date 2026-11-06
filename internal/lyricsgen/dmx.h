@@ -8,6 +8,8 @@ void dmx_free(void *model);
 // The model's cross-transformer on the GPU (dmx_gpu.cpp): 1 when there is one (AUDIOVIZ_DEMUCS_GPU=0: never)
 int dmx_gpu_attach(void *model);
 void dmx_gpu_detach(void *model);
+// The GPU the cross-transformer would use (its name in buf): 0 when it stays on the CPU
+int dmx_gpu_name(char *buf, int len);
 // stereo/out: interleaved L,R samples at 44100 Hz. progress: one float per thread.
 int dmx_vocals(void *model, const float *stereo, long n, int threads, float *out,
                float *progress, volatile int *cancel, char *err, int errlen);

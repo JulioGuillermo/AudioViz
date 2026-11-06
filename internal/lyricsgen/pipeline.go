@@ -198,7 +198,7 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 		t.End("separate", "skipped", "Reused from the cache")
 	case opt.StemsDir != "":
 		// the four parts (the same work as the vocals alone), kept for the effects
-		t.Start("separate", "Demucs htdemucs · CPU · drums, bass, vocals and the rest")
+		t.Start("separate", "Demucs htdemucs · "+DemucsDevice()+" · drums, bass, vocals and the rest")
 		err := SeparateStemsTo(ctx, DemucsModel.Path(), stereo44, opt.StemsFull, func(p float64) { t.Progress("separate", p, "") },
 			func(i int, x []float32) error {
 				ch := 1
@@ -223,7 +223,7 @@ func Generate(ctx context.Context, opt Options, report func(Status)) (*Result, e
 		}
 		t.End("separate", "done", "")
 	default:
-		t.Start("separate", "Demucs htdemucs · CPU")
+		t.Start("separate", "Demucs htdemucs · "+DemucsDevice())
 		v44, err := SeparateVocals(ctx, DemucsModel.Path(), stereo44, func(p float64) { t.Progress("separate", p, "") })
 		if err != nil {
 			t.End("separate", "error", err.Error())

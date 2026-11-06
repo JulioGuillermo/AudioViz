@@ -162,6 +162,15 @@ ggml_backend_dev_t gpu_device() {
 
 } // namespace
 
+extern "C" int dmx_gpu_name(char *buf, int len) {
+    const char *off = getenv("AUDIOVIZ_DEMUCS_GPU");
+    if (off && strcmp(off, "0") == 0) return 0;
+    ggml_backend_dev_t dev = gpu_device();
+    if (!dev) return 0;
+    snprintf(buf, len, "%s", ggml_backend_dev_description(dev));
+    return 1;
+}
+
 // dmx_gpu_attach: the model's cross-transformer weights on the GPU (0: no GPU, it stays on the CPU)
 extern "C" int dmx_gpu_attach(void *model) {
     const char *off = getenv("AUDIOVIZ_DEMUCS_GPU");

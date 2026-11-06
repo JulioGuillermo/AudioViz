@@ -39,7 +39,7 @@ export function StemsSection({ ctx, hasAudio, audio, onAudio }) {
     ${job && job.status === 'error' && html`<div class="stems-row"><span class="danger">${job.message}</span></div>`}
     </div>
     ${st && !st.ready && !running && html`<p class="faint" style="margin:6px 0 0;font-size:11.5px">${t(st.model
-      ? 'It takes a few minutes on the CPU, once per song.'
-      : 'It takes a few minutes on the CPU, once per song (the model, 84 MB, is downloaded the first time).')} ${t('Generating the lyrics separates it too (and then uses its vocals).')}</p>`}
+      ? 'It takes a few minutes, once per song.'
+      : 'It takes a few minutes, once per song (the model, 84 MB, is downloaded the first time).')} ${t('Generating the lyrics separates it too (and then uses its vocals).')}</p>`}
   </${Section}>`;
 }
