@@ -239,9 +239,9 @@ function FluidOptions({ s, set, ctx }) {
     ${s.transition.mode === 'liquid' && slider('viscosity', 'Viscosity', 0.6, t('How much neighbors move together: high, thick streams; low, more like separate drops'))}
     ${slider('interaction', 'Interaction', 0.5, t('How solid the particles are: high, they push each other hard; low, they slip past each other'))}
     ${slider('stagger', 'Stagger', 0.5, t('How spread out in time the departures are'))}
-    <div class="row" style="gap:6px;margin-top:4px">
-      <button class="btn sm" title=${t('Another flow with the same settings')} onClick=${() => upd('seed', 1 + Math.floor(Math.random() * 999999))}><${Icon} name="shuffle" size=${13} /> ${t('Other variation')}</button>
-      <button class="btn sm" onClick=${() => ctx.seek(s.at + s.transition.duration * 0.5)}><${Icon} name="play" size=${13} /> ${t('Go to the middle of the transition')}</button>
+    <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px">
+      <button class="btn sm" style="justify-content:flex-start" title=${t('Another flow with the same settings')} onClick=${() => upd('seed', 1 + Math.floor(Math.random() * 999999))}><${Icon} name="shuffle" size=${13} /> ${t('Other variation')}</button>
+      <button class="btn sm" style="justify-content:flex-start" onClick=${() => ctx.seek(s.at + s.transition.duration * 0.5)}><${Icon} name="play" size=${13} /> ${t('Go to the middle of the transition')}</button>
     </div>
   </div>`;
 }
