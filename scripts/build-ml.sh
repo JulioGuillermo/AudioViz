@@ -11,13 +11,15 @@ set -euo pipefail
 source "$(dirname "$0")/target.sh"
 WHISPER_REV=60c0be6ac8fa71b1a2ae2dd938a31a34a508e774
 DEMUCS_REV=f1206e9adeea103aef4a636b9e62297cf1f8e34e
-SD_REV=3f8527a46c54ecf4cb4ed6003da8e8982283c73c
+SD_REV=5a1ba5d895bec4e07deab80d6d791721cd59d9c2
 DA_REV=14f7461d1f704761a038ac9f50dbde8fdb7275e2
 
 # What the whisper + stable-diffusion libraries are built from: the revisions, the superproject
 # and our patches (ggml, stable-diffusion.cpp, depth-anything.cpp). When it changes (e.g. a new
 # patch), they are rebuilt.
-ML_STAMP="$WHISPER_REV $SD_REV $DA_REV $(cat "$ROOT/scripts/ml/CMakeLists.txt" "$ROOT"/scripts/ml/patches/*.patch "$ROOT"/scripts/ml/patches-sd/*.patch "$ROOT"/scripts/ml/patches-da/*.patch 2>/dev/null | cksum)"
+# (a patch folder may be empty: its glob then stays unexpanded and cat fails, which pipefail would
+# turn into a silent exit)
+ML_STAMP="$WHISPER_REV $SD_REV $DA_REV $( { cat "$ROOT/scripts/ml/CMakeLists.txt" "$ROOT"/scripts/ml/patches/*.patch "$ROOT"/scripts/ml/patches-sd/*.patch "$ROOT"/scripts/ml/patches-da/*.patch 2>/dev/null || true; } | cksum)"
 
 if [ ! -f "$OUT/lib/libwhisper.a" ] || [ ! -f "$OUT/lib/libstable-diffusion.a" ] || [ ! -f "$OUT/lib/libdepthanything.a" ] ||
    [ "$(cat "$OUT/lib/.ml-stamp" 2>/dev/null)" != "$ML_STAMP" ]; then
@@ -28,6 +30,9 @@ if [ ! -f "$OUT/lib/libwhisper.a" ] || [ ! -f "$OUT/lib/libstable-diffusion.a" ]
   if [ ! -d "$TP/stable-diffusion.cpp" ]; then
     git clone https://github.com/leejet/stable-diffusion.cpp "$TP/stable-diffusion.cpp"
   fi
+  # (our patches from the last build are dropped first: they would block the checkout)
+  git -C "$TP/stable-diffusion.cpp" checkout -q -- .
+  [ -d "$TP/stable-diffusion.cpp/ggml/.git" ] || [ -f "$TP/stable-diffusion.cpp/ggml/.git" ] && git -C "$TP/stable-diffusion.cpp/ggml" checkout -q -- .
   git -C "$TP/stable-diffusion.cpp" checkout -q "$SD_REV"
   git -C "$TP/stable-diffusion.cpp" submodule update --init --depth 1 ggml
   if [ ! -d "$TP/depth-anything.cpp" ]; then
@@ -42,11 +47,16 @@ if [ ! -f "$OUT/lib/libwhisper.a" ] || [ ! -f "$OUT/lib/libstable-diffusion.a" ]
   done
   # Our patches to stable-diffusion.cpp (scripts/ml/patches-sd) and to its ggml
   # (scripts/ml/patches), applied to a clean checkout
+  # (a clean tree: files our patches add are removed too, or applying them again fails)
+  git -C "$TP/stable-diffusion.cpp" reset -q
   git -C "$TP/stable-diffusion.cpp" checkout -q -- .
+  git -C "$TP/stable-diffusion.cpp" clean -fdq -e ggml
   for p in "$ROOT"/scripts/ml/patches-sd/*.patch; do
     [ -f "$p" ] && git -C "$TP/stable-diffusion.cpp" apply "$p"
   done
+  git -C "$TP/stable-diffusion.cpp/ggml" reset -q
   git -C "$TP/stable-diffusion.cpp/ggml" checkout -q -- .
+  git -C "$TP/stable-diffusion.cpp/ggml" clean -fdq
   for p in "$ROOT"/scripts/ml/patches/*.patch; do
     [ -f "$p" ] && git -C "$TP/stable-diffusion.cpp/ggml" apply "$p"
   done

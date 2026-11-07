@@ -17,7 +17,7 @@ import (
 )
 
 type Request struct {
-	Model         string // family ID (zimage, klein, qwen)
+	Model         string // family ID (zimage, klein, klein3, qwen, qwen-turbo, moss)
 	Prompt        string
 	Width, Height int           // rounded to multiples of 32
 	Steps         int           // 0 = the model's default
@@ -173,7 +173,11 @@ func Generate(ctx context.Context, req Request, report func(progress.Status), on
 		t.End("load", "skipped", "Already in memory")
 	} else {
 		t.Start("load", f.Name+"…")
-		if err := eng.load(key, paths[f.Diffusion.Name], paths[f.LLM.Name], vision, paths[f.VAE.Name], fa); err != nil {
+		tok := ""
+		if f.Tokenizer != nil {
+			tok = paths[f.Tokenizer.Name]
+		}
+		if err := eng.load(key, paths[f.Diffusion.Name], paths[f.LLM.Name], vision, paths[f.VAE.Name], tok, f.Conv, onSYCL() && !f.Heavy, fa); err != nil {
 			t.End("load", "error", err.Error())
 			return nil, err
 		}
@@ -195,8 +199,16 @@ func Generate(ctx context.Context, req Request, report func(progress.Status), on
 		r := fitRGB(req.Init, w, h)
 		init = &r
 	}
-	sp := sampling{negative: req.Negative, w: w, h: h, steps: steps, cfg: cfg, sampler: req.Sampler, scheduler: req.Scheduler,
+	neg := req.Negative
+	if neg == "" && cfg > 1 {
+		neg = f.Negative
+	}
+	sp := sampling{negative: neg, w: w, h: h, steps: steps, cfg: cfg, sampler: req.Sampler, scheduler: req.Scheduler,
 		euler: f.Euler, seed: seed, strength: strength, tile: w*h > vaeTileAbove()}
+	// a distilled model's own schedule, unless the steps or the scheduler were changed
+	if len(f.Sigmas) > 0 && steps == f.Steps && req.Scheduler == "" {
+		sp.sigmas = f.Sigmas
+	}
 	type res struct {
 		img *image.NRGBA
 		err error

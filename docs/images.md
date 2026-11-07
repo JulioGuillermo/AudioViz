@@ -59,10 +59,33 @@ The loaded model stays in memory between images (the next one starts sooner) and
 | **Z-Image Turbo** | Fast, photorealistic, text inside the image | — | 6.7 GB | ≈ 1 min 20 s (8 steps); 1920×1088: ≈ 5 min 30 s |
 | **FLUX.2 klein 4B** | Fast generation **and editing** | up to 4 | 5.3 GB (the text encoder is shared with Z-Image: 2.8 GB if you already have it) | ≈ 1 min (4 steps, 1 reference) |
 | **Qwen Image 2.1** | Highest quality and prompt following, editing | up to 3 | 9.9 GB (+0.75 GB to edit) | several minutes; meant for a dedicated GPU |
+| **Qwen Image 2.1 Turbo** | Qwen Image distilled to 8 steps: nearly its quality, several times faster; editing | up to 3 | 4.2 GB more if you have Qwen Image 2.1 (shares its encoders and decoder), else 9.9 GB | ≈ 2 min at 1024×1024 |
+| **FLUX.3 Image Klein** | Generation and editing; **places elements with boxes** in the prompt (below) | up to 4 | 6 GB (shares the FLUX.2 decoder) | ≈ 2 min at 1024×1024 (16 steps) |
+| **MOSS-Image** | Text inside the image (posters, signs, also Chinese); experimental **box layout** | — | 9.3 GB | ≈ 10 min at 1024×1024 (30 steps, two passes each) |
 
-All three have permissive licenses (Apache-2.0): the images are yours to use. A dedicated GPU
-or an Apple Silicon Mac is much faster than an integrated GPU; without any GPU it works on the
-CPU, very slowly.
+Licenses: Z-Image, FLUX.2 klein 4B and MOSS-Image are Apache-2.0. Qwen Image 2.1 and its Turbo
+use the Qwen Research license (**non-commercial**). FLUX.3 Image Klein uses the FLUX Kommunity
+license (commercial use of the images only below US$5M yearly revenue). A dedicated GPU or an
+Apple Silicon Mac is much faster than an integrated GPU; without any GPU it works on the CPU,
+very slowly.
+
+### Placing elements with boxes
+**FLUX.3 Image Klein**: write the description, name each element with an id in angle brackets,
+then a space and a JSON list with one box per id, `[top, left, bottom, right]` from 0 to 1000:
+```text
+A poster: a red bicycle <bicycle_1> against a blue wall <wall_1>, the word SUMMER <title_1> at the top.
+[{"id": "wall_1", "bbox": [0, 0, 1000, 1000], "desc": "A pale blue plaster wall."},
+ {"id": "title_1", "bbox": [60, 200, 260, 800], "desc": "SUMMER in large white letters."},
+ {"id": "bicycle_1", "bbox": [430, 330, 950, 980], "desc": "A vintage red bicycle."}]
+```
+**MOSS-Image**: the whole prompt is a JSON layout; boxes are `[y_min, x_min, y_max, x_max]` in
+pixels with the canvas centre as the origin (a 1024×1024 canvas spans −512…512):
+```json
+{"summary": {"meta": ["poster"], "canvas": "single", "caption": "A travel poster, cream background."},
+ "items": [{"label": "text", "caption": "Dark-blue title at the top.", "text": "EXPLORE", "bbox": [-416, -384, -288, 384]},
+           {"label": "object", "caption": "A blue mountain in the centre.", "bbox": [-192, -288, 384, 288]}],
+ "bbox_coord_space": "abs_centralized", "bbox_format": "yxyx"}
+```
 
 ## From the terminal
 ```bash

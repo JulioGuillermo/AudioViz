@@ -11,6 +11,7 @@ these pages are for whoever maintains, extends or ports the code.
 | [lyrics-rendering.md](lyrics-rendering.md) | `.srt`/`.lrc` parsing, word timing, SDF text atlas, layout, animations |
 | [lyrics-generation.md](lyrics-generation.md) | Synced lyrics from audio + text: Demucs, Whisper, alignment, Resync, evaluation |
 | [image-generation.md](image-generation.md) | Images from a prompt and reference images: stable-diffusion.cpp on the shared ggml, models, binding, studio API |
+| [image-gen-optimization.md](image-gen-optimization.md) | Speeding up image generation on Intel iGPUs: measurements, our patches to stable-diffusion.cpp and ggml-sycl, profiling tools, log of results |
 | [media-io.md](media-io.md) | Background images/videos (static FFmpeg), x264 encoder, MP4 muxer |
 | [config-and-timeline.md](config-and-timeline.md) | YAML project model, segments over time, cut/fade transitions |
 | [studio.md](studio.md) | Studio server and HTTP API, web app architecture, performance design, lyrics editing |

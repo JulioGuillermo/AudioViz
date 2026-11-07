@@ -14,6 +14,8 @@ package imagegen
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <stdbool.h>
 #include <stable-diffusion.h>
 #include <ggml.h>
 #include <ggml-backend.h>
@@ -94,8 +96,49 @@ static const char *av_last_err(void) { return av_err; }
 
 static void av_ggml_log(enum ggml_log_level l, const char *t, void *d) { (void)l; (void)d; if (av_debug) fputs(t, stderr); }
 
+// Per-operation GPU time (AUDIOVIZ_SD_OPTIME=1, for profiling): every node is computed on its own
+// and synchronized, the time between two of them added to its op + weight type; printed to stderr
+// after each image. Slower, and without graph fusion, but it shows where the time goes.
+#define AV_OPT_N 512
+static struct { char key[96]; double ms; long n; } av_opt[AV_OPT_N];
+static double av_opt_last;
+static double av_now_ms(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ts.tv_sec * 1e3 + ts.tv_nsec / 1e6; }
+static bool av_opt_cb(struct ggml_tensor *t, bool ask, void *d) {
+    (void)d;
+    if (ask) return true;
+    double now = av_now_ms(), dt = now - av_opt_last;
+    av_opt_last = now;
+    char key[96];
+    const char *w = t->src[0] ? ggml_type_name(t->src[0]->type) : "-";
+    const char *w1 = t->src[1] ? ggml_type_name(t->src[1]->type) : "-";
+    snprintf(key, sizeof key, "%s %s×%s→%s", ggml_op_desc(t), w, w1, ggml_type_name(t->type));
+    for (int i = 0; i < AV_OPT_N; i++) {
+        if (!av_opt[i].key[0]) { snprintf(av_opt[i].key, sizeof av_opt[i].key, "%s", key); }
+        if (!strcmp(av_opt[i].key, key)) { av_opt[i].ms += dt; av_opt[i].n++; break; }
+    }
+    return true;
+}
+static int av_opt_cmp(const void *a, const void *b) {
+    double x = ((const typeof(av_opt[0]) *)a)->ms, y = ((const typeof(av_opt[0]) *)b)->ms;
+    return (x < y) - (x > y);
+}
+static void av_opt_print(void) {
+    double tot = 0;
+    int n = 0;
+    while (n < AV_OPT_N && av_opt[n].key[0]) tot += av_opt[n++].ms;
+    qsort(av_opt, n, sizeof av_opt[0], av_opt_cmp);
+    fprintf(stderr, "== op time (total %.0f ms)\n", tot);
+    for (int i = 0; i < n && i < 40; i++)
+        fprintf(stderr, "%9.1f ms %5.1f%% %7ld  %s\n", av_opt[i].ms, 100 * av_opt[i].ms / tot, av_opt[i].n, av_opt[i].key);
+    memset(av_opt, 0, sizeof av_opt);
+}
+static int av_optime;
+
 static void av_setup(int debug) {
     av_debug = debug;
+    const char *ot = getenv("AUDIOVIZ_SD_OPTIME");
+    av_optime = ot && ot[0] == '1';
+    if (av_optime) { av_opt_last = av_now_ms(); sd_set_backend_eval_callback(av_opt_cb, NULL); }
     ggml_log_set(av_ggml_log, NULL); // until stable-diffusion.cpp routes it to av_log
     sd_set_log_callback(av_log, NULL);
     sd_set_progress_callback(av_progress, NULL);
@@ -146,16 +189,32 @@ static const char *av_device(void) {
     return "CPU";
 }
 
-static sd_ctx_t *av_open(const char *diff, const char *llm, const char *vision, const char *vae, int fa) {
+// tokenizer: an external tokenizer.json (MOSS-Image's Qwen3.5), or NULL
+// conv: the family's convolution mode (NULL = auto); AUDIOVIZ_SD_CONV overrides it
+// whole: every weight on the device and the graph in one piece (see below)
+static sd_ctx_t *av_open(const char *diff, const char *llm, const char *vision, const char *vae, const char *tokenizer, const char *conv, int whole, int fa) {
     sd_ctx_params_t p;
     sd_ctx_params_init(&p);
     p.diffusion_model_path = diff;
     p.llm_path = llm;
     p.llm_vision_path = vision;
     p.vae_path = vae;
+    p.tokenizer = tokenizer;
+    // direct convolution or im2col (on / off / auto = a small benchmark per backend, or
+    // per-module assignments such as "vae=on"): AUDIOVIZ_SD_CONV, to measure on each GPU
+    const char *env_conv = getenv("AUDIOVIZ_SD_CONV");
+    if (env_conv && env_conv[0]) conv = env_conv;
+    if (conv && conv[0]) p.conv_direct_mode = conv;
     p.n_threads = sd_get_num_physical_cores();
     p.diffusion_flash_attn = fa;
     if (av_dev[0]) p.backend = av_dev;
+    // All weights on the GPU and the graph in one piece: with SYCL the auto-fit sees little free
+    // memory (Level Zero reports ~7 GB on a 32 GB Lunar Lake), cuts the DiT into segments staged
+    // block by block every step and keeps the text encoder and VAE weights on the CPU. Z-Image
+    // 1024², 8 steps: 73 → 61 s (decode 14 → 7 s). AUDIOVIZ_SD_NOSEG=0/1 overrides it.
+    const char *noseg = getenv("AUDIOVIZ_SD_NOSEG");
+    if (noseg && noseg[0]) whole = noseg[0] == '1';
+    if (whole && av_dev[0]) { p.params_backend = av_dev; p.disable_segmented_compute = true; }
     av_err[0] = 0;
     return new_sd_ctx(&p);
 }
@@ -164,7 +223,8 @@ static sd_ctx_t *av_open(const char *diff, const char *llm, const char *vision, 
 // the model's default (or Euler if euler); init: optional starting image (img2img) with strength
 static int av_generate(sd_ctx_t *ctx, const char *prompt, const char *negative, int w, int h, int steps,
                        float cfg, const char *sampler, const char *scheduler, int euler, long long seed,
-                       sd_image_t *refs, int nrefs, sd_image_t *init, float strength, int tile, sd_image_t *out) {
+                       sd_image_t *refs, int nrefs, sd_image_t *init, float strength, int tile,
+                       float *sigmas, int nsigmas, sd_image_t *out) {
     sd_img_gen_params_t g;
     sd_img_gen_params_init(&g);
     g.prompt = prompt;
@@ -180,6 +240,8 @@ static int av_generate(sd_ctx_t *ctx, const char *prompt, const char *negative, 
     if (euler) g.sample_params.sample_method = EULER_SAMPLE_METHOD;
     if (sampler) g.sample_params.sample_method = str_to_sample_method(sampler);
     if (scheduler) g.sample_params.scheduler = str_to_scheduler(scheduler);
+    // a fixed noise schedule (a distilled model's): its count sets the steps
+    if (nsigmas > 0) { g.sample_params.custom_sigmas = sigmas; g.sample_params.custom_sigmas_count = nsigmas; g.sample_params.sample_steps = nsigmas - 1; }
     if (init) { g.init_image = *init; g.strength = strength; }
     // Large images: the VAE decodes (and encodes) in tiles; its attention over every latent
     // pixel otherwise grows with the square of the size (217 s instead of 28 s at 1920x1088)
@@ -187,16 +249,21 @@ static int av_generate(sd_ctx_t *ctx, const char *prompt, const char *negative, 
     av_phase = PH_NONE; av_loading = 0; av_step = 0; av_steps = 0; av_err[0] = 0;
     __atomic_store_n(&av_pseq, 0, __ATOMIC_RELEASE);
     sd_cancel_generation(ctx, SD_CANCEL_RESET);
-    sd_image_t *imgs = NULL;
-    int n = 0;
-    if (!generate_image(ctx, &g, &imgs, &n) || n < 1 || !imgs || !imgs[0].data) {
-        if (imgs) { for (int i = 0; i < n; i++) free(imgs[i].data); free(imgs); }
+    sd_image_generation_result_t *res = NULL;
+    if (av_optime) av_opt_last = av_now_ms();
+    int ok = generate_image(ctx, &g, &res);
+    if (av_optime) av_opt_print();
+    if (!ok || !res || res->count < 1 || !res->items[0].image.data) {
+        free_sd_image_generation_result(res);
         return 0;
     }
-    *out = imgs[0];
-    for (int i = 1; i < n; i++) free(imgs[i].data);
-    free(imgs);
-    return 1;
+    // (the result owns its pixels: a copy of the first image, freed by the caller)
+    *out = res->items[0].image;
+    size_t sz = (size_t)out->width * out->height * out->channel;
+    out->data = (uint8_t *)malloc(sz);
+    if (out->data) memcpy(out->data, res->items[0].image.data, sz);
+    free_sd_image_generation_result(res);
+    return out->data != NULL;
 }
 */
 import "C"
@@ -268,14 +335,11 @@ func onSYCL() bool { setup(); return strings.HasPrefix(C.GoString(C.av_dev_name(
 // references are resized to the image size; 16×16 pixels per token)
 func Tokens(w, h, refs int) int { return (round32(w) / 16) * (round32(h) / 16) * (1 + refs) }
 
-// load opens the models (if not already loaded); paths: diffusion, text encoder, vision (or ""), VAE
-func (e *engine) load(key, diff, llm, vision, vae string, fa bool) error {
+// load opens the models (if not already loaded); paths: diffusion, text encoder, vision (or ""),
+// VAE, tokenizer (or ""), convolution mode ("" = auto); whole: all weights on the device and no
+// graph segments
+func (e *engine) load(key, diff, llm, vision, vae, tok, conv string, whole, fa bool) error {
 	setup()
-	// Z-Image's feed-forward output in f16 on Intel (scripts/ml/patches-sd): its forced f32
-	// accumulation is 3× slower there, and its 1/128 scale keeps f16 in range (checked on Xe2)
-	if IntelGPU() && os.Getenv("SD_ZIMAGE_W2_F16ACC") == "" {
-		os.Setenv("SD_ZIMAGE_W2_F16ACC", "1")
-	}
 	if e.ctx != nil && e.key == key {
 		return nil
 	}
@@ -286,14 +350,14 @@ func (e *engine) load(key, diff, llm, vision, vae string, fa bool) error {
 		}
 		return C.CString(s)
 	}
-	cd, cl, cv, ca := cs(diff), cs(llm), cs(vision), cs(vae)
+	cd, cl, cv, ca, ct, cc := cs(diff), cs(llm), cs(vision), cs(vae), cs(tok), cs(conv)
 	defer func() {
-		for _, p := range []*C.char{cd, cl, cv, ca} {
+		for _, p := range []*C.char{cd, cl, cv, ca, ct, cc} {
 			C.free(unsafe.Pointer(p))
 		}
 	}()
 	dev := C.GoString(C.av_device())
-	ctx := C.av_open(cd, cl, cv, ca, C.int(btoi(fa)))
+	ctx := C.av_open(cd, cl, cv, ca, ct, cc, C.int(btoi(whole)), C.int(btoi(fa)))
 	if ctx == nil {
 		return lastErr("could not load the image model")
 	}
@@ -368,8 +432,9 @@ type sampling struct {
 	sampler, scheduler string // "" = default
 	euler              bool   // the default is Euler (the family asks for it)
 	seed               int64
-	strength           float32 // with an initial image
-	tile               bool    // VAE in tiles (large images)
+	strength           float32   // with an initial image
+	tile               bool      // VAE in tiles (large images)
+	sigmas             []float32 // a fixed noise schedule (nil = from the scheduler)
 }
 
 func (sp sampling) cstr(s string) *C.char {
@@ -405,9 +470,16 @@ func (e *engine) run(prompt string, sp sampling, refs []rgb, init *rgb) (*image.
 		defer C.free(p)
 		ci = &C.sd_image_t{width: C.uint32_t(init.w), height: C.uint32_t(init.h), channel: 3, data: (*C.uint8_t)(p)}
 	}
+	var cs *C.float
+	if len(sp.sigmas) > 0 {
+		cs = (*C.float)(C.malloc(C.size_t(len(sp.sigmas)) * 4))
+		defer C.free(unsafe.Pointer(cs))
+		copy(unsafe.Slice((*float32)(unsafe.Pointer(cs)), len(sp.sigmas)), sp.sigmas)
+	}
 	var out C.sd_image_t
 	if C.av_generate(e.ctx, cp, cn, C.int(sp.w), C.int(sp.h), C.int(sp.steps), C.float(sp.cfg), csa, csc,
-		C.int(btoi(sp.euler)), C.longlong(sp.seed), cr, C.int(len(refs)), ci, C.float(sp.strength), C.int(btoi(sp.tile)), &out) == 0 {
+		C.int(btoi(sp.euler)), C.longlong(sp.seed), cr, C.int(len(refs)), ci, C.float(sp.strength), C.int(btoi(sp.tile)),
+		cs, C.int(len(sp.sigmas)), &out) == 0 {
 		return nil, lastErr("the image could not be generated")
 	}
 	defer C.free(unsafe.Pointer(out.data))

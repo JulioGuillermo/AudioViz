@@ -25,7 +25,7 @@ func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 func runImage(args []string) {
 	fs := flag.NewFlagSet("image", flag.ExitOnError)
 	prompt := fs.String("p", "", "Prompt: what the image shows")
-	model := fs.String("model", "zimage", "Model: zimage (Z-Image Turbo), klein (FLUX.2 klein 4B), qwen (Qwen Image 2.1)")
+	model := fs.String("model", "zimage", "Model: zimage (Z-Image Turbo), klein (FLUX.2 klein 4B), qwen (Qwen Image 2.1), qwen-turbo (Qwen Image 2.1 Turbo), klein3 (FLUX.3 Image Klein), moss (MOSS-Image)")
 	out := fs.String("o", "image.png", "Output .png file")
 	w := fs.Int("W", 1024, "Width (rounded to a multiple of 32)")
 	h := fs.Int("H", 576, "Height")
@@ -56,7 +56,7 @@ func runImage(args []string) {
 		*prompt = strings.Join(fs.Args(), " ")
 	}
 	if *prompt == "" {
-		fmt.Println(`Usage: audioviz image -p "prompt" [--model zimage|klein|qwen] [-r ref.png]... [-W 1024 -H 576] [--steps N] [--seed N] [-o image.png]`)
+		fmt.Println(`Usage: audioviz image -p "prompt" [--model zimage|klein|klein3|qwen|qwen-turbo|moss] [-r ref.png]... [-W 1024 -H 576] [--steps N] [--seed N] [-o image.png]`)
 		fmt.Println("       audioviz image --list")
 		os.Exit(1)
 	}

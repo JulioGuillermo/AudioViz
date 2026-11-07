@@ -1,0 +1,718 @@
+diff --git a/src/ggml-sycl/dit-fuse.cpp b/src/ggml-sycl/dit-fuse.cpp
+new file mode 100644
+index 0000000..d1ea716
+--- /dev/null
++++ b/src/ggml-sycl/dit-fuse.cpp
+@@ -0,0 +1,437 @@
++// Fusions for diffusion transformers (AudioViz): the chains around each norm of a DiT block,
++//   [SCALE s] -> RMS_NORM -> MUL(weight) -> ... -> MUL(gate / modulation) [-> ADD(residual / shift)]
++// in one pass over the row: out = rms(s*x) * w * g (+ r), g and r broadcast. The nodes between the
++// two MULs (the gate's TANH, a CONT of the modulation vector: tiny and independent of the chain)
++// run first. ggml-sycl fused only RMS_NORM + MUL, leaving a SCALE before and a MUL + ADD after
++// (~4 ms of the ~5 per norm on a 3840 x 4128 Z-Image row block, four norms per layer).
++// GGML_SYCL_DIT_FUSE=0 turns it off (to compare).
++
++#include "common.hpp"
++#include "ggml-impl.h"
++#include "dit-fuse.hpp"
++
++#include <cstring>
++
++namespace {
++
++bool f32_rows(const ggml_tensor * t) {
++    return t && t->type == GGML_TYPE_F32 && t->nb[0] == sizeof(float) && t->nb[1] % sizeof(float) == 0 &&
++           t->nb[2] % sizeof(float) == 0 && t->nb[3] % sizeof(float) == 0;
++}
++
++// b broadcasts over a (ggml_can_repeat), with float rows
++bool bcast(const ggml_tensor * b, const ggml_tensor * a) {
++    return f32_rows(b) && ggml_can_repeat(b, a);
++}
++
++const ggml_tensor * other_src(const ggml_tensor * op, const ggml_tensor * one) {
++    if (op->src[0] == one) return op->src[1];
++    if (op->src[1] == one) return op->src[0];
++    return nullptr;
++}
++
++bool fuse_on() {
++    static const bool on = [] {
++        const char * e = getenv("GGML_SYCL_DIT_FUSE");
++        return !(e && e[0] == 0x30);
++    }();
++    return on;
++}
++
++// one consumer, no requested output; an in-place result (a view of its own first source, as
++// ggml_*_inplace makes) counts like a plain one: ggml_node_has_n_uses refuses every view
++bool one_use(const ggml_cgraph * g, int idx) {
++    const ggml_tensor * t = g->nodes[idx];
++    return ggml_node_get_use_count(g, idx) == 1 && !(t->flags & GGML_TENSOR_FLAG_OUTPUT) &&
++           (!t->view_src || t->view_src == t->src[0] || (t->src[0] && t->view_src == t->src[0]->view_src));
++}
++
++bool uses(const ggml_tensor * t, const ggml_tensor * a, const ggml_tensor * b, const ggml_tensor * c) {
++    for (int k = 0; k < GGML_MAX_SRC; k++) {
++        const ggml_tensor * s = t->src[k];
++        while (s) {
++            if (s == a || s == b || s == c) return true;
++            s = s->view_src;
++        }
++    }
++    return false;
++}
++
++struct ChainArgs {
++    const char * x;  int64_t xnb1, xnb2, xnb3;
++    const char * w;
++    const char * g;  int64_t gne0, gne1, gne2, gne3, gnb1, gnb2, gnb3;
++    const char * r;  int64_t rne0, rne1, rne2, rne3, rnb1, rnb2, rnb3;
++    float *      dst; int64_t dnb1, dnb2, dnb3;  // (in floats)
++    int64_t      D, ne1, ne2, ne3;
++    float        s, eps;
++    bool         self;  // + the normed row itself: modulation m + m*s = m*(1+s)
++};
++
++template <int WG>
++void chain_kernel(const ChainArgs a, const sycl::nd_item<1> & it) {
++    const int64_t row = it.get_group(0);
++    const int     lid = it.get_local_id(0);
++    const int64_t i1  = row % a.ne1;
++    const int64_t i2  = (row / a.ne1) % a.ne2;
++    const int64_t i3  = row / (a.ne1 * a.ne2);
++    const float * x   = reinterpret_cast<const float *>(a.x + i1 * a.xnb1 + i2 * a.xnb2 + i3 * a.xnb3);
++    float         sum = 0.0f;
++    for (int64_t c = lid; c < a.D; c += WG) {
++        const float v = x[c] * a.s;
++        sum += v * v;
++    }
++    sum             = sycl::reduce_over_group(it.get_group(), sum, sycl::plus<float>());
++    const float k   = a.s * sycl::rsqrt(sum / a.D + a.eps);
++    const float * w = reinterpret_cast<const float *>(a.w);
++    const float * g = a.g ? reinterpret_cast<const float *>(a.g + (i1 % a.gne1) * a.gnb1 + (i2 % a.gne2) * a.gnb2 +
++                                                            (i3 % a.gne3) * a.gnb3) : nullptr;
++    const float * r = a.r ? reinterpret_cast<const float *>(a.r + (i1 % a.rne1) * a.rnb1 + (i2 % a.rne2) * a.rnb2 +
++                                                            (i3 % a.rne3) * a.rnb3) : nullptr;
++    float * o = a.dst + i1 * a.dnb1 + i2 * a.dnb2 + i3 * a.dnb3;
++    for (int64_t c = lid; c < a.D; c += WG) {
++        const float b = x[c] * k * w[c];
++        float       v = b;
++        if (g) v *= g[c % a.gne0];
++        if (a.self) v += b;
++        if (r) v += r[c % a.rne0];
++        o[c] = v;
++    }
++}
++
++}  // namespace
++
++int ggml_sycl_dit_norm_chain(ggml_backend_sycl_context & ctx, ggml_cgraph * cgraph, int i,
++                             bool (*compute)(ggml_backend_sycl_context &, ggml_tensor *)) {
++    if (!fuse_on()) return 0;
++    const int n = cgraph->n_nodes;
++    // GGML_SYCL_DIT_FUSE_DEBUG=1: why a chain at a wide RMS_NORM is not taken (first 40)
++    static const bool dbg = [] { const char * e = getenv("GGML_SYCL_DIT_FUSE_DEBUG"); return e && e[0] == 0x31; }();
++    static int dbg_n = 0;
++    auto reject = [&](int why) {
++        const ggml_tensor * t = cgraph->nodes[i];
++        if (dbg && dbg_n < 40 && t->ne[0] >= 1024 && t->ne[1] > 64) {
++            dbg_n++;
++            GGML_LOG_INFO("dit-fuse: node %d %s %s: no (%d)\n", i, ggml_op_name(t->op), t->name, why);
++        }
++        return 0;
++    };
++    int       k = i;
++    ggml_tensor * scale = nullptr;
++    if (cgraph->nodes[k]->op == GGML_OP_SCALE) {
++        scale = cgraph->nodes[k];
++        float bias;
++        std::memcpy(&bias, scale->op_params + 1, sizeof bias);
++        if (bias != 0.0f || !f32_rows(scale->src[0]) || !ggml_is_contiguous(scale) || k + 1 >= n ||
++            cgraph->nodes[k + 1]->op != GGML_OP_RMS_NORM || cgraph->nodes[k + 1]->src[0] != scale ||
++            !one_use(cgraph, k)) {
++            return reject(2);
++        }
++        k++;
++    }
++    ggml_tensor * norm = cgraph->nodes[k];
++    if (norm->op != GGML_OP_RMS_NORM || k + 1 >= n || !one_use(cgraph, k)) return reject(3);
++    ggml_tensor * m1 = cgraph->nodes[k + 1];
++    const ggml_tensor * x = scale ? scale->src[0] : norm->src[0];
++    if (m1->op != GGML_OP_MUL || !f32_rows(x) || norm->type != GGML_TYPE_F32 || !ggml_is_contiguous(m1) ||
++        !ggml_are_same_shape(norm, m1)) {
++        return reject(4);
++    }
++    const ggml_tensor * w = other_src(m1, norm);
++    if (!w || w->type != GGML_TYPE_F32 || !ggml_is_contiguous(w) || ggml_nelements(w) != x->ne[0]) return reject(5);
++    // the gate: a MUL of m1 within the next few nodes, those in between independent of the chain
++    int j = k + 2;
++    for (; j < n && j <= k + 10; j++) {
++        ggml_tensor * t = cgraph->nodes[j];
++        if (t->op == GGML_OP_MUL && (t->src[0] == m1 || t->src[1] == m1)) break;
++        if (uses(t, scale, norm, m1)) return reject(6);
++    }
++    // m1's consumers: the gate MUL alone, or (modulation) that MUL and the ADD right after it
++    const int  m1_uses = ggml_node_get_use_count(cgraph, k + 1);
++    const bool m1_ok   = !(m1->flags & GGML_TENSOR_FLAG_OUTPUT) && (!m1->view_src || m1->view_src == norm);
++    if (j >= n || j > k + 10 || !m1_ok || (m1_uses != 1 && m1_uses != 2)) {
++        static int shown = 0;
++        static const bool dbg7 = [] { const char * e = getenv("GGML_SYCL_DIT_FUSE_DEBUG"); return e && e[0] == 0x31; }();
++        if (dbg7 && norm->ne[0] >= 1024 && norm->ne[1] >= 1024 && shown++ < 3) {
++            for (int q = k; q < n && q <= k + 8; q++) {
++                const ggml_tensor * t = cgraph->nodes[q];
++                GGML_LOG_INFO("dit-fuse:   [%d] %s %s uses=%d view_src=%s src0=%s src1=%s\n", q - k, ggml_op_name(t->op), t->name,
++                              ggml_node_get_use_count(cgraph, q), t->view_src ? t->view_src->name : "-",
++                              t->src[0] ? t->src[0]->name : "-", t->src[1] ? t->src[1]->name : "-");
++            }
++        }
++        return reject(7);
++    }
++    ggml_tensor *       m2 = cgraph->nodes[j];
++    const ggml_tensor * g  = other_src(m2, m1);
++    if (!g || !bcast(g, m1) || !ggml_are_same_shape(m2, m1) || !ggml_is_contiguous(m2)) return reject(8);
++    ggml_tensor *       last = m2;
++    const ggml_tensor * r    = nullptr;
++    bool                self = false;
++    if (m1_uses == 2) {
++        ggml_tensor * a = j + 1 < n ? cgraph->nodes[j + 1] : nullptr;
++        if (!a || a->op != GGML_OP_ADD || !one_use(cgraph, j) || !ggml_are_same_shape(a, m2) || !ggml_is_contiguous(a) ||
++            !((a->src[0] == m1 && a->src[1] == m2) || (a->src[0] == m2 && a->src[1] == m1))) {
++            return reject(11);
++        }
++        last = a;
++        self = true;
++    } else if (j + 1 < n && cgraph->nodes[j + 1]->op == GGML_OP_ADD && one_use(cgraph, j)) {
++        ggml_tensor *       a  = cgraph->nodes[j + 1];
++        const ggml_tensor * rr = other_src(a, m2);
++        if (rr && bcast(rr, m2) && ggml_are_same_shape(a, m2) && ggml_is_contiguous(a)) {
++            last = a;
++            r    = rr;
++        }
++    }
++    // the output may share storage with x, g or r (the allocator reuses dead inputs): only the
++    // element-wise same-position case is safe (each thread reads its row before writing it)
++    auto clash = [&](const ggml_tensor * t) {
++        if (!t) return false;
++        const char * a0 = (const char *) t->data;
++        const char * b0 = (const char *) last->data;
++        const bool   ov = a0 < b0 + ggml_nbytes(last) && b0 < a0 + ggml_nbytes(t);
++        return ov && !(a0 == b0 && ggml_are_same_shape(t, last) && ggml_are_same_stride(t, last));
++    };
++    if (clash(x) || clash(g) || clash(r) || clash(w)) return reject(9);
++
++    // the independent nodes in between run first: none may write where the chain still reads (x
++    // was alive for them in the original order, but the allocator may have reused a dead input)
++    auto noop = [](const ggml_tensor * t) {
++        return ggml_is_empty(t) || t->op == GGML_OP_NONE || t->op == GGML_OP_VIEW || t->op == GGML_OP_RESHAPE ||
++               t->op == GGML_OP_PERMUTE || t->op == GGML_OP_TRANSPOSE || (t->flags & GGML_TENSOR_FLAG_COMPUTE) == 0;
++    };
++    auto overlap = [](const ggml_tensor * p, const ggml_tensor * q) {
++        const char * a0 = (const char *) p->data;
++        const char * b0 = (const char *) q->data;
++        return a0 < b0 + ggml_nbytes(q) && b0 < a0 + ggml_nbytes(p);
++    };
++    for (int b = k + 2; b < j; b++) {
++        const ggml_tensor * t = cgraph->nodes[b];
++        if (!noop(t) && (overlap(t, x) || overlap(t, w) || (r && overlap(t, r)))) return reject(10);
++    }
++    for (int b = k + 2; b < j; b++) {
++        ggml_tensor * t = cgraph->nodes[b];
++        if (noop(t)) continue;
++        if (!compute(ctx, t)) return -1;
++    }
++
++    ChainArgs a{};
++    a.x = (const char *) x->data; a.xnb1 = x->nb[1]; a.xnb2 = x->nb[2]; a.xnb3 = x->nb[3];
++    a.w = (const char *) w->data;
++    a.g = (const char *) g->data;
++    a.gne0 = g->ne[0]; a.gne1 = g->ne[1]; a.gne2 = g->ne[2]; a.gne3 = g->ne[3];
++    a.gnb1 = g->nb[1]; a.gnb2 = g->nb[2]; a.gnb3 = g->nb[3];
++    if (r) {
++        a.r = (const char *) r->data;
++        a.rne0 = r->ne[0]; a.rne1 = r->ne[1]; a.rne2 = r->ne[2]; a.rne3 = r->ne[3];
++        a.rnb1 = r->nb[1]; a.rnb2 = r->nb[2]; a.rnb3 = r->nb[3];
++    }
++    a.dst = (float *) last->data;
++    a.dnb1 = last->nb[1] / sizeof(float); a.dnb2 = last->nb[2] / sizeof(float); a.dnb3 = last->nb[3] / sizeof(float);
++    a.D = x->ne[0]; a.ne1 = x->ne[1]; a.ne2 = x->ne[2]; a.ne3 = x->ne[3];
++    a.s    = 1.0f;
++    a.self = self;
++    if (scale) std::memcpy(&a.s, scale->op_params, sizeof a.s);
++    std::memcpy(&a.eps, norm->op_params, sizeof a.eps);
++
++    SYCL_CHECK(ggml_sycl_set_device(ctx.device));
++    constexpr int WG   = 256;
++    const int64_t rows = a.ne1 * a.ne2 * a.ne3;
++    ctx.stream()->parallel_for(sycl::nd_range<1>(sycl::range<1>(rows * WG), sycl::range<1>(WG)),
++                               [=](sycl::nd_item<1> it) { chain_kernel<WG>(a, it); });
++    // nodes consumed after i
++    return (last == m2 ? j : j + 1) - i;
++}
++
++// ---- the rest of a DiT layer's small launches
++
++namespace {
++
++bool noop_node(const ggml_tensor * t) {
++    return ggml_is_empty(t) || t->op == GGML_OP_NONE || t->op == GGML_OP_VIEW || t->op == GGML_OP_RESHAPE ||
++           t->op == GGML_OP_PERMUTE || t->op == GGML_OP_TRANSPOSE || (t->flags & GGML_TENSOR_FLAG_COMPUTE) == 0;
++}
++
++// the next node after idx that computes something (-1: none)
++int next_compute(const ggml_cgraph * g, int idx) {
++    for (int k = idx + 1; k < g->n_nodes; k++) {
++        if (!noop_node(g->nodes[k])) return k;
++    }
++    return -1;
++}
++
++// t reaches base through views only
++bool views_of(const ggml_tensor * t, const ggml_tensor * base) {
++    for (; t; t = t->view_src) {
++        if (t == base) return true;
++        if (t->op != GGML_OP_VIEW && t->op != GGML_OP_RESHAPE && t->op != GGML_OP_PERMUTE && t->op != GGML_OP_TRANSPOSE &&
++            t->view_src == nullptr) {
++            return false;
++        }
++    }
++    return false;
++}
++
++float scale_of(const ggml_tensor * t, float * bias) {
++    float s;
++    std::memcpy(&s, t->op_params, sizeof s);
++    std::memcpy(bias, t->op_params + 1, sizeof *bias);
++    return s;
++}
++
++}  // namespace
++
++// CONT(strided v) -> SCALE -> (permute) -> CPY to f16: the attention's V, read once and written
++// once in the layout the attention takes (~3 of the ~7 ms on Z-Image)
++int ggml_sycl_dit_cont_scale_cast(ggml_backend_sycl_context & ctx, ggml_cgraph * cgraph, int i) {
++    if (!fuse_on()) return 0;
++    ggml_tensor * c = cgraph->nodes[i];
++    if (c->op != GGML_OP_CONT || c->type != GGML_TYPE_F32 || !c->src[0] || c->src[0]->type != GGML_TYPE_F32 ||
++        ggml_node_get_use_count(cgraph, i) != 1) {
++        return 0;
++    }
++    const int is = next_compute(cgraph, i);
++    if (is < 0) return 0;
++    ggml_tensor * s = cgraph->nodes[is];
++    float         bias;
++    if (s->op != GGML_OP_SCALE || !views_of(s->src[0], c) || ggml_node_get_use_count(cgraph, is) != 1 ||
++        !ggml_is_contiguous(s) || s->type != GGML_TYPE_F32) {
++        return 0;
++    }
++    const float sc = scale_of(s, &bias);
++    if (bias != 0.0f) return 0;
++    const int ip = next_compute(cgraph, is);
++    if (ip < 0) return 0;
++    ggml_tensor * p = cgraph->nodes[ip];
++    if (p->op != GGML_OP_CPY || p->type != GGML_TYPE_F16 || !ggml_is_contiguous(p) || !views_of(p->src[0], s)) return 0;
++    // CPY copies into its second source (its own data is that view): the f16 destination
++    const ggml_tensor * pv  = p->src[0];  // a (permuted) view of s's storage
++    const ggml_tensor * v   = c->src[0];  // strided source
++    const ggml_tensor * dst = p;
++    if ((const char *) dst->data < (const char *) v->data + ggml_nbytes(v) &&
++        (const char *) v->data < (const char *) dst->data + ggml_nbytes(dst)) {
++        return 0;  // (the output reuses the source's storage)
++    }
++    const int64_t base = ((const char *) pv->data - (const char *) s->data) / (int64_t) sizeof(float);
++    const int64_t pn0 = pv->ne[0], pn1 = pv->ne[1], pn2 = pv->ne[2];
++    const int64_t pb0 = pv->nb[0] / 4, pb1 = pv->nb[1] / 4, pb2 = pv->nb[2] / 4, pb3 = pv->nb[3] / 4;
++    const int64_t sn0 = s->ne[0], sn1 = s->ne[1], sn2 = s->ne[2];
++    const int64_t vb0 = v->nb[0], vb1 = v->nb[1], vb2 = v->nb[2], vb3 = v->nb[3];
++    const char *  vd  = (const char *) v->data;
++    sycl::half *  od  = (sycl::half *) dst->data;
++    const int64_t total = ggml_nelements(dst);
++    SYCL_CHECK(ggml_sycl_set_device(ctx.device));
++    // each output row is one row of s (the permute keeps dim 0): a group per row, the row's place
++    // in v worked out once
++    if (pb0 == 1 && pn0 == sn0 && base % sn0 == 0) {
++        constexpr int WG   = 64;
++        const int64_t rows = total / pn0;
++        ctx.stream()->parallel_for(sycl::nd_range<1>(sycl::range<1>(rows * WG), sycl::range<1>(WG)), [=](sycl::nd_item<1> it) {
++            const int64_t row = it.get_group(0);
++            const int     lid = it.get_local_id(0);
++            const int64_t i1 = row % pn1, i2 = (row / pn1) % pn2, i3 = row / (pn1 * pn2);
++            const int64_t L  = (base + i1 * pb1 + i2 * pb2 + i3 * pb3) / sn0;  // s row
++            const int64_t j1 = L % sn1, j2 = (L / sn1) % sn2, j3 = L / (sn1 * sn2);
++            const char *  in = vd + j1 * vb1 + j2 * vb2 + j3 * vb3;
++            sycl::half *  o  = od + row * pn0;
++            for (int64_t c = lid; c < pn0; c += WG) {
++                o[c] = sycl::half(*reinterpret_cast<const float *>(in + c * vb0) * sc);
++            }
++        });
++        return ip - i;
++    }
++    ctx.stream()->parallel_for(sycl::range<1>(total), [=](sycl::id<1> id) {
++        const int64_t o  = id[0];
++        const int64_t i0 = o % pn0, i1 = (o / pn0) % pn1, i2 = (o / (pn0 * pn1)) % pn2, i3 = o / (pn0 * pn1 * pn2);
++        const int64_t L  = base + i0 * pb0 + i1 * pb1 + i2 * pb2 + i3 * pb3;  // in s (contiguous, = c's shape)
++        const int64_t j0 = L % sn0, j1 = (L / sn0) % sn1, j2 = (L / (sn0 * sn1)) % sn2, j3 = L / (sn0 * sn1 * sn2);
++        const float   x  = *reinterpret_cast<const float *>(vd + j0 * vb0 + j1 * vb1 + j2 * vb2 + j3 * vb3);
++        od[o]            = sycl::half(x * sc);
++    });
++    return ip - i;
++}
++
++// SCALE -> (views) -> SCALE: one pass with the product (after the attention, before the out
++// projection)
++int ggml_sycl_dit_scale_scale(ggml_backend_sycl_context & ctx, ggml_cgraph * cgraph, int i) {
++    if (!fuse_on()) return 0;
++    ggml_tensor * a = cgraph->nodes[i];
++    float         b1, b2;
++    if (a->op != GGML_OP_SCALE || a->type != GGML_TYPE_F32 || !ggml_is_contiguous(a) || !a->src[0] ||
++        a->src[0]->type != GGML_TYPE_F32 || !ggml_is_contiguous(a->src[0]) || ggml_node_get_use_count(cgraph, i) != 1) {
++        return 0;
++    }
++    const float s1 = scale_of(a, &b1);
++    const int   ib = next_compute(cgraph, i);
++    if (ib < 0 || b1 != 0.0f) return 0;
++    ggml_tensor * b = cgraph->nodes[ib];
++    if (b->op != GGML_OP_SCALE || !views_of(b->src[0], a) || !ggml_is_contiguous(b) || !ggml_is_contiguous(b->src[0]) ||
++        ggml_nelements(b) != ggml_nelements(a)) {
++        return 0;
++    }
++    const float s2 = scale_of(b, &b2);
++    if (b2 != 0.0f) return 0;
++    const float * x = (const float *) a->src[0]->data;
++    float *       y = (float *) b->data;
++    const float   s = s1 * s2;
++    SYCL_CHECK(ggml_sycl_set_device(ctx.device));
++    ctx.stream()->parallel_for(sycl::range<1>(ggml_nelements(b)), [=](sycl::id<1> id) { y[id[0]] = x[id[0]] * s; });
++    return ib - i;
++}
++
++// SWIGLU -> SCALE (the 1/128 before Z-Image's w2): silu(a) * b * s in one pass
++int ggml_sycl_dit_swiglu_scale(ggml_backend_sycl_context & ctx, ggml_cgraph * cgraph, int i) {
++    if (!fuse_on()) return 0;
++    ggml_tensor * gl = cgraph->nodes[i];
++    if (gl->op != GGML_OP_GLU || ggml_get_glu_op(gl) != GGML_GLU_OP_SWIGLU || gl->type != GGML_TYPE_F32 ||
++        !ggml_is_contiguous(gl) || ggml_node_get_use_count(cgraph, i) != 1) {
++        return 0;
++    }
++    const int is = next_compute(cgraph, i);
++    if (is < 0) return 0;
++    ggml_tensor * s = cgraph->nodes[is];
++    float         bias;
++    if (s->op != GGML_OP_SCALE || !views_of(s->src[0], gl) || !ggml_is_contiguous(s) ||
++        ggml_nelements(s) != ggml_nelements(gl)) {
++        return 0;
++    }
++    const float sc = scale_of(s, &bias);
++    if (bias != 0.0f) return 0;
++    const ggml_tensor * s0 = gl->src[0];
++    const ggml_tensor * s1 = gl->src[1];
++    const bool swapped = ggml_get_op_params_i32(gl, 1) != 0;
++    if (!f32_rows(s0) || (s1 && !f32_rows(s1))) return 0;
++    const int64_t nc = gl->ne[0], nr = ggml_nrows(gl);
++    if (ggml_nrows(s0) != nr || (s1 && ggml_nrows(s1) != nr) || s0->ne[1] * s0->ne[2] * s0->ne[3] != nr) return 0;
++    const char * a0 = (const char *) s0->data;
++    const char * b0 = s1 ? (const char *) s1->data : (const char *) s0->data;
++    int64_t      aoff = 0, boff = 0;
++    if (s1) {
++        if (swapped) std::swap(a0, b0);
++    } else {
++        aoff = swapped ? nc : 0;
++        boff = swapped ? 0 : nc;
++    }
++    const int64_t an1 = s0->ne[1], an2 = s0->ne[2];
++    const int64_t ab1 = s0->nb[1], ab2 = s0->nb[2], ab3 = s0->nb[3];
++    const int64_t bb1 = s1 ? s1->nb[1] : ab1, bb2 = s1 ? s1->nb[2] : ab2, bb3 = s1 ? s1->nb[3] : ab3;
++    const int64_t a1 = swapped && s1 ? bb1 : ab1, a2 = swapped && s1 ? bb2 : ab2, a3 = swapped && s1 ? bb3 : ab3;
++    const int64_t c1 = swapped && s1 ? ab1 : bb1, c2 = swapped && s1 ? ab2 : bb2, c3 = swapped && s1 ? ab3 : bb3;
++    float *       y = (float *) s->data;
++    SYCL_CHECK(ggml_sycl_set_device(ctx.device));
++    constexpr int WG = 256;
++    ctx.stream()->parallel_for(sycl::nd_range<1>(sycl::range<1>(nr * WG), sycl::range<1>(WG)), [=](sycl::nd_item<1> it) {
++        const int64_t row = it.get_group(0);
++        const int     lid = it.get_local_id(0);
++        const int64_t r1 = row % an1, r2 = (row / an1) % an2, r3 = row / (an1 * an2);
++        const float * xa = reinterpret_cast<const float *>(a0 + r1 * a1 + r2 * a2 + r3 * a3) + aoff;
++        const float * xg = reinterpret_cast<const float *>(b0 + r1 * c1 + r2 * c2 + r3 * c3) + boff;
++        float *       yo = y + row * nc;
++        for (int64_t c = lid; c < nc; c += WG) {
++            const float x = xa[c];
++            yo[c]         = x / (1.0f + sycl::native::exp(-x)) * xg[c] * sc;
++        }
++    });
++    return is - i;
++}
+diff --git a/src/ggml-sycl/dit-fuse.hpp b/src/ggml-sycl/dit-fuse.hpp
+new file mode 100644
+index 0000000..b422bc9
+--- /dev/null
++++ b/src/ggml-sycl/dit-fuse.hpp
+@@ -0,0 +1,15 @@
++#pragma once
++// Fusions for diffusion transformers (dit-fuse.cpp)
++#include "common.hpp"
++
++// At node i (a SCALE or RMS_NORM): [SCALE] RMS_NORM MUL(w) ... MUL(g) [ADD(r)] as one kernel (the
++// nodes in between, independent of the chain, computed first with compute). Returns how many nodes
++// after i it consumed (0: no match, nothing done; -1: an in-between node failed).
++int ggml_sycl_dit_norm_chain(ggml_backend_sycl_context & ctx, ggml_cgraph * cgraph, int i,
++                             bool (*compute)(ggml_backend_sycl_context &, ggml_tensor *));
++
++// CONT -> SCALE -> (permute) -> CPY f16 at node i (a CONT); SCALE -> SCALE (a SCALE); SWIGLU ->
++// SCALE (a GLU). Each returns the nodes consumed after i (0: no match, nothing done).
++int ggml_sycl_dit_cont_scale_cast(ggml_backend_sycl_context & ctx, ggml_cgraph * cgraph, int i);
++int ggml_sycl_dit_scale_scale(ggml_backend_sycl_context & ctx, ggml_cgraph * cgraph, int i);
++int ggml_sycl_dit_swiglu_scale(ggml_backend_sycl_context & ctx, ggml_cgraph * cgraph, int i);
+diff --git a/src/ggml-sycl/sd-ext.cpp b/src/ggml-sycl/sd-ext.cpp
+new file mode 100644
+index 0000000..636de25
+--- /dev/null
++++ b/src/ggml-sycl/sd-ext.cpp
+@@ -0,0 +1,248 @@
++// stable-diffusion.cpp's custom operators (ggml-ext) on SYCL: without them the SYCL backend runs the
++// generic graphs instead (RoPE through a table: REPEAT + MUL + ADD + CONT, plus a permute and a cast
++// to f16 before the attention). stable-diffusion.cpp hands the operators over through the registry's
++// "ggml_ext_sycl_register_v1" (scripts/ml/patches-sd/sycl-ext.patch); GGML_SYCL_SD_EXT=0 turns
++// them off (to compare).
++//
++//   sd.rope_apply.v1: x [D, heads, tokens, N] rotated by pe [2, 2, D/2', tokens] into a contiguous
++//   [D, tokens, heads * N] (the attention's layout). Fused, as on Vulkan and the CPU: RMS_NORM +
++//   MUL(weight) + rope (+ SCALE) (+ CPY to f16): the q/k norm, the rotation, the attention scale and
++//   the cast in one pass over the row.
++
++#include "common.hpp"
++#include "ggml-backend-impl.h"
++#include "ggml-ext.h"
++
++#include <cstring>
++
++namespace {
++
++ggml_ext_op_t g_rope_op = nullptr;
++
++bool aligned4(const ggml_tensor * t) {
++    for (int i = 0; i < GGML_MAX_DIMS; i++) {
++        if (t->nb[i] % sizeof(float)) {
++            return false;
++        }
++    }
++    return true;
++}
++
++// rope_infer of stable-diffusion.cpp (src/core/ggml_extensions.cpp), plus a contiguous f32 output
++bool rope_ok(const ggml_tensor * node) {
++    if (!node || !g_rope_op || ggml_ext_op_get(node) != g_rope_op || node->type != GGML_TYPE_F32 || !ggml_is_contiguous(node)) {
++        return false;
++    }
++    const ggml_tensor * x  = node->src[0];
++    const ggml_tensor * pe = node->src[1];
++    return x && pe && x->type == GGML_TYPE_F32 && pe->type == GGML_TYPE_F32 && x->ne[0] % 2 == 0 && pe->ne[0] == 2 &&
++           pe->ne[1] == 2 && pe->ne[2] > 0 && pe->ne[2] <= x->ne[0] / 2 && pe->ne[3] == x->ne[2] && node->ne[0] == x->ne[0] &&
++           node->ne[1] == x->ne[2] && node->ne[2] == x->ne[1] * x->ne[3] && node->ne[3] == 1 && aligned4(x) && aligned4(pe);
++}
++
++bool rope_supports(ggml_backend_dev_t, const ggml_tensor * node, void *) {
++    return rope_ok(node);
++}
++
++float fparam(const ggml_tensor * t, int i) {
++    float v;
++    std::memcpy(&v, t->op_params + i, sizeof v);
++    return v;
++}
++
++// [RMS_NORM, MUL(weight), rope] (+ SCALE without bias) (+ CPY to a contiguous f16 of the same shape)
++int rope_match(ggml_backend_dev_t, const ggml_cgraph * graph, int first, void *) {
++    auto *    g = const_cast<ggml_cgraph *>(graph);
++    const int n = ggml_graph_n_nodes(g);
++    if (first + 2 >= n) {
++        return 0;
++    }
++    const ggml_tensor * norm = ggml_graph_node(g, first);
++    const ggml_tensor * mul  = ggml_graph_node(g, first + 1);
++    const ggml_tensor * rope = ggml_graph_node(g, first + 2);
++    if (norm->op != GGML_OP_RMS_NORM || norm->type != GGML_TYPE_F32 || !norm->src[0] || norm->src[0]->type != GGML_TYPE_F32 ||
++        !aligned4(norm->src[0]) || mul->op != GGML_OP_MUL || mul->type != GGML_TYPE_F32 || !ggml_are_same_shape(norm, mul) ||
++        rope->src[0] != mul || !rope_ok(rope)) {
++        return 0;
++    }
++    const ggml_tensor * w = mul->src[0] == norm ? mul->src[1] : (mul->src[1] == norm ? mul->src[0] : nullptr);
++    if (!w || w->type != GGML_TYPE_F32 || w->ne[0] != norm->ne[0] || ggml_nelements(w) != w->ne[0] || !aligned4(w)) {
++        return 0;
++    }
++    int count = 3;
++    const ggml_tensor * last = rope;
++    if (first + count < n) {
++        const ggml_tensor * s = ggml_graph_node(g, first + count);
++        if (s->op == GGML_OP_SCALE && s->src[0] == rope && s->type == GGML_TYPE_F32 && fparam(s, 1) == 0.0f &&
++            first + count + 1 < n) {
++            const ggml_tensor * c = ggml_graph_node(g, first + count + 1);
++            if (c->op == GGML_OP_CPY && c->src[0] == s && c->type == GGML_TYPE_F16 && ggml_is_contiguous(c) &&
++                ggml_are_same_shape(rope, c)) {
++                return 5;
++            }
++        }
++        if (s->op == GGML_OP_CPY && s->src[0] == last && s->type == GGML_TYPE_F16 && ggml_is_contiguous(s) &&
++            ggml_are_same_shape(rope, s)) {
++            return 4;
++        }
++    }
++    return count;
++}
++
++struct RopeArgs {
++    const char * x;
++    int64_t      xnb0, xnb1, xnb2, xnb3;
++    const char * pe;
++    int64_t      penb0, penb1, penb2, penb3;
++    const char * w;     // norm weight (nullptr: no norm)
++    int64_t      wnb0;
++    float        eps;
++    float        scale;  // output scale
++    int64_t      D, H, T, rows, half;
++    bool         interleaved;
++};
++
++template <typename T, int WG>
++void rope_kernel(const RopeArgs a, T * out, const sycl::nd_item<1> & it) {
++    const int64_t r   = it.get_group(0);
++    const int     lid = it.get_local_id(0);
++    const int64_t tok = r % a.T;
++    const int64_t hd  = (r / a.T) % a.H;
++    const int64_t bt  = r / (a.T * a.H);
++    const char *  in  = a.x + hd * a.xnb1 + tok * a.xnb2 + bt * a.xnb3;
++    const char *  pos = a.pe + tok * a.penb3;
++    T *           o   = out + r * a.D;
++    auto          xv  = [&](int64_t c) { return *reinterpret_cast<const float *>(in + c * a.xnb0); };
++    float         rms = 1.0f;
++    if (a.w) {
++        float s = 0.0f;
++        for (int64_t c = lid; c < a.D; c += WG) {
++            const float v = xv(c);
++            s += v * v;
++        }
++        s   = sycl::reduce_over_group(it.get_group(), s, sycl::plus<float>());
++        rms = sycl::rsqrt(s / a.D + a.eps);
++    }
++    auto val = [&](int64_t c) {
++        float v = xv(c);
++        if (a.w) {
++            v = v * rms * *reinterpret_cast<const float *>(a.w + c * a.wnb0);
++        }
++        return v;
++    };
++    for (int64_t j = lid; j < a.half; j += WG) {
++        const int64_t i0 = a.interleaved ? 2 * j : j;
++        const int64_t i1 = a.interleaved ? 2 * j + 1 : j + a.half;
++        const float   p  = val(i0);
++        const float   q  = val(i1);
++        const char *  m  = pos + j * a.penb2;
++        const float   c  = *reinterpret_cast<const float *>(m);
++        const float   s  = *reinterpret_cast<const float *>(m + a.penb1);
++        float         o0, o1;
++        if (a.interleaved) {
++            const float ns = *reinterpret_cast<const float *>(m + a.penb0);
++            const float c1 = *reinterpret_cast<const float *>(m + a.penb0 + a.penb1);
++            o0             = p * c + q * ns;
++            o1             = p * s + q * c1;
++        } else {
++            o0 = p * c - q * s;
++            o1 = p * s + q * c;
++        }
++        o[i0] = T(o0 * a.scale);
++        o[i1] = T(o1 * a.scale);
++    }
++    for (int64_t c = 2 * a.half + lid; c < a.D; c += WG) {
++        o[c] = T(val(c) * a.scale);
++    }
++}
++
++bool overlaps(const ggml_tensor * a, const ggml_tensor * b) {
++    const char * a0 = (const char *) a->data;
++    const char * b0 = (const char *) b->data;
++    return a0 < b0 + ggml_nbytes(b) && b0 < a0 + ggml_nbytes(a);
++}
++
++ggml_status rope_execute(const ggml_ext_execution_context * ctx, ggml_tensor * const * nodes, int count, void *, void *) {
++    auto *              sctx   = static_cast<ggml_backend_sycl_context *>(ctx->backend->context);
++    const ggml_tensor * norm   = count >= 3 ? nodes[0] : nullptr;
++    const ggml_tensor * mul    = count >= 3 ? nodes[1] : nullptr;
++    const ggml_tensor * rope   = count >= 3 ? nodes[2] : nodes[0];
++    const ggml_tensor * scalen = count == 5 ? nodes[3] : nullptr;
++    ggml_tensor *       dst    = nodes[count - 1];
++    const ggml_tensor * x      = norm ? norm->src[0] : rope->src[0];
++    const ggml_tensor * pe     = rope->src[1];
++    int32_t             inter;
++    std::memcpy(&inter, ggml_ext_op_attributes(rope), sizeof inter);
++
++    RopeArgs a{};
++    a.x = (const char *) x->data;
++    a.xnb0 = x->nb[0]; a.xnb1 = x->nb[1]; a.xnb2 = x->nb[2]; a.xnb3 = x->nb[3];
++    a.pe = (const char *) pe->data;
++    a.penb0 = pe->nb[0]; a.penb1 = pe->nb[1]; a.penb2 = pe->nb[2]; a.penb3 = pe->nb[3];
++    if (norm) {
++        const ggml_tensor * w = mul->src[0] == norm ? mul->src[1] : mul->src[0];
++        a.w    = (const char *) w->data;
++        a.wnb0 = w->nb[0];
++        std::memcpy(&a.eps, norm->op_params, sizeof a.eps);
++    }
++    a.scale       = scalen ? fparam(scalen, 0) : 1.0f;
++    a.D           = x->ne[0];
++    a.H           = x->ne[1];
++    a.T           = x->ne[2];
++    a.rows        = x->ne[1] * x->ne[2] * x->ne[3];
++    a.half        = pe->ne[2];
++    a.interleaved = inter != 0;
++
++    ggml_sycl_set_device(sctx->device);
++    queue_ptr q = sctx->stream();
++    // the output may reuse the input's storage (allocator): then through a scratch buffer
++    const bool scratch = overlaps(dst, x) || overlaps(dst, pe);
++    void *     out     = scratch ? sycl::malloc_device(ggml_nbytes(dst), *q) : dst->data;
++    constexpr int WG   = 64;
++    const sycl::nd_range<1> range(sycl::range<1>(a.rows * WG), sycl::range<1>(WG));
++    if (dst->type == GGML_TYPE_F16) {
++        sycl::half * o = (sycl::half *) out;
++        q->parallel_for(range, [=](sycl::nd_item<1> it) { rope_kernel<sycl::half, WG>(a, o, it); });
++    } else {
++        float * o = (float *) out;
++        q->parallel_for(range, [=](sycl::nd_item<1> it) { rope_kernel<float, WG>(a, o, it); });
++    }
++    if (scratch) {
++        q->memcpy(dst->data, out, ggml_nbytes(dst));
++        q->wait();
++        sycl::free(out, *q);
++    }
++    return GGML_STATUS_SUCCESS;
++}
++
++}  // namespace
++
++// stable-diffusion.cpp's operators, in its order: [0] sd.rope_apply.v1. Registers the SYCL kernels
++// for the device (once, before graphs are allocated).
++extern "C" bool ggml_ext_sycl_register_v1(ggml_backend_dev_t device, const ggml_ext_op_t * ops, int n_ops) {
++    const char * off = getenv("GGML_SYCL_SD_EXT");
++    if ((off && off[0] == '0') || n_ops < 1 || !ops[0]) {
++        return false;
++    }
++    g_rope_op = ops[0];
++
++    ggml_ext_kernel_desc d = {};
++    d.abi_version          = GGML_EXT_ABI_VERSION;
++    d.name                 = "sd.rope_apply.sycl.v1";
++    d.op                   = GGML_OP_CUSTOM;
++    d.custom_op            = g_rope_op;
++    d.priority             = 100;
++    d.supports             = rope_supports;
++    d.execute              = rope_execute;
++    bool ok                = ggml_ext_register_kernel(device, &d);
++
++    d.name      = "sd.rms_norm_mul_rope.sycl.v1";
++    d.op        = GGML_OP_RMS_NORM;
++    d.custom_op = nullptr;
++    d.priority  = 200;
++    d.supports  = nullptr;
++    d.match     = rope_match;
++    ok          = ggml_ext_register_kernel(device, &d) && ok;
++    GGML_LOG_INFO("ggml_ext_sycl: stable-diffusion.cpp operators on SYCL: %s\n", ok ? "rope" : "failed");
++    return ok;
++}
