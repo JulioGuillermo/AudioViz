@@ -37,6 +37,7 @@ func runImage(args []string) {
 	sampler := fs.String("sampler", "", "Sampler: "+strings.Join(imagegen.Samplers, ", "))
 	scheduler := fs.String("scheduler", "", "Scheduler: "+strings.Join(imagegen.Schedulers, ", "))
 	fa := fs.String("fa", "on", "Flash attention: on, off (off is faster on Intel GPUs for small images, but needs much more memory)")
+	fastDec := fs.Bool("fast-decode", false, "Decode with the model's tiny decoder (TAE): much faster, a little less fine detail")
 	initPath := fs.String("init", "", "Starting image (img2img): keeps its composition")
 	strength := fs.Float64("strength", 0.75, "With --init: how much it changes (denoise 0..1)")
 	var refs multiFlag
@@ -61,7 +62,8 @@ func runImage(args []string) {
 		os.Exit(1)
 	}
 	req := imagegen.Request{Model: *model, Prompt: *prompt, Width: *w, Height: *h, Steps: *steps, Seed: *seed,
-		Negative: *neg, CFG: float32(*cfg), Sampler: *sampler, Scheduler: *scheduler, FlashAttn: *fa, Strength: float32(*strength)}
+		Negative: *neg, CFG: float32(*cfg), Sampler: *sampler, Scheduler: *scheduler, FlashAttn: *fa, Strength: float32(*strength),
+		FastDecode: *fastDec}
 	if *initPath != "" {
 		img, err := loadImage(*initPath)
 		if err != nil {

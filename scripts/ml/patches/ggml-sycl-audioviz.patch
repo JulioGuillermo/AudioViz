@@ -1,5 +1,5 @@
 diff --git a/src/ggml-sycl/ggml-sycl.cpp b/src/ggml-sycl/ggml-sycl.cpp
-index 6759af0..f0e9247 100644
+index 6759af0..5a5b3e1 100644
 --- a/src/ggml-sycl/ggml-sycl.cpp
 +++ b/src/ggml-sycl/ggml-sycl.cpp
 @@ -31,6 +31,9 @@
@@ -177,7 +177,7 @@ index 6759af0..f0e9247 100644
  
          const int nodes_to_skip = ggml_sycl_fuse(*sycl_ctx, cgraph, i);
          if (nodes_to_skip != 0) {
-@@ -6443,6 +6574,26 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
+@@ -6443,6 +6574,27 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
                  continue;
              }
          }
@@ -196,6 +196,7 @@ index 6759af0..f0e9247 100644
 +            if (node->op == GGML_OP_CONT) more = ggml_sycl_dit_cont_scale_cast(*sycl_ctx, cgraph, i);
 +            else if (node->op == GGML_OP_SCALE) more = ggml_sycl_dit_scale_scale(*sycl_ctx, cgraph, i);
 +            else if (node->op == GGML_OP_GLU) more = ggml_sycl_dit_swiglu_scale(*sycl_ctx, cgraph, i);
++            else if (node->op == GGML_OP_IM2COL) more = ggml_sycl_im2col_conv(*sycl_ctx, cgraph, i);
 +            if (more > 0) {
 +                i += more;
 +                continue;
@@ -204,7 +205,7 @@ index 6759af0..f0e9247 100644
          if (node->op == GGML_OP_RMS_NORM &&
              ggml_sycl_can_fuse(cgraph, i, { GGML_OP_RMS_NORM, GGML_OP_MUL, GGML_OP_ADD }, {})) {
              ggml_sycl_op_rms_norm_fused_add(*sycl_ctx, node, cgraph->nodes[i + 1], cgraph->nodes[i + 2]);
-@@ -6522,6 +6673,12 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
+@@ -6522,6 +6674,12 @@ static void ggml_backend_sycl_graph_compute_impl(ggml_backend_sycl_context * syc
          }
          GGML_ASSERT(ok);
      }
@@ -217,7 +218,7 @@ index 6759af0..f0e9247 100644
  }
  
  #ifdef GGML_SYCL_GRAPH
-@@ -7579,9 +7736,16 @@ bool ggml_backend_sycl_comm_allreduce_tensor(void * comm_ctx_v, struct ggml_tens
+@@ -7579,9 +7737,16 @@ bool ggml_backend_sycl_comm_allreduce_tensor(void * comm_ctx_v, struct ggml_tens
  catch (const sycl::exception &) { return false; }
  catch (...)                     { return false; }
  

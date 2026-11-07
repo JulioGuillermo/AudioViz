@@ -6,7 +6,7 @@ import { Icon } from './icons.js';
 import { Select } from './fields.js';
 import { t } from './i18n.js';
 import { Modal, GenSteps, fmtDur, fmtSize, fmtDate, thumbURL } from './dialogs.js';
-import { BoxLayout, layoutPrompt } from './layout.js';
+import { BoxCanvas, BoxFields, layoutPrompt } from './layout.js';
 
 // Image generation: a prompt (and optionally reference images to edit or combine) becomes an
 // image in the project's images/ folder, made inside the binary on the GPU. The images can then be
@@ -29,7 +29,7 @@ function imageSize(aspect, quality, vw, vh) {
 }
 
 // Advanced settings: empty = the model's default
-const ADV0 = { fa: 'on', cfg: '', sampler: '', scheduler: '', negative: '', init: '', strength: 0.75 };
+const ADV0 = { fa: 'on', cfg: '', sampler: '', scheduler: '', negative: '', init: '', strength: 0.75, fastDec: 'off' };
 const loadAdv = () => {
   let a = { ...ADV0 };
   try { a = { ...ADV0, ...JSON.parse(localStorage.getItem('audioviz.img.adv') || '{}'), init: '' }; } catch (e) { /* ignore */ }
@@ -50,6 +50,8 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onRun, onU
   // boxes placing elements (models with a layout format: FLUX.3 Image Klein, MOSS-Image)
   const [boxes, setBoxesState] = useState(() => { try { return JSON.parse(recall('boxes', '[]')); } catch (e) { return []; } });
   const setBoxes = (b) => { setBoxesState(b); remember('boxes', JSON.stringify(b)); };
+  const [boxSel, setBoxSel] = useState(-1);
+  const [boxesOpen, setBoxesOpen] = useState(() => recall('boxesOpen', '') === '1');
   const [aspect, setAspect] = useState(() => recall('aspect', 'video'));
   const [quality, setQuality] = useState(() => recall('quality', 'fast'));
   const [steps, setSteps] = useState('');
@@ -124,7 +126,7 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onRun, onU
     const layout = fam && fam.layout ? fam.layout : '';
     onStart({ model, prompt: layoutPrompt(layout, prompt, boxes, w, h), refs: refs.slice(0, maxRefs), width: w, height: h, steps: +steps || 0, seed: seed === '' ? -1 : +seed,
       flashAttn: adv.fa, cfg: +adv.cfg || 0, sampler: adv.sampler, scheduler: adv.scheduler, negative: adv.negative.trim(),
-      init: adv.init, strength: adv.init ? +adv.strength : 0 });
+      init: adv.init, strength: adv.init ? +adv.strength : 0, fastDecode: adv.fastDec === 'on' && !!(fam && fam.fastDecode) });
   };
   const reuse = (im) => {
     if (im.model) set('model', setModel)(im.model);
@@ -186,11 +188,11 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onRun, onU
     <label class="ig-l">${t('Prompt')}</label>
     <textarea class="ig-prompt" rows="6" value=${prompt} placeholder=${t('What the image shows: subject, setting, light, style… (English works best)')}
       onInput=${(e) => setPrompt(e.target.value)} onKeyDown=${(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && prompt.trim() && !running) start(); }}></textarea>
-    ${fam && fam.layout && html`<details class="ig-adv bx-wrap" open=${boxes.length > 0 || recall('boxesOpen', '') === '1'}
-        onToggle=${(e) => remember('boxesOpen', e.target.open ? '1' : '')}>
+    ${fam && fam.layout && html`<details class="ig-adv bx-wrap" open=${boxesOpen}
+        onToggle=${(e) => { setBoxesOpen(e.target.open); remember('boxesOpen', e.target.open ? '1' : ''); }}>
       <summary>${t('Place elements with boxes')}${boxes.length ? html` <span class="badge">${boxes.length}</span>` : ''}</summary>
       <p class="faint ig-hint">${t('Draw where each thing goes and describe it; the prompt above describes the whole image.')}</p>
-      <${BoxLayout} format=${fam.layout} w=${w} h=${h} boxes=${boxes} setBoxes=${setBoxes} bg=${refs[0] || ''} />
+      <${BoxFields} format=${fam.layout} boxes=${boxes} setBoxes=${setBoxes} sel=${boxSel} setSel=${setBoxSel} />
     </details>`}
     ${maxRefs > 0 && html`<label class="ig-l">${t('Reference images')} <span class="faint">(${refs.length}/${maxRefs})</span></label>
       <div class="ig-refs">
@@ -212,6 +214,8 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onRun, onU
       <summary>${t('Advanced settings')}${advChanged(adv) ? html` <span class="badge">${t('{n} changed', { n: advChanged(adv) })}</span>` : ''}</summary>
       <div class="fld"><label title=${t('Fused attention: little memory at any size. On Intel GPUs turning it off is ~1.6× faster for small images, but the memory grows with the square of the size.')}>${t('Flash attention')}</label><div class="ctl">
         <${Select} value=${adv.fa || 'on'} onChange=${(v) => setAdv('fa', v)} options=${[['on', 'On'], ['off', 'Off']]} /></div></div>
+      ${fam && fam.fastDecode && html`<div class="fld"><label title=${t('Decode the image with a tiny decoder instead of the full one: many times faster, a little less fine detail (a separate download of a few MB)')}>${t('Fast decode')}</label><div class="ctl">
+        <${Select} value=${adv.fastDec || 'off'} onChange=${(v) => setAdv('fastDec', v)} options=${[['off', 'Off'], ['on', 'On']]} /></div></div>`}
       ${faMem && html`<p class="ig-hint st-warn">${t('Without flash attention this size needs several GB per step and can stall: turn it on or use a smaller size.')}</p>`}
       <div class="fld"><label title=${t('How strictly the image follows the prompt. The fast models (Turbo, klein) are made for 1.')}>CFG</label><div class="ctl">
         <input type="number" min="1" max="20" step="0.5" value=${adv.cfg} placeholder=${fam ? String(fam.cfg) : ''} onInput=${(e) => setAdv('cfg', e.target.value)} /></div></div>
@@ -313,7 +317,7 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onRun, onU
             <div class="th"><img loading="lazy" alt="" src=${thumbURL(p)} /></div><div class="nm">${basename(p)}</div></div>`)}
         </div>`}
       </div>`;
-    } else if (mine && mine.status !== 'done') {
+    } else if (mine && mine.status !== 'done' && !(running === false && fam && fam.layout && boxesOpen)) {
       const pv = (mine.gen && mine.gen.preview) || mine.preview;
       side = html`<div class="ig-side">
         <div class="ig-stage">${pv ? html`<img class="pv" src=${pv} alt="" style=${{ aspectRatio: w / h }} />` : html`<div class="faint ig-wait"><${Icon} name=${running ? 'loader-circle' : 'image'} size=${28} cls=${running ? 'spin' : ''} />
@@ -326,6 +330,16 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onRun, onU
         ${mine.status !== 'running' && html`<p class=${'row ' + (mine.status === 'error' ? 'st-err' : 'st-warn')} style="font-size:12.5px">
           <${Icon} name=${mine.status === 'error' ? 'triangle-alert' : 'x'} size=${15} />${mine.message}</p>`}
       </div>`;
+    } else if (fam && fam.layout && boxesOpen) {
+      // the boxes' canvas, as big as the area allows (after a canceled or failed image too: its
+      // outcome in a line above)
+      const ended = mine && mine.status !== 'done' && mine.status !== 'running';
+      side = html`<div class="ig-side">
+        ${ended && html`<p class=${'row ' + (mine.status === 'error' ? 'st-err' : 'st-warn')} style="font-size:12.5px;margin:0 0 8px">
+          <${Icon} name=${mine.status === 'error' ? 'triangle-alert' : 'x'} size=${15} />${mine.message}</p>`}
+        <div class="ig-stage bx-stage">
+        <${BoxCanvas} w=${w} h=${h} boxes=${boxes} setBoxes=${setBoxes} bg=${refs[0] || ''} sel=${boxSel} setSel=${setBoxSel} maxH="calc(52vh - 24px)" /></div>
+        <p class="faint ig-hint">${t('Drag on empty space to draw a box, drag a box to move it, its corner to resize it.')}</p></div>`;
     } else {
       side = html`<div class="ig-side"><div class="ig-stage"><div class="faint ig-wait"><${Icon} name="wand-sparkles" size=${28} />
         <p style="max-width:340px;text-align:center">${t('Describe the image and press Generate. It forms here step by step and is saved in the project, in:')}</p>

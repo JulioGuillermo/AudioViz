@@ -10,6 +10,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"os"
+	"strconv"
 	"time"
 
 	"golang.org/x/image/draw"
@@ -33,6 +34,9 @@ type Request struct {
 	FlashAttn string      // "on", "off", "" = DefaultFlashAttn (on)
 	Init      image.Image // starting image (img2img): the result keeps its composition
 	Strength  float32     // with Init: how much it changes (denoise, 0..1; 0 = 0.75)
+	// FastDecode: the family's tiny decoder (TAE) instead of its VAE: much faster, a little
+	// less fine detail
+	FastDecode bool
 }
 
 // Samplers and Schedulers accepted in Request (stable-diffusion.cpp names)
@@ -69,8 +73,19 @@ var stepWeights = map[string]float64{"models": 0.05, "load": 0.02, "refs": 0.04,
 // piece its buffers outgrow what Vulkan can map: at 1024×1024 on Intel 40 s instead of 12 s in
 // tiles); on SYCL in one piece is faster (7 s instead of 27 s) until it no longer fits
 func vaeTileAbove() int {
+	// (AUDIOVIZ_SD_VAE_TILE: pixels above which it tiles, 0 = never; to measure)
+	if v := os.Getenv("AUDIOVIZ_SD_VAE_TILE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			if n <= 0 {
+				return 1 << 30
+			}
+			return n
+		}
+	}
 	if onSYCL() {
-		return 1536 * 1024
+		// the whole of a video-sized image at once (1920×1088: 28 s instead of 38 s in tiles,
+		// FLUX.2 klein on Lunar Lake; the tiles' overlap is work done twice)
+		return 2400 * 1000
 	}
 	return 512 * 512
 }
@@ -141,6 +156,10 @@ func Generate(ctx context.Context, req Request, report func(progress.Status), on
 
 	// 1. Models (downloaded the first time)
 	need := f.Needed(len(req.Refs) > 0)
+	tae := req.FastDecode && f.TAE != nil
+	if tae {
+		need = append(need, *f.TAE)
+	}
 	if missing := Missing(need); missing == 0 {
 		t.End("models", "skipped", "Already downloaded")
 	} else {
@@ -172,7 +191,11 @@ func Generate(ctx context.Context, req Request, report func(progress.Status), on
 	if len(req.Refs) > 0 && f.Vision != nil {
 		vision = paths[f.Vision.Name]
 	}
-	key := fmt.Sprintf("%s|%s|fa=%v", f.ID, vision, fa)
+	taePath := ""
+	if tae {
+		taePath = paths[f.TAE.Name]
+	}
+	key := fmt.Sprintf("%s|%s|fa=%v|tae=%v", f.ID, vision, fa, tae)
 	if eng.ctx != nil && eng.key == key {
 		t.End("load", "skipped", "Already in memory")
 	} else {
@@ -186,7 +209,7 @@ func Generate(ctx context.Context, req Request, report func(progress.Status), on
 		if d := os.Getenv("AUDIOVIZ_SD_DIFFUSION"); d != "" {
 			diff = d
 		}
-		if err := eng.load(key, diff, paths[f.LLM.Name], vision, paths[f.VAE.Name], tok, f.Conv, onSYCL() && !f.Heavy, fa); err != nil {
+		if err := eng.load(key, diff, paths[f.LLM.Name], vision, paths[f.VAE.Name], tok, taePath, f.Conv, onSYCL() && !f.Heavy, fa); err != nil {
 			t.End("load", "error", err.Error())
 			return nil, err
 		}
@@ -325,6 +348,7 @@ func Models() []map[string]any {
 		}
 		out = append(out, map[string]any{"id": f.ID, "name": f.Name, "desc": f.Desc, "refs": f.Refs, "steps": f.Steps, "cfg": f.CFG,
 			"heavy": f.Heavy, "license": f.License, "size": size, "missing": Missing(f.Needed(false)), "layout": f.Layout,
+			"fastDecode":  f.TAE != nil,
 			"missingRefs": Missing(f.Needed(true))})
 	}
 	return out

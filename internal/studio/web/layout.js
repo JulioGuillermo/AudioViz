@@ -6,8 +6,10 @@
 //     { id, bbox: [top, left, bottom, right] in 0..1000, desc }
 //   moss (MOSS-Image): a JSON layout { summary: { caption }, items: [{ label, caption, text,
 //     bbox: [y0, x0, y1, x1] }] } in pixels with the canvas centre as the origin
+// The canvas (BoxCanvas) goes in the generator's big area; the selected box's fields (BoxFields)
+// beside the prompt.
 
-import { html, useRef, useState } from './vendor/preact-htm.js';
+import { html, useRef } from './vendor/preact-htm.js';
 import { Icon } from './icons.js';
 import { t } from './i18n.js';
 import { thumbURL } from './dialogs.js';
@@ -49,10 +51,10 @@ export function layoutPrompt(format, caption, boxes, w, h) {
   return caption;
 }
 
-// The editor: draw (drag on empty space), move (drag a box), resize (its corner), select to edit
-export function BoxLayout({ format, w, h, boxes, setBoxes, bg }) {
+// The canvas: draw (drag on empty space), move (drag a box), resize (its corner), select. maxH:
+// the largest height it may take (CSS length); it keeps the output's shape within the width.
+export function BoxCanvas({ w, h, boxes, setBoxes, bg, sel, setSel, maxH = '260px' }) {
   const area = useRef();
-  const [sel, setSel] = useState(-1);
   const pos = (e) => {
     const r = area.current.getBoundingClientRect();
     return { x: clamp((e.clientX - r.left) / r.width), y: clamp((e.clientY - r.top) / r.height) };
@@ -97,30 +99,35 @@ export function BoxLayout({ format, w, h, boxes, setBoxes, bg }) {
     };
     addEventListener('pointermove', move); addEventListener('pointerup', up);
   };
+  const pct = (v) => (v * 100).toFixed(2) + '%';
+  return html`<div class="bx-area" ref=${area}
+      style=${{ aspectRatio: w + ' / ' + h, width: 'min(100%, calc(' + maxH + ' * ' + (w / h).toFixed(4) + '))',
+        backgroundImage: bg ? 'url(' + thumbURL(bg) + ')' : '' }}
+      onPointerDown=${(e) => drag(e, -1, 'new')}>
+    ${boxes.map((b, i) => html`<div class=${'bx-box' + (i === sel ? ' on' : '') + (b.text || b.kind === 'text' ? ' txt' : '')} key=${i}
+        style=${{ left: pct(b.x0), top: pct(b.y0), width: pct(b.x1 - b.x0), height: pct(b.y1 - b.y0) }}
+        onPointerDown=${(e) => drag(e, i, 'move')}>
+      <span class="bx-tag">${b.name || t('Element {n}', { n: i + 1 })}</span>
+      <i class="bx-size" onPointerDown=${(e) => drag(e, i, 'size')}></i></div>`)}
+    ${!boxes.length && html`<span class="bx-empty">${t('Drag to draw a box')}</span>`}
+  </div>`;
+}
+
+// The selected box's fields (or a hint), and clearing them all
+export function BoxFields({ format, boxes, setBoxes, sel, setSel }) {
   const edit = (k, v) => setBoxes(boxes.map((b, i) => (i === sel ? { ...b, [k]: v } : b)));
   const cur = boxes[sel];
-  const pct = (v) => (v * 100).toFixed(2) + '%';
-  return html`<div class="bx">
-    <div class="bx-area" ref=${area} style=${{ aspectRatio: w + ' / ' + h, width: 'min(100%, ' + Math.round(260 * w / h) + 'px)', backgroundImage: bg ? 'url(' + thumbURL(bg) + ')' : '' }}
-      onPointerDown=${(e) => drag(e, -1, 'new')}>
-      ${boxes.map((b, i) => html`<div class=${'bx-box' + (i === sel ? ' on' : '') + (b.text || b.kind === 'text' ? ' txt' : '')} key=${i}
-          style=${{ left: pct(b.x0), top: pct(b.y0), width: pct(b.x1 - b.x0), height: pct(b.y1 - b.y0) }}
-          onPointerDown=${(e) => drag(e, i, 'move')}>
-        <span class="bx-tag">${b.name || t('Element {n}', { n: i + 1 })}</span>
-        <i class="bx-size" onPointerDown=${(e) => drag(e, i, 'size')}></i></div>`)}
-      ${!boxes.length && html`<span class="bx-empty">${t('Drag to draw a box')}</span>`}
-    </div>
-    ${cur ? html`<div class="bx-edit">
-      <div class="fld"><label>${t('Name')}</label><div class="ctl"><input value=${cur.name} placeholder=${t('e.g. red bicycle')} onInput=${(e) => edit('name', e.target.value)} />
+  return html`<div class="bx-edit">
+    ${cur ? html`
+      <div class="bx-row"><input type="text" value=${cur.name} placeholder=${t('Name, e.g. red bicycle')} onInput=${(e) => edit('name', e.target.value)} />
         <button class="btn icon sm ghost" title=${t('Delete the box')} onClick=${() => { setBoxes(boxes.filter((_, i) => i !== sel)); setSel(-1); }}>
-          <${Icon} name="trash-2" size=${13} /></button></div></div>
+          <${Icon} name="trash-2" size=${13} /></button></div>
       <textarea class="bx-desc" rows="2" value=${cur.desc} placeholder=${t('What it looks like: shape, colour, material, style…')} onInput=${(e) => edit('desc', e.target.value)}></textarea>
-      <div class="fld"><label>${t('Text')}</label><div class="ctl"><input value=${cur.text} placeholder=${t('Optional: the words written in it')} onInput=${(e) => edit('text', e.target.value)} /></div></div>
-      ${format === 'moss' && html`<div class="fld"><label>${t('Kind')}</label><div class="ctl">
-        <select value=${cur.text ? 'text' : cur.kind} disabled=${!!cur.text} onChange=${(e) => edit('kind', e.target.value)}>
-          <option value="object">${t('Object')}</option><option value="text">${t('Text')}</option></select></div></div>`}
-    </div>` : boxes.length > 0 && html`<p class="faint ig-hint">${t('Select a box to describe it; drag its corner to resize it.')}</p>`}
-    ${boxes.length > 0 && html`<button class="btn sm ghost" style="margin-top:4px" onClick=${() => { setBoxes([]); setSel(-1); }}>
+      <div class="bx-row"><input type="text" value=${cur.text} placeholder=${t('Text written in it (optional)')} onInput=${(e) => edit('text', e.target.value)} />
+        ${format === 'moss' && html`<select value=${cur.text ? 'text' : cur.kind} disabled=${!!cur.text} title=${t('Kind')} onChange=${(e) => edit('kind', e.target.value)}>
+          <option value="object">${t('Object')}</option><option value="text">${t('Text')}</option></select>`}</div>`
+    : html`<p class="faint ig-hint">${t(boxes.length ? 'Select a box to describe it; drag its corner to resize it.' : 'Draw boxes on the canvas on the right.')}</p>`}
+    ${boxes.length > 0 && html`<button class="btn sm ghost bx-clear" onClick=${() => { setBoxes([]); setSel(-1); }}>
       <${Icon} name="x" size=${12} /> ${t('Remove all the boxes')}</button>`}
   </div>`;
 }

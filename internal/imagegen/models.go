@@ -37,6 +37,9 @@ type Family struct {
 	// [top, left, bottom, right] 0..1000; "moss": a JSON layout in centred pixels, yxyx; "" none).
 	// The studio's box editor writes it.
 	Layout string `json:"layout"`
+	// TAE: a tiny decoder for its VAE (madebyollin's TAE), used instead of it on request
+	// (Request.FastDecode): the image decoded many times faster, with a little less fine detail
+	TAE *aimodel.Model `json:"-"`
 }
 
 func hf(repo, path string) string { return "https://huggingface.co/" + repo + "/resolve/main/" + path }
@@ -44,6 +47,16 @@ func hf(repo, path string) string { return "https://huggingface.co/" + repo + "/
 // Qwen3 4B: the text encoder of both Z-Image and FLUX.2 klein (downloaded once)
 var qwen3_4b = aimodel.Model{Name: "qwen3-4b", Label: "Text encoder (Qwen3 4B)", File: "Qwen3-4B-Q4_K_M.gguf",
 	URL: hf("unsloth/Qwen3-4B-GGUF", "Qwen3-4B-Q4_K_M.gguf"), Size: 2497281312}
+
+// The tiny decoders: FLUX.1's VAE (Z-Image), FLUX.2's (klein, FLUX.3 klein, MOSS), Qwen Image 2.1's
+var (
+	taef1 = &aimodel.Model{Name: "taef1", Label: "Fast decoder (TAEF1)", File: "taef1.safetensors",
+		URL: hf("madebyollin/taef1", "diffusion_pytorch_model.safetensors"), Size: 9848636}
+	taef2 = &aimodel.Model{Name: "taef2", Label: "Fast decoder (TAEF2)", File: "taef2.safetensors",
+		URL: hf("madebyollin/taef2", "taef2.safetensors"), Size: 10723524}
+	taeqi = &aimodel.Model{Name: "taeqi2_1", Label: "Fast decoder (TAEQI 2.1)", File: "taeqi2_1.safetensors",
+		URL: hf("madebyollin/taeqi2_1", "taeqi2_1.safetensors"), Size: 30591264}
+)
 
 // The FLUX.2 VAE: FLUX.2 klein's, FLUX.3 Image Klein's and MOSS-Image's
 var flux2VAE = aimodel.Model{Name: "flux2-vae", Label: "Image decoder (FLUX.2 VAE)", File: "flux2_vae.safetensors",
@@ -131,7 +144,18 @@ func init() {
 	}
 	Families = all
 	for _, f := range Families {
+		switch f.VAE.Name {
+		case "flux-vae":
+			f.TAE = taef1
+		case "flux2-vae":
+			f.TAE = taef2
+		case "qwen-image-vae":
+			f.TAE = taeqi
+		}
 		aimodel.Register("Images · "+f.Name, f.Needed(true)...)
+		if f.TAE != nil {
+			aimodel.Register("Images · "+f.Name+" (fast decode)", *f.TAE)
+		}
 	}
 }
 

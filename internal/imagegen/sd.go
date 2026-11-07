@@ -192,7 +192,8 @@ static const char *av_device(void) {
 // tokenizer: an external tokenizer.json (MOSS-Image's Qwen3.5), or NULL
 // conv: the family's convolution mode (NULL = auto); AUDIOVIZ_SD_CONV overrides it
 // whole: every weight on the device and the graph in one piece (see below)
-static sd_ctx_t *av_open(const char *diff, const char *llm, const char *vision, const char *vae, const char *tokenizer, const char *conv, int whole, int fa) {
+// tae: a tiny decoder used instead of the VAE (NULL: the VAE)
+static sd_ctx_t *av_open(const char *diff, const char *llm, const char *vision, const char *vae, const char *tokenizer, const char *tae, const char *conv, int whole, int fa) {
     sd_ctx_params_t p;
     sd_ctx_params_init(&p);
     p.diffusion_model_path = diff;
@@ -200,6 +201,7 @@ static sd_ctx_t *av_open(const char *diff, const char *llm, const char *vision, 
     p.llm_vision_path = vision;
     p.vae_path = vae;
     p.tokenizer = tokenizer;
+    if (tae && tae[0]) { p.taesd_path = tae; p.tae_preview_only = false; }
     // direct convolution or im2col (on / off / auto = a small benchmark per backend, or
     // per-module assignments such as "vae=on"): AUDIOVIZ_SD_CONV, to measure on each GPU
     const char *env_conv = getenv("AUDIOVIZ_SD_CONV");
@@ -336,9 +338,9 @@ func onSYCL() bool { setup(); return strings.HasPrefix(C.GoString(C.av_dev_name(
 func Tokens(w, h, refs int) int { return (round32(w) / 16) * (round32(h) / 16) * (1 + refs) }
 
 // load opens the models (if not already loaded); paths: diffusion, text encoder, vision (or ""),
-// VAE, tokenizer (or ""), convolution mode ("" = auto); whole: all weights on the device and no
-// graph segments
-func (e *engine) load(key, diff, llm, vision, vae, tok, conv string, whole, fa bool) error {
+// VAE, tokenizer (or ""), tiny decoder (or ""), convolution mode ("" = auto); whole: all weights on
+// the device and no graph segments
+func (e *engine) load(key, diff, llm, vision, vae, tok, tae, conv string, whole, fa bool) error {
 	setup()
 	if e.ctx != nil && e.key == key {
 		return nil
@@ -350,14 +352,14 @@ func (e *engine) load(key, diff, llm, vision, vae, tok, conv string, whole, fa b
 		}
 		return C.CString(s)
 	}
-	cd, cl, cv, ca, ct, cc := cs(diff), cs(llm), cs(vision), cs(vae), cs(tok), cs(conv)
+	cd, cl, cv, ca, ct, ce, cc := cs(diff), cs(llm), cs(vision), cs(vae), cs(tok), cs(tae), cs(conv)
 	defer func() {
-		for _, p := range []*C.char{cd, cl, cv, ca, ct, cc} {
+		for _, p := range []*C.char{cd, cl, cv, ca, ct, ce, cc} {
 			C.free(unsafe.Pointer(p))
 		}
 	}()
 	dev := C.GoString(C.av_device())
-	ctx := C.av_open(cd, cl, cv, ca, ct, cc, C.int(btoi(whole)), C.int(btoi(fa)))
+	ctx := C.av_open(cd, cl, cv, ca, ct, ce, cc, C.int(btoi(whole)), C.int(btoi(fa)))
 	if ctx == nil {
 		return lastErr("could not load the image model")
 	}

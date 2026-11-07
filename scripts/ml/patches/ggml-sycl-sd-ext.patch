@@ -1,9 +1,9 @@
 diff --git a/src/ggml-sycl/dit-fuse.cpp b/src/ggml-sycl/dit-fuse.cpp
 new file mode 100644
-index 0000000..d1ea716
+index 0000000..aabf044
 --- /dev/null
 +++ b/src/ggml-sycl/dit-fuse.cpp
-@@ -0,0 +1,437 @@
+@@ -0,0 +1,508 @@
 +// Fusions for diffusion transformers (AudioViz): the chains around each norm of a DiT block,
 +//   [SCALE s] -> RMS_NORM -> MUL(weight) -> ... -> MUL(gate / modulation) [-> ADD(residual / shift)]
 +// in one pass over the row: out = rms(s*x) * w * g (+ r), g and r broadcast. The nodes between the
@@ -441,12 +441,83 @@ index 0000000..d1ea716
 +    });
 +    return is - i;
 +}
++
++// IM2COL -> MUL_MAT (ggml_conv_2d, a VAE's convolutions) as one oneDNN convolution on the XMX
++// units: the input read once instead of the patch matrix (IC·KH·KW per output pixel, gigabytes at
++// 1920×1088 with 128 channels) written by a slow gather and read back. ggml's product is
++// [OC][N·OH·OW]: NCHW when N = 1, what the convolution writes. f32 data, weights to f32 if f16,
++// the f32 → f16 down-conversion allowed (fpmath f16) for the XMX path. GGML_SYCL_ONEDNN_CONV=0:
++// the plain im2col.
++int ggml_sycl_im2col_conv(ggml_backend_sycl_context & ctx, ggml_cgraph * cgraph, int i) {
++    static const bool on = [] { const char * e = getenv("GGML_SYCL_ONEDNN_CONV"); return !(e && e[0] == 0x30); }();
++    if (!on) return 0;
++    ggml_tensor * col = cgraph->nodes[i];
++    if (col->op != GGML_OP_IM2COL || ggml_node_get_use_count(cgraph, i) != 1) return 0;
++    const int32_t * op = (const int32_t *) col->op_params;
++    const int s0 = op[0], s1 = op[1], p0 = op[2], p1 = op[3], d0 = op[4], d1 = op[5];
++    const bool is2D = op[6] == 1;
++    const ggml_tensor * a = col->src[0];  // kernel [KW, KH, IC, OC]
++    const ggml_tensor * b = col->src[1];  // input [IW, IH, IC, N]
++    if (!is2D || !a || !b || b->type != GGML_TYPE_F32 || !ggml_is_contiguous(b) || b->ne[3] != 1 || !ggml_is_contiguous(a) ||
++        (a->type != GGML_TYPE_F16 && a->type != GGML_TYPE_F32) || a->ne[2] != b->ne[2]) {
++        return 0;
++    }
++    const int jm = next_compute(cgraph, i);
++    if (jm < 0) return 0;
++    ggml_tensor * mm = cgraph->nodes[jm];
++    const int64_t IW = b->ne[0], IH = b->ne[1], IC = b->ne[2];
++    const int64_t KW = a->ne[0], KH = a->ne[1], OC = a->ne[3];
++    const int64_t OW = col->ne[1], OH = col->ne[2];
++    if (mm->op != GGML_OP_MUL_MAT || mm->type != GGML_TYPE_F32 || !ggml_is_contiguous(mm) || !views_of(mm->src[0], col) ||
++        !views_of(mm->src[1], a) || mm->ne[0] != OH * OW || mm->ne[1] != OC) {
++        return 0;
++    }
++    try {
++        using dt  = dnnl::memory::data_type;
++        using tag = dnnl::memory::format_tag;
++        queue_ptr q    = ctx.stream();
++        auto      eng  = ctx.engine_dnnl(q);
++        auto      strm = ctx.stream_dnnl(q);
++        const dnnl::memory::desc src_md({ 1, IC, IH, IW }, dt::f32, tag::nchw);
++        const dnnl::memory::desc wei_md({ OC, IC, KH, KW }, dt::f32, tag::oihw);
++        const dnnl::memory::desc dst_md({ 1, OC, OH, OW }, dt::f32, tag::nchw);
++        const dnnl::memory::dims strides = { s1, s0 }, dil = { d1 - 1, d0 - 1 }, pl = { p1, p0 };
++        const dnnl::memory::dims pr = { (OH - 1) * s1 + (KH - 1) * d1 + 1 - IH - p1, (OW - 1) * s0 + (KW - 1) * d0 + 1 - IW - p0 };
++        dnnl::primitive_attr attr;
++        attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
++        attr.set_fpmath_mode(dnnl::fpmath_mode::f16);
++        auto pd = dnnl::convolution_forward::primitive_desc(eng, dnnl::prop_kind::forward_inference, dnnl::algorithm::convolution_direct,
++                                                             src_md, wei_md, dst_md, strides, dil, pl, pr, attr);
++        SYCL_CHECK(ggml_sycl_set_device(ctx.device));
++        // the weights as f32
++        ggml_sycl_pool_alloc<float> wbuf(ctx.pool());
++        const float * w = (const float *) a->data;
++        if (a->type == GGML_TYPE_F16) {
++            const int64_t      n  = ggml_nelements(a);
++            float *            wf = wbuf.alloc(n);
++            const sycl::half * wh = (const sycl::half *) a->data;
++            q->parallel_for(sycl::range<1>(n), [=](sycl::id<1> id) { wf[id[0]] = float(wh[id[0]]); });
++            w = wf;
++        }
++        ggml_sycl_pool_alloc<uint8_t> scratch(ctx.pool());
++        void * sp = pd.scratchpad_desc().get_size() > 0 ? scratch.alloc(pd.scratchpad_desc().get_size()) : nullptr;
++        dnnl::convolution_forward(pd).execute(strm, { { DNNL_ARG_SRC, dnnl::memory(src_md, eng, b->data) },
++                                                      { DNNL_ARG_WEIGHTS, dnnl::memory(wei_md, eng, const_cast<float *>(w)) },
++                                                      { DNNL_ARG_DST, dnnl::memory(dst_md, eng, mm->data) },
++                                                      { DNNL_ARG_SCRATCHPAD, dnnl::memory(pd.scratchpad_desc(), eng, sp) } });
++    } catch (const std::exception & e) {
++        static int warned = 0;
++        if (!warned++) GGML_LOG_WARN("ggml-sycl: oneDNN convolution not used (%s): im2col instead\n", e.what());
++        return 0;
++    }
++    return jm - i;
++}
 diff --git a/src/ggml-sycl/dit-fuse.hpp b/src/ggml-sycl/dit-fuse.hpp
 new file mode 100644
-index 0000000..b422bc9
+index 0000000..f730380
 --- /dev/null
 +++ b/src/ggml-sycl/dit-fuse.hpp
-@@ -0,0 +1,15 @@
+@@ -0,0 +1,19 @@
 +#pragma once
 +// Fusions for diffusion transformers (dit-fuse.cpp)
 +#include "common.hpp"
@@ -462,6 +533,10 @@ index 0000000..b422bc9
 +int ggml_sycl_dit_cont_scale_cast(ggml_backend_sycl_context & ctx, ggml_cgraph * cgraph, int i);
 +int ggml_sycl_dit_scale_scale(ggml_backend_sycl_context & ctx, ggml_cgraph * cgraph, int i);
 +int ggml_sycl_dit_swiglu_scale(ggml_backend_sycl_context & ctx, ggml_cgraph * cgraph, int i);
++
++// IM2COL -> MUL_MAT at node i (an IM2COL) as a oneDNN convolution: nodes consumed after i (0: no
++// match or oneDNN refused it, nothing done)
++int ggml_sycl_im2col_conv(ggml_backend_sycl_context & ctx, ggml_cgraph * cgraph, int i);
 diff --git a/src/ggml-sycl/sd-ext.cpp b/src/ggml-sycl/sd-ext.cpp
 new file mode 100644
 index 0000000..4aec7f6

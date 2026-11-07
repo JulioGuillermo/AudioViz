@@ -74,6 +74,10 @@ Image 2.1, its Turbo and MOSS-Image also appear as "· INT8 (Intel XMX)": the sa
 weights, about a quarter faster there (Z-Image 1024×1024: 40 s instead of 46 s). They are a
 separate download (5.4–7.3 GB) and are not offered on Vulkan, where they would be very slow.
 
+**Fast decode.** In the advanced settings, *Fast decode* turns the finished latent into the image
+with the model's tiny decoder (TAE, a few MB, downloaded the first time) instead of its full one:
+under a second instead of ~11 s at 1920×1088, with a little less fine detail. Good for drafts.
+
 **Freeing disk space.** Settings › Downloaded models lists every model file AudioViz has
 downloaded (images, lyrics, depth), its size and what uses it. Delete the ones you do not use: a
 deleted model downloads again the next time you use it.

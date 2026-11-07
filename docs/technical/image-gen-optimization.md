@@ -114,6 +114,18 @@ the INT8 variants (`<model>-int8`) are offered only on the SYCL engine and refus
 Checked against the Vulkan INT8 path: the 2-step difference (PSNR 32.5 dB) is of the order of
 Vulkan vs SYCL with q4_K (36.3 dB); activation rounding amplifies tiny upstream differences.
 
+### The VAE decode (`dit-fuse.cpp`, `generate.go`)
+ggml's 2D convolution is IM2COL (a patch matrix of IC·KH·KW values per output pixel: gigabytes at
+1920×1088 with 128 channels, written by a gather at ≈ 10 GB/s) then MUL_MAT. The plugin runs the
+pair as one oneDNN convolution on the XMX units (the product is [OC][OH·OW], NCHW for one image;
+weights to f32, f32 → f16 down-conversion allowed): FLUX.2 klein's decode at 1920×1088 went from
+29 s to 11 s (PSNR 49.5 dB against im2col). `GGML_SYCL_ONEDNN_CONV=0` turns it off. ggml-sycl's own
+direct convolution took 20 minutes there: never use it. On SYCL the VAE no longer tiles up to
+2.4 MP (the tiles' overlap is work done twice: 38 → 28 s before the convolution);
+`AUDIOVIZ_SD_VAE_TILE=<pixels>` (0 = never) overrides it. Qwen's VAE (3D convolutions) is not
+covered. Optional *Fast decode* uses madebyollin's tiny decoders (taef1 for Z-Image, taef2 for the
+FLUX.2 VAE models, taeqi2_1 for Qwen): under a second.
+
 ## How to measure
 
 - `GGML_SYCL_OP_PROF=1`: after every launch (a node or a fused group) the plugin waits for the
@@ -136,7 +148,6 @@ Vulkan vs SYCL with q4_K (36.3 dB); activation rounding amplifies tiny upstream 
 
 ## Still slow, next ideas
 
-- **VAE `IM2COL`** at ≈ 10 GB/s: a faster kernel or oneDNN's convolution (≈ 4–5 s per image).
 - **JIT of SYCL kernels** (≈ 4 s per process; in the studio only the first image): AOT for Xe2
   (`lnl-m`) crashed in October because the build dropped the >4 GB buffer option.
 - INT8: only Z-Image was measured; Qwen and MOSS INT8 are offered but untested. A CPU-reference
