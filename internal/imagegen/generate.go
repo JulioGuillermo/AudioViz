@@ -277,19 +277,25 @@ func Generate(ctx context.Context, req Request, report func(progress.Status), on
 				continue
 			}
 			advance(id)
+			// (a model too big for the GPU at once has its weights staged block by block at every
+			// step: once the steps have started they stay shown, the loading only noted after them)
+			loadNote := ""
+			if st.loading {
+				loadNote = " · " + "loading weights"
+			}
 			switch {
+			case id == "generate" && st.steps > 0:
+				t.Progress(id, float64(st.step)/float64(st.steps), fmt.Sprintf("Step %d of %d · %d×%d · seed %d", st.step, st.steps, w, h, seed)+loadNote)
+			case id == "decode" && st.steps > 0:
+				t.Progress(id, float64(st.step)/float64(st.steps), fmt.Sprintf("Part %d of %d", st.step, st.steps)+loadNote)
 			case st.loading:
 				p := 0.0
 				if st.tensorsTotal > 0 {
 					p = float64(st.tensors) / float64(st.tensorsTotal)
 				}
 				t.Progress(id, 0, fmt.Sprintf("Loading the weights to the GPU · %.0f%%", p*100))
-			case id == "generate" && st.steps > 0:
-				t.Progress(id, float64(st.step)/float64(st.steps), fmt.Sprintf("Step %d of %d · %d×%d · seed %d", st.step, st.steps, w, h, seed))
 			case id == "generate":
 				t.Progress(id, 0, fmt.Sprintf("%d steps · %d×%d · seed %d", steps, w, h, seed))
-			case id == "decode" && st.steps > 0:
-				t.Progress(id, float64(st.step)/float64(st.steps), fmt.Sprintf("Part %d of %d", st.step, st.steps))
 			default:
 				t.Progress(id, 0, "")
 			}
