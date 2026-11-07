@@ -221,6 +221,13 @@ static sd_ctx_t *av_open(const char *diff, const char *llm, const char *vision, 
     return new_sd_ctx(&p);
 }
 
+// A new image: no phase, steps or preview yet (before the progress is first read: otherwise the
+// last image's "step 8 of 8" or preview shows until the new one reaches the engine)
+static void av_reset_state(void) {
+    av_phase = PH_NONE; av_loading = 0; av_step = 0; av_steps = 0; av_lstep = 0; av_lsteps = 0;
+    __atomic_store_n(&av_pseq, 0, __ATOMIC_RELEASE);
+}
+
 // sampler / scheduler: names as in stable-diffusion.cpp ("euler", "dpm++2m", "karras"…), NULL =
 // the model's default (or Euler if euler); init: optional starting image (img2img) with strength
 static int av_generate(sd_ctx_t *ctx, const char *prompt, const char *negative, int w, int h, int steps,
@@ -403,6 +410,9 @@ type state struct {
 	loading               bool
 	tensors, tensorsTotal int
 }
+
+// resetState: a new image starts (see av_reset_state)
+func resetState() { C.av_reset_state() }
 
 func getState() state {
 	var s, n, l, ls, ln C.int

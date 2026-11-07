@@ -101,6 +101,7 @@ func Generate(ctx context.Context, req Request, report func(progress.Status), on
 	if f == nil {
 		return nil, fmt.Errorf("unknown image model %q", req.Model)
 	}
+	resetState()
 	if f.SYCLOnly && !onSYCL() {
 		return nil, fmt.Errorf("%s needs the Intel GPU engine (SYCL plugin): Settings › Plugins", f.Name)
 	}
