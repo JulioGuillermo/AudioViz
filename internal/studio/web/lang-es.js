@@ -173,7 +173,11 @@ export const ES = {
 
   // --- transport / timeline
   'Go to start (Home)': 'Ir al inicio (Inicio)', 'Go to end (End)': 'Ir al final (Fin)', 'Previous frame (←)': 'Cuadro anterior (←)',
-  'Next frame (→)': 'Cuadro siguiente (→)', 'Play / pause (Space)': 'Reproducir / pausa (Espacio)', 'Preview resolution': 'Resolución del preview',
+  'Next frame (→)': 'Cuadro siguiente (→)', 'Play / pause (Space)': 'Reproducir / pausa (Espacio)',
+  'Previous background cut: start or end of a segment (PgUp)': 'Corte de fondo anterior: inicio o fin de un segmento (RePág)',
+  'Next background cut: start or end of a segment (PgDn)': 'Corte de fondo siguiente: inicio o fin de un segmento (AvPág)',
+  'Fast forward x{n} while held (L; Shift+L: x3)': 'Avanzar x{n} mientras está pulsado (L; Mayús+L: x3)',
+  'Rewind x{n} while held (J; Shift+J: x3)': 'Retroceder x{n} mientras está pulsado (J; Mayús+J: x3)', 'Preview resolution': 'Resolución del preview',
   'Full': 'Completa', 'Timeline': 'Línea de tiempo',
   'Double-click a track: new segment · Drag to move (snaps; Alt = free) · Ctrl + wheel: zoom · Drag the ruler: scroll': 'Doble clic en una pista: nuevo tramo · Arrastra para mover (imán; Alt sin imán) · Ctrl + rueda: zoom · Arrastra la regla: desplazar',
   'Marker': 'Marca', 'Marker at the cursor (M)': 'Marca en el cursor (M)', 'Zoom in': 'Acercar', 'Zoom out': 'Alejar', 'Show the whole song': 'Ver toda la canción',

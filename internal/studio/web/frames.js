@@ -6,7 +6,9 @@ import { useEffect, useRef, useState } from './vendor/preact-htm.js';
 // editor.
 export function useFrameStream(canvas, { meta, time, scale, rev, playing, view = '' }) {
   // inflight: requests in progress; lat: average latency (ms); shownF: last drawn frame
-  const st = useRef({ inflight: 0, lat: 40, shownKey: null, shownF: -1, shownSeq: 0, seq: 0, lastReq: '', lastT: 0 });
+  // epoch: bumped at every jump / play / stop; an answer of an older one is never drawn (a late
+  // frame from before a jump backwards would otherwise stall the playback until time caught up)
+  const st = useRef({ epoch: 0, inflight: 0, lat: 40, shownKey: null, shownF: -1, shownSeq: 0, seq: 0, lastReq: '', lastT: 0 });
   const [info, setInfo] = useState({ ms: 0, fps: 0, layers: [], texts: [] });
   const geo = useRef([]); // where the overlay clips are in the frame on screen (X-Layers)
   const tgeo = useRef([]); // and the fixed texts (X-Texts)
@@ -22,11 +24,14 @@ export function useFrameStream(canvas, { meta, time, scale, rev, playing, view =
 
   const request = (f, key) => {
     const s = st.current;
-    const seq = ++s.seq;
+    const seq = ++s.seq, epoch = s.epoch;
     s.inflight++;
     s.lastReq = key;
     const t0 = performance.now();
-    fetch(`/api/frame?f=${f}&scale=${scale}${view ? '&view=' + view : ''}`)
+    // a request that never answers must not block the next ones
+    const ac = new AbortController();
+    const to = setTimeout(() => ac.abort(), 6000);
+    fetch(`/api/frame?f=${f}&scale=${scale}${view ? '&view=' + view : ''}`, { signal: ac.signal })
       .then((r) => {
         if (!r.ok) throw new Error(r.statusText);
         const xl = r.headers.get('X-Layers'), xt = r.headers.get('X-Texts');
@@ -35,7 +40,7 @@ export function useFrameStream(canvas, { meta, time, scale, rev, playing, view =
       .then(({ bmp, xl, xt }) => {
         s.lat = s.lat * 0.8 + (performance.now() - t0) * 0.2;
         // Only draw if it is newer than what is on screen
-        if (seq > s.shownSeq) {
+        if (seq > s.shownSeq && epoch === s.epoch) {
           draw(bmp); s.shownSeq = seq; s.shownF = f; s.shownKey = key;
           try { geo.current = xl ? JSON.parse(xl) : []; } catch (e) { geo.current = []; }
           try { tgeo.current = xt ? JSON.parse(xt) : []; } catch (e) { tgeo.current = []; }
@@ -44,20 +49,26 @@ export function useFrameStream(canvas, { meta, time, scale, rev, playing, view =
         fpsWin.current = [...fpsWin.current.filter((x) => now - x < 1000), now];
         setInfo({ ms: Math.round(s.lat), fps: fpsWin.current.length, layers: geo.current, texts: tgeo.current });
       })
-      .catch(() => {})
-      .finally(() => { s.inflight--; });
+      .catch(() => { if (s.lastReq === key) s.lastReq = ''; })
+      .finally(() => { clearTimeout(to); s.inflight--; });
   };
 
+  // (before the one below: effects run in order, so a play / stop starts the new epoch first)
+  useEffect(() => { const s = st.current; s.epoch++; s.shownF = -1; s.lastReq = ''; }, [playing]);
   useEffect(() => {
     const s = st.current;
     const fps = meta.fps;
     // A jump (seeking while playing) restarts the frame sequence, otherwise a jump backwards
     // would never be requested
-    if (time < s.lastT - 0.05 || time > s.lastT + 1.0) { s.shownF = -1; s.lastReq = ''; }
+    // (while still, frames of a drag keep being drawn in order: no new epoch)
+    const jump = () => { if (playing) s.epoch++; s.shownF = -1; s.lastReq = ''; };
+    if (time < s.lastT - 0.05 || time > s.lastT + 1.0) jump();
     s.lastT = time;
     if (playing) {
       // Request ahead by the measured latency, with several requests in flight
       const f = Math.min(meta.frames - 1, Math.round((time + s.lat / 1000) * fps));
+      // what is on screen is far ahead of the cursor (should not happen): start again from here
+      if (s.shownF > f + fps) jump();
       const key = `${f}|${scale}|${rev}|${view}`;
       if (s.inflight < 3 && key !== s.lastReq && f > s.shownF) request(f, key);
       return;
@@ -73,6 +84,5 @@ export function useFrameStream(canvas, { meta, time, scale, rev, playing, view =
     return () => clearInterval(id);
   }, [time, scale, rev, meta.frames, playing, view]);
 
-  useEffect(() => { if (!playing) st.current.shownF = -1; }, [playing]);
   return info;
 }

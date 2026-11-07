@@ -31,6 +31,19 @@ import { PluginsSection } from './plugins.js';
 
 // ------------------------------------------------------------------ preview
 
+// Fast forward / rewind while it is held down (pointer captured: it ends on release anywhere)
+function HoldBtn({ dir, speed, start, stop }) {
+  const down = (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
+    start(dir, speed);
+  };
+  const tip = dir > 0 ? t('Fast forward x{n} while held (L; Shift+L: x3)', { n: speed }) : t('Rewind x{n} while held (J; Shift+J: x3)', { n: speed });
+  return html`<button class="btn icon shuttle" title=${tip} onPointerDown=${down} onPointerUp=${stop} onPointerCancel=${stop} onLostPointerCapture=${stop}
+    onContextMenu=${(e) => e.preventDefault()}>
+    <${Icon} name=${dir > 0 ? 'fast-forward' : 'rewind'} size=${14} /><small>${speed}</small></button>`;
+}
 function Preview({ meta, timeStore, scale, rev, playing, pin, onPin, points, onPoints, clip, clipRef, onClip, text, textIdx, onText, emitter, view, cursors = [], onPointer }) {
   const time = useStore(timeStore);
   const canvas = useRef();
@@ -954,6 +967,48 @@ function App() {
       if (scrubber.current.position() != null) scrubber.current.startPlay(tt); else audio.current.currentTime = tt;
     } else if (!playing && scrubRef.current) scrubber.current.play(tt);
   };
+  // The background's cuts: where each segment starts and where its transition ends (and the
+  // song's ends). dir = +1 / -1: to the next / previous one; while playing, "previous" skips the
+  // one just passed (as a player's back button does)
+  const seekCut = (dir) => {
+    if (!meta || !projRef.current) return;
+    const cs = [0, meta.duration];
+    for (const g of projRef.current.tracks.background || []) {
+      cs.push(g.at);
+      if (g.at > 0 && g.transition && g.transition.mode !== 'cut' && g.transition.duration > 0) cs.push(g.at + g.transition.duration);
+    }
+    cs.sort((a, b) => a - b);
+    const now = timeStore.get(), eps = dir < 0 && playing ? 0.4 : 0.02;
+    const c = dir > 0 ? cs.find((x) => x > now + eps) : cs.reverse().find((x) => x < now - eps);
+    if (c != null) seek(c);
+  };
+  // Fast forward / rewind while held (a button or J / L): x2, x3 with Shift. Playback pauses
+  // while it lasts and goes on from the new place when released; with scrub audio on, snippets
+  const shuttle = useRef(null);
+  const shuttleStart = (dir, speed) => {
+    if (!meta || shuttle.current) return;
+    const sh = { resume: playing, raf: 0, speed };
+    if (playing) setPlaying(false);
+    let last = performance.now();
+    const tick = () => {
+      const now = performance.now();
+      const tt = Math.max(0, Math.min(meta.duration, timeStore.get() + dir * sh.speed * (now - last) / 1000));
+      last = now;
+      timeStore.set(tt);
+      if (scrubRef.current) scrubber.current.play(tt);
+      sh.raf = requestAnimationFrame(tick);
+    };
+    sh.raf = requestAnimationFrame(tick);
+    shuttle.current = sh;
+  };
+  const shuttleStop = () => {
+    const sh = shuttle.current;
+    if (!sh) return;
+    cancelAnimationFrame(sh.raf);
+    shuttle.current = null;
+    scrubber.current.stop();
+    if (sh.resume && timeStore.get() < meta.duration) setPlaying(true);
+  };
   useEffect(() => {
     if (!playing) return;
     const a = audio.current;
@@ -1362,6 +1417,9 @@ function App() {
       else if (e.key === 'ArrowRight') seek(now + (e.shiftKey ? 1 : fr));
       else if (e.key === 'Home') seek(0);
       else if (e.key === 'End') seek(meta.duration);
+      else if (e.key === 'PageUp') { e.preventDefault(); seekCut(-1); }
+      else if (e.key === 'PageDown') { e.preventDefault(); seekCut(1); }
+      else if (e.code === 'KeyJ' || e.code === 'KeyL') { if (!e.repeat) shuttleStart(e.code === 'KeyL' ? 1 : -1, e.shiftKey ? 3 : 2); }
       else if (e.key === 'm' || e.key === 'M') onMarker('add');
       else if ((e.key === 'e' || e.key === 'E') && !editor) setEditor(true);
       else if (e.key === 's' || e.key === 'S') setScrub(!scrubRef.current);
@@ -1387,6 +1445,13 @@ function App() {
     addEventListener('keydown', k);
     return () => removeEventListener('keydown', k);
   }, [meta, sel, playing, editor]);
+  // releasing J / L (or leaving the window while held) ends the fast forward / rewind
+  useEffect(() => {
+    const up = (e) => { if (e.code === 'KeyJ' || e.code === 'KeyL') shuttleStop(); };
+    const blur = () => shuttleStop();
+    addEventListener('keyup', up); addEventListener('blur', blur);
+    return () => { removeEventListener('keyup', up); removeEventListener('blur', blur); };
+  }, [meta]);
 
   if (!st) return html`<div class="welcome"><p class="muted">${t('Loading…')}</p></div>`;
 
@@ -1714,12 +1779,18 @@ function App() {
       <div class="transport">
         <div class="btngroup">
           <button class="btn icon" title=${t('Go to start (Home)')} onClick=${() => seek(0)}><${Icon} name="skip-back" size=${15} /></button>
+          <button class="btn icon" title=${t('Previous background cut: start or end of a segment (PgUp)')} onClick=${() => seekCut(-1)}><${Icon} name="chevron-first" size=${16} /></button>
+          <${HoldBtn} speed=${3} dir=${-1} start=${shuttleStart} stop=${shuttleStop} />
+          <${HoldBtn} speed=${2} dir=${-1} start=${shuttleStart} stop=${shuttleStop} />
           <button class="btn icon" title=${t('Previous frame (←)')} onClick=${() => seek(timeStore.get() - 1 / meta.fps)}><${Icon} name="chevron-left" size=${16} /></button>
         </div>
         <button class="btn primary play" title=${t('Play / pause (Space)')} onClick=${() => setPlaying(!playing)}>
           <${Icon} name=${playing ? 'pause' : 'play'} size=${16} /></button>
         <div class="btngroup">
           <button class="btn icon" title=${t('Next frame (→)')} onClick=${() => seek(timeStore.get() + 1 / meta.fps)}><${Icon} name="chevron-right" size=${16} /></button>
+          <${HoldBtn} speed=${2} dir=${1} start=${shuttleStart} stop=${shuttleStop} />
+          <${HoldBtn} speed=${3} dir=${1} start=${shuttleStart} stop=${shuttleStop} />
+          <button class="btn icon" title=${t('Next background cut: start or end of a segment (PgDn)')} onClick=${() => seekCut(1)}><${Icon} name="chevron-last" size=${16} /></button>
           <button class="btn icon" title=${t('Go to end (End)')} onClick=${() => seek(meta.duration)}><${Icon} name="skip-forward" size=${15} /></button>
         </div>
         <${Clock} timeStore=${timeStore} meta=${meta} />
