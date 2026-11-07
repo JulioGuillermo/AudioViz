@@ -24,6 +24,7 @@ layout(std430, set = 0, binding = 10) readonly buffer EmitAcc { uint eacc[]; };
 #define BG_PARALLAX
 vec2 gParA = vec2(0.0), gParB = vec2(0.0);
 vec3 gHit = vec3(0.0);
+int gW = 0; // the background whose depth this pixel uses (0 the old, 1 the new: parallaxPixel)
 #include "common.glsl"
 
 // Per-tile (workgroup) lists: particles and words that may touch the tile
@@ -977,9 +978,76 @@ vec3 layerNormal(int which, vec2 q) {
     return normalize(vec3(n, sqrt(max(0.0, 1.0 - dot(n, n)))) + vec3(0.0, 0.0, 1e-6));
 }
 
-int depthWhich() {
-    int has = P.depthI.z;
-    return (has & 2) != 0 && ((has & 1) == 0 || P.transP.x >= 0.5) ? 1 : 0;
+// the depth this pixel uses: the image the transition shows here (parallaxPixel)
+int depthWhich() { return gW; }
+
+// The transition's geometry at frame pixel q, for the depth (as composite; effects.Scene.pick):
+// where each image is read (the old at qa, the new at qb), how much of the new one is in the mix
+// and so which one is seen there
+struct TPick { int img; vec2 qa; vec2 qb; float wb; };
+TPick transPick(vec2 q) {
+    TPick t;
+    t.qa = q;
+    t.qb = q;
+    int mode = P.trans.x;
+    float k = clamp(P.transP.x, 0.0, 1.0);
+    float ke = k * k * (3.0 - 2.0 * k);
+    vec2 S = vec2(float(W), float(H));
+    vec2 c = S * 0.5;
+    uint seed = uint(P.trans.w);
+    float wb = k; // fade
+    if (mode == 0) {
+        wb = 0.0;
+    } else if (mode == 2) {
+        float n = hash3(uint(floor(q.x * 0.5)), uint(floor(q.y * 0.5)), seed);
+        wb = smoothstep(n, n + 0.1, k * 1.1);
+    } else if (mode == 3 || mode == 4) {
+        wb = k < 0.5 ? 0.0 : 1.0;
+    } else if (mode == 5) {
+        int d = P.trans.y;
+        float u = d == 1 ? q.x / S.x : d == 2 ? 1.0 - q.y / S.y : d == 3 ? q.y / S.y : 1.0 - q.x / S.x;
+        const float f = 0.02;
+        float e = ke * (1.0 + 2.0 * f) - f;
+        wb = 1.0 - smoothstep(e - f, e + f, u);
+    } else if (mode == 6 || mode == 7) {
+        vec2 dv = dirVec(P.trans.y);
+        t.qb = q + dv * S * (1.0 - ke);
+        if (mode == 7) t.qa = q - dv * S * ke;
+        wb = (t.qb.x >= 0.0 && t.qb.x < S.x && t.qb.y >= 0.0 && t.qb.y < S.y) ? 1.0 : 0.0;
+    } else if (mode == 8) {
+        t.qa = c + (q - c) / (1.0 + 1.5 * ke);
+        t.qb = c + (q - c) / (1.0 + 0.2 * (1.0 - ke));
+        wb = smoothstep(0.3, 1.0, k);
+    } else if (mode == 9) {
+        t.qb = c + (q - c) / (1.0 + 1.5 * (1.0 - ke));
+        wb = smoothstep(0.0, 0.7, k);
+    } else if (mode == 10) {
+        float diag = length(S) * 0.5;
+        float f = 0.01 * diag;
+        float r = ke * (diag + f);
+        wb = 1.0 - smoothstep(r - f, r + f, length(q - c));
+    } else if (mode == 11) {
+        float ang = atan(q.x - c.x, -(q.y - c.y));
+        if (ang < 0.0) ang += 6.28318530718;
+        float e = ke * (6.28318530718 + 0.04);
+        wb = 1.0 - smoothstep(e - 0.04, e, ang);
+    } else if (mode == 12) {
+        float g = sin(3.14159265 * k);
+        uint band = uint(int(floor(q.y)) / max(1, H / 24));
+        uint stp = uint(k * 16.0);
+        wb = hash3(band, stp, seed) < k ? 1.0 : 0.0;
+        float shift = (hash3(band, stp + 97u, seed) - 0.5) * S.x * 0.08 * g;
+        t.qa = t.qb = vec2(q.x + shift, q.y);
+    } else if (mode == 13) {
+        float bs = 1.0 + floor(sin(3.14159265 * k) * 48.0 * (S.y / 1080.0));
+        t.qa = t.qb = (floor(q / bs) + 0.5) * bs;
+        wb = smoothstep(0.4, 0.6, k);
+    } else if (mode >= 14) {
+        wb = k >= 0.5 ? 1.0 : 0.0; // burn, fluid: the new one from halfway, as before
+    }
+    t.wb = wb;
+    t.img = wb >= 0.5 ? 1 : 0;
+    return t;
 }
 
 // The 2.5D camera (as effects.Parallax): a point at nearness z seen at u is moved by
@@ -1021,19 +1089,36 @@ void parallaxPixel(vec2 q) {
     gParB = vec2(0.0);
     gHit = vec3(q, 0.0);
     int has = P.depthI.z;
+    gW = (has & 2) != 0 ? 1 : 0;
     if (has == 0) return;
-    vec2 u = bgPoint(q);
-    int w = depthWhich();
+    // in a transition between two backgrounds with depth: each one's depth where the transition
+    // shows it (moved, scaled, wiped…), the one seen here for the lights and the camera
+    bool both = (has & 3) == 3;
+    TPick tp;
+    if (both) {
+        tp = transPick(q);
+        gW = tp.img;
+    } else {
+        tp.qa = q;
+        tp.qb = q;
+        tp.wb = float(gW);
+        tp.img = gW;
+    }
+    vec2 ua = bgPoint(tp.qa), ub = bgPoint(tp.qb);
+    vec2 u = gW == 0 ? ua : ub;
     if (P.parallaxN.x == 0) {
-        gHit = vec3(u, layerDepth(w, u));
+        float z = layerDepth(gW, u);
+        if (both && tp.wb > 0.0 && tp.wb < 1.0) z = mix(layerDepth(0, ua), layerDepth(1, ub), tp.wb); // (blends: both)
+        gHit = vec3(u, z);
         return;
     }
     for (int img = 0; img < 2; img++) {
         if ((has & (1 << img)) == 0) continue;
-        vec3 r = parallaxFind(img, u);
-        if (img == 0) gParA = u - r.xy;
-        else gParB = u - r.xy;
-        if (img == w) gHit = r;
+        vec2 ui = img == 0 ? ua : ub;
+        vec3 r = parallaxFind(img, ui);
+        if (img == 0) gParA = ui - r.xy;
+        else gParB = ui - r.xy;
+        if (img == gW) gHit = r;
     }
 }
 
@@ -1360,6 +1445,7 @@ vec3 shade(vec2 q) {
     // the scene seen here (and under the water, from qb: once per point, one call)
     vec2 paQ = vec2(0.0), pbQ = vec2(0.0);
     vec3 hitQ = vec3(0.0);
+    int wQ = 0;
     for (int k = 0; k < 2; k++) {
         if (k == 1 && lensAt > nl) break;
         parallaxPixel(k == 0 ? q : qb);
@@ -1367,12 +1453,14 @@ vec3 shade(vec2 q) {
             paQ = gParA;
             pbQ = gParB;
             hitQ = gHit;
+            wQ = gW;
         }
     }
     if (P.viewI.x != 0) {
         gParA = paQ;
         gParB = pbQ;
         gHit = hitQ;
+        gW = wQ;
         return viewColor(q);
     }
     vec2 qs = lensAt <= nl ? qb : q;
@@ -1388,6 +1476,7 @@ vec3 shade(vec2 q) {
             gParA = paQ;
             gParB = pbQ;
             gHit = hitQ;
+            gW = wQ;
         }
         if (st > 0) col = drawLayer(col, st - 1, qs);
         if (zp == st) col = drawParticles(col, p);

@@ -454,7 +454,7 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 		if fs.Trans.Fluid != nil {
 			fx.par = effects.Parallax{} // the fluid transitions don't move
 		}
-		fs.Scene = &effects.Scene{A: fs.DepthA, B: fs.DepthB, NA: fs.NormA, NB: fs.NormB, LA: fs.LayerA, LB: fs.LayerB, K: fs.Trans.K,
+		fs.Scene = &effects.Scene{A: fs.DepthA, B: fs.DepthB, NA: fs.NormA, NB: fs.NormB, LA: fs.LayerA, LB: fs.LayerB, K: fs.Trans.K, Tr: fs.Trans,
 			Zoom: fx.zoom, ShakeX: fx.shakeX, ShakeY: fx.shakeY, RippleAmp: fx.rippleAmp, RippleFreq: fx.rippleFreq, RippleTm: fx.rTim,
 			W: s.W, H: s.H, Par: fx.par, N: fx.par.Steps(s.W, s.H), DoF: fx.dof}
 	}

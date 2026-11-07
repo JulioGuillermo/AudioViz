@@ -10,6 +10,7 @@ type Scene struct {
 	NA, NB                          []uint16 // their surface normals (NormalMap; nil: from the slope)
 	LA, LB                          Layer
 	K                               float64 // transition progress: B from halfway on
+	Tr                              Trans   // the transition (its geometry: TransPick) while A and B both have depth
 	Zoom, ShakeX, ShakeY            float64
 	RippleAmp, RippleFreq, RippleTm float64
 	W, H                            int
@@ -62,6 +63,66 @@ func (s *Scene) bgPoint(qx, qy float32) (float32, float32) {
 	return qx - float32(s.ShakeX), qy - float32(s.ShakeY)
 }
 
+// The depths in a transition, per frame pixel (as parallaxPixel in render.comp): each image's depth
+// where the transition shows it, the one seen there (w: 0 A, the old one; 1 B, the new one)
+func (s *Scene) both() bool { return s.A != nil && s.B != nil }
+
+func (s *Scene) nearW(w int, x, y float32) float32 {
+	if (w == 1 && s.B != nil) || s.A == nil {
+		return layerDepth(s.B, s.LB, x, y, s.W, s.H)
+	}
+	return layerDepth(s.A, s.LA, x, y, s.W, s.H)
+}
+
+func (s *Scene) normalW(w int, x, y float32) (float32, float32, float32, bool) {
+	g, L := s.NA, s.LA
+	if (w == 1 && s.B != nil) || s.A == nil {
+		g, L = s.NB, s.LB
+	}
+	if g == nil {
+		return 0, 0, 1, false
+	}
+	nx, ny, nz := layerNormal(g, L, x, y, s.W, s.H)
+	return nx, ny, nz, true
+}
+
+// HitW: as Hit, and which background's depth the pixel uses
+func (s *Scene) HitW(qx, qy float32) (float32, float32, float32, int) {
+	if !s.On() {
+		return qx, qy, 0, 0
+	}
+	w := 0
+	if s.B != nil {
+		w = 1
+	}
+	ax, ay, bx, by, wb := qx, qy, qx, qy, float64(w)
+	if s.both() {
+		fax, fay, fbx, fby, fwb := TransPick(s.Tr, float64(qx), float64(qy), s.W, s.H)
+		ax, ay, bx, by, wb = float32(fax), float32(fay), float32(fbx), float32(fby), fwb
+		w = 0
+		if wb >= 0.5 {
+			w = 1
+		}
+	}
+	uax, uay := s.bgPoint(ax, ay)
+	ubx, uby := s.bgPoint(bx, by)
+	ux, uy := uax, uay
+	if w == 1 {
+		ux, uy = ubx, uby
+	}
+	near := func(x, y float32) float32 { return s.nearW(w, x, y) }
+	if s.Par.On() {
+		x, y, z := s.Par.Find(ux, uy, s.N, s.W, s.H, near)
+		return x, y, z, w
+	}
+	z := near(ux, uy)
+	if s.both() && wb > 0 && wb < 1 { // (blends: both)
+		za, zb := s.nearW(0, uax, uay), s.nearW(1, ubx, uby)
+		z = za + (zb-za)*float32(wb)
+	}
+	return ux, uy, z, w
+}
+
 // Normal: the surface normal at background point (x, y) (as layerNormal in render.comp); false
 // when the depth map has no normal map
 func (s *Scene) Normal(x, y float32) (float32, float32, float32, bool) {
@@ -87,14 +148,8 @@ func (s *Scene) Near(x, y float32) float32 {
 // Hit: the background point seen at frame point q (pixel coordinates, as the GPU's q), through
 // the camera, and its nearness
 func (s *Scene) Hit(qx, qy float32) (float32, float32, float32) {
-	if !s.On() {
-		return qx, qy, 0
-	}
-	x, y := s.bgPoint(qx, qy)
-	if s.Par.On() {
-		return s.Par.Find(x, y, s.N, s.W, s.H, s.Near)
-	}
-	return x, y, s.Near(x, y)
+	x, y, z, _ := s.HitW(qx, qy)
+	return x, y, z
 }
 
 // Ground: the nearness of the background at frame point q before the camera (where something

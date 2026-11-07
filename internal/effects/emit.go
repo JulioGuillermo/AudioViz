@@ -690,15 +690,15 @@ const DepthPx = 800
 func (l *LightField) DepthFactor(s *Scene, x, y int) float32 {
 	qx, qy := float32(x), float32(y)
 	// the background point seen there; its surroundings around that point
-	hx, hy, zp := s.Hit(qx, qy)
+	hx, hy, zp, w := s.HitW(qx, qy)
 	dz := (zp - l.LZ) * l.DepthK
 	att := float32(math.Exp(float64(-dz * dz)))
 	rng := LightRange(zp, l.From, l.To, l.Soft)
 	f := att * rng
-	nx, ny, nz, hasN := s.Normal(hx, hy)
+	nx, ny, nz, hasN := s.normalW(w, hx, hy)
 	if !hasN {
-		gx := (s.Near(hx+2, hy) - s.Near(hx-2, hy)) / 4 * DepthPx
-		gy := (s.Near(hx, hy+2) - s.Near(hx, hy-2)) / 4 * DepthPx
+		gx := (s.nearW(w, hx+2, hy) - s.nearW(w, hx-2, hy)) / 4 * DepthPx
+		gy := (s.nearW(w, hx, hy+2) - s.nearW(w, hx, hy-2)) / 4 * DepthPx
 		nl := float32(math.Sqrt(float64(gx*gx + gy*gy + 1)))
 		nx, ny, nz = -gx/nl, -gy/nl, 1/nl
 	}
@@ -729,13 +729,13 @@ func (l *LightField) DepthFactor(s *Scene, x, y int) float32 {
 				r = l.rimNormal(nx, ny, nz, ux, uy)
 				t *= smooth32(-0.05, 0.35, -lz)
 			} else {
-				r = l.rimAt(s, hx, hy, zp, ux, uy)
+				r = l.rimAt(s, w, hx, hy, zp, ux, uy)
 			}
 			f = f*(1-t) + t*l.RimGain*r*rng
 		}
 	}
 	if l.Shadow > 0 {
-		f *= 1 - l.Shadow*l.shadowAt(s, qx, qy, hx, hy, zp)
+		f *= 1 - l.Shadow*l.shadowAt(s, w, qx, qy, hx, hy, zp)
 	}
 	return f
 }
@@ -754,7 +754,7 @@ func (l *LightField) rimNormal(nx, ny, nz, ux, uy float32) float32 {
 // shadowAt: how much nearer things block the way from background point h (frame pixel q) to the
 // light: 12 steps over up to 600 px towards it, each one in shadow where the scene there is nearer
 // than the ray (as shadowAt in render.comp)
-func (l *LightField) shadowAt(s *Scene, qx, qy, hx, hy, zp float32) float32 {
+func (l *LightField) shadowAt(s *Scene, w int, qx, qy, hx, hy, zp float32) float32 {
 	dx, dy := l.CX-qx, l.CY-qy
 	d := float32(math.Sqrt(float64(dx*dx + dy*dy)))
 	if d < 2 {
@@ -766,7 +766,7 @@ func (l *LightField) shadowAt(s *Scene, qx, qy, hx, hy, zp float32) float32 {
 	for k := 1; k <= 12; k++ {
 		st := span * float32(k) / 12
 		zr := zp + (l.LZ-zp)*(st/d)
-		zs := s.Near(hx+ux*st, hy+uy*st)
+		zs := s.nearW(w, hx+ux*st, hy+uy*st)
 		occ = max(occ, smooth32(0.004, 0.03, zs-zr)*(1-0.5*float32(k-1)/11))
 	}
 	return occ
@@ -775,11 +775,11 @@ func (l *LightField) shadowAt(s *Scene, qx, qy, hx, hy, zp float32) float32 {
 // rimAt: how much background point h is on an edge facing the light (direction ux, uy): the
 // scene farther than it within RimW px towards the light, brighter right at the edge (as in
 // lightDepth in render.comp)
-func (l *LightField) rimAt(s *Scene, hx, hy, zp, ux, uy float32) float32 {
+func (l *LightField) rimAt(s *Scene, w int, hx, hy, zp, ux, uy float32) float32 {
 	var r float32
 	for k := 1; k <= 4; k++ {
 		st := l.RimW * float32(k) / 4
-		dz := zp - s.Near(hx+ux*st, hy+uy*st)
+		dz := zp - s.nearW(w, hx+ux*st, hy+uy*st)
 		r = max(r, smooth32(l.RimEdge*0.35, l.RimEdge, dz)*(1-0.55*float32(k-1)/3))
 	}
 	return r

@@ -225,8 +225,13 @@ func ComposeParallax(dst, a, b *image.RGBA, la, lb Layer, tr Trans, par Parallax
 		for y := y0; y < y1; y++ {
 			for x := 0; x < w; x++ {
 				var c rgb
-				sa.moveAt(float64(x), float64(y))
-				sb.moveAt(float64(x), float64(y))
+				// (each image's camera move where the transition reads it)
+				ax, ay, bx, by := float64(x), float64(y), float64(x), float64(y)
+				if sa.par != nil && sb.par != nil {
+					ax, ay, bx, by, _ = TransPick(tr, float64(x), float64(y), w, h)
+				}
+				sa.moveAt(ax, ay)
+				sb.moveAt(bx, by)
 				if tr.Mode == 0 {
 					c = sa.at(float64(x), float64(y))
 				} else {
@@ -240,6 +245,102 @@ func ComposeParallax(dst, a, b *image.RGBA, la, lb Layer, tr Trans, par Parallax
 			}
 		}
 	})
+}
+
+// TransPick: the transition's geometry at frame pixel (x, y), for the depth (as transPick in
+// render.comp): where the old image is read (ax, ay) and the new one (bx, by), and how much of the
+// new one is in the mix (from 0.5 it is the one seen there)
+func TransPick(tr Trans, x, y float64, w, h int) (ax, ay, bx, by, wb float64) {
+	ax, ay, bx, by = x, y, x, y
+	W, H := float64(w), float64(h)
+	k := math.Max(0, math.Min(1, tr.K))
+	ke := k * k * (3 - 2*k)
+	cx, cy := W/2, H/2
+	mode := ""
+	if tr.Mode >= 0 && tr.Mode < len(config.TransitionModes) {
+		mode = config.TransitionModes[tr.Mode]
+	}
+	wb = k // fade
+	switch mode {
+	case "cut":
+		wb = 0
+	case "dissolve":
+		n := hash3(uint32(int(math.Floor(x*0.5))), uint32(int(math.Floor(y*0.5))), tr.Seed)
+		wb = smoothstep(n, n+0.1, k*1.1)
+	case "dip_black", "flash":
+		if k >= 0.5 {
+			wb = 1
+		} else {
+			wb = 0
+		}
+	case "wipe":
+		var u float64
+		switch tr.Dir {
+		case 1:
+			u = x / W
+		case 2:
+			u = 1 - y/H
+		case 3:
+			u = y / H
+		default:
+			u = 1 - x/W
+		}
+		const f = 0.02
+		e := ke*(1+2*f) - f
+		wb = 1 - smoothstep(e-f, e+f, u)
+	case "slide", "push":
+		dx, dy := dirVec(tr.Dir)
+		bx, by = x+dx*W*(1-ke), y+dy*H*(1-ke)
+		if mode == "push" {
+			ax, ay = x-dx*W*ke, y-dy*H*ke
+		}
+		wb = 0
+		if bx >= 0 && bx < W && by >= 0 && by < H {
+			wb = 1
+		}
+	case "zoom_in":
+		s, sb := 1+1.5*ke, 1+0.2*(1-ke)
+		ax, ay = cx+(x-cx)/s, cy+(y-cy)/s
+		bx, by = cx+(x-cx)/sb, cy+(y-cy)/sb
+		wb = smoothstep(0.3, 1, k)
+	case "zoom_out":
+		s := 1 + 1.5*(1-ke)
+		bx, by = cx+(x-cx)/s, cy+(y-cy)/s
+		wb = smoothstep(0, 0.7, k)
+	case "circle":
+		diag := math.Hypot(W, H) / 2
+		f := 0.01 * diag
+		r := ke * (diag + f)
+		wb = 1 - smoothstep(r-f, r+f, math.Hypot(x-cx, y-cy))
+	case "clock":
+		ang := math.Atan2(x-cx, -(y - cy))
+		if ang < 0 {
+			ang += 2 * math.Pi
+		}
+		e := ke * (2*math.Pi + 0.04)
+		wb = 1 - smoothstep(e-0.04, e, ang)
+	case "glitch":
+		g := math.Sin(math.Pi * k)
+		band := uint32(int(math.Floor(y)) / max(1, h/24))
+		step := uint32(k * 16)
+		wb = 0
+		if hash3(band, step, tr.Seed) < k {
+			wb = 1
+		}
+		shift := (hash3(band, step+97, tr.Seed) - 0.5) * W * 0.08 * g
+		ax, bx = x+shift, x+shift
+	case "pixelate":
+		bs := 1 + math.Floor(math.Sin(math.Pi*k)*48*(H/1080))
+		ax, ay = (math.Floor(x/bs)+0.5)*bs, (math.Floor(y/bs)+0.5)*bs
+		bx, by = ax, ay
+		wb = smoothstep(0.4, 0.6, k)
+	case "burn", "fluid", "liquid":
+		wb = 0
+		if k >= 0.5 {
+			wb = 1 // the new one from halfway, as before
+		}
+	}
+	return
 }
 
 // dirVec: unit vector where the new image moves (left, right, up, down)
