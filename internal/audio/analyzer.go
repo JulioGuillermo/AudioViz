@@ -10,6 +10,15 @@ import (
 
 const FFTWindowSize = 2048 // 2048 samples = ~42.6ms at 48kHz (resolution ~23.4Hz)
 
+// The bass bars (log-spaced: a few Hz wide) come from a longer window (~171 ms at 48 kHz,
+// ~5.9 Hz per bin), blended into the short one between bassFull and bassUntil Hz; a bar narrower
+// than two bins reads the spectrum at its centre (interpolated), so neighbours never share a bin
+const (
+	FFTBassSize = 8192
+	bassFull    = 220.0
+	bassUntil   = 450.0
+)
+
 // FrameFeatures holds the analyzed spectral and energy data for a specific video frame
 type FrameFeatures struct {
 	FrameIndex   int
@@ -59,9 +68,10 @@ type AudioAnalyzer struct {
 	beatPulseVal   float64
 }
 
+// a bar: its frequencies (Hz) and how much of it comes from the long window (0..1)
 type binRange struct {
-	startBin int
-	endBin   int
+	f0, f1 float64
+	long   float64
 }
 
 // NewAudioAnalyzer initializes the analyzer, precomputing windows and frequencies
@@ -89,28 +99,14 @@ func NewAudioAnalyzer(audio *DecodedAudio, fps int, barCount int, sensitivity fl
 	// From 25 Hz to 18000 Hz
 	minFreq := 25.0
 	maxFreq := 18000.0
-	hzPerBin := float64(audio.SampleRate) / float64(FFTWindowSize)
-	maxBin := FFTWindowSize / 2
-
 	ranges := make([]binRange, barCount)
 	for i := 0; i < barCount; i++ {
 		// Exponential / logarithmic distribution
 		fStart := minFreq * math.Pow(maxFreq/minFreq, float64(i)/float64(barCount))
 		fEnd := minFreq * math.Pow(maxFreq/minFreq, float64(i+1)/float64(barCount))
-
-		bStart := int(math.Floor(fStart / hzPerBin))
-		bEnd := int(math.Ceil(fEnd / hzPerBin))
-
-		if bStart < 1 {
-			bStart = 1
-		}
-		if bEnd <= bStart {
-			bEnd = bStart + 1
-		}
-		if bEnd > maxBin {
-			bEnd = maxBin
-		}
-		ranges[i] = binRange{startBin: bStart, endBin: bEnd}
+		fc := math.Sqrt(fStart * fEnd)
+		long := 1 - math.Max(0, math.Min(1, (fc-bassFull)/(bassUntil-bassFull)))
+		ranges[i] = binRange{f0: fStart, f1: fEnd, long: long}
 	}
 
 	return &AudioAnalyzer{
@@ -138,6 +134,12 @@ func (a *AudioAnalyzer) AnalyzeAllFrames(totalVideoFrames int) []FrameFeatures {
 
 	raws := make([]rawFrame, totalVideoFrames)
 	fft := newFFTPlan(FFTWindowSize)
+	fftB := newFFTPlan(FFTBassSize)
+	hannB := make([]float64, FFTBassSize)
+	for i := range hannB {
+		hannB[i] = 0.5 * (1.0 - math.Cos(2.0*math.Pi*float64(i)/float64(FFTBassSize-1)))
+	}
+	hzB := float64(a.audio.SampleRate) / float64(FFTBassSize)
 
 	workers := runtime.NumCPU()
 	var wg sync.WaitGroup
@@ -152,6 +154,11 @@ func (a *AudioAnalyzer) AnalyzeAllFrames(totalVideoFrames int) []FrameFeatures {
 			im := make([]float64, FFTWindowSize)
 			magsL := make([]float64, FFTWindowSize/2)
 			magsR := make([]float64, FFTWindowSize/2)
+			bufB := make([]float32, FFTBassSize)
+			reB := make([]float64, FFTBassSize)
+			imB := make([]float64, FFTBassSize)
+			bassL := make([]float64, FFTBassSize/2)
+			bassR := make([]float64, FFTBassSize/2)
 			for {
 				frameIdx := int(next.Add(1) - 1)
 				if frameIdx >= totalVideoFrames {
@@ -176,9 +183,23 @@ func (a *AudioAnalyzer) AnalyzeAllFrames(totalVideoFrames int) []FrameFeatures {
 					}
 				}
 
+				// the long window, for the bass bars (scaled as the short one: a steady tone
+				// gives the same magnitude)
+				for ch, mags := range [2][]float64{bassL, bassR} {
+					a.audio.ExtractChannelSamples(ch, centerSample, FFTBassSize, bufB)
+					for i := range reB {
+						reB[i] = float64(bufB[i]) * hannB[i]
+						imB[i] = 0
+					}
+					fftB.transform(reB, imB)
+					for i := range mags {
+						mags[i] = math.Hypot(reB[i], imB[i]) * (float64(FFTWindowSize) / FFTBassSize)
+					}
+				}
+
 				raws[frameIdx] = rawFrame{
-					barsL:  a.extractBars(magsL),
-					barsR:  a.extractBars(magsR),
+					barsL:  a.extractBars(magsL, bassL, hzPerBin, hzB),
+					barsR:  a.extractBars(magsR, bassR, hzPerBin, hzB),
 					bass:   a.calculateBandEnergy(magsL, magsR, 20.0, 150.0, hzPerBin),
 					mid:    a.calculateBandEnergy(magsL, magsR, 150.0, 3000.0, hzPerBin),
 					treble: a.calculateBandEnergy(magsL, magsR, 3000.0, 16000.0, hzPerBin),
@@ -281,22 +302,48 @@ func (a *AudioAnalyzer) AnalyzeAllFrames(totalVideoFrames int) []FrameFeatures {
 	return results
 }
 
-func (a *AudioAnalyzer) extractBars(magnitudes []float64) []float64 {
+func (a *AudioAnalyzer) extractBars(mags, bass []float64, hz, hzB float64) []float64 {
 	bars := make([]float64, a.barCount)
 	for i, r := range a.binFrequencies {
-		var sum float64
-		count := 0
-		for b := r.startBin; b < r.endBin && b < len(magnitudes); b++ {
-			sum += magnitudes[b]
-			count++
+		avg := 0.0
+		if r.long < 1 {
+			avg = bandMag(mags, hz, r.f0, r.f1) * (1 - r.long)
 		}
-		if count > 0 {
-			avg := sum / float64(count)
-			// Perceptual compression scale (soft logarithmic with normalization)
-			bars[i] = math.Log10(1.0+avg*9.0) / 1.5
+		if r.long > 0 {
+			avg += bandMag(bass, hzB, r.f0, r.f1) * r.long
 		}
+		// Perceptual compression scale (soft logarithmic with normalization)
+		bars[i] = math.Log10(1.0+avg*9.0) / 1.5
 	}
 	return bars
+}
+
+// bandMag: the spectrum's mean magnitude from f0 to f1 Hz (bins of hz Hz): the bins it covers, or
+// where it is narrower than two bins, the spectrum at its centre between the two nearest bins
+func bandMag(mags []float64, hz, f0, f1 float64) float64 {
+	n := len(mags)
+	if f1-f0 < 2*hz {
+		x := math.Sqrt(f0*f1) / hz
+		i := int(math.Floor(x))
+		if i < 1 {
+			return mags[min(1, n-1)]
+		}
+		if i >= n-1 {
+			return mags[n-1]
+		}
+		t := x - float64(i)
+		return mags[i]*(1-t) + mags[i+1]*t
+	}
+	b0 := max(1, int(math.Floor(f0/hz)))
+	b1 := min(n, int(math.Ceil(f1/hz)))
+	if b1 <= b0 {
+		b1 = min(n, b0+1)
+	}
+	sum := 0.0
+	for b := b0; b < b1; b++ {
+		sum += mags[b]
+	}
+	return sum / float64(max(1, b1-b0))
 }
 
 func (a *AudioAnalyzer) calculateBandEnergy(magsL, magsR []float64, fMin, fMax, hzPerBin float64) float64 {

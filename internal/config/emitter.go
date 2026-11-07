@@ -125,8 +125,10 @@ type EmitLight struct {
 	Flicker   float64 `yaml:"flicker"`
 	// The music (the emitter's Reacts to band): React adds to its strength (1 = twice as strong
 	// at full band), Quiet dims it where the band is low (1 = dark in silence)
-	React float64 `yaml:"react,omitempty"`
-	Quiet float64 `yaml:"quiet,omitempty"`
+	// ReactTo: its own band ("" = the emitter's, Audio reaction → Reacts to)
+	React   float64 `yaml:"react,omitempty"`
+	Quiet   float64 `yaml:"quiet,omitempty"`
+	ReactTo string  `yaml:"react_to,omitempty"`
 	// With a background that has depth: how fast it fades with the difference of depth (0 = not
 	// at all, flat as in 2D) and how much the surfaces are shaded by where they face (0..1)
 	Depth float64 `yaml:"depth"`

@@ -292,7 +292,11 @@ func (s *Session) emitFrame(li, ci int, c0, c *config.ClipConfig, idx int, feats
 		ph := float64(p.Seed%1000) / 159.0
 		k := l.Intensity * math.Max(0, 1+l.Flicker*(0.55*math.Sin(t*11.3+ph)+0.45*math.Sin(t*29.7+2*ph)))
 		if (l.React != 0 || l.Quiet != 0) && idx < len(feats) { // stronger / weaker with the music
-			k *= config.LightMusic(l.React, l.Quiet, math.Min(feats[idx].Band(e.React.ReactTo, "bass"), 1.5))
+			by := l.ReactTo
+			if by == "" {
+				by = e.React.ReactTo
+			}
+			k *= config.LightMusic(l.React, l.Quiet, math.Min(feats[idx].Band(by, "bass"), 1.5))
 		}
 		end := l.End
 		if end <= 0 {

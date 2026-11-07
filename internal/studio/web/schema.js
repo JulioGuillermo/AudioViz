@@ -451,6 +451,16 @@ export const EMITTER_PRESETS = [['fire', 'Fire', 'flame'], ['fire_real', 'Realis
   ['lamp', 'Light source (invisible)', 'sun'], ['water', 'Water', 'droplet'], ['water_clear', 'Clear water (lens)', 'droplet'], ['splash', 'Water splash', 'waves'], ['rain', 'Rain', 'cloud-rain']];
 const EMIT_SHAPES = [['point', 'Point'], ['circle', 'Circle (filled)'], ['ring', 'Ring'], ['line', 'Line'], ['box', 'Rectangle'],
   ['text', 'The letters of a text']];
+// an emitter light's reaction to the music (in its Light group and in Audio reaction)
+const LIGHT_MUSIC = [
+  { key: 'react_to', label: 'Its light reacts to', type: 'enum', def: '', anim: false, showIf: (c) => c.enabled,
+    options: [['', 'As the particles (Audio reaction)'], ...BANDS],
+    help: 'The band or instrument that makes its light stronger or weaker (the two settings below)' },
+  { key: 'react', label: 'Light stronger with the music', type: 'num', min: 0, max: 4, step: 0.05, def: 0, showIf: (c) => c.enabled,
+    help: 'How much the band adds to its strength (1 = twice as strong at full band)' },
+  { key: 'quiet', label: 'Light weaker when quiet', type: 'num', min: 0, max: 1, step: 0.01, def: 0, showIf: (c) => c.enabled,
+    help: 'How much it dims where the band is low (1 = dark in silence, full strength at full band)' },
+];
 const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', fields: [
   { key: 'amount', label: 'Amount', type: 'section', fields: [
     { key: 'rate', label: 'Per second', type: 'num', min: 0, max: 3000, step: 1 },
@@ -559,10 +569,7 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
     { key: 'mode', label: 'How it lights', type: 'enum', def: 'soft', anim: false, showIf: (c) => c.enabled,
       options: [['soft', 'Soft (lights and tints what is there)'], ['add', 'Add (brighter, like neon)']] },
     { key: 'flicker', label: 'Flicker', type: 'num', min: 0, max: 1, step: 0.01, showIf: (c) => c.enabled },
-    { key: 'react', label: 'Stronger with the music', type: 'num', min: 0, max: 4, step: 0.05, def: 0, showIf: (c) => c.enabled,
-      help: 'How much the band (Audio reaction → Reacts to) adds to its strength (1 = twice as strong at full band)' },
-    { key: 'quiet', label: 'Weaker when quiet', type: 'num', min: 0, max: 1, step: 0.01, def: 0, showIf: (c) => c.enabled,
-      help: 'How much it dims where the band (Audio reaction → Reacts to) is low (1 = dark in silence, full strength at full band)' },
+    ...LIGHT_MUSIC,
     { key: 'depth', label: 'Fades with depth', type: 'num', min: 0, max: 10, step: 0.1, showIf: (c) => c.enabled,
       help: 'With a background that has depth: how fast it fades away from its own depth (0 = flat, as in 2D)' },
     { key: 'shade', label: 'Surfaces shading', type: 'num', min: 0, max: 1, step: 0.01, showIf: (c) => c.enabled,
@@ -592,12 +599,14 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
     { key: 'radius', label: 'Reach (px)', type: 'num', min: 2, max: 400, step: 1 },
     { key: 'color', label: 'Color', type: 'color', optional: true, help: 'Empty: the particles\' own color' },
   ] },
-  { key: 'react', label: 'Audio reaction', type: 'group', fields: [
-    react('bass'),
-    { key: 'rate', label: 'More particles', type: 'num', min: 0, max: 10, step: 0.05, help: '1 = twice as many at full band' },
-    { key: 'speed', label: 'Faster', type: 'num', min: 0, max: 4, step: 0.05 },
-    { key: 'size', label: 'Bigger', type: 'num', min: 0, max: 4, step: 0.05 },
-    { key: 'burst', label: 'Burst on each beat', type: 'int', min: 0, max: 5000, step: 1, help: 'Particles thrown at once on every beat' },
+  // (edits the emitter itself: its react block, and its light's reaction as in Light)
+  { key: 'react', label: 'Audio reaction', type: 'group', whole: true, fields: [
+    { ...react('bass'), key: 'react.react_to' },
+    { key: 'react.rate', label: 'More particles', type: 'num', min: 0, max: 10, step: 0.05, help: '1 = twice as many at full band' },
+    { key: 'react.speed', label: 'Faster', type: 'num', min: 0, max: 4, step: 0.05 },
+    { key: 'react.size', label: 'Bigger', type: 'num', min: 0, max: 4, step: 0.05 },
+    { key: 'react.burst', label: 'Burst on each beat', type: 'int', min: 0, max: 5000, step: 1, help: 'Particles thrown at once on every beat' },
+    ...LIGHT_MUSIC.map((f) => ({ ...f, key: 'light.' + f.key, showIf: (c) => !!(c.light && c.light.enabled) })),
   ] },
 ] };
 export const EMITTER_CLIP_FIELDS = [
@@ -616,6 +625,7 @@ export const EMITTER_CLIP_FIELDS = [
   CLIP_DEPTH,
   // the emitter block, one folding group per part (each edits clip.emitter, or a block inside it)
   ...EMITTER_BLOCK.fields.flatMap((f) => {
+    if (f.whole) return [{ ...f, key: 'emitter', id: 'em_' + f.key }]; // (its fields: paths in the emitter)
     if (f.type !== 'section') return [{ ...f, key: 'emitter.' + f.key, id: 'em_' + f.key }];
     const own = f.fields.filter((x) => x.type !== 'group');
     const subs = f.fields.filter((x) => x.type === 'group').map((x) => ({ ...x, key: 'emitter.' + x.key, id: 'em_' + x.key,
