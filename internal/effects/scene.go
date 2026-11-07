@@ -113,6 +113,19 @@ func (s *Scene) HitW(qx, qy float32) (float32, float32, float32, int) {
 	near := func(x, y float32) float32 { return s.nearW(w, x, y) }
 	if s.Par.On() {
 		x, y, z := s.Par.Find(ux, uy, s.N, s.W, s.H, near)
+		if s.both() && wb > 0 && wb < 1 { // (each image's hit: the nearness blends)
+			o := 1 - w
+			ox, oy := uax, uay
+			if o == 1 {
+				ox, oy = ubx, uby
+			}
+			_, _, zo := s.Par.Find(ox, oy, s.N, s.W, s.H, func(x, y float32) float32 { return s.nearW(o, x, y) })
+			za, zb := z, zo
+			if w == 1 {
+				za, zb = zo, z
+			}
+			z = za + (zb-za)*float32(wb)
+		}
 		return x, y, z, w
 	}
 	z := near(ux, uy)

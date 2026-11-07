@@ -480,6 +480,9 @@ type FluidFrame struct {
 	BinStart []uint32 // NBX*NBY+1
 	CW, CH   int
 	Coarse   []float32 // CW×CH × (r, g, b sums 0..255, weight), blurred
+	// New: per pixel, how much of the new image the pieces bring (filled by Render; the depth
+	// follows it: TransPick)
+	New []float32
 }
 
 // FluidBufWords: an upper bound of the 32-bit words a FluidFrame takes on the GPU at w×h
@@ -594,10 +597,12 @@ func (f *Fluid) Frame(k float64) *FluidFrame {
 // Render draws the frame into dst (W×H) on the CPU. sa / sb are the two images as they are shown
 // now (with their motion): it starts exactly on the first and ends exactly on the second.
 func (ff *FluidFrame) Render(dst *image.RGBA, sa, sb *sampler) {
+	nw := make([]float32, ff.W*ff.H)
 	parallelFor(ff.H, func(y0, y1 int) {
 		for y := y0; y < y1; y++ {
 			for x := 0; x < ff.W; x++ {
-				c := ff.pixel(x, y, sa, sb)
+				c, nb := ff.pixel(x, y, sa, sb)
+				nw[y*ff.W+x] = float32(nb)
 				d := y*dst.Stride + x*4
 				dst.Pix[d] = uint8(math.Max(0, math.Min(255, c[0]+0.5)))
 				dst.Pix[d+1] = uint8(math.Max(0, math.Min(255, c[1]+0.5)))
@@ -606,14 +611,15 @@ func (ff *FluidFrame) Render(dst *image.RGBA, sa, sb *sampler) {
 			}
 		}
 	})
+	ff.New = nw
 }
 
 // pixel: the pieces covering pixel (x, y), each weighted by how much of the pixel it covers
 // (antialiased squares); the uncovered part takes the soft color around. Mirrors main() in
 // fluid.comp.
-func (ff *FluidFrame) pixel(x, y int, sa, sb *sampler) rgb {
+func (ff *FluidFrame) pixel(x, y int, sa, sb *sampler) (rgb, float64) {
 	var acc rgb
-	var w float64
+	var w, pw float64
 	fx, fy := float32(x), float32(y)
 	// Only the bins that can hold a piece touching the pixel (its center within half a piece)
 	bs := float32(ff.Bin)
@@ -641,15 +647,19 @@ func (ff *FluidFrame) pixel(x, y int, sa, sb *sampler) rgb {
 					c = mixc(c, sb.at(float64(q[6])+ox, float64(q[7])+oy), p)
 				}
 				acc = rgb{acc[0] + c[0]*wgt, acc[1] + c[1]*wgt, acc[2] + c[2]*wgt}
+				pw += p * wgt
 				w += wgt
 			}
 		}
 	}
 	var c rgb
+	nb := ff.K
 	if w > 1e-4 {
 		c = rgb{acc[0] / w, acc[1] / w, acc[2] / w}
+		nb = pw / w
 	}
 	if w < 1 {
+		nb = ff.K + (nb-ff.K)*w
 		// Where the area is almost empty (e.g. edges the particles left), fade to a dim mix of
 		// both images instead of stretching a few particles' colors
 		dim := mixc(sa.at(float64(x), float64(y)), sb.at(float64(x), float64(y)), ff.K)
@@ -675,8 +685,9 @@ func (ff *FluidFrame) pixel(x, y int, sa, sb *sampler) rgb {
 	}
 	if out := smooth01((ff.K - 0.96) / 0.04); out > 0 {
 		c = mixc(c, sb.at(float64(x), float64(y)), out)
+		nb += (1 - nb) * out
 	}
-	return c
+	return c, nb
 }
 
 // NewSampler exposes the layer sampler to the engine (the fluid renders with the images' motion)

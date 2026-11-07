@@ -79,19 +79,26 @@ float fbm(vec2 p, uint seed) {
     return s / tot;
 }
 
-vec3 burnPixel(vec2 q, float k, uint seed) {
-    float Hf = float(H);
+// how far past the fire's front q is (> 0: burned; as effects.burnFront)
+float burnFront(vec2 q, float k, uint seed) {
     float ke = k * k * (3.0 - 2.0 * k);
-    vec2 u = q / Hf;
+    vec2 u = q / float(H);
     float amp = 0.25 * P.burnP.y;
     float charW = 0.02 + 0.1 * P.burnP.x;
-    float emberW = 0.004 + 0.012 * P.burnP.x;
     float d = 1e9;
     int n = int(P.burnP.w);
     for (int i = 0; i < n; i++) d = min(d, distance(u, P.burnPts[i].xy));
     d += amp * (fbm(u * 5.0, seed) - 0.5) * 2.0 + 0.012 * (vnoise(u * 90.0, seed + 5u) - 0.5);
     float r = ke * (P.burnP.z + 2.0 * amp + 2.0 * charW) - (amp + charW);
-    float s = r - d; // > 0: burned
+    return r - d;
+}
+
+vec3 burnPixel(vec2 q, float k, uint seed) {
+    float Hf = float(H);
+    vec2 u = q / Hf;
+    float charW = 0.02 + 0.1 * P.burnP.x;
+    float emberW = 0.004 + 0.012 * P.burnP.x;
+    float s = burnFront(q, k, seed); // > 0: burned
     vec3 a = layerAt(0, q), b = layerAt(1, q);
     float ch = smoothstep(-charW, 0.0, s);
     a = mix(a, a * vec3(0.55, 0.38, 0.22), ch * 0.8);
@@ -1002,7 +1009,7 @@ TPick transPick(vec2 q) {
         float n = hash3(uint(floor(q.x * 0.5)), uint(floor(q.y * 0.5)), seed);
         wb = smoothstep(n, n + 0.1, k * 1.1);
     } else if (mode == 3 || mode == 4) {
-        wb = k < 0.5 ? 0.0 : 1.0;
+        wb = smoothstep(0.3, 0.7, k); // (the depth glides while the frame is nearly black / white)
     } else if (mode == 5) {
         int d = P.trans.y;
         float u = d == 1 ? q.x / S.x : d == 2 ? 1.0 - q.y / S.y : d == 3 ? q.y / S.y : 1.0 - q.x / S.x;
@@ -1042,8 +1049,14 @@ TPick transPick(vec2 q) {
         float bs = 1.0 + floor(sin(3.14159265 * k) * 48.0 * (S.y / 1080.0));
         t.qa = t.qb = (floor(q / bs) + 0.5) * bs;
         wb = smoothstep(0.4, 0.6, k);
-    } else if (mode >= 14) {
-        wb = k >= 0.5 ? 1.0 : 0.0; // burn, fluid: the new one from halfway, as before
+    } else if ((mode == 15 || mode == 16) && P.fluidI.w > 0) {
+        // fluid / liquid: how much of the new image the pieces bring here (the fluid pass's alpha)
+        ivec2 c2 = clamp(ivec2(q), ivec2(0), ivec2(W - 1, H - 1));
+        wb = unpackUnorm4x8(fimg[c2.y * W + c2.x]).a;
+    } else if (mode == 14) {
+        wb = smoothstep(0.0, 1.5 / float(H), burnFront(q, k, seed)); // burn: the hole
+    } else if (mode >= 15) {
+        wb = k >= 0.5 ? 1.0 : 0.0;
     }
     t.wb = wb;
     t.img = wb >= 0.5 ? 1 : 0;
@@ -1112,6 +1125,7 @@ void parallaxPixel(vec2 q) {
         gHit = vec3(u, z);
         return;
     }
+    vec3 rz = vec3(0.0); // (each image's hit: the nearness blends as without the camera)
     for (int img = 0; img < 2; img++) {
         if ((has & (1 << img)) == 0) continue;
         vec2 ui = img == 0 ? ua : ub;
@@ -1119,6 +1133,11 @@ void parallaxPixel(vec2 q) {
         if (img == 0) gParA = ui - r.xy;
         else gParB = ui - r.xy;
         if (img == gW) gHit = r;
+        else rz = r;
+    }
+    if (both && tp.wb > 0.0 && tp.wb < 1.0) {
+        float za = gW == 0 ? gHit.z : rz.z, zb = gW == 1 ? gHit.z : rz.z;
+        gHit.z = mix(za, zb, tp.wb);
     }
 }
 

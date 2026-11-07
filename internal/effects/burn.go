@@ -130,7 +130,9 @@ func fbm(x, y float64, seed uint32) float64 {
 	return s / tot
 }
 
-func burnPixel(sa, sb *sampler, x, y float64, w, h int, tr Trans) rgb {
+// burnFront: how far past the fire's front (x, y) is (> 0: burned; as burnFront in render.comp).
+// The distance to the fire is irregular at large scale (roughness) and crinkled at small scale
+func burnFront(tr Trans, x, y float64, h int) float64 {
 	H := float64(h)
 	k := math.Max(0, math.Min(1, tr.K))
 	ke := k * k * (3 - 2*k)
@@ -138,11 +140,19 @@ func burnPixel(sa, sb *sampler, x, y float64, w, h int, tr Trans) rgb {
 	u := [2]float64{x / H, y / H}
 	amp := 0.25 * bp.Rough
 	charW := 0.02 + 0.1*bp.Edge
-	emberW := 0.004 + 0.012*bp.Edge
-	// Distance to the fire: irregular at large scale (roughness) and crinkled at small scale
 	d := nearest(bp.Pts, u) + amp*(fbm(u[0]*5, u[1]*5, tr.Seed)-0.5)*2 + 0.012*(vnoise(u[0]*90, u[1]*90, tr.Seed+5)-0.5)
 	r := ke*(bp.MaxD+2*amp+2*charW) - (amp + charW)
-	s := r - d // > 0: burned
+	return r - d
+}
+
+func burnPixel(sa, sb *sampler, x, y float64, w, h int, tr Trans) rgb {
+	H := float64(h)
+	k := math.Max(0, math.Min(1, tr.K))
+	bp := tr.Burn
+	u := [2]float64{x / H, y / H}
+	charW := 0.02 + 0.1*bp.Edge
+	emberW := 0.004 + 0.012*bp.Edge
+	s := burnFront(tr, x, y, h) // > 0: burned
 	a, b := sa.at(x, y), sb.at(x, y)
 	// The paper chars ahead of the front: browner, then nearly black at the edge
 	ch := smoothstep(-charW, 0, s)

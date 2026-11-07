@@ -268,11 +268,7 @@ func TransPick(tr Trans, x, y float64, w, h int) (ax, ay, bx, by, wb float64) {
 		n := hash3(uint32(int(math.Floor(x*0.5))), uint32(int(math.Floor(y*0.5))), tr.Seed)
 		wb = smoothstep(n, n+0.1, k*1.1)
 	case "dip_black", "flash":
-		if k >= 0.5 {
-			wb = 1
-		} else {
-			wb = 0
-		}
+		wb = smoothstep(0.3, 0.7, k) // (the depth glides while the frame is nearly black / white)
 	case "wipe":
 		var u float64
 		switch tr.Dir {
@@ -334,11 +330,18 @@ func TransPick(tr Trans, x, y float64, w, h int) (ax, ay, bx, by, wb float64) {
 		ax, ay = (math.Floor(x/bs)+0.5)*bs, (math.Floor(y/bs)+0.5)*bs
 		bx, by = ax, ay
 		wb = smoothstep(0.4, 0.6, k)
-	case "burn", "fluid", "liquid":
-		wb = 0
-		if k >= 0.5 {
-			wb = 1 // the new one from halfway, as before
+	case "fluid", "liquid":
+		// how much of the new image the pieces bring here (FluidFrame.Render)
+		if f := tr.Fluid; f != nil && len(f.New) == w*h {
+			xi, yi := min(max(int(x), 0), w-1), min(max(int(y), 0), h-1)
+			wb = float64(f.New[yi*w+xi])
+		} else if k >= 0.5 {
+			wb = 1
+		} else {
+			wb = 0
 		}
+	case "burn":
+		wb = smoothstep(0, 1.5/H, burnFront(tr, x, y, h)) // the hole
 	}
 	return
 }

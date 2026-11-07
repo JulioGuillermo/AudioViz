@@ -30,6 +30,7 @@ void main() {
     vec2 f = vec2(px);
     vec3 acc = vec3(0.0);
     float w = 0.0;
+    float pw = 0.0; // how much of the new image the pieces bring (for the depth: written in alpha)
     // The pieces covering the pixel, each weighted by how much of it it covers (antialiased squares)
     // Only the bins that can hold a piece touching the pixel (its center within half a piece)
     float bs = float(bin);
@@ -52,12 +53,15 @@ void main() {
                 if (p < 1.0) c = layerAt(0, src.xy + off);
                 if (p > 0.0) c = mix(c, layerAt(1, src.zw + off), p);
                 acc += c * wgt;
+                pw += p * wgt;
                 w += wgt;
             }
         }
     }
     vec3 c = w > 1e-4 ? acc / w : vec3(0.0);
+    float nb = w > 1e-4 ? pw / w : k;
     if (w < 1.0) {
+        nb = mix(k, nb, w);
         // Where the area is almost empty, a dim mix of both images, or the soft color of the
         // particles around (bilinear on the 1/8 coarse grid)
         vec3 g = mix(layerAt(0, f), layerAt(1, f), k) * 0.5;
@@ -74,6 +78,10 @@ void main() {
         c = mix(g, c, w);
     }
     if (P.fluidF.w > 0.0 && w < 0.5) c = vec3(1.0, 0.0, 1.0);
-    if (k > 0.96) c = mix(c, layerAt(1, f), smoothstep(0.96, 1.0, k));
-    fimg[px.y * W + px.x] = packUnorm4x8(vec4(c, 1.0));
+    if (k > 0.96) {
+        c = mix(c, layerAt(1, f), smoothstep(0.96, 1.0, k));
+        nb = mix(nb, 1.0, smoothstep(0.96, 1.0, k));
+    }
+    // alpha: how much of the new image is here (render.comp transPick: the depth follows it)
+    fimg[px.y * W + px.x] = packUnorm4x8(vec4(c, nb));
 }
