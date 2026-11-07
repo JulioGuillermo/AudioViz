@@ -130,6 +130,8 @@ func Run(opt Options, ready func(url string)) error {
 	mux.HandleFunc("POST /api/plugins/install", s.hPluginInstall)
 	mux.HandleFunc("PUT /api/plugins/engine", s.hPluginEngine)
 	mux.HandleFunc("DELETE /api/plugins", s.hPluginRemove)
+	mux.HandleFunc("GET /api/models", s.hModels)
+	mux.HandleFunc("DELETE /api/models", s.hModelRemove)
 	mux.HandleFunc("GET /api/images/preview", s.hImagePreview)
 	mux.HandleFunc("DELETE /api/images", s.hDeleteImage)
 	mux.HandleFunc("POST /api/job/cancel", s.hCancel)

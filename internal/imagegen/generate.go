@@ -9,6 +9,7 @@ import (
 	"image"
 	"math"
 	"math/rand/v2"
+	"os"
 	"time"
 
 	"golang.org/x/image/draw"
@@ -17,7 +18,7 @@ import (
 )
 
 type Request struct {
-	Model         string // family ID (zimage, klein, klein3, qwen, qwen-turbo, moss)
+	Model         string // family ID (zimage, klein, klein3, qwen, qwen-turbo, moss; +"-int8" on SYCL)
 	Prompt        string
 	Width, Height int           // rounded to multiples of 32
 	Steps         int           // 0 = the model's default
@@ -84,6 +85,9 @@ func Generate(ctx context.Context, req Request, report func(progress.Status), on
 	f := Get(req.Model)
 	if f == nil {
 		return nil, fmt.Errorf("unknown image model %q", req.Model)
+	}
+	if f.SYCLOnly && !onSYCL() {
+		return nil, fmt.Errorf("%s needs the Intel GPU engine (SYCL plugin): Settings › Plugins", f.Name)
 	}
 	if req.Prompt == "" {
 		return nil, fmt.Errorf("the prompt is empty")
@@ -177,7 +181,12 @@ func Generate(ctx context.Context, req Request, report func(progress.Status), on
 		if f.Tokenizer != nil {
 			tok = paths[f.Tokenizer.Name]
 		}
-		if err := eng.load(key, paths[f.Diffusion.Name], paths[f.LLM.Name], vision, paths[f.VAE.Name], tok, f.Conv, onSYCL() && !f.Heavy, fa); err != nil {
+		diff := paths[f.Diffusion.Name]
+		// (development: another diffusion file for the family, e.g. its INT8 convrot weights)
+		if d := os.Getenv("AUDIOVIZ_SD_DIFFUSION"); d != "" {
+			diff = d
+		}
+		if err := eng.load(key, diff, paths[f.LLM.Name], vision, paths[f.VAE.Name], tok, f.Conv, onSYCL() && !f.Heavy, fa); err != nil {
 			t.End("load", "error", err.Error())
 			return nil, err
 		}
@@ -299,7 +308,11 @@ func round32(v int) int { return (v + 16) / 32 * 32 }
 // Models lists, per family, whether its files are downloaded and how much is missing
 func Models() []map[string]any {
 	var out []map[string]any
+	sycl := onSYCL()
 	for _, f := range Families {
+		if f.SYCLOnly && !sycl {
+			continue
+		}
 		var size int64
 		for _, m := range f.Needed(f.Vision != nil) {
 			size += m.Size

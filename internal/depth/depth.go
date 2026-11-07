@@ -32,8 +32,8 @@ import (
 	"unsafe"
 
 	"audioviz/internal/aimodel"
-	"audioviz/internal/imagegen"
 	_ "audioviz/internal/ggml" // the shared Vulkan loader bridge
+	"audioviz/internal/imagegen"
 )
 
 // Kinds of model output (Spec.Kind)
@@ -330,5 +330,14 @@ func Unload() {
 func debugf(f string, a ...any) {
 	if os.Getenv("AUDIOVIZ_DEBUG_DEPTH") != "" {
 		fmt.Fprintf(os.Stderr, "[depth] "+f+"\n", a...)
+	}
+}
+
+func init() {
+	for _, sp := range Models {
+		aimodel.Register("Depth · "+sp.Label, sp.Model)
+		if sp.Branch != nil {
+			aimodel.Register("Depth · "+sp.Label, *sp.Branch)
+		}
 	}
 }

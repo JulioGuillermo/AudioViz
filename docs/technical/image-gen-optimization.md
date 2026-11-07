@@ -33,6 +33,7 @@ seconds between processes, so close numbers were A/B'd alternately):
 | Whole model on the GPU, no graph segments, iGPU free memory fixed | 61 s | 2 s | 49 s | 7 s |
 | + rope on SYCL (ggml-ext) + norm-chain fusion | 49 s | 2 s | 38 s | 7 s |
 | + V preparation, SCALE·SCALE, SwiGLU·SCALE fusions | **46 s** | 3 s | **35 s** | 7 s |
+| INT8 weights (W8A8 "convrot", `zimage-int8`) | **40 s** | 3 s | **27 s** | 7 s |
 
 Every image was compared with the unfused one: PSNR ≈ 55 dB (mean difference < 0.1 of 255),
 visually identical.
@@ -101,6 +102,18 @@ Lesson: a first version with one work-item per element and 64-bit division/modul
 was *slower* than the unfused ops (SwiGLU·SCALE 12 ms); one work-group per row with the row's
 coordinates computed once fixed it.
 
+### INT8 on XMX (`sd-ext.cpp`)
+stable-diffusion.cpp runs INT8 "convrot" checkpoints (Comfy-Org publishes them for Z-Image Turbo,
+Qwen Image 2.1 and its Turbo, MOSS-Image SFT): int8 weights with a scale per output channel,
+activations rotated in groups (scaled by 1/√G, radix-4 butterflies) and quantized per row at run
+time (`sd.quantize_i8_convrot`), then `sd.linear_i8`. The plugin implements both: the rotation in
+local memory per (row, group), the per-row quantization, an s8 × s8 → s32 oneDNN matmul on the
+XMX units, and an epilogue (× row scale × column scale + bias). Z-Image's DiT step goes from
+≈ 4.4 s (q4_K) to ≈ 3.4 s. Upstream's Vulkan INT8 kernels take ≈ 2 min per step on this GPU, so
+the INT8 variants (`<model>-int8`) are offered only on the SYCL engine and refused elsewhere.
+Checked against the Vulkan INT8 path: the 2-step difference (PSNR 32.5 dB) is of the order of
+Vulkan vs SYCL with q4_K (36.3 dB); activation rounding amplifies tiny upstream differences.
+
 ## How to measure
 
 - `GGML_SYCL_OP_PROF=1`: after every launch (a node or a fused group) the plugin waits for the
@@ -126,8 +139,9 @@ coordinates computed once fixed it.
 - **VAE `IM2COL`** at ≈ 10 GB/s: a faster kernel or oneDNN's convolution (≈ 4–5 s per image).
 - **JIT of SYCL kernels** (≈ 4 s per process; in the studio only the first image): AOT for Xe2
   (`lnl-m`) crashed in October because the build dropped the >4 GB buffer option.
-- **INT8** weights on XMX (twice the f16 rate, no dequantization): stable-diffusion.cpp has INT8
-  "convrot" models and Vulkan INT8 kernels.
+- INT8: only Z-Image was measured; Qwen and MOSS INT8 are offered but untested. A CPU-reference
+  check of the INT8 kernels at a small size would make the correctness proof exact.
+- Qwen Image's VAE spends ≈ 5 s in CONT permutes around its 3D convolutions.
 - The w2 matmul (K = 10240) takes 23.5 ms against 16 ms for w1/w3 with the same FLOPs; the
   f32 → f16 conversion of its input is a suspect.
 - Other models: the rope, the memory fix and the V preparation are generic. The norm-chain and

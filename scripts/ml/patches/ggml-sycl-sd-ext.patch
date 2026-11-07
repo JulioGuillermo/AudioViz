@@ -464,10 +464,10 @@ index 0000000..b422bc9
 +int ggml_sycl_dit_swiglu_scale(ggml_backend_sycl_context & ctx, ggml_cgraph * cgraph, int i);
 diff --git a/src/ggml-sycl/sd-ext.cpp b/src/ggml-sycl/sd-ext.cpp
 new file mode 100644
-index 0000000..636de25
+index 0000000..4aec7f6
 --- /dev/null
 +++ b/src/ggml-sycl/sd-ext.cpp
-@@ -0,0 +1,248 @@
+@@ -0,0 +1,485 @@
 +// stable-diffusion.cpp's custom operators (ggml-ext) on SYCL: without them the SYCL backend runs the
 +// generic graphs instead (RoPE through a table: REPEAT + MUL + ADD + CONT, plus a permute and a cast
 +// to f16 before the attention). stable-diffusion.cpp hands the operators over through the registry's
@@ -687,7 +687,225 @@ index 0000000..636de25
 +
 +}  // namespace
 +
-+// stable-diffusion.cpp's operators, in its order: [0] sd.rope_apply.v1. Registers the SYCL kernels
++// ---- INT8 (W8A8, "convrot"): stable-diffusion.cpp's sd.quantize_i8_convrot.v1 and sd.linear_i8.v1.
++// Activations: rotated in groups of G (scaled by 1/sqrt(G), radix-4 butterflies; G = 0: none) and
++// quantized per row (absmax / 127, round to nearest). The packed form is K int8 per row for
++// rows rounded up to 4, then one float scale per row. The product: int8 x int8 -> int32 on XMX
++// through oneDNN, then * row scale * column scale + bias.
++
++namespace {
++
++ggml_ext_op_t g_i8_op      = nullptr;
++ggml_ext_op_t g_convrot_op = nullptr;
++
++struct I8Attr {
++    int64_t shape[3];
++    int32_t group_size;
++    int32_t flags;  // 1 packed, 2 input scale, 4 weight scale, 8 bias
++};
++
++bool valid_group(int g) { return g == 1 || g == 4 || g == 16 || g == 64 || g == 256; }
++
++int64_t padded_rows(int64_t rows) { return (rows + 3) / 4 * 4; }
++
++// rotate every group of G of each row into tmp (float)
++void convrot_rotate(queue_ptr q, const float * x, float * tmp, int64_t rows, int64_t K, int G) {
++    constexpr int WG = 64;
++    const int64_t groups = rows * (K / G);
++    const float   inv    = 1.0f / sycl::sqrt(float(G));
++    q->submit([&](sycl::handler & h) {
++        sycl::local_accessor<float, 1> v(sycl::range<1>(256), h);
++        h.parallel_for(sycl::nd_range<1>(sycl::range<1>(groups * WG), sycl::range<1>(WG)), [=](sycl::nd_item<1> it) {
++            const int64_t gi  = it.get_group(0);
++            const int     lid = it.get_local_id(0);
++            const float * src = x + gi * G;  // rows are contiguous, K % G == 0
++            for (int i = lid; i < G; i += WG) v[i] = src[i] * inv;
++            sycl::group_barrier(it.get_group());
++            for (int stride = 1; stride < G; stride *= 4) {
++                for (int qd = lid; qd < G / 4; qd += WG) {
++                    const int   base = (qd / stride) * 4 * stride, j = qd % stride, i = base + j;
++                    const float a = v[i], b = v[i + stride], c = v[i + 2 * stride], d = v[i + 3 * stride];
++                    v[i]              = a + b + c - d;
++                    v[i + stride]     = a + b - c + d;
++                    v[i + 2 * stride] = a - b + c + d;
++                    v[i + 3 * stride] = -a + b + c + d;
++                }
++                sycl::group_barrier(it.get_group());
++            }
++            float * dst = tmp + gi * G;
++            for (int i = lid; i < G; i += WG) dst[i] = v[i];
++        });
++    });
++}
++
++// quantize each row of src (float) to int8 with its absmax / 127
++void quantize_rows(queue_ptr q, const float * src, int8_t * out, float * scales, int64_t rows, int64_t K) {
++    constexpr int WG = 256;
++    q->parallel_for(sycl::nd_range<1>(sycl::range<1>(rows * WG), sycl::range<1>(WG)), [=](sycl::nd_item<1> it) {
++        const int64_t r   = it.get_group(0);
++        const int     lid = it.get_local_id(0);
++        const float * s   = src + r * K;
++        float         m   = 0.0f;
++        for (int64_t c = lid; c < K; c += WG) m = sycl::fmax(m, sycl::fabs(s[c]));
++        m                 = sycl::reduce_over_group(it.get_group(), m, sycl::maximum<float>());
++        const float scale = m / 127.0f;
++        const float inv   = scale == 0.0f ? 0.0f : 1.0f / scale;
++        if (lid == 0) scales[r] = scale;
++        int8_t * o = out + r * K;
++        for (int64_t c = lid; c < K; c += WG) {
++            o[c] = (int8_t) sycl::clamp(sycl::rint(s[c] * inv), -127.0f, 127.0f);
++        }
++    });
++}
++
++// f32 rows -> int8 rows + scales (with the convrot rotation if G > 0)
++void quantize_input(ggml_backend_sycl_context & ctx, queue_ptr q, const float * x, int64_t rows, int64_t K, int G,
++                    int8_t * out, float * scales) {
++    if (G > 1) {
++        ggml_sycl_pool_alloc<float> tmp(ctx.pool(), rows * K);
++        convrot_rotate(q, x, tmp.get(), rows, K, G);
++        quantize_rows(q, tmp.get(), out, scales, rows, K);
++    } else {
++        quantize_rows(q, x, out, scales, rows, K);
++    }
++}
++
++bool convrot_supports(ggml_backend_dev_t, const ggml_tensor * node, void *) {
++    if (!g_convrot_op || ggml_ext_op_get(node) != g_convrot_op || node->type != GGML_TYPE_I8 || !ggml_is_contiguous(node)) {
++        return false;
++    }
++    const ggml_tensor * x = node->src[0];
++    int32_t             G;
++    std::memcpy(&G, ggml_ext_op_attributes(node), sizeof G);
++    if (!x || x->type != GGML_TYPE_F32 || !ggml_is_contiguous(x) || !valid_group(G) || x->ne[0] % G) return false;
++    const int64_t rows = ggml_nrows(x), K = x->ne[0];
++    return node->ne[0] == K && node->ne[1] == padded_rows(rows) + (rows * 4 - 1) / K + 1;
++}
++
++ggml_status convrot_execute(const ggml_ext_execution_context * c, ggml_tensor * const * nodes, int, void *, void *) {
++    auto *              ctx = static_cast<ggml_backend_sycl_context *>(c->backend->context);
++    ggml_tensor *       dst = nodes[0];
++    const ggml_tensor * x   = dst->src[0];
++    int32_t             G;
++    std::memcpy(&G, ggml_ext_op_attributes(dst), sizeof G);
++    const int64_t rows = ggml_nrows(x), K = x->ne[0];
++    ggml_sycl_set_device(ctx->device);
++    queue_ptr q = ctx->stream();
++    int8_t *  out    = (int8_t *) dst->data;
++    float *   scales = (float *) (out + padded_rows(rows) * K);
++    quantize_input(*ctx, q, (const float *) x->data, rows, K, G, out, scales);
++    if (padded_rows(rows) > rows) q->memset(out + rows * K, 0, (padded_rows(rows) - rows) * K);
++    return GGML_STATUS_SUCCESS;
++}
++
++struct I8Parts {
++    const ggml_tensor *w, *x, *xs, *ws, *b;
++    I8Attr             a;
++};
++
++bool i8_parts(const ggml_tensor * node, I8Parts * p) {
++    if (!g_i8_op || ggml_ext_op_get(node) != g_i8_op || node->type != GGML_TYPE_F32 || !ggml_is_contiguous(node)) return false;
++    std::memcpy(&p->a, ggml_ext_op_attributes(node), sizeof p->a);
++    if (p->a.flags & ~15) return false;
++    p->w = node->src[0];
++    p->x = node->src[1];
++    p->xs = p->ws = p->b = nullptr;
++    int i = 2;
++    if (p->a.flags & 2) p->xs = node->src[i++];
++    if (p->a.flags & 4) p->ws = node->src[i++];
++    if (p->a.flags & 8) p->b = node->src[i++];
++    const ggml_tensor * w = p->w;
++    if (!w || !p->x || w->type != GGML_TYPE_I8 || !ggml_is_contiguous(w) || w->ne[2] != 1 || w->ne[3] != 1 ||
++        node->ne[0] != w->ne[1] || !ggml_is_contiguous(p->x)) {
++        return false;
++    }
++    for (const ggml_tensor * t : { p->xs, p->ws, p->b }) {
++        if (t && (t->type != GGML_TYPE_F32 || !ggml_is_contiguous(t))) return false;
++    }
++    const bool packed = p->a.flags & 1;
++    if (packed) return p->x->type == GGML_TYPE_I8 && !p->xs && p->x->ne[0] == w->ne[0];
++    if (p->x->type == GGML_TYPE_I8) return p->xs && p->a.group_size == 0;
++    return p->x->type == GGML_TYPE_F32 && !p->xs && p->x->ne[0] == w->ne[0] &&
++           (p->a.group_size == 0 || (valid_group(p->a.group_size) && w->ne[0] % p->a.group_size == 0));
++}
++
++bool i8_supports(ggml_backend_dev_t, const ggml_tensor * node, void *) {
++    I8Parts p;
++    return i8_parts(node, &p);
++}
++
++ggml_status i8_execute(const ggml_ext_execution_context * c, ggml_tensor * const * nodes, int, void *, void *) {
++    auto *        ctx = static_cast<ggml_backend_sycl_context *>(c->backend->context);
++    ggml_tensor * dst = nodes[0];
++    I8Parts       p;
++    if (!i8_parts(dst, &p)) return GGML_STATUS_FAILED;
++    const int64_t K = p.w->ne[0], N = p.w->ne[1], rows = dst->ne[1] * dst->ne[2] * dst->ne[3];
++    ggml_sycl_set_device(ctx->device);
++    queue_ptr q = ctx->stream();
++
++    // the int8 rows and their scales
++    const int8_t *                 xq;
++    const float *                  xs;
++    ggml_sycl_pool_alloc<int8_t>   qbuf(ctx->pool());
++    ggml_sycl_pool_alloc<float>    sbuf(ctx->pool());
++    if (p.a.flags & 1) {
++        xq = (const int8_t *) p.x->data;
++        xs = (const float *) (xq + padded_rows(rows) * K);
++    } else if (p.x->type == GGML_TYPE_I8) {
++        xq = (const int8_t *) p.x->data;
++        xs = (const float *) p.xs->data;
++    } else {
++        int8_t * qo = qbuf.alloc(rows * K);
++        float *  so = sbuf.alloc(rows);
++        quantize_input(*ctx, q, (const float *) p.x->data, rows, K, p.a.group_size, qo, so);
++        xq = qo;
++        xs = so;
++    }
++
++    // int32 = int8 rows [rows, K] x int8 weights^T [K, N] (oneDNN, XMX)
++    ggml_sycl_pool_alloc<int32_t> acc(ctx->pool(), rows * N);
++    {
++        using dt   = dnnl::memory::data_type;
++        auto eng   = ctx->engine_dnnl(q);
++        auto strm  = ctx->stream_dnnl(q);
++        auto a_md  = dnnl::memory::desc({ rows, K }, dt::s8, { K, 1 });
++        auto b_md  = dnnl::memory::desc({ K, N }, dt::s8, { 1, K });
++        auto c_md  = dnnl::memory::desc({ rows, N }, dt::s32, { N, 1 });
++        dnnl::primitive_attr attr;
++        attr.set_scratchpad_mode(dnnl::scratchpad_mode::user);
++        auto pd = dnnl::matmul::primitive_desc(eng, a_md, b_md, c_md, attr);
++        ggml_sycl_pool_alloc<uint8_t> scratch(ctx->pool());
++        void * sp = pd.scratchpad_desc().get_size() > 0 ? scratch.alloc(pd.scratchpad_desc().get_size()) : nullptr;
++        dnnl::matmul(pd).execute(strm, { { DNNL_ARG_SRC, dnnl::memory(a_md, eng, const_cast<int8_t *>(xq)) },
++                                         { DNNL_ARG_WEIGHTS, dnnl::memory(b_md, eng, p.w->data) },
++                                         { DNNL_ARG_DST, dnnl::memory(pd.dst_desc(), eng, acc.get()) },
++                                         { DNNL_ARG_SCRATCHPAD, dnnl::memory(pd.scratchpad_desc(), eng, sp) } });
++    }
++
++    // * row scale * column scale + bias
++    const int32_t * A  = acc.get();
++    const float *   ws = p.ws ? (const float *) p.ws->data : nullptr;
++    const float *   bb = p.b ? (const float *) p.b->data : nullptr;
++    float *         o  = (float *) dst->data;
++    constexpr int   WG = 256;
++    q->parallel_for(sycl::nd_range<1>(sycl::range<1>(rows * WG), sycl::range<1>(WG)), [=](sycl::nd_item<1> it) {
++        const int64_t r   = it.get_group(0);
++        const int     lid = it.get_local_id(0);
++        const float   rs  = xs[r];
++        for (int64_t n = lid; n < N; n += WG) {
++            float v = float(A[r * N + n]) * rs;
++            if (ws) v *= ws[n];
++            if (bb) v += bb[n];
++            o[r * N + n] = v;
++        }
++    });
++    return GGML_STATUS_SUCCESS;
++}
++
++}  // namespace
++
++// stable-diffusion.cpp's operators, in its order: [0] sd.rope_apply.v1, [1] sd.linear_i8.v1,
++// [2] sd.quantize_i8_convrot.v1 (older stable-diffusion.cpp builds pass only the first). Registers the SYCL kernels
 +// for the device (once, before graphs are allocated).
 +extern "C" bool ggml_ext_sycl_register_v1(ggml_backend_dev_t device, const ggml_ext_op_t * ops, int n_ops) {
 +    const char * off = getenv("GGML_SYCL_SD_EXT");
@@ -713,6 +931,25 @@ index 0000000..636de25
 +    d.supports  = nullptr;
 +    d.match     = rope_match;
 +    ok          = ggml_ext_register_kernel(device, &d) && ok;
-+    GGML_LOG_INFO("ggml_ext_sycl: stable-diffusion.cpp operators on SYCL: %s\n", ok ? "rope" : "failed");
++    if (n_ops >= 3 && ops[1] && ops[2]) {
++        g_i8_op      = ops[1];
++        g_convrot_op = ops[2];
++        d            = {};
++        d.abi_version = GGML_EXT_ABI_VERSION;
++        d.name        = "sd.linear_i8.sycl.v1";
++        d.op          = GGML_OP_CUSTOM;
++        d.custom_op   = g_i8_op;
++        d.priority    = 100;
++        d.supports    = i8_supports;
++        d.execute     = i8_execute;
++        ok            = ggml_ext_register_kernel(device, &d) && ok;
++        d.name        = "sd.quantize_i8_convrot.sycl.v1";
++        d.custom_op   = g_convrot_op;
++        d.supports    = convrot_supports;
++        d.execute     = convrot_execute;
++        ok            = ggml_ext_register_kernel(device, &d) && ok;
++    }
++    GGML_LOG_INFO("ggml_ext_sycl: stable-diffusion.cpp operators on SYCL: %s\n",
++                  !ok ? "failed" : g_i8_op ? "rope, int8 (W8A8 convrot)" : "rope");
 +    return ok;
 +}

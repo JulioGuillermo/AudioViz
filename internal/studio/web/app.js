@@ -28,6 +28,7 @@ import { ChatPanel, chatStore, loadChat, chatEvent, unreadCount, notifyMsg } fro
 import { AgentChanges } from './review.js';
 import { ComfySection, ComfyRunDialog, loadFlows, flowsStore } from './comfy.js';
 import { PluginsSection } from './plugins.js';
+import { ModelsSection } from './models.js';
 
 // ------------------------------------------------------------------ preview
 
@@ -1675,7 +1676,8 @@ function App() {
       </${Section}>
       <${LibrarySection} lib=${proj.expressions || {}} Section=${Section} Edit=${Edit} onChange=${(l) => update((p) => { p.expressions = l; })} />
       <${ComfySection} comfy=${proj.comfy} onRun=${(id) => setDlg({ type: 'comfyrun', id })} onURL=${(u) => update((p) => { p.comfy = { ...(p.comfy || {}), url: u }; })} Section=${Section} Edit=${Edit} showErr=${showErr} />
-      <${PluginsSection} Section=${Section} showErr=${showErr} /></div></div>`;
+      <${PluginsSection} Section=${Section} showErr=${showErr} />
+      <${ModelsSection} Section=${Section} showErr=${showErr} /></div></div>`;
   else if (sel.kind === 'layer' && layerById_(sel.id)) inspector = html`<${LayerInspector} proj=${proj} sel=${sel} setSel=${setSel} update=${update} time=${time} meta=${meta} ctx=${ctx} />`;
   else if (sel.kind === 'text') inspector = html`<${TextsInspector} proj=${proj} sel=${sel} setSel=${setSel} update=${update} time=${time} meta=${meta} ctx=${ctx} />`;
   else if (sel.kind === 'line') inspector = html`<${LineEditor} lyr=${lyr} lines=${lineSel} time=${time} seek=${seek} saveState=${lyrSave}

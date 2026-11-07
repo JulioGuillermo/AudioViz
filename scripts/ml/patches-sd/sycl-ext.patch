@@ -10,8 +10,8 @@ index 25fa222..69d97c5 100644
 +        // in this order
 +        using register_fn = bool (*)(ggml_backend_dev_t, const ggml_ext_op_t*, int);
 +        if (auto fn = reinterpret_cast<register_fn>(ggml_backend_reg_get_proc_address(reg, "ggml_ext_sycl_register_v1"))) {
-+            const ggml_ext_op_t ops[] = {sd_ggml_rope_op()};
-+            fn(device, ops, 1);
++            const ggml_ext_op_t ops[] = {sd_ggml_rope_op(), sd_ggml_i8_op(), sd_ggml_convrot_op()};
++            fn(device, ops, 3);
 +        }
  #ifdef SD_BACKEND_EXTENSIONS
          for (auto register_backend : sd_backend_extensions)

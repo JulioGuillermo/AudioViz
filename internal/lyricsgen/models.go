@@ -18,3 +18,9 @@ const aheadsLargeV3Turbo = 14
 
 // CacheDir is the folder for models and caches (~/.cache/audioviz)
 func CacheDir() string { return aimodel.CacheDir() }
+
+func init() {
+	aimodel.Register("Lyrics · speech recognition", WhisperModel)
+	aimodel.Register("Lyrics and stems · voice separation", DemucsModel)
+	aimodel.Register("Lyrics · alignment (Sylla)", SyllaModel, SyllaVocab)
+}

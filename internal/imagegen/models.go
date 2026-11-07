@@ -28,6 +28,11 @@ type Family struct {
 	// benchmark on Vulkan). Qwen Image 2.1's VAE decodes 1024² in 34 s with off, 46 s with auto and
 	// 63 s with on (Vulkan, Lunar Lake)
 	Conv string `json:"-"`
+	// Int8: the same model's INT8 "convrot" weights (W8A8), offered as a variant (ID + "-int8") on
+	// the SYCL engine, whose plugin runs them on the XMX units (≈ 25 % faster than q4_K there;
+	// very slow on Vulkan). SYCLOnly marks that variant.
+	Int8     *aimodel.Model `json:"-"`
+	SYCLOnly bool           `json:"sycl"`
 }
 
 func hf(repo, path string) string { return "https://huggingface.co/" + repo + "/resolve/main/" + path }
@@ -55,6 +60,8 @@ var Families = []*Family{
 		Steps: 8, CFG: 1, License: "Apache-2.0",
 		Diffusion: aimodel.Model{Name: "zimage", Label: "Z-Image Turbo", File: "z_image_turbo-Q4_K.gguf",
 			URL: hf("leejet/Z-Image-Turbo-GGUF", "z_image_turbo-Q4_K.gguf"), Size: 3864250304},
+		Int8: &aimodel.Model{Name: "zimage-int8", Label: "Z-Image Turbo (INT8)", File: "z_image_turbo_int8_convrot.safetensors",
+			URL: hf("Comfy-Org/z_image_turbo", "split_files/diffusion_models/z_image_turbo_int8_convrot.safetensors"), Size: 6201001296},
 		LLM: qwen3_4b,
 		VAE: aimodel.Model{Name: "flux-vae", Label: "Image decoder (FLUX VAE)", File: "flux_ae.safetensors",
 			URL: hf("Comfy-Org/z_image_turbo", "split_files/vae/ae.safetensors"), Size: 335304388}},
@@ -68,6 +75,8 @@ var Families = []*Family{
 		Refs: 3, Steps: 20, CFG: 6, Euler: true, Heavy: true, License: "Qwen Research (non-commercial)", Conv: "off",
 		Diffusion: aimodel.Model{Name: "qwen-image", Label: "Qwen Image 2.1", File: "qwen_image_2.1-Q4_K.gguf",
 			URL: hf("leejet/Qwen-Image-2.1-GGUF", "qwen_image_2.1-Q4_K.gguf"), Size: 4197494816},
+		Int8: &aimodel.Model{Name: "qwen-image-int8", Label: "Qwen Image 2.1 (INT8)", File: "qwen_image_2.1_int8_convrot.safetensors",
+			URL: hf("Comfy-Org/Qwen-Image-2.1", "diffusion_models/qwen_image_2.1_int8_convrot.safetensors"), Size: 7256783064},
 		LLM: qwen3vl8b, Vision: &qwen3vl8bVision, VAE: qwenImageVAE},
 	// The 8-step distilled Qwen Image 2.1: the same encoders and VAE, CFG 1 (one pass per step)
 	// and its own sigma schedule (Qwen/Qwen-Image-2.1-Turbo model_index.json sample_sigmas)
@@ -76,6 +85,8 @@ var Families = []*Family{
 		Sigmas: []float32{1.0, 0.978453, 0.95418, 0.926626, 0.89508, 0.845148, 0.704534, 0.414568, 0.0},
 		Diffusion: aimodel.Model{Name: "qwen-image-turbo", Label: "Qwen Image 2.1 Turbo", File: "qwen-image-2.1-turbo-Q4_K_M.gguf",
 			URL: hf("unsloth/Qwen-Image-2.1-Turbo-GGUF", "qwen-image-2.1-turbo-Q4_K_M.gguf"), Size: 4199565120},
+		Int8: &aimodel.Model{Name: "qwen-image-turbo-int8", Label: "Qwen Image 2.1 Turbo (INT8)", File: "qwen_image_2.1_turbo_int8_convrot.safetensors",
+			URL: hf("Comfy-Org/Qwen-Image-2.1", "diffusion_models/qwen_image_2.1_turbo_int8_convrot.safetensors"), Size: 7256787829},
 		LLM: qwen3vl8b, Vision: &qwen3vl8bVision, VAE: qwenImageVAE},
 	// FLUX.3 Image Klein (5.6B): 16 steps at CFG 1, edits with references (the VAE encodes them);
 	// boxes in the prompt place each element
@@ -92,11 +103,32 @@ var Families = []*Family{
 		Steps: 30, CFG: 3, Heavy: true, License: "Apache-2.0", Negative: "worst quality, bad anatomy, watermark, jpeg artifact",
 		Diffusion: aimodel.Model{Name: "moss-image", Label: "MOSS-Image SFT", File: "MOSS-Image-SFT-Q4_K.gguf",
 			URL: hf("leejet/MOSS-Image-SFT-GGUF", "MOSS-Image-SFT-Q4_K.gguf"), Size: 3327400800},
+		Int8: &aimodel.Model{Name: "moss-image-int8", Label: "MOSS-Image SFT (INT8)", File: "moss_image_sft_int8_convrot.safetensors",
+			URL: hf("Comfy-Org/MOSS-Image", "diffusion_models/moss_image_sft_int8_convrot.safetensors"), Size: 5413698958},
 		LLM: aimodel.Model{Name: "qwen3.5-9b", Label: "Text encoder (Qwen3.5 9B)", File: "Qwen3.5-9B-Q4_K_M.gguf",
 			URL: hf("unsloth/Qwen3.5-9B-GGUF", "Qwen3.5-9B-Q4_K_M.gguf"), Size: 5680522464},
 		Tokenizer: &aimodel.Model{Name: "moss-tokenizer", Label: "Tokenizer (Qwen3.5)", File: "moss-image-tokenizer.json",
 			URL: hf("OpenMOSS-Team/MOSS-Image-Base", "tokenizer/tokenizer.json"), Size: 19989325},
 		VAE: flux2VAE},
+}
+
+// The INT8 variants (after each family that has INT8 weights) and every file in the model
+// catalog (aimodel.Register)
+func init() {
+	var all []*Family
+	for _, f := range Families {
+		all = append(all, f)
+		if f.Int8 != nil {
+			v := *f
+			v.ID, v.Name, v.Diffusion, v.Int8, v.SYCLOnly = f.ID+"-int8", f.Name+" · INT8 (Intel XMX)", *f.Int8, nil, true
+			v.Desc = "The same model with INT8 weights, run on the XMX units by the SYCL engine: about a quarter faster. A separate download."
+			all = append(all, &v)
+		}
+	}
+	Families = all
+	for _, f := range Families {
+		aimodel.Register("Images · "+f.Name, f.Needed(true)...)
+	}
 }
 
 // Get returns the family with that ID (nil if unknown)

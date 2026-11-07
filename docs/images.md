@@ -69,6 +69,15 @@ license (commercial use of the images only below US$5M yearly revenue). A dedica
 Apple Silicon Mac is much faster than an integrated GPU; without any GPU it works on the CPU,
 very slowly.
 
+**INT8 variants (Intel GPUs).** With the SYCL engine (Settings › Plugins), Z-Image Turbo, Qwen
+Image 2.1, its Turbo and MOSS-Image also appear as "· INT8 (Intel XMX)": the same model with INT8
+weights, about a quarter faster there (Z-Image 1024×1024: 40 s instead of 46 s). They are a
+separate download (5.4–7.3 GB) and are not offered on Vulkan, where they would be very slow.
+
+**Freeing disk space.** Settings › Downloaded models lists every model file AudioViz has
+downloaded (images, lyrics, depth), its size and what uses it. Delete the ones you do not use: a
+deleted model downloads again the next time you use it.
+
 ### Placing elements with boxes
 **FLUX.3 Image Klein**: write the description, name each element with an id in angle brackets,
 then a space and a JSON list with one box per id, `[top, left, bottom, right]` from 0 to 1000:

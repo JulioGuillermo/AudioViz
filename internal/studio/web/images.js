@@ -83,6 +83,13 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onRun, onU
   }, [mine && mine.status, mine && mine.output]);
 
   const fam = data && data.models.find((m) => m.id === model);
+  // a remembered model not offered now (an INT8 variant with the engine back on Vulkan): its base
+  useEffect(() => {
+    if (data && !fam && !model.startsWith('comfy:') && data.models.length) {
+      const base = model.replace(/-int8$/, '');
+      setModel(data.models.some((m) => m.id === base) ? base : data.models[0].id);
+    }
+  }, [data, model]);
   const maxRefs = fam ? fam.refs : 0;
   const [w, h] = imageSize(aspect, quality, meta.width || 1920, meta.height || 1080);
   // Tokens the model processes (16×16 px each; the references are resized to the image size).
