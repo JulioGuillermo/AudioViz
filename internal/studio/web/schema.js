@@ -451,7 +451,7 @@ export const EMITTER_PRESETS = [['fire', 'Fire', 'flame'], ['fire_real', 'Realis
   ['lamp', 'Light source (invisible)', 'sun'], ['water', 'Water', 'droplet'], ['water_clear', 'Clear water (lens)', 'droplet'], ['splash', 'Water splash', 'waves'], ['rain', 'Rain', 'cloud-rain']];
 const EMIT_SHAPES = [['point', 'Point'], ['circle', 'Circle (filled)'], ['ring', 'Ring'], ['line', 'Line'], ['box', 'Rectangle'],
   ['text', 'The letters of a text']];
-// an emitter light's reaction to the music (in its Light group and in Audio reaction)
+// an emitter light's reaction to the music (in Audio reaction)
 const LIGHT_MUSIC = [
   { key: 'react_to', label: 'Its light reacts to', type: 'enum', def: '', anim: false, showIf: (c) => c.enabled,
     options: [['', 'As the particles (Audio reaction)'], ...BANDS],
@@ -569,7 +569,6 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
     { key: 'mode', label: 'How it lights', type: 'enum', def: 'soft', anim: false, showIf: (c) => c.enabled,
       options: [['soft', 'Soft (lights and tints what is there)'], ['add', 'Add (brighter, like neon)']] },
     { key: 'flicker', label: 'Flicker', type: 'num', min: 0, max: 1, step: 0.01, showIf: (c) => c.enabled },
-    ...LIGHT_MUSIC,
     { key: 'depth', label: 'Fades with depth', type: 'num', min: 0, max: 10, step: 0.1, showIf: (c) => c.enabled,
       help: 'With a background that has depth: how fast it fades away from its own depth (0 = flat, as in 2D)' },
     { key: 'shade', label: 'Surfaces shading', type: 'num', min: 0, max: 1, step: 0.01, showIf: (c) => c.enabled,
@@ -599,7 +598,7 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
     { key: 'radius', label: 'Reach (px)', type: 'num', min: 2, max: 400, step: 1 },
     { key: 'color', label: 'Color', type: 'color', optional: true, help: 'Empty: the particles\' own color' },
   ] },
-  // (edits the emitter itself: its react block, and its light's reaction as in Light)
+  // (edits the emitter itself: its react block, and its light's reaction)
   { key: 'react', label: 'Audio reaction', type: 'group', whole: true, fields: [
     { ...react('bass'), key: 'react.react_to' },
     { key: 'react.rate', label: 'More particles', type: 'num', min: 0, max: 10, step: 0.05, help: '1 = twice as many at full band' },
