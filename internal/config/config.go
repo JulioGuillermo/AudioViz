@@ -368,6 +368,7 @@ type TextLight struct {
 	Color     string  `yaml:"color,omitempty"`
 	Mode      string  `yaml:"mode,omitempty"`
 	React     float64 `yaml:"react,omitempty"`
+	Quiet     float64 `yaml:"quiet,omitempty"` // dimmer where the band is low (1 = dark in silence)
 	Depth     float64 `yaml:"depth,omitempty"`
 	Shade     float64 `yaml:"shade,omitempty"`
 	// with depth, as an emitter's light: only from From (near) to To (far), soft edge; rim light

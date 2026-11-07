@@ -1,6 +1,10 @@
 package config
 
-import "gopkg.in/yaml.v3"
+import (
+	"math"
+
+	"gopkg.in/yaml.v3"
+)
 
 // Emitters: a layer of kind "emitter" has clips that throw particles (fire, sparks, smoke...)
 // instead of showing a file. The clip places the emitter: x, y (or its motion path) is where the
@@ -119,6 +123,10 @@ type EmitLight struct {
 	Color     string  `yaml:"color"`
 	Mode      string  `yaml:"mode"`
 	Flicker   float64 `yaml:"flicker"`
+	// The music (the emitter's Reacts to band): React adds to its strength (1 = twice as strong
+	// at full band), Quiet dims it where the band is low (1 = dark in silence)
+	React float64 `yaml:"react,omitempty"`
+	Quiet float64 `yaml:"quiet,omitempty"`
 	// With a background that has depth: how fast it fades with the difference of depth (0 = not
 	// at all, flat as in 2D) and how much the surfaces are shaded by where they face (0..1)
 	Depth float64 `yaml:"depth"`
@@ -331,3 +339,11 @@ func DefaultEmitter() EmitterConfig { return EmitterPresets["fire"] }
 
 // IsEmitter: a layer of particle emitters
 func (l *LayerConfig) IsEmitter() bool { return l.Kind == "emitter" }
+
+// LightMusic: how a light's strength follows the music at band level b (0..~1.5): react adds to
+// it (1 = twice as strong at full band), quiet takes it away where the band is low (1 = dark in
+// silence, full at full band)
+func LightMusic(react, quiet, b float64) float64 {
+	q := math.Max(0, math.Min(1, quiet))
+	return math.Max(0, (1-q*(1-math.Min(b, 1)))*(1+react*b))
+}

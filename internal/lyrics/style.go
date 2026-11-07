@@ -139,7 +139,7 @@ func StyleFor(cfg *config.LyricsConfig, t float64, feat *audio.FrameFeatures) St
 			c = st.GlowC
 		}
 		c = rgba(l.Color, c)
-		k := l.Intensity * (1 + l.React*band)
+		k := l.Intensity * config.LightMusic(l.React, l.Quiet, band)
 		st.LightOn, st.LightCol = true, [3]float64{c[0] * k, c[1] * k, c[2] * k}
 		st.LightR, st.LightE, st.LightAdd = l.Reach, l.End, l.Mode == "add"
 		if st.LightE <= 0 {
