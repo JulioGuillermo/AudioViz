@@ -27,6 +27,8 @@ export const DEPTH_FIELDS = [
       ['native', 'The image\'s own size (by tiles, slowest)']],
     help: 'The size it works at: higher keeps finer shapes. Above 504 px it goes over the image in tiles fitted to one look at the whole (DA3 Small, Base, Large and Giant do High and Very high in one go)' },
   { key: 'path', label: 'Depth map', type: 'file', kind: 'bg', showIf: (c) => c.source === 'file', help: 'White = near, black = far' },
+  { key: 'relief', label: 'Relief of the surfaces', type: 'num', min: 0.2, max: 3, step: 0.05, def: 1, anim: false, showIf: (c) => c.source && c.source !== 'none',
+    help: 'For the lights with depth: how round the shapes are. More = the light wraps them more (strong where they face it, fading as they turn away)' },
 ];
 
 const viewURL = (image, d, v) => '/api/depth/view?' + new URLSearchParams({ image, source: d.source || '', model: d.model || 'small',

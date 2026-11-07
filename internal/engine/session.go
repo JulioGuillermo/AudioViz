@@ -283,6 +283,7 @@ type FrameState struct {
 	VerA, VerB string
 	// Depth of the backgrounds A and B (fitted to the frame, 16-bit nearness; nil = none)
 	DepthA, DepthB []uint16
+	NormA, NormB   []uint16 // their surface normals (effects.NormalMap)
 	VerDA, VerDB   string
 	LayerA, LayerB effects.Layer
 	Trans          effects.Trans
@@ -358,7 +359,7 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 		img, ver := ra.FrameAt(t - tl.Background[bi].At)
 		fs.BgA, fs.VerA = img, fmt.Sprintf("%p:%d", ra, ver)
 	}
-	fs.DepthA, fs.VerDA = s.depthFor(cbg)
+	fs.DepthA, fs.NormA, fs.VerDA = s.depthFor(cbg)
 	fs.LayerA = s.motionAt(bi, t)
 	fs.Trans = effects.Trans{HasA: fs.BgA != nil}
 	if k < 1 {
@@ -368,8 +369,8 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 		}
 		fs.BgB, fs.VerB, fs.LayerB = fs.BgA, fs.VerA, fs.LayerA
 		fs.BgA, fs.VerA = nil, ""
-		fs.DepthB, fs.VerDB = fs.DepthA, fs.VerDA
-		fs.DepthA, fs.VerDA = s.depthFor(pbg)
+		fs.DepthB, fs.NormB, fs.VerDB = fs.DepthA, fs.NormA, fs.VerDA
+		fs.DepthA, fs.NormA, fs.VerDA = s.depthFor(pbg)
 		if rb != nil {
 			img, ver := rb.FrameAt(t - tl.Background[bi-1].At)
 			fs.BgA, fs.VerA = img, fmt.Sprintf("%p:%d", rb, ver)
@@ -453,7 +454,7 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 		if fs.Trans.Fluid != nil {
 			fx.par = effects.Parallax{} // the fluid transitions don't move
 		}
-		fs.Scene = &effects.Scene{A: fs.DepthA, B: fs.DepthB, LA: fs.LayerA, LB: fs.LayerB, K: fs.Trans.K,
+		fs.Scene = &effects.Scene{A: fs.DepthA, B: fs.DepthB, NA: fs.NormA, NB: fs.NormB, LA: fs.LayerA, LB: fs.LayerB, K: fs.Trans.K,
 			Zoom: fx.zoom, ShakeX: fx.shakeX, ShakeY: fx.shakeY, RippleAmp: fx.rippleAmp, RippleFreq: fx.rippleFreq, RippleTm: fx.rTim,
 			W: s.W, H: s.H, Par: fx.par, N: fx.par.Steps(s.W, s.H), DoF: fx.dof}
 	}
@@ -521,7 +522,7 @@ func (s *Session) textLights(fs *FrameState) {
 		if soft <= 0 {
 			soft = 0.05
 		}
-		if sc := fs.Scene; sc.On() && (st.LightDepthK > 0 || st.LightShade > 0 || from < 1 || to > 0 || l.Rim) {
+		if sc := fs.Scene; sc.On() && (st.LightDepthK > 0 || st.LightShade > 0 || from < 1 || to > 0 || l.Rim || l.Gloss > 0 || l.Shadows > 0) {
 			if cx, cy, ok := textCenter(fs, si); ok {
 				z := float64(sc.Ground(float32(cx), float32(cy)))
 				if st.InDepth {
@@ -529,6 +530,7 @@ func (s *Session) textLights(fs *FrameState) {
 				}
 				lf.D3, lf.CX, lf.CY, lf.LZ = true, float32(cx), float32(cy), float32(z)
 				lf.DepthK, lf.Shade = float32(st.LightDepthK), float32(st.LightShade)
+				lf.Gloss, lf.Shadow = float32(l.Gloss), float32(l.Shadows)
 				lf.From, lf.To, lf.Soft = float32(from), float32(to), float32(soft)
 				if l.Rim {
 					pos := func(v, def float64) float64 {

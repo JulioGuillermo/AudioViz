@@ -127,7 +127,8 @@ With a depth map: **Fades with depth** (away from the text's depth: its own if i
 scene's where it is) and **Surfaces shading** (the side facing it gets more), as an emitter's light
 also **only a range of depths** (*Lights from / up to*, soft edge; while you adjust them the preview
 shows the depth map with what is not lit in black) and **only the edges, far away** (rim light:
-farther than *Edges from* px only the edges of things that face it). A selected fixed text shows its
+farther than *Edges from* px only the edges of things that face it), with **Shine** and **Shadows**
+as an emitter's light ([emitters.md](../emitters.md)). A selected fixed text shows its
 light's circles on the preview (its reach, where it fades out and, with rim light, the blue one),
 each with a handle to drag. It lights what is drawn before it (the background and the layers below
 its z-index). At most two texts light at once.

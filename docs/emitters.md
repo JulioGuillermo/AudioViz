@@ -69,7 +69,8 @@ Any emitter can use them:
           flame: { color_cool: "#b8200a", color_mid: "#ff8a1e", color_hot: "#fff4d0", heat: 1, noise: 22, noise_scale: 60, noise_speed: 260, edge: 0.55 }
           glow: { intensity: 0.8, radius: 90, color: "#ff6a1a" }
           light: { enabled: true, intensity: 0.8, reach: 450, end: 1100, mode: soft, flicker: 0.25,
-                   rim: true, rim_from: 500, rim_soft: 120, rim_width: 10, rim_gain: 2, rim_edge: 0.04 }
+                   rim: true, rim_from: 500, rim_soft: 120, rim_width: 10, rim_gain: 2, rim_edge: 0.04,
+                   shade: 0.6, gloss: 0.3, shadows: 0.5 }
 ```
 
 The **Water** preset (`water`) is a jet with the water look that falls onto a floor; `splash`
@@ -91,10 +92,21 @@ The light follows the particles: when the fire grows with the bass, moves along 
 fades out, its light does too. With a background that has a [depth map](depth.md) it lights the
 scene in 2.5D (see there), and it can light **only the edges** of things far away (rim light):
 *Only the edges, far away* — farther than **Edges from** (px, its blue circle; 0 = everywhere),
-changing over **Change over** px, it no longer lights the surfaces but the edges of things that face
-it: where the scene drops behind them towards the light by **What counts as an edge** (a depth
-step; less = more edges), **Edge width** px wide, **Edge strength** times as bright. It still ends
-where the light fades out. A sharp depth map (DA3 Mono Large) gives crisp edges.
+changing over **Change over** px, it no longer lights the surfaces but the edges of things that turn
+towards it: where the surface turns away from you by **What counts as an edge** or more (less = more
+edges), **Edge strength** times as bright. It still ends where the light fades out.
+
+The surfaces are shaded with **normals** worked out from the depth map (its slope taken without
+crossing the jumps between objects, smoothed at a fine and a coarse scale, the outlines slightly
+rounded; how round with the background depth's **Relief of the surfaces**). Where the light is
+**in front** of a surface (nearer than it) it lights the side that faces it, strongest straight on
+and fading as the surface turns away; where it is **behind** it, the front stays dark and only the
+edges that turn towards it light up (and *Only the edges, far away* works only then):
+**Surfaces shading** brightens the side that faces the light and darkens the other, **Shine**
+(`gloss`, 0..1) adds highlights where the surface reflects the light towards you (wet skin, metal),
+and **Shadows** (`shadows`, 0..1) darkens what has something nearer between it and the light. The
+same applies to the [texts that light the scene](texts.md). The normals are an estimate from one
+image: they follow the shapes the depth map sees, not the hidden side of things.
 
 Keys of where it is (x, y, rotation, its path) and the music's push count from the moment each
 particle is born; the other settings (forces, colors...) apply to all of them now. At most 4

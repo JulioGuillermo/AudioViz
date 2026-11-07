@@ -165,8 +165,8 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 	off := 0
 	// first the depth of the backgrounds A and B (a byte per pixel), then the clips
 	dw := (r.s.W*r.s.H + 1) / 2 // 16 bits per pixel
-	p.DepthI = [4]int32{}
-	var depths [2][]uint16
+	p.DepthI, p.NormI = [4]int32{}, [4]int32{}
+	var depths [4][]uint16 // A, B, then their normals (packed the same way)
 	for k, d := range [2][]uint16{fs.DepthA, fs.DepthB} {
 		if d != nil && off+dw <= g.LayerWords {
 			depths[k] = d
@@ -175,7 +175,15 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 			off += dw
 		}
 	}
-	vers = append(vers, "dA"+fs.VerDA, "dB"+fs.VerDB)
+	for k, nm := range [2][]uint16{fs.NormA, fs.NormB} {
+		if nm != nil && depths[k] != nil && off+dw <= g.LayerWords {
+			depths[2+k] = nm
+			p.NormI[k] = int32(off)
+			p.NormI[2] |= 1 << k
+			off += dw
+		}
+	}
+	vers = append(vers, "dA"+fs.VerDA, "dB"+fs.VerDB, fmt.Sprint("n", p.NormI[2]))
 	type emitAt struct {
 		e   *effects.EmitFrame
 		off int
@@ -262,10 +270,11 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 				if P.LightD3 {
 					lp.Light2 = [4]float32{float32(P.LightCX), float32(P.LightCY), float32(P.LightZ), float32(P.LightDepthK)}
 					lp.Light3 = [4]float32{float32(P.LightShade), 1, float32(P.LightFrom), float32(P.LightTo)}
+					lp.Light5 = [4]float32{0.04, float32(P.LightGloss), float32(P.LightShadow)}
 					lp.Light1[3] = float32(P.LightSoft)
 					if P.LightRim {
 						lp.Light4 = [4]float32{float32(P.LightRimFrom), float32(P.LightRimSoft), float32(P.LightRimW), float32(P.LightRimGain)}
-						lp.Light5 = [4]float32{float32(P.LightRimEdge)}
+						lp.Light5[0] = float32(P.LightRimEdge)
 					}
 				}
 			}
@@ -1365,7 +1374,7 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 		if l.D3 {
 			p.TLightD[i] = [4]float32{l.CX, l.CY, l.LZ, l.DepthK}
 			p.TLightE[i] = [4]float32{l.Shade, 1, l.From, l.To}
-			p.TLightG[i] = [4]float32{l.RimEdge, l.Soft}
+			p.TLightG[i] = [4]float32{l.RimEdge, l.Soft, l.Gloss, l.Shadow}
 			if l.Rim {
 				p.TLightF[i] = [4]float32{l.RimFrom, l.RimSoft, l.RimW, l.RimGain}
 			}

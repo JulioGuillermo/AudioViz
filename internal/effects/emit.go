@@ -86,8 +86,10 @@ type EmitParams struct {
 	// rim light: on, from (px), soft (px), width (px), gain, edge (depth step)
 	LightRim                                                          bool
 	LightRimFrom, LightRimSoft, LightRimW, LightRimGain, LightRimEdge float64
-	LightCol                                                          [3]float64
-	LightAdd                                                          bool
+	// with depth: specular shine (0..1) and how dark the shadows that nearer things cast (0..1)
+	LightGloss, LightShadow float64
+	LightCol                [3]float64
+	LightAdd                bool
 	// Text shape: points on its letters (x, y pairs, px around its anchor, before its rotation)
 	Pts []float32
 	// Along the motion path: the path sampled (x, y, length so far: px), its length, closed
@@ -665,6 +667,8 @@ type LightField struct {
 	// rim light: farther than RimFrom (soft RimSoft) only the edges that face it, RimW px wide
 	Rim                                      bool
 	RimFrom, RimSoft, RimW, RimGain, RimEdge float32
+	// specular shine (0..1) and cast shadows (0..1), with depth
+	Gloss, Shadow float32
 }
 
 // LightRange: how much a point at depth z is inside the lit range [to, from] (soft edges), as
@@ -679,33 +683,93 @@ func LightRange(z, from, to, soft float32) float32 {
 const DepthPx = 800
 
 // DepthFactor: how much of the light reaches frame pixel (x, y) given the scene's depth there
-// (as lightDepth in render.comp): less with the difference of depth, and the surface's side that
-// faces the light gets more (its normal from the depth's slope)
+// (as depthLight in render.comp): less with the difference of depth, only in the lit range, and
+// shaded by the surface there (its normal from the normal map, or the depth's slope without one):
+// wrapped diffuse light, specular shine (Gloss), farther than RimFrom only the edges that turn
+// towards the light (rim), and darker where nearer things stand between it and the light (Shadow)
 func (l *LightField) DepthFactor(s *Scene, x, y int) float32 {
 	qx, qy := float32(x), float32(y)
 	// the background point seen there; its surroundings around that point
 	hx, hy, zp := s.Hit(qx, qy)
 	dz := (zp - l.LZ) * l.DepthK
-	f := float32(math.Exp(float64(-dz*dz))) * LightRange(zp, l.From, l.To, l.Soft)
-	if l.Shade > 0 {
+	att := float32(math.Exp(float64(-dz * dz)))
+	rng := LightRange(zp, l.From, l.To, l.Soft)
+	f := att * rng
+	nx, ny, nz, hasN := s.Normal(hx, hy)
+	if !hasN {
 		gx := (s.Near(hx+2, hy) - s.Near(hx-2, hy)) / 4 * DepthPx
 		gy := (s.Near(hx, hy+2) - s.Near(hx, hy-2)) / 4 * DepthPx
-		nx, ny, nz := -gx, -gy, float32(1)
-		nl := float32(math.Sqrt(float64(nx*nx + ny*ny + nz*nz)))
-		lx, ly, lz := l.CX-qx, l.CY-qy, (l.LZ-zp)*DepthPx
-		ll := float32(math.Sqrt(float64(lx*lx+ly*ly+lz*lz))) + 1e-3
-		lam := max(0, (nx*lx+ny*ly+nz*lz)/(nl*ll))
-		f *= 1 - l.Shade + l.Shade*(0.3+1.1*lam)
+		nl := float32(math.Sqrt(float64(gx*gx + gy*gy + 1)))
+		nx, ny, nz = -gx/nl, -gy/nl, 1/nl
+	}
+	lx, ly, lz := l.CX-qx, l.CY-qy, (l.LZ-zp)*DepthPx
+	ll := float32(math.Sqrt(float64(lx*lx+ly*ly+lz*lz))) + 1e-3
+	lx, ly, lz = lx/ll, ly/ll, lz/ll
+	ndl := nx*lx + ny*ly + nz*lz
+	if l.Shade > 0 {
+		diff := max(0, min(1, (ndl+0.2)/1.2))
+		f *= 1 - l.Shade + l.Shade*(0.25+1.15*diff)
+	}
+	if l.Gloss > 0 {
+		hx2, hy2, hz2 := lx, ly, lz+1
+		hl := float32(math.Sqrt(float64(hx2*hx2+hy2*hy2+hz2*hz2))) + 1e-6
+		sp := float32(math.Pow(float64(max(0, (nx*hx2+ny*hy2+nz*hz2)/hl)), float64(6+58*l.Gloss)))
+		f += l.Gloss * 1.6 * sp * att * rng * smooth32(-0.05, 0.2, ndl)
 	}
 	if l.Rim {
-		// far away: only the edges that face it (the scene drops behind them towards the light)
+		// far away: only the edges that face it
 		dx, dy := l.CX-qx, l.CY-qy
 		d := float32(math.Sqrt(float64(dx*dx + dy*dy)))
 		if t := smooth32(l.RimFrom-l.RimSoft, l.RimFrom+l.RimSoft+1e-3, d); t > 0 {
-			f = f*(1-t) + t*l.RimGain*l.rimAt(s, hx, hy, zp, dx/max(d, 1e-3), dy/max(d, 1e-3))*LightRange(zp, l.From, l.To, l.Soft)
+			ux, uy := dx/max(d, 1e-3), dy/max(d, 1e-3)
+			var r float32
+			if hasN {
+				// a rim is back light: only as much as the light is behind the surface (in front
+				// of it the surface keeps its light)
+				r = l.rimNormal(nx, ny, nz, ux, uy)
+				t *= smooth32(-0.05, 0.35, -lz)
+			} else {
+				r = l.rimAt(s, hx, hy, zp, ux, uy)
+			}
+			f = f*(1-t) + t*l.RimGain*r*rng
 		}
 	}
+	if l.Shadow > 0 {
+		f *= 1 - l.Shadow*l.shadowAt(s, qx, qy, hx, hy, zp)
+	}
 	return f
+}
+
+// rimNormal: how much a surface of normal n is an edge facing the light (direction ux, uy on the
+// frame): turned away from the viewer (1 − nz) towards the light, from RimEdge×4 of turn (as
+// rimNormal in render.comp)
+func (l *LightField) rimNormal(nx, ny, nz, ux, uy float32) float32 {
+	side := 1 - nz
+	nl := float32(math.Sqrt(float64(nx*nx+ny*ny))) + 1e-5
+	faces := (nx*ux + ny*uy) / nl
+	e := max(0.02, min(0.6, l.RimEdge*4))
+	return smooth32(0, e, side) * smooth32(-0.1, 0.4, faces)
+}
+
+// shadowAt: how much nearer things block the way from background point h (frame pixel q) to the
+// light: 12 steps over up to 600 px towards it, each one in shadow where the scene there is nearer
+// than the ray (as shadowAt in render.comp)
+func (l *LightField) shadowAt(s *Scene, qx, qy, hx, hy, zp float32) float32 {
+	dx, dy := l.CX-qx, l.CY-qy
+	d := float32(math.Sqrt(float64(dx*dx + dy*dy)))
+	if d < 2 {
+		return 0
+	}
+	span := min(d, 600)
+	ux, uy := dx/d, dy/d
+	var occ float32
+	for k := 1; k <= 12; k++ {
+		st := span * float32(k) / 12
+		zr := zp + (l.LZ-zp)*(st/d)
+		zs := s.Near(hx+ux*st, hy+uy*st)
+		occ = max(occ, smooth32(0.004, 0.03, zs-zr)*(1-0.5*float32(k-1)/11))
+	}
+	return occ
 }
 
 // rimAt: how much background point h is on an edge facing the light (direction ux, uy): the
@@ -869,7 +933,8 @@ func DrawEmitter(e *EmitFrame, W, H int) (*image.RGBA, *LightField) {
 		DepthK: float32(p.LightDepthK), Shade: float32(p.LightShade),
 		From: float32(p.LightFrom), To: float32(p.LightTo), Soft: float32(p.LightSoft),
 		Rim: p.LightRim, RimFrom: float32(p.LightRimFrom), RimSoft: float32(p.LightRimSoft), RimW: float32(p.LightRimW),
-		RimGain: float32(p.LightRimGain), RimEdge: float32(p.LightRimEdge)}
+		RimGain: float32(p.LightRimGain), RimEdge: float32(p.LightRimEdge),
+		Gloss: float32(p.LightGloss), Shadow: float32(p.LightShadow)}
 	return img, lf
 }
 
@@ -1252,7 +1317,7 @@ func PathBuiltinAt(b int, pp []float32, L float32, closed bool, s, dx, dy float3
 // partParams: the params a particle can have of its own
 type partParams struct {
 	Speed, Life, Size, SizeEnd, Gravity, Wind, Turb, Dir, Spread float64
-	Col                                                         [3][4]float64 // birth, middle, end
+	Col                                                          [3][4]float64 // birth, middle, end
 }
 
 func (pp *partParams) set(prop int, v float64) {

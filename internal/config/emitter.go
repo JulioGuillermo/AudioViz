@@ -137,6 +137,10 @@ type EmitLight struct {
 	RimWidth float64 `yaml:"rim_width,omitempty"`
 	RimGain  float64 `yaml:"rim_gain,omitempty"`
 	RimEdge  float64 `yaml:"rim_edge,omitempty"`
+	// With depth: specular shine on the surfaces that face it (0..1) and how dark the shadows
+	// that nearer things cast away from it (0..1)
+	Gloss   float64 `yaml:"gloss,omitempty"`
+	Shadows float64 `yaml:"shadows,omitempty"`
 }
 
 // FlameLook: the colors of the flame from cool (its edges) to hot (its core), how fast it gets

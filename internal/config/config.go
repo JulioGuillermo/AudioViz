@@ -82,6 +82,9 @@ type DepthConfig struct {
 	Detail string `yaml:"detail,omitempty"` // ai: the size it works at: normal (504 px), high (1008, default), max (1512)
 	Path   string `yaml:"path,omitempty"`   // file: the depth map
 	Flow   string `yaml:"flow,omitempty"`   // comfy: the project's ComfyUI flow (its id)
+	// How much relief the surfaces have for the 2.5D lights (their normals from the depth): 1 =
+	// the default, more = rounder shapes that turn more to and from a light (0 = 1)
+	Relief float64 `yaml:"relief,omitempty"`
 }
 
 // MotionConfig: slow camera motion over a background segment (Ken Burns style), so a still
@@ -378,6 +381,8 @@ type TextLight struct {
 	RimWidth  float64 `yaml:"rim_width,omitempty"`
 	RimGain   float64 `yaml:"rim_gain,omitempty"`
 	RimEdge   float64 `yaml:"rim_edge,omitempty"`
+	Gloss     float64 `yaml:"gloss,omitempty"`   // with depth: specular shine (0..1)
+	Shadows   float64 `yaml:"shadows,omitempty"` // with depth: cast shadows (0..1)
 }
 
 type TextConfig struct {

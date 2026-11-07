@@ -7,6 +7,7 @@ import "math"
 // shake, motion and transition. Same math as sceneDepth in render.comp, in float32.
 type Scene struct {
 	A, B                            []uint16 // W×H, 65535 = near
+	NA, NB                          []uint16 // their surface normals (NormalMap; nil: from the slope)
 	LA, LB                          Layer
 	K                               float64 // transition progress: B from halfway on
 	Zoom, ShakeX, ShakeY            float64
@@ -59,6 +60,20 @@ func (s *Scene) bgPoint(qx, qy float32) (float32, float32) {
 		qx, qy = cx+(qx-cx)/z, cy+(qy-cy)/z
 	}
 	return qx - float32(s.ShakeX), qy - float32(s.ShakeY)
+}
+
+// Normal: the surface normal at background point (x, y) (as layerNormal in render.comp); false
+// when the depth map has no normal map
+func (s *Scene) Normal(x, y float32) (float32, float32, float32, bool) {
+	g, L := s.NA, s.LA
+	if s.B != nil && (s.A == nil || s.K >= 0.5) {
+		g, L = s.NB, s.LB
+	}
+	if g == nil {
+		return 0, 0, 1, false
+	}
+	nx, ny, nz := layerNormal(g, L, x, y, s.W, s.H)
+	return nx, ny, nz, true
 }
 
 // Near: the nearness at background point (x, y) (as Hit gives; no camera)

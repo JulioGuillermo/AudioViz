@@ -196,6 +196,7 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx f
 					P.LightD3, P.LightCX, P.LightCY, P.LightZ = true, ox+lf.W.ShakeX, oy+lf.W.ShakeY, z
 					if e != nil {
 						P.LightDepthK, P.LightShade = e.Light.Depth, e.Light.Shade
+						P.LightGloss, P.LightShadow = e.Light.Gloss, e.Light.Shadows
 						P.LightFrom, P.LightTo, P.LightSoft = e.Light.From, e.Light.To, e.Light.RangeSoft
 					}
 				}

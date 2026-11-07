@@ -10,6 +10,7 @@ import (
 
 	"audioviz/internal/config"
 	"audioviz/internal/depth"
+	"audioviz/internal/effects"
 )
 
 // Depth maps of the background segments (config.DepthConfig): made once (depth.Make keeps them in
@@ -19,18 +20,20 @@ import (
 // effects.Scene).
 
 type depthEntry struct {
-	img []uint16
-	ver string
-	err error
+	img  []uint16
+	norm []uint16 // its surface normals (effects.NormalMap), for the 2.5D lights
+	ver  string
+	err  error
 }
 
 var depthSeq int
 
-// depthFor: the fitted depth map of a background segment (nil if it has none or it failed)
-func (s *Session) depthFor(bg *config.BackgroundConfig) ([]uint16, string) {
+// depthFor: the fitted depth map of a background segment and its normals (nil if it has none or
+// it failed)
+func (s *Session) depthFor(bg *config.BackgroundConfig) ([]uint16, []uint16, string) {
 	d := bg.Depth
 	if bg.Path == "" || d.Source == "" || d.Source == "none" {
-		return nil, ""
+		return nil, nil, ""
 	}
 	req := depth.Request{Image: bg.Path, Source: d.Source, Model: d.Model, Detail: d.Detail, File: d.Path}
 	if d.Source == depth.SourceComfy {
@@ -38,12 +41,12 @@ func (s *Session) depthFor(bg *config.BackgroundConfig) ([]uint16, string) {
 	}
 	cache := filepath.Join(s.Cfg.Dir, "cache")
 	cp := depth.CachePath(cache, req)
-	key := fmt.Sprintf("%s|%dx%d|%s", cp, s.W, s.H, bg.FitMode)
+	key := fmt.Sprintf("%s|%dx%d|%s|%g", cp, s.W, s.H, bg.FitMode, d.Relief)
 	if st, err := os.Stat(cp); err == nil {
 		key += fmt.Sprint("|", st.ModTime().UnixNano()) // (worked out again: the new one)
 	}
 	if e, ok := s.depths[key]; ok {
-		return e.img, e.ver
+		return e.img, e.norm, e.ver
 	}
 	if s.depths == nil || len(s.depths) > 16 {
 		s.depths = map[string]*depthEntry{}
@@ -58,14 +61,15 @@ func (s *Session) depthFor(bg *config.BackgroundConfig) ([]uint16, string) {
 		if err != nil {
 			e.err = err
 			s.Logf("⚠️  Depth of %s: %v", filepath.Base(bg.Path), err)
-			return nil, ""
+			return nil, nil, ""
 		}
 		s.Logf("🗺️  Depth of %s worked out in %.1fs", filepath.Base(bg.Path), time.Since(t0).Seconds())
 	}
 	e.img = fitDepth(m, s.W, s.H, bg.FitMode)
+	e.norm = effects.NormalMap(e.img, s.W, s.H, d.Relief)
 	depthSeq++
 	e.ver = fmt.Sprintf("depth%d", depthSeq)
-	return e.img, e.ver
+	return e.img, e.norm, e.ver
 }
 
 // fitDepth places a depth map on the frame as its image is placed (fit mode, as video.Fit), as

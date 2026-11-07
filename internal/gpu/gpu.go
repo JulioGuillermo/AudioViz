@@ -153,6 +153,9 @@ type Params struct {
 	// Depth of the backgrounds A and B (16 bits per pixel, 65535 = near) in the overlay buffer:
 	// word offsets of A and B, which are there (bit 0 A, bit 1 B)
 	DepthI [4]int32
+	// Their surface normals (effects.NormalMap, two int8 per pixel packed like the depth): word
+	// offsets of A and B, which are there (bit 0 A, bit 1 B)
+	NormI [4]int32
 	// The 2.5D camera (effects.Parallax): shift x, y (px), dolly, focus; search steps (0 = off)
 	Parallax  [4]float32
 	ParallaxN [4]int32
@@ -167,7 +170,7 @@ type Params struct {
 	TLightD [MaxTextLights][4]float32
 	TLightE [MaxTextLights][4]float32 // shading, 2.5D on, lit from, to
 	TLightF [MaxTextLights][4]float32 // rim light: from, soft, width (px), gain (0 = off)
-	TLightG [MaxTextLights][4]float32 // rim light's edge, the lit range's soft edge
+	TLightG [MaxTextLights][4]float32 // rim light's edge, the lit range's soft edge, shine, shadows
 	TLightV [MaxTextLights * TextLightVec4][4]float32
 	// The studio's views of the scene's depth instead of the frame: mode (0 the frame, 1 the
 	// depth, 2 a lit range: from, to, soft; 3 an object's depth: its depth, soft; 4 what an
