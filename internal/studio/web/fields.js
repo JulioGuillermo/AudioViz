@@ -138,8 +138,14 @@ function Row({ f, children, dia, kf, path }) {
   if (f.help) items.push(...(items.length ? ['-'] : []), helpItem(t(f.label), tHelp(f.help)));
   const menu = items.length ? (e) => openMenu(e, items) : undefined;
   const noValue = src && xinfo && !xinfo.error && !xinfo.uses_value;
-  return html`<div class=${'fld' + (f.type === 'bool' ? ' fld-bool' : '') + (dia ? ' kfable' : '') + (f.adjust ? ' adjust' : '') + (src ? ' has-expr' : '') + (noValue ? ' expr-novalue' : '')} ...${adj} onContextMenu=${menu}>
-    <label for=${btn ? 'kf-none' : undefined}>${btn && dia}${src && html`<span class="xbadge" title=${t('It has an expression (right-click: Advanced settings)')}
+  // click on its name: the timeline shows only its keys (if it has any); a click anywhere else
+  // shows them all again (the app's kfFocus)
+  const animated = btn && kf && kf.keys && (kf.keys[path] || []).length > 0;
+  const focused = animated && kf.focus === path;
+  const nameClick = animated ? (e) => { e.preventDefault(); kf.setFocus && kf.setFocus(path); } : undefined;
+  return html`<div class=${'fld' + (f.type === 'bool' ? ' fld-bool' : '') + (dia ? ' kfable' : '') + (f.adjust ? ' adjust' : '') + (src ? ' has-expr' : '') + (noValue ? ' expr-novalue' : '') + (animated ? ' kf-named' : '') + (focused ? ' kf-focus' : '')}
+      data-kfpath=${animated ? path : undefined} ...${adj} onContextMenu=${menu}>
+    <label for=${btn ? 'kf-none' : undefined} onClick=${nameClick} title=${animated ? t('Click: show only its keys on the timeline') : undefined}>${btn && dia}${src && html`<span class="xbadge" title=${t('It has an expression (right-click: Advanced settings)')}
       onClick=${(e) => { e.preventDefault(); e.stopPropagation(); openAdv(); }}>ƒ</span>`}${t(f.label)}</label>
     <div class="ctl">${children}</div>
     ${src && html`<${ExprValue} kf=${kf} path=${path} src=${src} bool=${f.type === 'bool'} onInfo=${setXinfo} />`}

@@ -519,6 +519,21 @@ function App() {
   const [selMask, setSelMask] = useState(null); // the mask of the selected clip being edited
   useEffect(() => setSelMask(null), [sel.kind, sel.id, sel.clip, sel.i, sel.track, sel.seg]);
   useEffect(() => { setKfFocus(null); setKfSel(null); setPathNodeI(null); }, [sel.kind, sel.track, sel.seg, sel.i, sel.id, sel.clip]);
+  // the property filter goes away with a click anywhere but on its keys, on that property's field
+  // (its name, value, diamond), on a menu or on the filter's chip
+  useEffect(() => {
+    if (!kfFocus) return;
+    const down = (e) => {
+      const el = e.target instanceof Element ? e.target : null;
+      if (!el) return;
+      const fld = el.closest('[data-kfpath]');
+      if (fld && fld.dataset.kfpath === kfFocus) return;
+      if (el.closest('.kf, .ed-key, .ctxmenu, .kf-chip')) return;
+      setKfFocus(null);
+    };
+    addEventListener('pointerdown', down, true);
+    return () => removeEventListener('pointerdown', down, true);
+  }, [kfFocus]);
   const [playing, setPlaying] = useState(false);
   const [scale, setScale] = useState(2);
   const [rev, setRev] = useState(0);

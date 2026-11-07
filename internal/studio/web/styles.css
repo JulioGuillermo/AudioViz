@@ -478,6 +478,9 @@ a.btn { text-decoration: none; }
 .kfbtn .kfd.on { background: var(--key); border-color: var(--key); opacity: 1; }
 .kfbtn .kfd:hover { border-color: var(--text); }
 .kfbtn.focus .kfd { box-shadow: 0 0 0 2px rgba(255, 200, 70, .3); }
+.fld.kf-named > label { cursor: pointer; }
+.fld.kf-named > label:hover { color: var(--text); }
+.fld.kf-focus > label { color: var(--key); }
 .lane .kf { position: absolute; width: 9px; height: 9px; margin: -5px 0 0 -5px; transform: rotate(45deg); background: var(--key);
   border: 1px solid rgba(0, 0, 0, .55); border-radius: 1px; z-index: 3; cursor: ew-resize; opacity: .7; }
 .lane .kf.sel { opacity: 1; }

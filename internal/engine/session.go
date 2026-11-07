@@ -522,7 +522,7 @@ func (s *Session) textLights(fs *FrameState) {
 		if soft <= 0 {
 			soft = 0.05
 		}
-		if sc := fs.Scene; sc.On() && (st.LightDepthK > 0 || st.LightShade > 0 || from < 1 || to > 0 || l.Rim || l.Gloss > 0 || l.Shadows > 0) {
+		if sc := fs.Scene; sc.On() && (st.LightDepthK > 0 || st.LightShade > 0 || from < 1+soft || to > -soft || l.Rim || l.Gloss > 0 || l.Shadows > 0) {
 			if cx, cy, ok := textCenter(fs, si); ok {
 				z := float64(sc.Ground(float32(cx), float32(cy)))
 				if st.InDepth {
