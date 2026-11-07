@@ -33,6 +33,10 @@ type Family struct {
 	// very slow on Vulkan). SYCLOnly marks that variant.
 	Int8     *aimodel.Model `json:"-"`
 	SYCLOnly bool           `json:"sycl"`
+	// Layout: how the prompt places elements in boxes ("flux3": <ids> in the text + a JSON list of
+	// [top, left, bottom, right] 0..1000; "moss": a JSON layout in centred pixels, yxyx; "" none).
+	// The studio's box editor writes it.
+	Layout string `json:"layout"`
 }
 
 func hf(repo, path string) string { return "https://huggingface.co/" + repo + "/resolve/main/" + path }
@@ -91,7 +95,7 @@ var Families = []*Family{
 	// FLUX.3 Image Klein (5.6B): 16 steps at CFG 1, edits with references (the VAE encodes them);
 	// boxes in the prompt place each element
 	{ID: "klein3", Name: "FLUX.3 Image Klein", Desc: "Generates or edits with references (up to 4). Places elements where you say with boxes in the prompt. Better than FLUX.2 klein, somewhat slower.",
-		Refs: 4, Steps: 16, CFG: 1, Euler: true, License: "FLUX Kommunity (commercial use under US$5M revenue)",
+		Refs: 4, Steps: 16, CFG: 1, Euler: true, License: "FLUX Kommunity (commercial use under US$5M revenue)", Layout: "flux3",
 		Diffusion: aimodel.Model{Name: "klein3", Label: "FLUX.3 Image Klein", File: "flux3-image-klein-Q4_K.gguf",
 			URL: hf("leejet/flux-3-image-klein-GGUF", "flux3-image-klein-Q4_K.gguf"), Size: 3514023104},
 		LLM: aimodel.Model{Name: "qwen3-vl-4b", Label: "Text encoder (Qwen3-VL 4B)", File: "Qwen3VL-4B-Instruct-Q4_K_M.gguf",
@@ -100,7 +104,7 @@ var Families = []*Family{
 	// MOSS-Image SFT (5B): CFG 3 (two passes per step; upstream uses 50 steps), Qwen3.5 9B as the
 	// text encoder with its own tokenizer.json; JSON layouts in the prompt (experimental)
 	{ID: "moss", Name: "MOSS-Image", Desc: "Very good with text in the image (posters, signs), also in Chinese. Accepts a layout of boxes in the prompt (experimental). From a prompt only; slow (two passes per step).",
-		Steps: 30, CFG: 3, Heavy: true, License: "Apache-2.0", Negative: "worst quality, bad anatomy, watermark, jpeg artifact",
+		Steps: 30, CFG: 3, Heavy: true, License: "Apache-2.0", Negative: "worst quality, bad anatomy, watermark, jpeg artifact", Layout: "moss",
 		Diffusion: aimodel.Model{Name: "moss-image", Label: "MOSS-Image SFT", File: "MOSS-Image-SFT-Q4_K.gguf",
 			URL: hf("leejet/MOSS-Image-SFT-GGUF", "MOSS-Image-SFT-Q4_K.gguf"), Size: 3327400800},
 		Int8: &aimodel.Model{Name: "moss-image-int8", Label: "MOSS-Image SFT (INT8)", File: "moss_image_sft_int8_convrot.safetensors",

@@ -79,6 +79,15 @@ downloaded (images, lyrics, depth), its size and what uses it. Delete the ones y
 deleted model downloads again the next time you use it.
 
 ### Placing elements with boxes
+With **FLUX.3 Image Klein** and **MOSS-Image** the generator shows **Place elements with boxes**:
+drag on the canvas (it has the output's shape; when editing, the first reference image is behind
+it) to draw a box, drag a box to move it and its corner to resize it, and select it to give it a
+name, a description and, if it carries words, its text. The prompt above describes the whole
+image; on generating, AudioViz writes the boxes into it in the model's format (below). The boxes
+are kept for the next image; **Remove all the boxes** clears them.
+
+The formats, to write them by hand or from the terminal:
+
 **FLUX.3 Image Klein**: write the description, name each element with an id in angle brackets,
 then a space and a JSON list with one box per id, `[top, left, bottom, right]` from 0 to 1000:
 ```text

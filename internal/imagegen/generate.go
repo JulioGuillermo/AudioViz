@@ -318,7 +318,7 @@ func Models() []map[string]any {
 			size += m.Size
 		}
 		out = append(out, map[string]any{"id": f.ID, "name": f.Name, "desc": f.Desc, "refs": f.Refs, "steps": f.Steps, "cfg": f.CFG,
-			"heavy": f.Heavy, "license": f.License, "size": size, "missing": Missing(f.Needed(false)),
+			"heavy": f.Heavy, "license": f.License, "size": size, "missing": Missing(f.Needed(false)), "layout": f.Layout,
 			"missingRefs": Missing(f.Needed(true))})
 	}
 	return out

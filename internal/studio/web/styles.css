@@ -828,3 +828,20 @@ a.btn { text-decoration: none; }
 .cf-in { display: flex; flex-direction: column; gap: 3px; font-size: 11px; }
 
 input[type=search]::-webkit-search-cancel-button { filter: invert(1) opacity(.6); }
+/* box layout (layout.js) */
+.bx-wrap summary { margin-bottom: 4px; }
+.bx-area { position: relative; margin: 6px auto 0; background: #0b0c0f center / cover no-repeat;
+  border: 1px solid var(--border-2); border-radius: var(--r); cursor: crosshair; touch-action: none; user-select: none; overflow: hidden; }
+.bx-area::before { content: ''; position: absolute; inset: 0; background-image: linear-gradient(var(--border) 1px, transparent 1px),
+  linear-gradient(90deg, var(--border) 1px, transparent 1px); background-size: 10% 10%; opacity: .35; pointer-events: none; }
+.bx-box { position: absolute; border: 1.5px solid var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); cursor: move; }
+.bx-box.txt { border-style: dashed; }
+.bx-box.on { border-color: #fff; box-shadow: 0 0 0 1px var(--accent); background: color-mix(in srgb, var(--accent) 24%, transparent); }
+.bx-tag { position: absolute; left: 2px; top: 1px; font-size: 10.5px; color: #fff; text-shadow: 0 1px 2px #000; pointer-events: none;
+  white-space: nowrap; max-width: calc(100% - 4px); overflow: hidden; text-overflow: ellipsis; }
+.bx-size { position: absolute; right: -5px; bottom: -5px; width: 10px; height: 10px; background: #fff; border: 1px solid var(--accent); border-radius: 2px; cursor: nwse-resize; }
+.bx-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 12px; color: var(--text-3); pointer-events: none; }
+.bx-edit { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.bx-desc { width: 100%; font-size: 12.5px; }
+.md-total { font-size: 12px; display: flex; align-items: center; gap: 6px; margin: 0 0 6px; }
+.md-use { font-size: 11.5px; }

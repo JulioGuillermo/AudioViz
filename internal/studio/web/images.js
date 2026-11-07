@@ -6,6 +6,7 @@ import { Icon } from './icons.js';
 import { Select } from './fields.js';
 import { t } from './i18n.js';
 import { Modal, GenSteps, fmtDur, fmtSize, fmtDate, thumbURL } from './dialogs.js';
+import { BoxLayout, layoutPrompt } from './layout.js';
 
 // Image generation: a prompt (and optionally reference images to edit or combine) becomes an
 // image in the project's images/ folder, made inside the binary on the GPU. The images can then be
@@ -46,6 +47,9 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onRun, onU
   const [model, setModel] = useState(() => recall('model', 'zimage'));
   const [prompt, setPrompt] = useState(() => recall('prompt', ''));
   const [refs, setRefs] = useState([]);
+  // boxes placing elements (models with a layout format: FLUX.3 Image Klein, MOSS-Image)
+  const [boxes, setBoxesState] = useState(() => { try { return JSON.parse(recall('boxes', '[]')); } catch (e) { return []; } });
+  const setBoxes = (b) => { setBoxesState(b); remember('boxes', JSON.stringify(b)); };
   const [aspect, setAspect] = useState(() => recall('aspect', 'video'));
   const [quality, setQuality] = useState(() => recall('quality', 'fast'));
   const [steps, setSteps] = useState('');
@@ -117,7 +121,8 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onRun, onU
       return;
     }
     remember('prompt', prompt);
-    onStart({ model, prompt, refs: refs.slice(0, maxRefs), width: w, height: h, steps: +steps || 0, seed: seed === '' ? -1 : +seed,
+    const layout = fam && fam.layout ? fam.layout : '';
+    onStart({ model, prompt: layoutPrompt(layout, prompt, boxes, w, h), refs: refs.slice(0, maxRefs), width: w, height: h, steps: +steps || 0, seed: seed === '' ? -1 : +seed,
       flashAttn: adv.fa, cfg: +adv.cfg || 0, sampler: adv.sampler, scheduler: adv.scheduler, negative: adv.negative.trim(),
       init: adv.init, strength: adv.init ? +adv.strength : 0 });
   };
@@ -181,6 +186,12 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onRun, onU
     <label class="ig-l">${t('Prompt')}</label>
     <textarea class="ig-prompt" rows="6" value=${prompt} placeholder=${t('What the image shows: subject, setting, light, style… (English works best)')}
       onInput=${(e) => setPrompt(e.target.value)} onKeyDown=${(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && prompt.trim() && !running) start(); }}></textarea>
+    ${fam && fam.layout && html`<details class="ig-adv bx-wrap" open=${boxes.length > 0 || recall('boxesOpen', '') === '1'}
+        onToggle=${(e) => remember('boxesOpen', e.target.open ? '1' : '')}>
+      <summary>${t('Place elements with boxes')}${boxes.length ? html` <span class="badge">${boxes.length}</span>` : ''}</summary>
+      <p class="faint ig-hint">${t('Draw where each thing goes and describe it; the prompt above describes the whole image.')}</p>
+      <${BoxLayout} format=${fam.layout} w=${w} h=${h} boxes=${boxes} setBoxes=${setBoxes} bg=${refs[0] || ''} />
+    </details>`}
     ${maxRefs > 0 && html`<label class="ig-l">${t('Reference images')} <span class="faint">(${refs.length}/${maxRefs})</span></label>
       <div class="ig-refs">
         ${refs.map((p) => html`<div class="ig-ref" key=${p} title=${p}><img src=${thumbURL(p)} alt="" />
