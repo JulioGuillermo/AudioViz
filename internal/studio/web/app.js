@@ -1139,6 +1139,64 @@ function App() {
       if (x) { const now = timeStore.get(); if (now < x.start || now > x.end) seek(x.start + Math.min(1, (x.end - x.start) / 2)); }
     },
   };
+  // Overlay clips between layers of the same kind (image layers, emitter layers): copied or moved
+  // to another layer (or a new one like it), pasted at a time; clipBoard: the copied clip
+  const clipBoard = useRef(null);
+  const sameKind = (a, b) => (a && a.kind || '') === (b && b.kind || '');
+  const clipToLayer = (fromId, j, toId, move, at = null) => {
+    let target = toId, nj = 0;
+    update((p) => {
+      const src = p.layers.find((l) => l.id === fromId);
+      const c = clone(src.clips[j]);
+      let dst = p.layers.find((l) => l.id === toId);
+      if (!dst) { // a new layer like its own, just in front of it
+        target = newLayerId();
+        dst = { ...clone(src), id: target, name: (src.name || '') ? src.name + ' 2' : '', clips: [] };
+        p.layers.splice(p.layers.indexOf(src) + 1, 0, dst);
+      }
+      if (at != null) {
+        const len = c.end - c.start;
+        c.start = +Math.max(0, Math.min(meta.duration - len, at)).toFixed(3);
+        c.end = +(c.start + len).toFixed(3);
+      }
+      if (move) src.clips.splice(j, 1);
+      dst.clips.push(c);
+      dst.clips.sort((a, b) => a.start - b.start);
+      if (move) src.clips.sort((a, b) => a.start - b.start);
+      nj = dst.clips.indexOf(c);
+    });
+    setSel({ kind: 'layer', id: target, clip: nj });
+  };
+  const pasteClip = (toId, at) => {
+    const cb = clipBoard.current;
+    if (!cb) return;
+    let nj = 0;
+    update((p) => {
+      const dst = p.layers.find((l) => l.id === toId);
+      const c = clone(cb.clip);
+      const len = c.end - c.start;
+      c.start = +Math.max(0, Math.min(meta.duration - len, at)).toFixed(3);
+      c.end = +(c.start + len).toFixed(3);
+      dst.clips.push(c);
+      dst.clips.sort((a, b) => a.start - b.start);
+      nj = dst.clips.indexOf(c);
+    });
+    setSel({ kind: 'layer', id: toId, clip: nj });
+  };
+  // the layers a clip of layer l can go to, as menu items (a second menu where the first was)
+  const layerTargets = (e, l, j, move) => {
+    const p = projRef.current;
+    const items = [{ header: t(move ? 'Move to the layer' : 'Copy to the layer') }];
+    frontFirst(p).forEach(({ l: x }) => {
+      if (x.id !== l.id && sameKind(x, l)) {
+        items.push({ label: layerName(x, p.layers.indexOf(x)), icon: isEmitterLayer(x) ? 'sparkles' : 'layers', onClick: () => clipToLayer(l.id, j, x.id, move) });
+      }
+    });
+    items.push('-', { label: t('A new layer'), icon: 'plus', onClick: () => clipToLayer(l.id, j, null, move) });
+    // (openMenu takes an event: the first menu's place, with no-op preventDefault / stopPropagation)
+    const at = { clientX: e.clientX, clientY: e.clientY, preventDefault() {}, stopPropagation() {} };
+    setTimeout(() => openMenu(at, items), 0);
+  };
   // Moving a clip on the timeline (live while dragging, committed at the end)
   const onMoveClip = (id, j, s, e, commit) => {
     if (commit) { update((p) => { p.layers.find((l) => l.id === id).clips.sort((a, b) => a.start - b.start); }); return; }
@@ -1316,12 +1374,17 @@ function App() {
         selectLayer(c.id, c.clip);
         items.push(
           { label: t('Duplicate'), icon: 'copy', onClick: () => { let nj = 0; update((q) => { nj = duplicateClip(q.layers.find((x) => x.id === c.id), c.clip); }); setSel({ kind: 'layer', id: c.id, clip: nj }); } },
+          { label: t('Copy clip'), icon: 'clipboard', onClick: () => { clipBoard.current = { kind: l.kind || '', clip: clone(l.clips[c.clip]) }; } },
+          { label: t('Copy to the layer…'), icon: 'copy', onClick: () => layerTargets(e, l, c.clip, false) },
+          { label: t('Move to the layer…'), icon: 'arrow-left-right', onClick: () => layerTargets(e, l, c.clip, true) },
           { label: t('Delete clip'), icon: 'trash-2', danger: true, onClick: () => { update((q) => { q.layers.find((x) => x.id === c.id).clips.splice(c.clip, 1); }); setSel({ kind: 'layer', id: c.id, clip: Math.max(0, c.clip - 1) }); } },
           '-');
       }
       const at = c.at ?? timeStore.get();
+      const cb = clipBoard.current;
       items.push(
         { label: t('New clip at {t}', { t: fmtTime(at) }), icon: 'plus', onClick: () => ctx.addClip(c.id, at) },
+        ...(cb && (cb.kind || '') === (l.kind || '') ? [{ label: t('Paste clip at {t}', { t: fmtTime(at) }), icon: 'clipboard', onClick: () => pasteClip(c.id, at) }] : []),
         { label: t('Rename…'), icon: 'pencil', onClick: () => { const n = prompt(t('New name:'), l.name || ''); if (n !== null) update((q) => { q.layers.find((x) => x.id === c.id).name = n; }); } },
         { label: t('Bring forward'), icon: 'arrow-up', disabled: ff === 0, onClick: () => moveLayer(ff, ff - 1) },
         { label: t('Send backward'), icon: 'chevron-down', disabled: ff === p.layers.length - 1, onClick: () => moveLayer(ff, ff + 1) },
@@ -1819,7 +1882,8 @@ function App() {
       sel=${sel} lineSel=${lineSel} wordEdit=${wordEdit} height=${tlH} setHeight=${setTlH}
       onSeek=${seek} onSelect=${selTrack} onMoveSeg=${onMoveSeg} onAddSeg=${ctx.addSeg} onMarker=${onMarker}
       view=${view} onToggleZone=${(z) => toggleView('collapsed', z)} kfFocus=${kfFocus} setKfFocus=${setKfFocus} kfSel=${kfSel} setKfSel=${setKfSel} onContext=${onContext}
-      layers=${layersFF} onSelectLayer=${selectLayer} onMoveClip=${onMoveClip} onAddClip=${(id, tt) => ctx.addClip(id, tt)} onAddLayer=${(tt) => ctx.addLayer(tt)}
+      layers=${layersFF} onSelectLayer=${selectLayer} onMoveClip=${onMoveClip}
+      onClipToLayer=${(id, j, to) => { const p = projRef.current; if (sameKind(p.layers.find((x) => x.id === id), p.layers.find((x) => x.id === to))) clipToLayer(id, j, to, true); else onMoveClip(id, j, null, null, true); }} onAddClip=${(id, tt) => ctx.addClip(id, tt)} onAddLayer=${(tt) => ctx.addLayer(tt)}
       onKeys=${onKeys}
       onSelectLine=${selectLine} onLyrics=${(lines) => editLyrics((all) => { all.splice(0, all.length, ...lines); }, false)}
       onLyricsCommit=${() => update(() => {})} />

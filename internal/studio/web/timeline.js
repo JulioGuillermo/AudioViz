@@ -240,7 +240,7 @@ export function Timeline(props) {
 function TimelineInner({ openStems, toggleStems,  proj, meta, ana, lyr, timeStore, slowTime, playing, sel, lineSel, onSeek, onSelect, onMoveSeg,
   onAddSeg, onSelectLine, onLyrics, onLyricsCommit, onMarker, height, setHeight, wordEdit,
   texts = [], onSelectText, onMoveText, onAddText, view = { hidden: [], collapsed: [] }, onToggleZone,
-  kfFocus = null, setKfFocus = () => {}, kfSel = null, setKfSel = () => {}, onKeys, onContext, layers = [], onSelectLayer, onMoveClip, onAddClip, onAddLayer,
+  kfFocus = null, setKfFocus = () => {}, kfSel = null, setKfSel = () => {}, onKeys, onContext, layers = [], onSelectLayer, onMoveClip, onClipToLayer, onAddClip, onAddLayer,
   remote = [], marks = {}, onPointer }) {
   const scroller = useRef();
   const namesRef = useRef();
@@ -291,11 +291,12 @@ function TimelineInner({ openStems, toggleStems,  proj, meta, ana, lyr, timeStor
     return Math.max(0, Math.min(duration, (clientX - r.left + scroller.current.scrollLeft) / effPps));
   };
 
-  const drag = (e, onMove, onEnd) => {
-    const startX = e.clientX;
+  // vert: a vertical move alone counts as moving too (a clip dragged to another lane)
+  const drag = (e, onMove, onEnd, vert = false) => {
+    const startX = e.clientX, startY = e.clientY;
     let moved = false;
     const mv = (ev) => {
-      if (!moved && Math.abs(ev.clientX - startX) < 3) return;
+      if (!moved && Math.abs(ev.clientX - startX) < 3 && !(vert && Math.abs(ev.clientY - startY) >= 6)) return;
       moved = true;
       onMove((ev.clientX - startX) / effPps, ev);
     };
@@ -580,7 +581,9 @@ function TimelineInner({ openStems, toggleStems,  proj, meta, ana, lyr, timeStor
     if (e.button !== 0) return;
     const c = layers.find((x) => x.l.id === id).l.clips[j];
     const s0 = c.start, e0 = c.end;
+    let last = null; // (where the pointer is: dropped on another layer's lane, the clip goes there)
     drag(e, (dt, ev) => {
+      last = ev;
       let st = s0, en = e0;
       if (edge === 'start') st = Math.max(0, Math.min(e0 - 0.1, snap(s0 + dt, ev)));
       else if (edge === 'end') en = Math.min(duration, Math.max(s0 + 0.1, snap(e0 + dt, ev)));
@@ -589,7 +592,14 @@ function TimelineInner({ openStems, toggleStems,  proj, meta, ana, lyr, timeStor
         en = st + (e0 - s0);
       }
       onMoveClip(id, j, st, en, false);
-    }, (moved) => moved && onMoveClip(id, j, null, null, true));
+    }, (moved) => {
+      if (!moved) return;
+      const lane = !edge && last && onClipToLayer && document.elementFromPoint(last.clientX, last.clientY);
+      const to = lane && lane.closest && lane.closest('[data-lane^="layer-"]');
+      const toId = to ? to.dataset.lane.slice(6) : null;
+      if (toId && toId !== id) onClipToLayer(id, j, toId);
+      else onMoveClip(id, j, null, null, true);
+    }, true);
   };
   const layerRow = ({ l, i }) => {
     const on = sel.kind === 'layer' && sel.id === l.id;
@@ -685,7 +695,7 @@ function TimelineInner({ openStems, toggleStems,  proj, meta, ana, lyr, timeStor
       <div class="tl-scroll" ref=${scroller} onWheel=${wheel} onScroll=${onScroll}
         onMouseMove=${(e) => onPointer && onPointer({ area: 'timeline', t: +xToT(e.clientX).toFixed(3) })} onMouseLeave=${() => onPointer && onPointer(null)}>
         <div class="tl-inner" style=${{ width: width + 'px' }}>
-          ${rows.map((r) => html`<div key=${r.key} class=${'lane ' + (r.cls || '') + (r.sel ? ' sel' : '')} style=${{ '--h': r.h + 'px', top: r.top }}
+          ${rows.map((r) => html`<div key=${r.key} data-lane=${r.key} class=${'lane ' + (r.cls || '') + (r.sel ? ' sel' : '')} style=${{ '--h': r.h + 'px', top: r.top }}
               onMouseDown=${r.onDown} onDblClick=${r.onDbl} onContextMenu=${r.onCtx} title=${r.laneTitle || null}>${r.lane}</div>`)}
           ${proj.markers.map((m, i) => html`<div class="marker" style=${{ left: m.at * effPps + 'px' }}>
             <b title=${t('Click: go · double-click: rename · right-click: menu')}

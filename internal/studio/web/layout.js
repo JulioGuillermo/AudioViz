@@ -105,7 +105,7 @@ export function BoxCanvas({ w, h, boxes, setBoxes, bg, sel, setSel, maxH = '260p
         backgroundImage: bg ? 'url(' + thumbURL(bg) + ')' : '' }}
       onPointerDown=${(e) => drag(e, -1, 'new')}>
     ${boxes.map((b, i) => html`<div class=${'bx-box' + (i === sel ? ' on' : '') + (b.text || b.kind === 'text' ? ' txt' : '')} key=${i}
-        style=${{ left: pct(b.x0), top: pct(b.y0), width: pct(b.x1 - b.x0), height: pct(b.y1 - b.y0) }}
+        style=${{ left: pct(b.x0), top: pct(b.y0), width: pct(b.x1 - b.x0), height: pct(b.y1 - b.y0), zIndex: i === sel ? 2 : 1 }}
         onPointerDown=${(e) => drag(e, i, 'move')}>
       <span class="bx-tag">${b.name || t('Element {n}', { n: i + 1 })}</span>
       <i class="bx-size" onPointerDown=${(e) => drag(e, i, 'size')}></i></div>`)}
@@ -127,6 +127,11 @@ export function BoxFields({ format, boxes, setBoxes, sel, setSel }) {
         ${format === 'moss' && html`<select value=${cur.text ? 'text' : cur.kind} disabled=${!!cur.text} title=${t('Kind')} onChange=${(e) => edit('kind', e.target.value)}>
           <option value="object">${t('Object')}</option><option value="text">${t('Text')}</option></select>`}</div>`
     : html`<p class="faint ig-hint">${t(boxes.length ? 'Select a box to describe it; drag its corner to resize it.' : 'Draw boxes on the canvas on the right.')}</p>`}
+    ${boxes.length > 0 && html`<div class="bx-list">
+      ${boxes.map((b, i) => html`<button key=${i} class=${'bx-chip' + (i === sel ? ' on' : '')} title=${t('Select it (and bring it to the front)')}
+          onClick=${() => setSel(i === sel ? -1 : i)}>
+        <${Icon} name=${b.text || b.kind === 'text' ? 'type' : 'square'} size=${12} />${b.name || t('Element {n}', { n: i + 1 })}</button>`)}
+    </div>`}
     ${boxes.length > 0 && html`<button class="btn sm ghost bx-clear" onClick=${() => { setBoxes([]); setSel(-1); }}>
       <${Icon} name="x" size=${12} /> ${t('Remove all the boxes')}</button>`}
   </div>`;

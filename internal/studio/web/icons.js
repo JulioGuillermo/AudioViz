@@ -2,6 +2,7 @@
 import { html } from './vendor/preact-htm.js';
 
 const P = {
+"square": "<rect width=\"18\" height=\"18\" x=\"3\" y=\"3\" rx=\"2\" />",
 "rewind": "<polygon points=\"11 19 2 12 11 5 11 19\" /><polygon points=\"22 19 13 12 22 5 22 19\" />",
 "fast-forward": "<polygon points=\"13 19 22 12 13 5 13 19\" /><polygon points=\"2 19 11 12 2 5 2 19\" />",
 "chevron-first": "<path d=\"m17 18-6-6 6-6\" /><path d=\"M7 6v12\" />",
