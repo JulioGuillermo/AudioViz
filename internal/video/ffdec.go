@@ -145,13 +145,13 @@ type videoReader struct {
 	have     bool
 }
 
-func probeVideo(path string) (w, h int, dur float64, err error) {
+func probeVideo(path string) (w, h int, dur, fps float64, err error) {
 	r, err := openVideo(path)
 	if err != nil {
-		return 0, 0, 0, err
+		return 0, 0, 0, 0, err
 	}
 	defer r.close()
-	return r.srcW, r.srcH, r.duration, nil
+	return r.srcW, r.srcH, r.duration, r.fps, nil
 }
 
 func openVideo(path string) (*videoReader, error) {

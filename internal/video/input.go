@@ -35,6 +35,7 @@ type ProbeResult struct {
 	Width      int
 	Height     int
 	Duration   float64 // s (video)
+	FPS        float64 // frames per second (video)
 }
 
 var videoExts = map[string]bool{".mp4": true, ".mkv": true, ".mov": true, ".webm": true, ".avi": true, ".m4v": true, ".ts": true}
@@ -45,11 +46,11 @@ func IsVideo(path string) bool { return videoExts[strings.ToLower(filepath.Ext(p
 // ProbeMedia determines the background dimensions
 func ProbeMedia(filePath string) (*ProbeResult, error) {
 	if IsVideo(filePath) {
-		w, h, dur, err := probeVideo(filePath)
+		w, h, dur, fps, err := probeVideo(filePath)
 		if err != nil {
 			return nil, err
 		}
-		return &ProbeResult{IsVideo: true, Width: w / 2 * 2, Height: h / 2 * 2, Duration: dur}, nil
+		return &ProbeResult{IsVideo: true, Width: w / 2 * 2, Height: h / 2 * 2, Duration: dur, FPS: fps}, nil
 	}
 	f, err := os.Open(filePath)
 	if err != nil {

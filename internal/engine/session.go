@@ -12,6 +12,7 @@ import (
 
 	"audioviz/internal/audio"
 	"audioviz/internal/config"
+	"audioviz/internal/depth"
 	"audioviz/internal/effects"
 	"audioviz/internal/gpu"
 	"audioviz/internal/lyrics"
@@ -45,6 +46,7 @@ type Session struct {
 	stems      []audio.StemFrame     // the separated song per frame (stems.go), nil until separated
 	stemsKey   string
 	depths     map[string]*depthEntry // depth maps of the backgrounds, fitted to the frame (depth.go)
+	depthSeqs  map[string]*depth.Seq  // a video's depth on every frame (nil: failed)
 	maskSeq    int
 	lyr        *lyrics.Multi
 	lyrKey     string
@@ -359,7 +361,7 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 		img, ver := ra.FrameAt(t - tl.Background[bi].At)
 		fs.BgA, fs.VerA = img, fmt.Sprintf("%p:%d", ra, ver)
 	}
-	fs.DepthA, fs.NormA, fs.VerDA = s.depthFor(cbg)
+	fs.DepthA, fs.NormA, fs.VerDA = s.depthFor(cbg, t-tl.Background[bi].At)
 	fs.LayerA = s.motionAt(bi, t)
 	fs.Trans = effects.Trans{HasA: fs.BgA != nil}
 	if k < 1 {
@@ -370,7 +372,7 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 		fs.BgB, fs.VerB, fs.LayerB = fs.BgA, fs.VerA, fs.LayerA
 		fs.BgA, fs.VerA = nil, ""
 		fs.DepthB, fs.NormB, fs.VerDB = fs.DepthA, fs.NormA, fs.VerDA
-		fs.DepthA, fs.NormA, fs.VerDA = s.depthFor(pbg)
+		fs.DepthA, fs.NormA, fs.VerDA = s.depthFor(pbg, t-tl.Background[bi-1].At)
 		if rb != nil {
 			img, ver := rb.FrameAt(t - tl.Background[bi-1].At)
 			fs.BgA, fs.VerA = img, fmt.Sprintf("%p:%d", rb, ver)

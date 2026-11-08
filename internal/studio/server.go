@@ -938,12 +938,20 @@ type job struct {
 	Started  time.Time `json:"started"`
 	Gen      *progress.Status
 	Export   *exportStatus
-	Previews int    // image generation: previews received so far
-	Ref      string // what it runs (a ComfyUI flow's id)
-	By       string // who started it (a person's name, an agent's)
-	ByID     string // (their client: a studio's or an MCP session)
-	Config   any    // what it was started with (an image's prompt, model, size…)
+	Frames   *frameProgress // a video's depth on every frame: frames done, all, this one's progress
+	Previews int            // image generation: previews received so far
+	Ref      string         // what it runs (a ComfyUI flow's id)
+	By       string         // who started it (a person's name, an agent's)
+	ByID     string         // (their client: a studio's or an MCP session)
+	Config   any            // what it was started with (an image's prompt, model, size…)
 	cancel   context.CancelFunc
+}
+
+// frameProgress: progress over the frames of a video (and of the frame being worked on, 0..1)
+type frameProgress struct {
+	Done  int     `json:"done"`
+	Total int     `json:"total"`
+	Frame float64 `json:"frame"`
 }
 
 // exportStatus: structured progress of an export, formatted by the UI
@@ -969,7 +977,12 @@ func (j *job) snapshot() map[string]any {
 		e := *j.Export
 		exp = &e
 	}
-	return map[string]any{"id": j.ID, "kind": j.Kind, "status": j.Status, "progress": j.Progress,
+	var frames *frameProgress
+	if j.Frames != nil {
+		f := *j.Frames
+		frames = &f
+	}
+	return map[string]any{"id": j.ID, "kind": j.Kind, "status": j.Status, "progress": j.Progress, "frames": frames,
 		"message": j.Message, "output": j.Output, "log": log, "elapsed": time.Since(j.Started).Seconds(), "gen": j.Gen,
 		"export": exp, "preview": j.preview(), "ref": j.Ref,
 		"by": j.By, "byId": j.ByID, "config": j.Config}

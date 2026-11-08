@@ -278,6 +278,7 @@ type Request struct {
 	Model  string // ai: small or base
 	Detail string // ai: normal, high, max (DetailSize)
 	File   string // file: the depth map
+	All    bool   // a video: every frame (a sequence, seq.go), not only the first
 	Force  bool   // worked out again though it is in the cache
 }
 
@@ -300,11 +301,20 @@ func CachePath(cacheDir string, r Request) string {
 		model = ""
 	}
 	fmt.Fprintf(h, "%s|%s|v2", r.Source, model)
+	if r.All {
+		fmt.Fprint(h, "|all")
+	}
 	return filepath.Join(cacheDir, "depth", hex.EncodeToString(h.Sum(nil))[:20]+".png")
 }
 
-// Cached: the map of a request if it is already in the cache
+// Cached: the map of a request if it is already in the cache (every frame's: its first frame's,
+// once the whole sequence is there)
 func Cached(cacheDir string, r Request) (*Map, bool) {
+	if r.All {
+		if _, ok := OpenSeq(cacheDir, r); !ok {
+			return nil, false
+		}
+	}
 	m, err := Load(CachePath(cacheDir, r))
 	return m, err == nil
 }
@@ -314,6 +324,9 @@ func Cached(cacheDir string, r Request) (*Map, bool) {
 func Make(ctx context.Context, cacheDir string, r Request, stage func(string, float64)) (*Map, error) {
 	if m, ok := Cached(cacheDir, r); ok && !r.Force {
 		return m, nil
+	}
+	if r.All {
+		return makeSeq(ctx, cacheDir, r, stage)
 	}
 	img, err := firstFrame(r.Image)
 	if err != nil {

@@ -8,12 +8,14 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"math"
 	"net/http"
 	"path/filepath"
 	"time"
 
 	"audioviz/internal/depth"
 	"audioviz/internal/effects"
+	"audioviz/internal/video"
 )
 
 // Depth maps of the backgrounds (internal/depth): worked out as a job (the model is downloaded
@@ -27,11 +29,13 @@ type depthReq struct {
 	Detail string `json:"detail"`
 	File   string `json:"file"`
 	Flow   string `json:"flow"`  // comfy: the project's flow
+	All    bool   `json:"all"`   // a video: every frame (DepthConfig.EveryFrame)
 	Force  bool   `json:"force"` // worked out again (it is in the cache)
 }
 
 func (s *Server) depthRequest(r depthReq) depth.Request {
-	q := depth.Request{Image: r.Image, Source: r.Source, Model: r.Model, Detail: r.Detail, File: r.File, Force: r.Force}
+	q := depth.Request{Image: r.Image, Source: r.Source, Model: r.Model, Detail: r.Detail, File: r.File, Force: r.Force,
+		All: r.All && r.Source != depth.SourceFile && video.IsVideo(r.Image)}
 	if r.Source == depth.SourceComfy {
 		s.mu.Lock()
 		if s.cfg != nil {
@@ -70,7 +74,7 @@ func (s *Server) hDepth(w http.ResponseWriter, r *http.Request) {
 	}
 	labels := map[string]string{"download": "Downloading the depth model", "estimate": "Working out the depth",
 		"refine": "Following the image's edges", "brightness": "Depth from the brightness", "file": "Reading the depth map",
-		"comfy": "Working out the depth in ComfyUI"}
+		"comfy": "Working out the depth in ComfyUI", "frames": "Working out the depth of every frame"}
 	if req.Source == depth.SourceComfy && req.Flow == "" {
 		fail(w, 400, errors.New("choose the ComfyUI flow that makes the depth map"))
 		return
@@ -80,6 +84,30 @@ func (s *Server) hDepth(w http.ResponseWriter, r *http.Request) {
 		t0 := time.Now()
 		_, err := depth.Make(ctx, dir, dreq, func(st string, p float64) {
 			j.mu.Lock()
+			if dreq.All { // every frame: the total and this frame's progress
+				switch st {
+				case "count":
+					j.Frames = &frameProgress{Total: int(p)}
+				case "frames", "frame", "done":
+					if f := j.Frames; f != nil {
+						switch st {
+						case "frames":
+							f.Done = int(math.Round(p * float64(f.Total)))
+						case "frame":
+							f.Frame = p
+						default:
+							f.Done, f.Frame = f.Total, 1
+						}
+						j.Progress = (float64(f.Done) + f.Frame) / float64(max(1, f.Total))
+						j.Message = fmt.Sprintf("%s · %d / %d", labels["frames"], min(f.Done+1, f.Total), f.Total)
+					}
+				case "download":
+					j.Message = fmt.Sprintf("%s · %d %%", labels[st], int(p*100))
+				}
+				j.mu.Unlock()
+				s.hub.send("job", j.snapshot())
+				return
+			}
 			if l, ok := labels[st]; ok {
 				j.Message = l
 				if st == "download" {
@@ -111,7 +139,8 @@ func (s *Server) hDepth(w http.ResponseWriter, r *http.Request) {
 // (white = near), at most 640 px wide; 404 if not in the cache yet
 func (s *Server) hDepthView(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	req := depthReq{Image: q.Get("image"), Source: q.Get("source"), Model: q.Get("model"), Detail: q.Get("detail"), File: q.Get("file"), Flow: q.Get("flow")}
+	req := depthReq{Image: q.Get("image"), Source: q.Get("source"), Model: q.Get("model"), Detail: q.Get("detail"), File: q.Get("file"), Flow: q.Get("flow"),
+		All: q.Get("all") == "1"}
 	dir := s.cacheDir()
 	m, ok := depth.Cached(dir, s.depthRequest(req))
 	if dir == "" || !ok {

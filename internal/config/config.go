@@ -82,6 +82,8 @@ type DepthConfig struct {
 	Detail string `yaml:"detail,omitempty"` // ai: the size it works at: normal (504 px), high (1008, default), max (1512)
 	Path   string `yaml:"path,omitempty"`   // file: the depth map
 	Flow   string `yaml:"flow,omitempty"`   // comfy: the project's ComfyUI flow (its id)
+	// A video: the depth of every frame (it follows the video), not one map from its first frame
+	EveryFrame bool `yaml:"every_frame,omitempty"`
 	// How much relief the surfaces have for the 2.5D lights (their normals from the depth): 1 =
 	// the default, more = rounder shapes that turn more to and from a light (0 = 1)
 	Relief float64 `yaml:"relief,omitempty"`
