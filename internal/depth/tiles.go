@@ -42,6 +42,9 @@ func aiMap(ctx context.Context, img *image.RGBA, r Request, stage func(string, f
 		if global, err = inferImage(sp, paths, img, false); err != nil {
 			return nil, err
 		}
+		if size > sp.Tile+sp.Tile/4 { // (tiles follow: the look at the whole counts as a quarter)
+			stage("estimate", 0.25)
+		}
 	}
 	switch {
 	case size <= sp.Tile+sp.Tile/4:
@@ -61,7 +64,12 @@ func aiMap(ctx context.Context, img *image.RGBA, r Request, stage func(string, f
 		if k < 1 {
 			in = resized(img, int(math.Round(float64(W)*k)), int(math.Round(float64(H)*k)))
 		}
-		if m, err = tiled(ctx, sp, paths, in, global, stage); err != nil {
+		if m, err = tiled(ctx, sp, paths, in, global, func(st string, p float64) {
+			if st == "estimate" {
+				p = 0.25 + 0.75*p
+			}
+			stage(st, p)
+		}); err != nil {
 			return nil, err
 		}
 	}

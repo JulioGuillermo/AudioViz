@@ -91,14 +91,14 @@ func (s *Server) hDepth(w http.ResponseWriter, r *http.Request) {
 				case "frames", "frame", "done":
 					if f := j.Frames; f != nil {
 						switch st {
-						case "frames":
-							f.Done = int(math.Round(p * float64(f.Total)))
+						case "frames": // (the whole, counting the frames being worked out)
+							j.Progress = p
+							f.Done = min(f.Total, int(math.Floor(p*float64(f.Total)+1e-9)))
 						case "frame":
 							f.Frame = p
 						default:
-							f.Done, f.Frame = f.Total, 1
+							f.Done, f.Frame, j.Progress = f.Total, 1, 1
 						}
-						j.Progress = (float64(f.Done) + f.Frame) / float64(max(1, f.Total))
 						j.Message = fmt.Sprintf("%s · %d / %d", labels["frames"], min(f.Done+1, f.Total), f.Total)
 					}
 				case "download":

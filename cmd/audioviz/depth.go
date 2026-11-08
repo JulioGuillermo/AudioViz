@@ -33,7 +33,7 @@ func runDepth(args []string) {
 	defer os.RemoveAll(dir)
 	t0 := time.Now()
 	last := ""
-	frames := 0
+	frames, lastFrame := 0, -1
 	m, err := depth.Make(context.Background(), dir, depth.Request{Image: fs.Arg(0), Source: *src, Model: *model, Detail: *detail, All: *all},
 		func(st string, p float64) {
 			switch st {
@@ -42,7 +42,8 @@ func runDepth(args []string) {
 			case "frame":
 				return
 			case "frames":
-				if i := int(p*float64(frames) + 0.5); frames > 0 && (i == 1 || i%25 == 0) {
+				if i := int(p * float64(frames)); frames > 0 && i != lastFrame && (i == 1 || i%25 == 0) {
+					lastFrame = i
 					fmt.Printf("frame %d/%d %.1fs\n", i, frames, time.Since(t0).Seconds())
 				}
 				return

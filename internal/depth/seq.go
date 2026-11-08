@@ -141,7 +141,9 @@ func makeSeq(ctx context.Context, cacheDir string, r Request, stage func(string,
 			}
 		}()
 	}()
-	var awaited atomic.Int64 // the frame whose progress is shown
+	// progress: the frames done plus how far the ones being worked out are (two at a time: they
+	// come out about together, so the bar moves meanwhile); the lower bar, the next frame to finish
+	prog := &seqProgress{n: n, part: map[int]float64{}, stage: stage}
 	go func() {
 		defer close(jobs)
 		for i := 0; i < n; i++ {
@@ -179,21 +181,22 @@ func makeSeq(ctx context.Context, cacheDir string, r Request, stage func(string,
 			defer workers.Done()
 			for j := range jobs {
 				inner := func(st string, p float64) {
-					if int64(j.i) != awaited.Load() {
-						return
-					}
 					switch st {
 					case "estimate", "comfy":
-						stage("frame", 0.9*p)
+						prog.set(j.i, 0.9*p)
 					case "refine":
-						stage("frame", 0.95)
+						prog.set(j.i, 0.95)
 					}
 				}
+				prog.set(j.i, 0)
 				t0 := time.Now()
+				// (the two frames take turns on the GPU run by run, so they come out about together:
+				// faster in all than one after the other)
 				m, err := frameMap(cctx, r, j.img, inner)
 				if err == nil {
 					m = shrinkMap(m, seqMaxSide)
 				}
+				prog.set(j.i, 1)
 				debugf("frame %d: map %v", j.i, time.Since(t0))
 				select {
 				case out <- res{i: j.i, m: m, err: err}:
@@ -209,9 +212,7 @@ func makeSeq(ctx context.Context, cacheDir string, r Request, stage func(string,
 	}()
 	pending := map[int]res{}
 	for i := 0; i < n; i++ {
-		awaited.Store(int64(i))
-		stage("frames", float64(i)/float64(n))
-		stage("frame", 0)
+		prog.next(i)
 		rr, ok := pending[i]
 		for !ok {
 			x, open := <-out
@@ -356,4 +357,45 @@ func steady(m, prev *Map) {
 		k := 0.45 + 0.55*smooth(0.02, 0.12, d) // how much of the new frame
 		m.V[i] = max(0, min(1, prev.V[i]+(z-prev.V[i])*k))
 	}
+}
+
+// seqProgress: a sequence's progress, reported as "frames" (the whole, 0..1, fractional) and
+// "frame" (the next frame to finish, 0..1)
+type seqProgress struct {
+	mu    sync.Mutex
+	n     int
+	done  int             // frames finished and written in order
+	part  map[int]float64 // how far each frame being worked out is
+	stage func(string, float64)
+}
+
+func (p *seqProgress) set(i int, v float64) {
+	p.mu.Lock()
+	if i >= p.done {
+		p.part[i] = v
+	}
+	p.report()
+	p.mu.Unlock()
+}
+
+// next: the frames before i are done
+func (p *seqProgress) next(i int) {
+	p.mu.Lock()
+	p.done = i
+	for k := range p.part {
+		if k < i {
+			delete(p.part, k)
+		}
+	}
+	p.report()
+	p.mu.Unlock()
+}
+
+func (p *seqProgress) report() {
+	sum := float64(p.done)
+	for _, v := range p.part {
+		sum += v
+	}
+	p.stage("frames", min(1, sum/float64(max(1, p.n))))
+	p.stage("frame", p.part[p.done])
 }
