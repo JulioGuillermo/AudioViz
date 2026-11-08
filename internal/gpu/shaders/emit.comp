@@ -1,6 +1,9 @@
 #version 450
 #extension GL_GOOGLE_include_directive : require
 // Emitter pass (particle emitters, see internal/effects/emit.go: same math, in float32):
+// The emitters go in batches (as many as the accumulations: push constant n), each running the
+// four phases with its first emitter e0; their light fields (all the emitters', read by
+// render.comp) are after the batch's accumulations, so any number of emitters fits:
 //   phase 0: clear the accumulations
 //   phase 1: one invocation per particle: its state from its birth and age, splatted into its
 //            emitter's accumulation with integer atomic adds (the sum does not depend on order)
@@ -11,7 +14,7 @@
 // (4 words per 8×8 px)
 layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
-layout(push_constant) uniform Push { int phase; } pc;
+layout(push_constant) uniform Push { int phase, e0, n; } pc;
 
 layout(std430, set = 0, binding = 9) writeonly buffer Layers { uint lay[]; };
 layout(std430, set = 0, binding = 10) buffer Acc { uint acc[]; };
@@ -33,6 +36,7 @@ uint pcg(uint v) {
 float rnd(uint seed, int i, uint j) { return float(pcg(seed ^ pcg(uint(i) * 16u + j))) * (1.0 / 4294967296.0); }
 
 int W, H, NE;
+int E0, E1; // this batch: emitters e0 to e1 - 1
 
 // Emitter e's header: word offset
 int eh(int e) { return 4 + e * ESTRIDE; }
@@ -40,13 +44,15 @@ int eh(int e) { return 4 + e * ESTRIDE; }
 const int GDIV = 8;  // the glow's cells
 const int XDIV = 32; // the light's cells
 int LW, LH, XW, XH;  // the glow grid, the light grid
-// Word offsets of emitter e's accumulation, its glow, its light sources and its light field
-// (as effects.EmitAccLayout)
-uint accBase(int e) { return uint(e) * uint(W * H * 4 + LW * LH * 4 + 2 * XW * XH + W * H); }
+// Word offsets of emitter e's accumulation (its place in the batch), its glow, its light
+// sources, its particles' depth × their weight; then its light field, after the accumulations
+// of a batch (as effects.EmitAccLayout)
+uint accStride() { return uint(W * H * 4 + LW * LH * 4 + XW * XH + W * H); }
+uint accBase(int e) { return uint(e - E0) * accStride(); }
 uint glowBase(int e) { return accBase(e) + uint(W * H * 4); }
 uint srcBase(int e) { return glowBase(e) + uint(LW * LH * 4); }
-uint fieldBase(int e) { return srcBase(e) + uint(XW * XH); }
-uint zBase(int e) { return fieldBase(e) + uint(XW * XH); } // its particles' depth × their weight
+uint zBase(int e) { return srcBase(e) + uint(XW * XH); }
+uint fieldBase(int e) { return uint(pc.n) * accStride() + uint(e) * uint(XW * XH); }
 
 // The easings of keys (as config.Ease) and a value along a path (as effects.PathTrack.At): at
 // off in the emitter data, n, then n lengths, values and easings
@@ -77,11 +83,11 @@ float trackAtE(int off, float s) {
 // a length along a path of length L, round when closed
 float wrapLen(float s, float L, bool closed) { return closed && L > 0.0 ? s - L * floor(s / L) : s; }
 
-// Every phase runs THREADS invocations (4096 groups of 64); phases 0 and 2 loop over their items
+// Every phase runs THREADS invocations (4096 groups of 64), each looping over its items
 const uint THREADS = 4096u * 64u;
 
 void clearPhase() {
-    uint n = accBase(NE);
+    uint n = uint(E1 - E0) * accStride();
     for (uint k = gl_GlobalInvocationID.x; k < n; k += THREADS) acc[k] = 0u;
 }
 
@@ -211,10 +217,9 @@ vec4 exprRun(int d, int index, float sRoute, float sPath, uint seed, uint frame,
     return o;
 }
 
-void splatPhase() {
-    int j = int(gl_GlobalInvocationID.x);
+void splatOne(int j) {
     int e = -1, i = 0;
-    for (int k = 0; k < NE; k++) {
+    for (int k = E0; k < E1; k++) {
         ivec4 v0 = edi4(eh(k));
         if (j >= v0.x && j < v0.x + v0.z) { e = k; i = v0.y + (j - v0.x); break; }
     }
@@ -564,6 +569,7 @@ vec4 waterPixel(int h, uint base, int GW, int GH, int dv, vec2 pp, float T, uint
 void resolveOne(uint id) {
     int n = W * H;
     int e = int(id) / n, p = int(id) - e * n;
+    e += E0;
     int h = eh(e);
     ivec4 v1 = edi4(h + 4);
     int dv = int(ed[h + 42]);
@@ -660,9 +666,10 @@ float lightFalloff(float d, float R, float E) {
     return 1.0 / (1.0 + 4.0 * k * k) * (1.0 - smoothstep(0.6 * E, E, d));
 }
 void lightPhase() {
-    uint n = uint(XW * XH * NE);
+    uint n = uint(XW * XH * (E1 - E0));
     for (uint id = gl_GlobalInvocationID.x; id < n; id += THREADS) {
         int e = int(id) / (XW * XH), c = int(id) - e * XW * XH;
+        e += E0;
         int h = eh(e);
         if (ed[h + 64] == 0u) continue;
         float R = max(edf(h + 65), 1.0), E = max(edf(h + 66), 1.0);
@@ -680,8 +687,16 @@ void lightPhase() {
 }
 
 void resolvePhase() {
-    uint n = uint(W * H * NE);
+    uint n = uint(W * H * (E1 - E0));
     for (uint k = gl_GlobalInvocationID.x; k < n; k += THREADS) resolveOne(k);
+}
+
+// one invocation per particle of the batch (their numbers run on from emitter to emitter)
+void splatPhase() {
+    int p0 = int(ed[eh(E0)]);
+    ivec4 v = edi4(eh(E1 - 1));
+    int p1 = v.x + v.z;
+    for (int j = p0 + int(gl_GlobalInvocationID.x); j < p1; j += int(THREADS)) splatOne(j);
 }
 
 void main() {
@@ -692,7 +707,9 @@ void main() {
     LH = (H + GDIV - 1) / GDIV;
     XW = (W + XDIV - 1) / XDIV;
     XH = (H + XDIV - 1) / XDIV;
-    if (NE <= 0) return;
+    E0 = pc.e0;
+    E1 = min(E0 + pc.n, NE);
+    if (E0 >= E1) return;
     if (pc.phase == 0) clearPhase();
     else if (pc.phase == 1) splatPhase();
     else if (pc.phase == 2) resolvePhase();

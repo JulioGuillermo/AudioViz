@@ -131,7 +131,7 @@ farther than *Edges from* px only the edges of things that face it), with **Shin
 as an emitter's light ([emitters.md](../emitters.md)). A selected fixed text shows its
 light's circles on the preview (its reach, where it fades out and, with rim light, the blue one),
 each with a handle to drag. It lights what is drawn before it (the background and the layers below
-its z-index). At most two texts light at once.
+its z-index). Every text can light at the same time.
 
 ```yaml
 lyrics:

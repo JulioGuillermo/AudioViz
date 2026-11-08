@@ -1486,7 +1486,7 @@ vec3 shade(vec2 q) {
     vec2 p = qs + 0.5;
     vec3 col = background(qs);
     int zp = min(P.zIdx.x, nl), zv = min(P.zIdx.y, nl);
-    int tmask = P.zIdx.z;
+    int tmask = P.zIdx.z; // the text styles drawn (bit per style)
     for (int st = 0; st <= nl; st++) {
         if (st == lensAt) {
             // the water and what is above it: here
@@ -1501,7 +1501,9 @@ vec3 shade(vec2 q) {
         if (zp == st) col = drawParticles(col, p);
         if (zv == st) col = drawViz(col, p);
         // texts of this stage (those set beyond the clips drawn go with the last stage)
-        bool txt = ((tmask >> st) & 1) != 0 || (st == nl && (tmask >> (nl + 1)) != 0);
+        bool txt = false;
+        for (int s = 0; s < MAX_TSTYLE; s++)
+            if (((tmask >> s) & 1) != 0 && min(P.ts[s].gradN.y, nl) == st) txt = true;
         if (txt) {
             // the texts of this stage that light the scene, then the texts
             for (int l = 0; l < MAX_TLIGHTS; l++) {

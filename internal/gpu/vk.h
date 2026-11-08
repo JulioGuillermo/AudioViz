@@ -40,7 +40,7 @@ typedef struct {
     size_t spirv_fluid_size;
     const uint32_t *spirv_emit; // emitter pass (same descriptor layout, push constant: phase)
     size_t spirv_emit_size;
-    int emitters;       // frame-sized accumulations of the emitter pass (0 = none)
+    int emitters;       // emitters drawn at once (0 = no emitter pass), VKR_EMIT_BATCH per batch
     size_t edata_size;  // emitter data in bytes
 } vkr_config;
 
@@ -51,8 +51,10 @@ void *vkr_map(vkr *r, int slot, int which);
 // passes: bit 0 = run the fluid pass first (a fluid / liquid transition is on screen), bit 1 =
 // the emitter pass (particle emitters on screen)
 int vkr_submit(vkr *r, int slot, int passes);
-// Invocations of each emitter pass phase (4096 groups of 64): the most particles at once
+// Invocations of each emitter pass phase (4096 groups of 64, each looping over its items)
 #define VKR_EMIT_THREADS (4096 * 64)
+// Emitters per batch of the emitter pass (each one's accumulations are frame-sized)
+#define VKR_EMIT_BATCH 4
 int vkr_wait(vkr *r, int slot);
 int vkr_list_devices(char *out, int len);
 

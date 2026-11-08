@@ -109,5 +109,5 @@ same applies to the [texts that light the scene](texts.md). The normals are an e
 image: they follow the shapes the depth map sees, not the hidden side of things.
 
 Keys of where it is (x, y, rotation, its path) and the music's push count from the moment each
-particle is born; the other settings (forces, colors...) apply to all of them now. At most 4
-emitter clips are drawn at once.
+particle is born; the other settings (forces, colors...) apply to all of them now. Any number of
+emitter clips (and so of lights) can be on screen at once.

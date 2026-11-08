@@ -10,8 +10,7 @@ const int MAX_TEXT = 256;
 const int MAX_TSTYLE = 8;
 
 // One overlay clip (gpu.LayerP); its image is in the Layers buffer (render.comp)
-const int MAX_LAYERS = 16;
-const int MAX_TLIGHTS = 2;    // gpu.MaxTextLights
+const int MAX_TLIGHTS = MAX_TSTYLE; // gpu.MaxTextLights
 const int TLIGHT_VEC4 = 900;  // gpu.TextLightVec4
 struct LayerP {
     ivec4 info;    // image offset (pixels), width, height, flags (blend 0-3, key 4, glitch 5-6: 1 background's / 2 own, own count 8-11)
@@ -123,7 +122,7 @@ layout(std430, set = 0, binding = 0) readonly buffer Params {
     ivec4 viewI;      // studio view instead of the frame: 0 the frame, 1 depth, 2 lit range, 3 object, 4 solid
     vec4 viewP;       // 2: from, to, soft; 3: its depth, soft; 4: its depth, band
     vec4 viewQ;       // 4: where it is born: x, y, radius
-    LayerP layers[MAX_LAYERS];
+    LayerP layers[];  // the overlay clips drawn (layerN.x; as many as the renderer has room for)
 } P;
 
 layout(std430, set = 0, binding = 1) readonly buffer BG { uint bg[]; };

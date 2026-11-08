@@ -19,9 +19,6 @@ import (
 	"audioviz/internal/video"
 )
 
-// MaxLayers: overlay clips drawn at once (the GPU's limit; the CPU draws them all the same way)
-const MaxLayers = 16
-
 // maxOwnGlitch: bands of a clip's own glitch
 const maxOwnGlitch = 8
 
@@ -62,7 +59,6 @@ func contrastFactor(contrast float64) float64 {
 // (its layer's index + 1), to place the visualizer, particles and texts among them
 func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx frameFX, glitchAmt float64, scene *effects.Scene) ([]effects.LayerFrame, []int, error) {
 	feat := &feats[idx]
-	nEmit := 0
 	var out []effects.LayerFrame
 	var stack []int
 	W, H := float64(s.W), float64(s.H)
@@ -82,9 +78,6 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx f
 			if t < c0.Start || t >= c0.End || (c0.Path == "" && !emit) {
 				continue
 			}
-			if len(out) == MaxLayers || (emit && nEmit == MaxEmitters) {
-				break
-			}
 			c := c0
 			if len(c0.Keys) > 0 || len(c0.Exprs) > 0 {
 				c = config.Animate(c0, c0.Keys, s.clipFrameExprs(c0, emit), s, config.ExprCtx{T: t, U: t - c0.Start, Dur: c0.End - c0.Start, ID: clipID(layer.ID, ci)})
@@ -95,7 +88,6 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx f
 				if ef == nil {
 					continue
 				}
-				nEmit++
 				op := c.Opacity
 				if c.FadeIn > 0 {
 					op *= math.Min(1, (t-c.Start)/c.FadeIn)
@@ -374,7 +366,7 @@ func (s *Session) LayerPixels() int {
 				continue
 			}
 			if s.Cfg.Layers[li].IsEmitter() {
-				// its image (and mask) are frame-sized; at most MaxEmitters at once (counted as always on)
+				// its image (and mask) are frame-sized: emitterWords
 				continue
 			}
 			if c.Path == "" {
@@ -429,36 +421,72 @@ func (s *Session) depthWords() int {
 	return 0
 }
 
-// emitterWords: room for the images of the emitters (one frame each, and its mask)
+// emitterWords: room for the images of the emitters on screen at once (one frame each, and its mask)
 func (s *Session) emitterWords() int {
-	n, masks := 0, 0
-	for li := range s.Cfg.Layers {
-		if !s.Cfg.Layers[li].IsEmitter() {
-			continue
+	mw, mh := effects.MaskSize(s.W, s.H)
+	mask := (mw*mh + 3) / 4
+	return s.clipsAtOnce(func(l *config.LayerConfig, c *config.ClipConfig) int {
+		if !l.IsEmitter() {
+			return 0
 		}
-		for _, c := range s.Cfg.Layers[li].Clips {
-			if c.End > c.Start {
-				n++
-				if len(c.Masks) > 0 {
-					masks++
-				}
+		if len(c.Masks) > 0 {
+			return s.W*s.H + mask
+		}
+		return s.W * s.H
+	})
+}
+
+// EmitterCount: the most emitter clips on screen at once (the GPU's emitter pass is sized by it)
+func (s *Session) EmitterCount() int {
+	return s.clipsAtOnce(func(l *config.LayerConfig, c *config.ClipConfig) int {
+		if l.IsEmitter() {
+			return 1
+		}
+		return 0
+	})
+}
+
+// LayerCount: the most overlay clips on screen at once (emitters included)
+func (s *Session) LayerCount() int {
+	return s.clipsAtOnce(func(l *config.LayerConfig, c *config.ClipConfig) int {
+		if l.IsEmitter() || c.Path != "" {
+			return 1
+		}
+		return 0
+	})
+}
+
+// clipsAtOnce: the most of size(clip) summed over the overlay clips on screen at the same time
+func (s *Session) clipsAtOnce(size func(*config.LayerConfig, *config.ClipConfig) int) int {
+	type ev struct {
+		t float64
+		d int
+	}
+	var evs []ev
+	for li := range s.Cfg.Layers {
+		l := &s.Cfg.Layers[li]
+		for ci := range l.Clips {
+			c := &l.Clips[ci]
+			if c.End <= c.Start {
+				continue
+			}
+			if n := size(l, c); n > 0 {
+				evs = append(evs, ev{c.Start, n}, ev{c.End, -n})
 			}
 		}
 	}
-	n, masks = min(n, MaxEmitters), min(masks, MaxEmitters)
-	mw, mh := effects.MaskSize(s.W, s.H)
-	return n*s.W*s.H + masks*((mw*mh+3)/4)
-}
-
-// EmitterCount: emitter clips that can be on screen at once (the GPU's accumulation buffers)
-func (s *Session) EmitterCount() int {
-	n := 0
-	for li := range s.Cfg.Layers {
-		if s.Cfg.Layers[li].IsEmitter() {
-			n += len(s.Cfg.Layers[li].Clips)
+	sort.Slice(evs, func(i, j int) bool {
+		if evs[i].t != evs[j].t {
+			return evs[i].t < evs[j].t
 		}
+		return evs[i].d < evs[j].d // ends first
+	})
+	cur, best := 0, 0
+	for _, e := range evs {
+		cur += e.d
+		best = max(best, cur)
 	}
-	return min(n, MaxEmitters)
+	return best
 }
 
 // textMaskWords: room for the screen masks of the lyrics and the fixed texts (one frame-sized

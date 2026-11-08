@@ -437,9 +437,13 @@ rgb and alpha × 1024, `uint` atomic adds: the sum does not depend on order) of 
 (Div 2 / 4 for big soft particles), then resolved per pixel (bilinear between cells): *add* =
 light (alpha = max(sum α, max rgb)), *soft* = mean color with alpha 1 − e^(−Σα); premultiplied
 RGBA8 written as the clip's frame-sized image in `LAYERS`, composited by `drawLayer` like any
-clip. GPU: the emitter pass (`pipeEmit`, push constant = phase: clear / splat / resolve, 4096×64
-invocations each) before the main pass, in the command buffers with bit 1 of `passes`; buffers
-`EACC` (binding 10, 4 words per pixel per emitter, device-local) and `EDATA` (binding 11: count,
+clip. GPU: the emitter pass (`pipeEmit`, push constants = phase: clear / splat / resolve / light,
+the batch's first emitter, emitters per batch; 4096×64 invocations each, looping over their items)
+before the main pass, in the command buffers with bit 1 of `passes`. It goes in batches of
+`VKR_EMIT_BATCH` = 4 emitters (as many batches as the renderer's `Emitters`, recorded once; those
+past the emitters on screen return at once), so only a batch's frame-sized accumulations exist;
+buffers `EACC` (binding 10, device-local: per emitter of a batch 4 words per pixel, its glow, its
+light sources, its particles' depth; then every emitter's light field, `effects.EmitAccLayout`) and `EDATA` (binding 11: count,
 W, H; per emitter a 128-word header and up to 4096 births of 8 words). CPU: `DrawEmitter`, the
 same math in float32. **Flame look** (resolve): the sums are read at the pixel moved by two
 rising fbm value noises (whirls twice as tall as wide), heat = 1 − e^(−Σα·heat), a third noise
@@ -449,12 +453,12 @@ grid of 8×8 px cells after its accumulation; the resolve adds it bilinearly, sa
 (1 − e^(−glow·strength)). **Light**: each particle also adds its alpha to its cell of a 32×32 px
 grid (the sources); the light phase (4th of the emitter pass) gives every cell the sum of the
 sources weighted by 1 / (1 + 4(d/R)²), faded out between 0.6E and E (E = `end`, default 2.5R), as 1 − e^(−sum/40) (the
-field, after the sources in the emitter's accumulation). `drawLayer` of the emitter clip first
+field, after the batch's accumulations, one per emitter: the main pass reads it). `drawLayer` of the emitter clip first
 lights what is already there with it (bilinear between cells; `LayerP.light0/1`): soft
 c + light·(0.9·√c + 0.03), add c + 0.6·light; the light's color carries strength, flicker (two
 waves) and the clip's opacity. CPU: `DrawEmitter` returns the same `LightField`, `DrawLayer` applies
-it. At most `MaxEmitters` = 4 at once (the renderer is sized by
-`Session.EmitterCount`).
+it. Any number at once: the renderer is sized by `Session.EmitterCount` (the most on screen at
+once, an event sweep over the clips, with margin: `roomFor`), the images by `emitterWords`.
 
 Motion paths (`config.Motion`, `effects.PathAt`): the path's Béziers (the masks' nodes, in frame
 px) sampled 24 times per segment with their cumulative length; progress × length gives the point
@@ -476,10 +480,12 @@ through YAML into the field by `setLeaf`).
 GPU: binding 9 `LAYERS` (RGBA8 pixels; size = `layerCap`: 1.5 × the most pixels of clips on
 screen at once (`Session.LayerPixels`, an event sweep over the clips), at least 2·W·H; the renderer
 is recreated by `Fits` when it no longer fits); `Renderer.layerData` packs the images of the frame's
-clips and re-uploads them only when their `Ver` list changed for that slot; `Params.Layers[16]`
+clips and re-uploads them only when their `Ver` list changed for that slot; `layers[]` (a runtime
+array after `Params`, `Renderer.LayerParams`, as many as `roomFor(Session.LayerCount())`: the most
+clips on screen at once)
 (`LayerP`: info (offset, size, flags: blend, key, glitch source / count), transform, look, key,
-warp, own glitch bands), `LayerN`, `ZIdx` (particles stage, visualizer stage, mask of stages with
-texts), `FxFlash`. Each text style carries its stage in `ts[s].gradN.y`; `drawText` skips items of
+warp, own glitch bands), `LayerN`, `ZIdx` (particles stage, visualizer stage, mask of the
+text styles drawn), `FxFlash`. Each text style carries its stage in `ts[s].gradN.y`; `drawText` skips items of
 other stages. Stages beyond the clips drawn are clamped to the last one in the shader. CPU:
 `cpuFrame` loops the stages calling `effects.DrawLayer` (per pixel, parallel rows), particles,
 `drawVizCPU` and `Multi.DrawCPU` with the items of that stage.

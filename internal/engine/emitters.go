@@ -18,9 +18,6 @@ import (
 // (its keys, its motion and the music decide, frame by frame, how many are born, where and how
 // fast) and kept until the clip changes; each frame takes the part that can still be alive.
 
-// MaxEmitters: emitter clips drawn at once (each needs a frame-sized accumulation on the GPU)
-const MaxEmitters = 4
-
 type emitTable struct {
 	key    string
 	f0     int             // global frame of the first entry

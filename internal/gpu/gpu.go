@@ -65,15 +65,16 @@ var fluidSPV []byte
 //go:embed shaders/emit.spv
 var emitSPV []byte
 
-// Emitter pass (emit.comp): the most particles drawn at once, and the layout of its data
+// Emitter pass (emit.comp): its invocations per phase (each loops over its items), the emitters
+// of a batch (their accumulations are frame-sized; any number of batches), and the layout of its data
 // buffer: a header (count, W, H), per emitter EmitHeaderWords words, then the births of each,
 // then each one's extra data: the points on a text's letters, the samples of its motion path
 const (
-	MaxEmitParticles = C.VKR_EMIT_THREADS
-	EmitHeaderWords  = 128
-	EmitBirthWords   = 10
-	MaxEmitBirths    = 4096                                                 // births per emitter (older ones are left out)
-	EmitExtraWords   = 4096*2 + 256*3 + 240*240 + 1 + 3*256 + EmitExprWords + 240*240 // text points, path samples, collision grid, depth track, expressions, the scene's depth (each particle hidden by it)
+	EmitBatch       = C.VKR_EMIT_BATCH
+	EmitHeaderWords = 128
+	EmitBirthWords  = 10
+	MaxEmitBirths   = 4096                                                           // births per emitter (older ones are left out)
+	EmitExtraWords  = 4096*2 + 256*3 + 240*240 + 1 + 3*256 + EmitExprWords + 240*240 // text points, path samples, collision grid, depth track, expressions, the scene's depth (each particle hidden by it)
 	// EmitExprWords: an emitter's expressions worked out per particle (their programs and tracks);
 	// EmitExprStack, EmitExprSlots: the most a program can use of each (exprRun in emit.comp)
 	EmitExprWords = 6144
@@ -94,8 +95,9 @@ const (
 
 	MaxTextItems  = 256
 	MaxTextStyles = 8
-	// texts lighting the scene at once, and the cells of each one's light (at most 60×60, in vec4s)
-	MaxTextLights = 2
+	// texts lighting the scene at once (any of the texts drawn), and the cells of each one's light
+	// (at most 60×60, in vec4s)
+	MaxTextLights = MaxTextStyles
 	TextLightVec4 = 900
 )
 
@@ -175,14 +177,11 @@ type Params struct {
 	// The studio's views of the scene's depth instead of the frame: mode (0 the frame, 1 the
 	// depth, 2 a lit range: from, to, soft; 3 an object's depth: its depth, soft; 4 what an
 	// emitter goes round: its depth, band, and the circle where it is born x, y, radius)
-	ViewI  [4]int32
-	ViewP  [4]float32
-	ViewQ  [4]float32
-	Layers [MaxLayers]LayerP
+	ViewI [4]int32
+	ViewP [4]float32
+	ViewQ [4]float32
+	// then the overlay clips (LayerP, as many as the renderer's Layers: see LayerParams)
 }
-
-// MaxLayers: overlay clips drawn at once
-const MaxLayers = 16
 
 // LayerP mirrors 'LayerP' in render.comp: one overlay clip
 type LayerP struct {
@@ -242,7 +241,8 @@ type Renderer struct {
 	DeviceName string
 	FluidWords int // capacity of the fluid data buffer (32-bit words)
 	LayerWords int // capacity of the overlay images buffer (pixels)
-	Emitters   int // emitter accumulations (emitters drawn at once; 0 = no emitter pass)
+	Layers     int // overlay clips drawn at once (their parameters after Params)
+	Emitters   int // emitters drawn at once (0 = no emitter pass)
 	spirv      unsafe.Pointer
 	spirvFluid unsafe.Pointer
 	spirvEmit  unsafe.Pointer
@@ -268,14 +268,15 @@ func ListDevices() string {
 func align(v, a int) int { return (v + a - 1) / a * a }
 
 // New creates the renderer. deviceIndex -1 = automatic. fluidWords: size of the fluid
-// transition data (effects.FluidBufWords).
-func New(width, height, slots, deviceIndex int, textSize, fluidWords, layerWords, emitters int) (*Renderer, error) {
+// transition data (effects.FluidBufWords); layers: overlay clips drawn at once, emitters: those of
+// them that are emitters.
+func New(width, height, slots, deviceIndex int, textSize, fluidWords, layerWords, layers, emitters int) (*Renderer, error) {
 	type res struct {
 		g   *Renderer
 		err error
 	}
 	r, ok := withTimeout(func() res {
-		g, err := newRenderer(width, height, slots, deviceIndex, textSize, fluidWords, layerWords, emitters)
+		g, err := newRenderer(width, height, slots, deviceIndex, textSize, fluidWords, layerWords, layers, emitters)
 		return res{g, err}
 	})
 	if !ok {
@@ -284,9 +285,9 @@ func New(width, height, slots, deviceIndex int, textSize, fluidWords, layerWords
 	return r.g, r.err
 }
 
-func newRenderer(width, height, slots, deviceIndex int, textSize, fluidWords, layerWords, emitters int) (*Renderer, error) {
+func newRenderer(width, height, slots, deviceIndex int, textSize, fluidWords, layerWords, layers, emitters int) (*Renderer, error) {
 	g := &Renderer{Width: width, Height: height, PadW: align(width, 16), PadH: align(height, 16), Slots: slots,
-		FluidWords: fluidWords, LayerWords: max(layerWords, 4), Emitters: emitters}
+		FluidWords: fluidWords, LayerWords: max(layerWords, 4), Layers: max(layers, emitters, 1), Emitters: emitters}
 	g.spirv = C.CBytes(renderSPV)
 	g.spirvFluid = C.CBytes(fluidSPV)
 	g.spirvEmit = C.CBytes(emitSPV)
@@ -298,7 +299,7 @@ func newRenderer(width, height, slots, deviceIndex int, textSize, fluidWords, la
 		width: C.int(width), height: C.int(height),
 		pad_w: C.int(g.PadW), pad_h: C.int(g.PadH),
 		slots: C.int(slots), device_index: C.int(deviceIndex),
-		params_size: C.size_t(unsafe.Sizeof(Params{})),
+		params_size: C.size_t(unsafe.Sizeof(Params{}) + uintptr(g.Layers)*unsafe.Sizeof(LayerP{})),
 		text_size:   C.size_t(textSize),
 		fluid_size:  C.size_t(fluidWords * 4),
 		layers_size: C.size_t(g.LayerWords * 4),
@@ -322,6 +323,12 @@ func newRenderer(width, height, slots, deviceIndex int, textSize, fluidWords, la
 
 func (g *Renderer) Params(slot int) *Params {
 	return (*Params)(C.vkr_map(g.r, C.int(slot), C.VKR_BUF_PARAMS))
+}
+
+// LayerParams: the slot's overlay clips' parameters (the array after Params: 'layers' in render.comp)
+func (g *Renderer) LayerParams(slot int) []LayerP {
+	p := unsafe.Add(C.vkr_map(g.r, C.int(slot), C.VKR_BUF_PARAMS), unsafe.Sizeof(Params{}))
+	return unsafe.Slice((*LayerP)(p), g.Layers)
 }
 
 func (g *Renderer) bytes(slot int, which C.int, n int) []byte {

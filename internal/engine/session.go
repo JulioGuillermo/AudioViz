@@ -14,7 +14,6 @@ import (
 	"audioviz/internal/config"
 	"audioviz/internal/depth"
 	"audioviz/internal/effects"
-	"audioviz/internal/gpu"
 	"audioviz/internal/lyrics"
 	"audioviz/internal/particles"
 	"audioviz/internal/video"
@@ -504,15 +503,15 @@ func textCenter(fs *FrameState, si int) (float64, float64, bool) {
 	return ax / float64(n), ay / float64(n), true
 }
 
-// textLights: the light of the texts that light the scene, from their letters now (at most
-// gpu.MaxTextLights at once); with a depth map in 2.5D from the text's place and depth
+// textLights: the light of the texts that light the scene, from their letters now (all of them);
+// with a depth map in 2.5D from the text's place and depth
 func (s *Session) textLights(fs *FrameState) {
 	div := effects.TextLightDiv(s.W, s.H)
 	gw, gh := (s.W+div-1)/div, (s.H+div-1)/div
 	k := float64(s.H) / 1080
 	for si := range fs.TextStyles {
 		st := &fs.TextStyles[si]
-		if !st.LightOn || len(fs.TextLights) == gpu.MaxTextLights {
+		if !st.LightOn {
 			continue
 		}
 		src := fs.Lyr.LightSources(fs.TextItems, si, div, gw, gh)

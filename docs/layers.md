@@ -185,4 +185,4 @@ visualizer:
 ```
 
 Clip fields not given take their defaults (centered, inside the frame, scale 1, opacity 1, normal
-blend, every background effect *like the background*). Up to 16 clips are drawn at the same time.
+blend, every background effect *like the background*). Any number of clips can be on screen at the same time.

@@ -628,16 +628,14 @@ func emitGrid(W, H, div int) (int, int) { return (W + div - 1) / div, (H + div -
 // EmitGlowDiv: the glow's accumulation has a cell per EmitGlowDiv×EmitGlowDiv pixels (it is blurry)
 const EmitGlowDiv = 8
 
-// EmitAccLayout: the words of one emitter's accumulations for W×H on the GPU (emit.comp): its
-// particles (4 per pixel), its glow (4 per glow cell), its light sources and its light field (1
-// per light cell); the offsets of the glow, the sources and the field, and the whole stride
-func EmitAccLayout(W, H int) (glow, src, field, stride int) {
+// EmitAccLayout: the words of the emitter pass's accumulations for W×H on the GPU (emit.comp),
+// which goes in batches of emitters: per emitter of a batch its particles (4 per pixel), its glow
+// (4 per glow cell), its light sources (1 per light cell) and its particles' depth (1 per pixel),
+// stride words in all; after the batch's, every emitter's light field (field words each)
+func EmitAccLayout(W, H int) (stride, field int) {
 	gw, gh := emitGrid(W, H, EmitGlowDiv)
 	xw, xh := emitGrid(W, H, EmitLightDiv)
-	glow = W * H * 4
-	src = glow + gw*gh*4
-	field = src + xw*xh
-	return glow, src, field, field + xw*xh + W*H // then the depth of its particles (a word per pixel)
+	return W*H*4 + gw*gh*4 + xw*xh + W*H, xw * xh
 }
 
 // EmitLightGrid: the size of the light grid for W×H

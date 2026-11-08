@@ -85,6 +85,15 @@ func layerCap(s *Session) int {
 	return max(need+need/2, 2*s.W*s.H)
 }
 
+// roomFor: room for n clips drawn at once, with margin so that adding some while editing does not
+// recreate the renderer every time (0 when there are none)
+func roomFor(n int) int {
+	if n == 0 {
+		return 0
+	}
+	return max(n+n/2, 8)
+}
+
 // NewRenderer creates the render backend ("auto", "gpu" or "cpu") for the session's resolution
 func NewRenderer(s *Session, mode string, slots int) (*Renderer, error) {
 	r := &Renderer{s: s}
@@ -94,7 +103,8 @@ func NewRenderer(s *Session, mode string, slots int) (*Renderer, error) {
 		if s.lyr != nil {
 			textCap = max(textCap, len(s.lyr.Atlas.Pix)*2)
 		}
-		g, err := gpu.New(s.W, s.H, slots, s.Cfg.Output.GPUDevice, textCap, effects.FluidBufWords(s.W, s.H), layerCap(s), s.EmitterCount())
+		g, err := gpu.New(s.W, s.H, slots, s.Cfg.Output.GPUDevice, textCap, effects.FluidBufWords(s.W, s.H), layerCap(s),
+			roomFor(s.LayerCount()), roomFor(s.EmitterCount()))
 		if err != nil {
 			if mode == "gpu" {
 				return nil, fmt.Errorf("Vulkan GPU not available: %w", err)
@@ -122,7 +132,8 @@ func (r *Renderer) Fits() bool {
 	if r.s.lyr != nil {
 		need = len(r.s.lyr.Atlas.Pix)
 	}
-	return r.G.Width == r.s.W && r.G.Height == r.s.H && need <= r.textCap && r.s.LayerPixels() <= r.G.LayerWords && r.s.EmitterCount() <= r.G.Emitters
+	return r.G.Width == r.s.W && r.G.Height == r.s.H && need <= r.textCap && r.s.LayerPixels() <= r.G.LayerWords &&
+		r.s.LayerCount() <= r.G.Layers && r.s.EmitterCount() <= r.G.Emitters
 }
 
 func (r *Renderer) Close() {
@@ -161,6 +172,7 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 	g := r.G
 	n := 0
 	buf := g.LayerData(slot)
+	lps := g.LayerParams(slot)
 	var vers []string
 	off := 0
 	// first the depth of the backgrounds A and B (a byte per pixel), then the clips
@@ -223,11 +235,11 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		if l.ZTrack != nil {
 			twords = 1 + 3*len(l.ZTrack.S)
 		}
-		if n == gpu.MaxLayers || off+px+mwords+twords > g.LayerWords {
+		if n == g.Layers || off+px+mwords+twords > g.LayerWords {
 			break
 		}
 		vers = append(vers, fmt.Sprintf("%s|%s|%d", l.Ver, l.MaskVer, twords))
-		lp := &p.Layers[n]
+		lp := &lps[n]
 		flags := int32(l.Blend & 15)
 		if l.Key {
 			flags |= 1 << 4
@@ -258,14 +270,14 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		}
 		if l.Emit != nil {
 			if P := &l.Emit.P; P.LightOn {
-				// its light field, made by the emitter pass (k-th accumulation)
-				_, _, field, stride := effects.EmitAccLayout(r.s.W, r.s.H)
+				// its light field, made by the emitter pass (k-th, after a batch's accumulations)
+				stride, field := effects.EmitAccLayout(r.s.W, r.s.H)
 				xw, xh := effects.EmitLightGrid(r.s.W, r.s.H)
 				mode := int32(1)
 				if P.LightAdd {
 					mode = 2
 				}
-				lp.Light0 = [4]int32{int32(len(emits)*stride + field), int32(xw), int32(xh), mode}
+				lp.Light0 = [4]int32{int32(min(g.Emitters, gpu.EmitBatch)*stride + len(emits)*field), int32(xw), int32(xh), mode}
 				lp.Light1 = [4]float32{float32(P.LightCol[0]), float32(P.LightCol[1]), float32(P.LightCol[2])}
 				if P.LightD3 {
 					lp.Light2 = [4]float32{float32(P.LightCX), float32(P.LightCY), float32(P.LightZ), float32(P.LightDepthK)}
@@ -405,7 +417,7 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 	// effects.ClipPxProps, its program's offset + 1 and -, then the programs; written every frame)
 	for k := 0; k < n; k++ {
 		l := &fs.Layers[k]
-		lp := &p.Layers[k]
+		lp := &lps[k]
 		lp.Xpr, lp.Xps = [4]int32{}, [4]float32{}
 		x0 := l.FirstX()
 		if x0 == nil {
@@ -498,7 +510,7 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		if len(bs) > 0 {
 			i0 = max(i0, int(math.Floor(bs[0].N-0.5)))
 		}
-		cnt := max(0, min(e.I1-i0, gpu.MaxEmitParticles-base))
+		cnt := max(0, e.I1-i0)
 		P := &e.P
 		flags := uint32(0)
 		if P.Soft {
@@ -1295,7 +1307,7 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 
 	// Lyrics
 	p.TextInfo = [4]int32{}
-	p.ZIdx[2] = 0 // stages with texts (mask)
+	p.ZIdx[2] = 0 // the text styles drawn (mask; each one's stage in its GradN[1])
 	if fs.Lyr != nil {
 		items, styles := fs.TextItems, fs.TextStyles
 		n := min(len(items), gpu.MaxTextItems)
@@ -1332,7 +1344,7 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 				ts.Grad[i] = [4]float32{float32(g.C[0]), float32(g.C[1]), float32(g.C[2]), float32(g.Off)}
 			}
 			// GradN[1]: the stage among the overlay clips of this lyrics / text style
-			stg := min(fs.Stage(st.Z), gpu.MaxLayers)
+			stg := fs.Stage(st.Z)
 			ts.GradN = [4]int32{int32(ng), int32(stg)}
 			if st.GlowOn {
 				ts.GradN[2] |= 1
@@ -1340,7 +1352,7 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 			if st.ShadowOn {
 				ts.GradN[2] |= 2
 			}
-			p.ZIdx[2] |= 1 << stg
+			p.ZIdx[2] |= 1 << si
 			ts.Info = [4]float32{float32(st.OutlineW), float32(st.GlowR), float32(st.GlowI), float32(ch)}
 			ts.Color, ts.Upcoming, ts.Outline, ts.GlowC = f4(st.Color), f4(st.Upcoming), f4(st.Outline), f4(st.GlowC)
 			ts.Shadow = [4]float32{float32(st.ShadowDX), float32(st.ShadowDY), float32(st.ShadowOp), float32(st.Blur)}
@@ -1356,9 +1368,10 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 	for i := range p.TLightI {
 		p.TLightI[i] = [4]int32{}
 	}
-	for i, tl := range fs.TextLights {
+	i := 0
+	for _, tl := range fs.TextLights {
 		if i == gpu.MaxTextLights || tl.Style >= gpu.MaxTextStyles {
-			break
+			continue // (a text the GPU does not draw)
 		}
 		l := tl.Light
 		if l.GW*l.GH > 4*gpu.TextLightVec4 {
@@ -1382,6 +1395,7 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 		for c, v := range l.V {
 			p.TLightV[i*gpu.TextLightVec4+c/4][c%4] = v
 		}
+		i++
 	}
 }
 
