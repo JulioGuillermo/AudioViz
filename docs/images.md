@@ -57,13 +57,14 @@ The loaded model stays in memory between images (the next one starts sooner) and
 | Model | Good for | References | Download | Time (1024×576, Intel Lunar Lake iGPU) |
 |---|---|---|---|---|
 | **Z-Image Turbo** | Fast, photorealistic, text inside the image | — | 6.7 GB | ≈ 1 min 20 s (8 steps); 1920×1088: ≈ 5 min 30 s |
+| **NitroFusion2 · Q4 / Q8** | Z-Image Turbo distilled to 2 steps (or 1): near its quality in a moment | — | 5.1 GB (Q4) or 7.2 GB (Q8) more if you have Z-Image Turbo (shares its encoder and decoder) | ≈ 20 s at 1024×1024 (2 steps), ≈ 17 s (1 step) |
 | **FLUX.2 klein 4B** | Fast generation **and editing** | up to 4 | 5.3 GB (the text encoder is shared with Z-Image: 2.8 GB if you already have it) | ≈ 1 min (4 steps, 1 reference) |
 | **Qwen Image 2.1** | Highest quality and prompt following, editing | up to 3 | 9.9 GB (+0.75 GB to edit) | several minutes; meant for a dedicated GPU |
 | **Qwen Image 2.1 Turbo** | Qwen Image distilled to 8 steps: nearly its quality, several times faster; editing | up to 3 | 4.2 GB more if you have Qwen Image 2.1 (shares its encoders and decoder), else 9.9 GB | ≈ 2 min at 1024×1024 |
 | **FLUX.3 Image Klein** | Generation and editing; **places elements with boxes** in the prompt (below) | up to 4 | 6 GB (shares the FLUX.2 decoder) | ≈ 2 min at 1024×1024 (16 steps) |
 | **MOSS-Image** | Text inside the image (posters, signs, also Chinese); experimental **box layout** | — | 9.3 GB | ≈ 10 min at 1024×1024 (30 steps, two passes each) |
 
-Licenses: Z-Image, FLUX.2 klein 4B and MOSS-Image are Apache-2.0. Qwen Image 2.1 and its Turbo
+Licenses: Z-Image, NitroFusion2, FLUX.2 klein 4B and MOSS-Image are Apache-2.0. Qwen Image 2.1 and its Turbo
 use the Qwen Research license (**non-commercial**). FLUX.3 Image Klein uses the FLUX Kommunity
 license (commercial use of the images only below US$5M yearly revenue). A dedicated GPU or an
 Apple Silicon Mac is much faster than an integrated GPU; without any GPU it works on the CPU,

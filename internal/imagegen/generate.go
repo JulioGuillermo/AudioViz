@@ -19,7 +19,7 @@ import (
 )
 
 type Request struct {
-	Model         string // family ID (zimage, klein, klein3, qwen, qwen-turbo, moss; +"-int8" on SYCL)
+	Model         string // family ID (zimage, nitro, nitro-q8, klein, klein3, qwen, qwen-turbo, moss; +"-int8" on SYCL)
 	Prompt        string
 	Width, Height int           // rounded to multiples of 32
 	Steps         int           // 0 = the model's default
@@ -241,6 +241,8 @@ func Generate(ctx context.Context, req Request, report func(progress.Status), on
 	// a distilled model's own schedule, unless the steps or the scheduler were changed
 	if len(f.Sigmas) > 0 && steps == f.Steps && req.Scheduler == "" {
 		sp.sigmas = f.Sigmas
+	} else if f.Shift > 0 && req.Scheduler == "" {
+		sp.sigmas = shiftedSigmas(steps, f.Shift)
 	}
 	type res struct {
 		img *image.NRGBA
@@ -387,4 +389,15 @@ func fitRGB(src image.Image, w, h int) rgb {
 		copy(pix[i*3:i*3+3], dst.Pix[i*4:i*4+3])
 	}
 	return rgb{w: w, h: h, pix: pix}
+}
+
+// shiftedSigmas: a flow model's schedule over n steps (t evenly from 1 to 0, as ComfyUI's
+// "simple"), shifted: σ = s·t / (1 + (s−1)·t); n+1 values ending in 0
+func shiftedSigmas(n int, s float32) []float32 {
+	out := make([]float32, n+1)
+	for i := 0; i < n; i++ {
+		t := 1 - float32(i)/float32(n)
+		out[i] = s * t / (1 + (s-1)*t)
+	}
+	return out
 }

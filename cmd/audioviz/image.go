@@ -57,7 +57,7 @@ func runImage(args []string) {
 		*prompt = strings.Join(fs.Args(), " ")
 	}
 	if *prompt == "" {
-		fmt.Println(`Usage: audioviz image -p "prompt" [--model zimage|klein|klein3|qwen|qwen-turbo|moss] [-r ref.png]... [-W 1024 -H 576] [--steps N] [--seed N] [-o image.png]`)
+		fmt.Println(`Usage: audioviz image -p "prompt" [--model zimage|nitro|nitro-q8|klein|klein3|qwen|qwen-turbo|moss] [-r ref.png]... [-W 1024 -H 576] [--steps N] [--seed N] [-o image.png]`)
 		fmt.Println("       audioviz image --list")
 		os.Exit(1)
 	}

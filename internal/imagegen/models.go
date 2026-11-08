@@ -14,9 +14,12 @@ type Family struct {
 	Euler bool    `json:"-"` // sample with Euler (otherwise the model default)
 	// Sigmas: the fixed noise schedule it was distilled for (one more than its steps); used while
 	// the steps are the default and no scheduler is picked
-	Sigmas  []float32 `json:"-"`
-	Heavy   bool      `json:"heavy"` // needs a lot of memory and time
-	License string    `json:"license"`
+	Sigmas []float32 `json:"-"`
+	// Shift: a flow model's schedule shifted by this much (σ = s·t / (1 + (s−1)·t), t evenly from
+	// 1 to 0 over the steps), for any number of steps, while no scheduler is picked
+	Shift   float32 `json:"-"`
+	Heavy   bool    `json:"heavy"` // needs a lot of memory and time
+	License string  `json:"license"`
 
 	Diffusion aimodel.Model  `json:"-"`
 	LLM       aimodel.Model  `json:"-"`
@@ -58,6 +61,10 @@ var (
 		URL: hf("madebyollin/taeqi2_1", "taeqi2_1.safetensors"), Size: 30591264}
 )
 
+// The FLUX.1 VAE: Z-Image Turbo's and NitroFusion2's
+var fluxVAE = aimodel.Model{Name: "flux-vae", Label: "Image decoder (FLUX VAE)", File: "flux_ae.safetensors",
+	URL: hf("Comfy-Org/z_image_turbo", "split_files/vae/ae.safetensors"), Size: 335304388}
+
 // The FLUX.2 VAE: FLUX.2 klein's, FLUX.3 Image Klein's and MOSS-Image's
 var flux2VAE = aimodel.Model{Name: "flux2-vae", Label: "Image decoder (FLUX.2 VAE)", File: "flux2_vae.safetensors",
 	URL: hf("Comfy-Org/flux2-dev", "split_files/vae/flux2-vae.safetensors"), Size: 336213556}
@@ -80,8 +87,19 @@ var Families = []*Family{
 		Int8: &aimodel.Model{Name: "zimage-int8", Label: "Z-Image Turbo (INT8)", File: "z_image_turbo_int8_convrot.safetensors",
 			URL: hf("Comfy-Org/z_image_turbo", "split_files/diffusion_models/z_image_turbo_int8_convrot.safetensors"), Size: 6201001296},
 		LLM: qwen3_4b,
-		VAE: aimodel.Model{Name: "flux-vae", Label: "Image decoder (FLUX VAE)", File: "flux_ae.safetensors",
-			URL: hf("Comfy-Org/z_image_turbo", "split_files/vae/ae.safetensors"), Size: 335304388}},
+		VAE: fluxVAE},
+	// NitroFusion2: Z-Image Turbo distilled to 1–2 steps (ChenDY/NitroFusion2): the same text
+	// encoder and VAE, only its transformer; shift 6, CFG 1, Euler (its ComfyUI flows)
+	{ID: "nitro", Name: "NitroFusion2 · Q4", Desc: "Z-Image Turbo distilled to 2 steps (or 1): an image in a moment, near its quality. Shares the text encoder and decoder with Z-Image Turbo.",
+		Steps: 2, CFG: 1, Euler: true, Shift: 6, License: "Apache-2.0",
+		Diffusion: aimodel.Model{Name: "nitrofusion2", Label: "NitroFusion2 (Q4)", File: "nf2-Q4_K_M.gguf",
+			URL: hf("ChenDY/NitroFusion2", "nf2-Q4_K_M.gguf"), Size: 5066519616},
+		LLM: qwen3_4b, VAE: fluxVAE},
+	{ID: "nitro-q8", Name: "NitroFusion2 · Q8", Desc: "NitroFusion2 with 8-bit weights: closer to the original, a larger download (7.2 GB) and somewhat slower.",
+		Steps: 2, CFG: 1, Euler: true, Shift: 6, License: "Apache-2.0",
+		Diffusion: aimodel.Model{Name: "nitrofusion2-q8", Label: "NitroFusion2 (Q8)", File: "nf2-Q8_0.gguf",
+			URL: hf("ChenDY/NitroFusion2", "nf2-Q8_0.gguf"), Size: 7222556736},
+		LLM: qwen3_4b, VAE: fluxVAE},
 	{ID: "klein", Name: "FLUX.2 klein 4B", Desc: "Fast, generates or edits: give it reference images (up to 4) and describe the change.",
 		Refs: 4, Steps: 4, CFG: 1, Euler: true, License: "Apache-2.0",
 		Diffusion: aimodel.Model{Name: "klein", Label: "FLUX.2 klein 4B", File: "flux-2-klein-4b-Q4_0.gguf",

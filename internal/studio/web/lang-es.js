@@ -1111,4 +1111,7 @@ export const ES = {
   "Instruments": "Instrumentos",
   "Include the song separated into its instruments (no need to separate it again)": "Incluir la canción separada en sus instrumentos (no hay que separarla otra vez)",
   "Always in the package: the depth maps edited by hand, the generated images, the ComfyUI flows and the painted masks.": "Siempre van en el paquete: los mapas de profundidad retocados a mano, las imágenes generadas, los flujos de ComfyUI y las máscaras pintadas.",
+  // NitroFusion2
+  "Z-Image Turbo distilled to 2 steps (or 1): an image in a moment, near its quality. Shares the text encoder and decoder with Z-Image Turbo.": "Z-Image Turbo destilado a 2 pasos (o 1): una imagen en un momento, casi con su calidad. Comparte el codificador de texto y el decodificador con Z-Image Turbo.",
+  "NitroFusion2 with 8-bit weights: closer to the original, a larger download (7.2 GB) and somewhat slower.": "NitroFusion2 con pesos de 8 bits: más fiel al original, una descarga mayor (7,2 GB) y algo más lento.",
 };
