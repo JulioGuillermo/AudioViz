@@ -22,6 +22,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
 	"math"
 	"os"
 	"runtime"
@@ -43,6 +44,7 @@ const (
 	KindNested = "nested" // DA3 Nested Giant + Large: metric depth (two files)
 	KindDA2    = "da2"    // Depth Anything 2 relative: inverse depth, near = high
 	KindDA2M   = "da2m"   // Depth Anything 2 metric: metres, far = high
+	KindVDA    = "vda"    // Video Depth Anything: DA2 relative + temporal modules (windows of frames)
 )
 
 // Spec is a depth model: its weights (and a second file for the nested one), what it gives back
@@ -58,7 +60,7 @@ const hf = "https://huggingface.co/mudler/depth-anything.cpp-gguf/resolve/main/"
 
 func spec(name, file string, size int64, label, kind string) Spec {
 	tile := 504
-	if kind == KindDA2 || kind == KindDA2M {
+	if kind == KindDA2 || kind == KindDA2M || kind == KindVDA {
 		tile = 518
 	}
 	return Spec{Model: aimodel.Model{Name: "depth-" + name, File: file, Size: size, Label: label, URL: hf + file}, Kind: kind, Tile: tile}
@@ -80,10 +82,15 @@ var Models = map[string]Spec{
 		s.Branch = &b.Model
 		return s
 	}(),
-	"da2-small":   spec("da2-small", "depth-anything2-small-f32.gguf", 99154784, "Depth Anything 2 Small", KindDA2),
-	"da2-base":    spec("da2-base", "depth-anything2-base-q8_0.gguf", 140400448, "Depth Anything 2 Base", KindDA2),
-	"da2-large":   spec("da2-large", "depth-anything2-large-q8_0.gguf", 454188672, "Depth Anything 2 Large", KindDA2),
-	"da2-indoor":  spec("da2-indoor", "depth-anything2-metric-hypersim-large-q8_0.gguf", 454188736, "Depth Anything 2 Metric Indoor Large", KindDA2M),
+	"da2-small":  spec("da2-small", "depth-anything2-small-f32.gguf", 99154784, "Depth Anything 2 Small", KindDA2),
+	"da2-base":   spec("da2-base", "depth-anything2-base-q8_0.gguf", 140400448, "Depth Anything 2 Base", KindDA2),
+	"da2-large":  spec("da2-large", "depth-anything2-large-q8_0.gguf", 454188672, "Depth Anything 2 Large", KindDA2),
+	"da2-indoor": spec("da2-indoor", "depth-anything2-metric-hypersim-large-q8_0.gguf", 454188736, "Depth Anything 2 Metric Indoor Large", KindDA2M),
+	// Video Depth Anything Small (Apache-2.0): published as a PyTorch checkpoint, converted to
+	// GGUF here the first time (vda.go)
+	"video": {Model: aimodel.Model{Name: "depth-video", File: "video_depth_anything_vits.pth", Size: 116440756,
+		Label: "Video Depth Anything Small", URL: "https://huggingface.co/depth-anything/Video-Depth-Anything-Small/resolve/main/video_depth_anything_vits.pth"},
+		Kind: KindVDA, Tile: 518},
 	"da2-outdoor": spec("da2-outdoor", "depth-anything2-metric-vkitti-large-q8_0.gguf", 454188704, "Depth Anything 2 Metric Outdoor Large", KindDA2M),
 }
 
@@ -114,6 +121,17 @@ func (sp Spec) Ensure(ctx context.Context, progress func(done, total int64)) ([]
 		}
 		before += m.Size
 		paths = append(paths, p)
+	}
+	if sp.Kind == KindVDA { // (converted once, next to the checkpoint)
+		g := strings.TrimSuffix(paths[0], ".pth") + ".gguf"
+		if _, err := os.Stat(g); err != nil {
+			t0 := time.Now()
+			if err := ConvertVDA(paths[0], g); err != nil {
+				return nil, fmt.Errorf("converting Video Depth Anything: %w", err)
+			}
+			debugf("vda converted %v", time.Since(t0))
+		}
+		paths = []string{g}
 	}
 	return paths, nil
 }
@@ -248,27 +266,7 @@ func Infer(sp Spec, paths []string, imagePath string, plain bool) (*Raw, error) 
 	defer C.da_capi_free_floats(p)
 	n := int(w) * int(h)
 	raw := unsafe.Slice((*float32)(unsafe.Pointer(p)), n)
-	r := &Raw{W: int(w), H: int(h), V: make([]float32, n)}
-	// on a log scale: the near and the far both keep their steps (inverse depth gives all the
-	// range to what is nearest, plain depth to what is farthest)
-	var top float32
-	for _, v := range raw {
-		top = max(top, v)
-	}
-	for i, v := range raw {
-		d := max(v, 1e-4)
-		if sp.Kind == KindDA2 {
-			d = 1 / max(v, top*1e-3) // it gives inverse depth
-		}
-		r.V[i] = -float32(math.Log(float64(d)))
-	}
-	if sp.Kind == KindDA2 && top > 0 {
-		// Depth Anything 2 gives the sky (endless) as no nearness at all: it is the sky
-		r.Sky = make([]float32, n)
-		for i, v := range raw {
-			r.Sky[i] = 1 - smooth(0.002, 0.01, v/top)
-		}
-	}
+	r := toRaw(sp, raw, int(w), int(h), 0)
 	if sky != nil {
 		if r.Sky == nil {
 			s := unsafe.Slice((*float32)(unsafe.Pointer(sky)), n)
@@ -280,6 +278,86 @@ func Infer(sp Spec, paths []string, imagePath string, plain bool) (*Raw, error) 
 		C.da_capi_free_floats(sky)
 	}
 	return r, nil
+}
+
+// toRaw: a model's output made comparable (larger = nearer, on a log scale); top: the inverse
+// depth's top to measure the far and the sky by (0: this map's own)
+func toRaw(sp Spec, raw []float32, w, h int, top float32) *Raw {
+	n := w * h
+	r := &Raw{W: w, H: h, V: make([]float32, n)}
+	// on a log scale: the near and the far both keep their steps (inverse depth gives all the
+	// range to what is nearest, plain depth to what is farthest)
+	if top <= 0 {
+		for _, v := range raw {
+			top = max(top, v)
+		}
+	}
+	for i, v := range raw {
+		d := max(v, 1e-4)
+		if sp.Kind == KindDA2 || sp.Kind == KindVDA {
+			d = 1 / max(v, top*1e-3) // it gives inverse depth
+		}
+		r.V[i] = -float32(math.Log(float64(d)))
+	}
+	if (sp.Kind == KindDA2 || sp.Kind == KindVDA) && top > 0 {
+		// Depth Anything 2 gives the sky (endless) as no nearness at all: it is the sky
+		r.Sky = make([]float32, n)
+		for i, v := range raw {
+			r.Sky[i] = 1 - smooth(0.002, 0.01, v/top)
+		}
+	}
+	return r
+}
+
+// InferVideo runs Video Depth Anything on a window of frames (all the same size) at once: each
+// frame's relative inverse depth (near = high) at the model's size (w×h)
+func InferVideo(sp Spec, paths []string, frames []*image.RGBA) (int, int, [][]float32, error) {
+	if len(frames) == 0 {
+		return 0, 0, nil, errors.New("no frames")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if err := load(sp, paths); err != nil {
+		return 0, 0, nil, err
+	}
+	fw, fh := frames[0].Bounds().Dx(), frames[0].Bounds().Dy()
+	fs := fw * fh * 3
+	buf := (*C.uchar)(C.malloc(C.size_t(fs * len(frames))))
+	defer C.free(unsafe.Pointer(buf))
+	px := unsafe.Slice((*byte)(unsafe.Pointer(buf)), fs*len(frames))
+	for i, f := range frames {
+		if f.Bounds().Dx() != fw || f.Bounds().Dy() != fh {
+			return 0, 0, nil, errors.New("the frames are not the same size")
+		}
+		dst := px[i*fs:]
+		rows(fh, func(y0, y1 int) {
+			for y := y0; y < y1; y++ {
+				for x := 0; x < fw; x++ {
+					o, d := y*f.Stride+x*4, (y*fw+x)*3
+					dst[d], dst[d+1], dst[d+2] = f.Pix[o], f.Pix[o+1], f.Pix[o+2]
+				}
+			}
+		})
+	}
+	t0 := time.Now()
+	var h, w C.int
+	p := C.da_capi_depth_video(ctx, buf, C.int(len(frames)), C.int(fw), C.int(fh), &h, &w)
+	debugf("video window %d frames %v %dx%d", len(frames), time.Since(t0), int(w), int(h))
+	if p == nil {
+		msg := C.GoString(C.da_capi_last_error(ctx))
+		if msg == "" {
+			msg = "the depth could not be worked out"
+		}
+		return 0, 0, nil, errors.New(msg)
+	}
+	defer C.da_capi_free_floats(p)
+	n := int(w) * int(h)
+	all := unsafe.Slice((*float32)(unsafe.Pointer(p)), n*len(frames))
+	out := make([][]float32, len(frames))
+	for i := range out {
+		out[i] = append([]float32(nil), all[i*n:(i+1)*n]...)
+	}
+	return int(w), int(h), out, nil
 }
 
 // Nearness: a Raw as a depth map 0 (far) … 1 (near), stretched between its 0.2 % and 99.8 %

@@ -1116,4 +1116,7 @@ export const ES = {
   "NitroFusion2 with 8-bit weights: closer to the original, a larger download (7.2 GB) and somewhat slower.": "NitroFusion2 con pesos de 8 bits: más fiel al original, una descarga mayor (7,2 GB) y algo más lento.",
   "De-distillation LoRA": "LoRA de des-destilado",
   "NitroFusion2: its de-distillation LoRA at half strength on the first step (as its own 2-step flow): fewer artifacts and closer to what the prompt asks, a little slower. Not used with 1 step.": "NitroFusion2: su LoRA de des-destilado a media fuerza en el primer paso (como su propio flujo de 2 pasos): menos artefactos y más fiel a lo que pide el prompt, algo más lento. No se usa con 1 paso.",
+  // Video Depth Anything
+  "Video Depth Anything Small: made for videos, the depth steady from frame to frame (116 MB)": "Video Depth Anything Small: hecho para vídeos, la profundidad estable de frame a frame (116 MB)",
+  "Downloaded the first time. Non-commercial: their license only allows non-commercial use. Video Depth Anything looks at 32 frames at once: with \"Every frame of the video\" it gives the steadiest depth": "Se descarga la primera vez. No comercial: su licencia solo permite uso no comercial. Video Depth Anything mira 32 frames a la vez: con \"Todos los frames del vídeo\" da la profundidad más estable",
 };

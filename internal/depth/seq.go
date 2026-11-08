@@ -156,12 +156,23 @@ func makeSeq(ctx context.Context, cacheDir string, r Request, stage func(string,
 		return nil, err
 	}
 	if r.Source == SourceAI || r.Source == "" { // the model, once (not by two frames at a time)
-		if _, err := ModelFor(r.Model).Ensure(ctx, func(done, total int64) {
+		sp := ModelFor(r.Model)
+		paths, err := sp.Ensure(ctx, func(done, total int64) {
 			if total > 0 {
 				stage("download", float64(done)/float64(total))
 			}
-		}); err != nil {
+		})
+		if err != nil {
 			return nil, err
+		}
+		if sp.Kind == KindVDA {
+			// Video Depth Anything: by windows of frames, all of it on one scale (vdaseq.go). A
+			// stopped run starts again (each window follows from the one before)
+			os.RemoveAll(s.Dir)
+			if err := os.MkdirAll(s.Dir, 0o755); err != nil {
+				return nil, err
+			}
+			return vdaSeq(ctx, cacheDir, r, sp, paths, s, final, stage)
 		}
 	}
 	var prev, first *Map

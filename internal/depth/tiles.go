@@ -93,6 +93,17 @@ func resized(img image.Image, w, h int) *image.RGBA {
 // inferImage: the model on an image (through a temporary file: it reads files; a PPM, which costs
 // next to nothing to write and read, unlike a PNG)
 func inferImage(sp Spec, paths []string, img image.Image, plain bool) (*Raw, error) {
+	if sp.Kind == KindVDA { // (the video model: a window of one frame)
+		rgba, ok := img.(*image.RGBA)
+		if !ok || rgba.Bounds().Min != (image.Point{}) {
+			rgba = resized(img, img.Bounds().Dx(), img.Bounds().Dy())
+		}
+		w, h, out, err := InferVideo(sp, paths, []*image.RGBA{rgba})
+		if err != nil {
+			return nil, err
+		}
+		return toRaw(sp, out[0], w, h, 0), nil
+	}
 	tmp, err := os.CreateTemp("", "audioviz-depth-*.ppm")
 	if err != nil {
 		return nil, err

@@ -21,6 +21,7 @@ logo behind a mountain) without drawing masks.
     | DA3 Large | 1.4 GB | non-commercial |
     | DA3 Giant | 4.9 GB | slow, non-commercial |
     | DA3 Nested Giant + Large | 6.2 GB (two files) | the slowest, non-commercial |
+    | **Video Depth Anything Small** | 116 MB | made for videos: looks at 32 frames at once, the steadiest depth over time |
     | DA2 Small | 99 MB | Depth Anything 2: fine edges |
     | DA2 Base / Large | 140 / 454 MB | non-commercial |
     | DA2 Metric indoors / outdoors | 454 MB | real distances, trained on rooms / streets; non-commercial |
@@ -39,7 +40,18 @@ logo behind a mountain) without drawing masks.
   - **Brightness**: a quick guess without AI (bright = near).
   - **A depth map of my own**: an image, white = near, black = far.
 - **Work out the depth** makes it now (otherwise it is made the first time the frame needs it) and
-  shows it. For a GIF or a video, its first frame is used.
+  shows it. For a GIF or a video, its first frame is used, unless **Every frame of the video** is
+  on: then each frame gets its own depth (worked out once, kept in the cache), and transitions mix
+  the two clips' depths frame by frame.
+- **Video Depth Anything** (with *Every frame*): the video in windows of 32 frames, each sharing ten
+  frames with the one before, so all of the video is on one depth scale and nothing flickers. It
+  is converted from its PyTorch checkpoint the first time (a fraction of a second). Intel iGPU,
+  768×416 video: ≈ 0.5 s per frame with the SYCL engine, 0.65 s with Vulkan. With the other models
+  each frame is worked out on its own and then steadied against the one before.
+- **Edit the depth…** paints the map by hand over the picture (a video: frame by frame): brush with
+  textures (spray, particles, grain, clouds, streaks), nearer / farther, blur, sharpen, smudge,
+  gradient and eyedropper. The edits are kept in the project's `depth-edits` folder and win over
+  the worked out map.
 - The button next to *Editor* under the preview shows **the depth of the scene** (white = near),
   as it moves with the background's motion, zoom and shake: to see where to place things.
 

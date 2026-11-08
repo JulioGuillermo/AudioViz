@@ -1,0 +1,284 @@
+diff --git a/include/da_capi.h b/include/da_capi.h
+index f3ebb53..8cf3760 100644
+--- a/include/da_capi.h
++++ b/include/da_capi.h
+@@ -21,6 +21,13 @@ typedef struct da_ctx da_ctx;
+    11: added temporal exposed-face voxel mesh generation and retrieval for streamed
+       fused scenes. */
+ int         da_capi_abi_version(void);
++/* Video Depth Anything (a GGUF with temporal head modules): the depth of a window of n frames
++   at once, steady over time. rgb: n frames of w*h*3 bytes (RGB, row-major), one after another.
++   On success writes the processed size to *out_h,*out_w and returns a malloc'd
++   float[n*H*W] (frame-major; relative inverse depth, near = high); free via
++   da_capi_free_floats. NULL on error (da_capi_last_error). */
++float*      da_capi_depth_video(da_ctx* ctx, const unsigned char* rgb, int n, int w, int h,
++                                int* out_h, int* out_w);
+ /* Set scene-relative TSDF surface-fusion knobs consumed by the NEXT
+    da_capi_points_stream whose fuse flag is set. voxel_frac: voxel edge as a fraction
+    of the reconstruction's bbox diagonal (fusion detail; <=0 => 0.004). trunc_mult:
+diff --git a/src/da_capi.cpp b/src/da_capi.cpp
+index d14123c..683dfee 100644
+--- a/src/da_capi.cpp
++++ b/src/da_capi.cpp
+@@ -146,6 +146,24 @@ float* da_capi_depth_path(da_ctx* c, const char* image_path, int* out_h, int* ou
+     return p;
+ }
+ void da_capi_free_floats(float* p){ std::free(p); }
++float* da_capi_depth_video(da_ctx* c, const unsigned char* rgb, int n, int w, int h, int* out_h, int* out_w){
++    if (!c || !c->engine || !rgb || n < 1 || w < 1 || h < 1){ if (c) c->last_error = "depth_video: bad args"; return nullptr; }
++    if (!c->engine->is_video()){ c->last_error = "depth_video: not a video depth model"; return nullptr; }
++    std::vector<da::Image> frames(n);
++    const size_t fs = (size_t)w * h * 3;
++    for (int i = 0; i < n; ++i) {
++        frames[i].w = w; frames[i].h = h;
++        frames[i].rgb.assign(rgb + fs * i, rgb + fs * (i + 1));
++    }
++    std::vector<float> depth; int H = 0, W = 0;
++    if (!c->engine->depth_video(frames, depth, H, W)){ c->last_error = "depth_video: failed"; return nullptr; }
++    float* p = (float*)std::malloc(depth.size() * sizeof(float));
++    if (!p){ c->last_error = "depth_video: oom"; return nullptr; }
++    std::memcpy(p, depth.data(), depth.size() * sizeof(float));
++    if (out_h) *out_h = H;
++    if (out_w) *out_w = W;
++    return p;
++}
+ int da_capi_pose_path(da_ctx* c, const char* image_path, float out_ext[12], float out_intr[9]){
+     if (!c || !c->engine || !image_path){ if (c) c->last_error = "pose: bad args"; return -1; }
+     if (c->engine->is_da2()){ c->last_error = "pose: da2 model has no camera pose"; return -1; }
+diff --git a/src/dpt_head.cpp b/src/dpt_head.cpp
+index e1d0c3d..4239bd4 100644
+--- a/src/dpt_head.cpp
++++ b/src/dpt_head.cpp
+@@ -411,4 +411,150 @@ bool DptHead::depth_debug(const std::vector<std::vector<float>>& feats, int H, i
+     return run(feats, H, W, depth_out, conf_out, &stages, &fused);
+ }
+ 
++
++// ---- Video Depth Anything (DepthAnything/Video-Depth-Anything, DPTHeadTemporal) ----------------
++// A temporal module (TemporalModule, motion_module.py): GroupNorm(32) -> proj_in -> one
++// transformer block (two self-attention blocks across the T frames at each spatial point, each
++// with a sinusoidal frame embedding added before Q/K/V, then a GEGLU feed-forward) -> proj_out,
++// plus the input. x: [w,h,C,T] -> [w,h,C,T]. Points are processed in chunks (the attention and
++// the feed-forward of the finest stage are large).
++static ggml_tensor* temporal_module(ggml_context* ctx, ModelLoader& ml, int m, ggml_tensor* x) {
++    auto t = [&](const std::string& n) { return ml.tensor("head.tm." + std::to_string(m) + "." + n); };
++    const int64_t w = x->ne[0], h = x->ne[1], C = x->ne[2], T = x->ne[3], S = w * h;
++    const int64_t heads = 8, hd = C / heads;
++    ggml_tensor* g = ggml_group_norm(ctx, x, 32, 1e-6f);
++    g = ggml_mul(ctx, g, ggml_reshape_4d(ctx, t("norm.weight"), 1, 1, C, 1));
++    g = ggml_add(ctx, g, ggml_reshape_4d(ctx, t("norm.bias"), 1, 1, C, 1));
++    // [w,h,C,T] -> [S,C,T] -> [C,T,S]: tokens per point, frames as the sequence
++    ggml_tensor* all = ggml_cont(ctx, ggml_permute(ctx, ggml_reshape_3d(ctx, g, S, C, T), 2, 0, 1, 3));
++    // the largest tensors (the feed-forward's 8C, the T*T*heads scores) kept to ~32M values
++    const int64_t chunk = std::max<int64_t>(1, std::min<int64_t>(S, (32ll << 20) / (T * std::max<int64_t>(8 * C, T * heads))));
++    ggml_tensor* out = nullptr;
++    for (int64_t s0 = 0; s0 < S; s0 += chunk) {
++        const int64_t n = std::min(chunk, S - s0);
++        ggml_tensor* y = ggml_view_3d(ctx, all, C, T, n, all->nb[1], all->nb[2], s0 * all->nb[2]);
++        y = linear(ctx, t("proj_in.weight"), y, t("proj_in.bias"));
++        for (int j = 0; j < 2; ++j) {
++            const std::string a = "a" + std::to_string(j) + ".";
++            ggml_tensor* z = layernorm(ctx, y, t("n" + std::to_string(j) + ".weight"),
++                                       t("n" + std::to_string(j) + ".bias"), 1e-5f);
++            ggml_tensor* pe = t(a + "pe");                              // [C, 32]
++            z = ggml_add(ctx, z, ggml_view_2d(ctx, pe, C, T, pe->nb[1], 0));
++            auto split = [&](ggml_tensor* u) { return ggml_reshape_4d(ctx, u, hd, heads, T, n); };
++            ggml_tensor* q = ggml_cont(ctx, ggml_permute(ctx, split(ggml_mul_mat(ctx, t(a + "q.weight"), z)), 0, 2, 1, 3));
++            ggml_tensor* k = ggml_cont(ctx, ggml_permute(ctx, split(ggml_mul_mat(ctx, t(a + "k.weight"), z)), 0, 2, 1, 3));
++            ggml_tensor* v = ggml_cont(ctx, ggml_permute(ctx, split(ggml_mul_mat(ctx, t(a + "v.weight"), z)), 1, 2, 0, 3));
++            ggml_tensor* kq = ggml_mul_mat(ctx, k, q);                  // [Tk, Tq, heads, n]
++            kq = ggml_soft_max_ext(ctx, kq, nullptr, 1.0f / std::sqrt((float)hd), 0.0f);
++            ggml_tensor* o = ggml_mul_mat(ctx, v, kq);                  // [hd, Tq, heads, n]
++            o = ggml_reshape_3d(ctx, ggml_cont(ctx, ggml_permute(ctx, o, 0, 2, 1, 3)), C, T, n);
++            o = linear(ctx, t(a + "o.weight"), o, t(a + "o.bias"));
++            y = ggml_add(ctx, y, o);
++        }
++        ggml_tensor* z = layernorm(ctx, y, t("ff_norm.weight"), t("ff_norm.bias"), 1e-5f);
++        z = linear(ctx, t("ff_in.weight"), z, t("ff_in.bias"));        // [8C, T, n]: hidden, gate
++        const int64_t F = z->ne[0] / 2;
++        ggml_tensor* hid = ggml_view_3d(ctx, z, F, T, n, z->nb[1], z->nb[2], 0);
++        ggml_tensor* gate = ggml_view_3d(ctx, z, F, T, n, z->nb[1], z->nb[2], F * ggml_element_size(z));
++        z = ggml_mul(ctx, ggml_cont(ctx, hid), ggml_gelu_erf(ctx, ggml_cont(ctx, gate)));
++        z = linear(ctx, t("ff_out.weight"), z, t("ff_out.bias"));
++        y = ggml_add(ctx, y, z);
++        y = linear(ctx, t("proj_out.weight"), y, t("proj_out.bias"));
++        out = out ? ggml_concat(ctx, out, y, 2) : y;
++    }
++    // [C,T,S] -> [S,C,T] -> [w,h,C,T], plus the input
++    out = ggml_cont(ctx, ggml_permute(ctx, out, 1, 2, 0, 3));
++    return ggml_add(ctx, ggml_reshape_4d(ctx, out, w, h, C, T), x);
++}
++
++bool DptHead::depth_video(const std::vector<std::vector<std::vector<float>>>& feats, int H, int W,
++                          std::vector<float>& depth_out) {
++    const Config& cfg = ml_.config();
++    const int pw = W / (int)cfg.patch_size, ph = H / (int)cfg.patch_size;
++    const int N = ph * pw, C = (int)cfg.embed_dim;
++    const int T = (int)feats.size();
++    if (T < 1 || !has_temporal()) return false;
++    for (const auto& f : feats) {
++        if (f.size() != 4) return false;
++        for (const auto& x : f) if ((int)x.size() != N * C) return false;
++    }
++    auto t = [&](const std::string& n) { return ml_.tensor(n); };
++    // a stage's projection: [C,N,T] -> [pw,ph,oc,T]
++    auto project = [&](ggml_context* ctx, ggml_tensor* f, int s) {
++        ggml_tensor* x = ggml_cont(ctx, ggml_permute(ctx, f, 1, 0, 2, 3));      // [N,C,T]
++        x = ggml_reshape_4d(ctx, x, pw, ph, C, f->ne[2]);
++        x = conv2d(ctx, t("head.proj." + std::to_string(s) + ".weight"), t("head.proj." + std::to_string(s) + ".bias"), x, 1, 0);
++        if (s == 0) x = conv_transpose2d_p0(ctx, t("head.resize.0.weight"), t("head.resize.0.bias"), x, 4);
++        else if (s == 1) x = conv_transpose2d_p0(ctx, t("head.resize.1.weight"), t("head.resize.1.bias"), x, 2);
++        else if (s == 3) x = conv2d(ctx, t("head.resize.3.weight"), t("head.resize.3.bias"), x, 2, 1);
++        return x;
++    };
++    auto rn = [&](const std::string& i) {
++        return std::vector<ggml_tensor*>{
++            t("head.scratch.rn" + i + ".rc1.c1.weight"), t("head.scratch.rn" + i + ".rc1.c1.bias"),
++            t("head.scratch.rn" + i + ".rc1.c2.weight"), t("head.scratch.rn" + i + ".rc1.c2.bias"),
++            t("head.scratch.rn" + i + ".rc2.c1.weight"), t("head.scratch.rn" + i + ".rc2.c1.bias"),
++            t("head.scratch.rn" + i + ".rc2.c2.weight"), t("head.scratch.rn" + i + ".rc2.c2.bias"),
++            t("head.scratch.rn" + i + ".out.weight"), t("head.scratch.rn" + i + ".out.bias")};
++    };
++    // 1) all the frames at once, up to path_3 (the temporal modules M0..M3)
++    std::vector<float> f2((size_t)T * N * C), f3((size_t)T * N * C);
++    for (int i = 0; i < T; ++i) {
++        std::copy(feats[i][2].begin(), feats[i][2].end(), f2.begin() + (size_t)i * N * C);
++        std::copy(feats[i][3].begin(), feats[i][3].end(), f3.begin() + (size_t)i * N * C);
++    }
++    std::vector<float> path3;
++    {
++        GraphInputPool pool;
++        bool ok = be_.compute([&](ggml_context* ctx) -> ggml_tensor* {
++            const int64_t ne[3] = { C, N, T };
++            ggml_tensor* l3 = project(ctx, be_.add_graph_input_nd(ctx, pool, f2.data(), ne, 3), 2);
++            ggml_tensor* l4 = project(ctx, be_.add_graph_input_nd(ctx, pool, f3.data(), ne, 3), 3);
++            l3 = temporal_module(ctx, ml_, 0, l3);
++            l4 = temporal_module(ctx, ml_, 1, l4);
++            ggml_tensor* l3_rn = conv2d(ctx, t("head.scratch.layer3_rn.weight"), nullptr, l3, 1, 1);
++            ggml_tensor* l4_rn = conv2d(ctx, t("head.scratch.layer4_rn.weight"), nullptr, l4, 1, 1);
++            auto r4 = rn("4");
++            ggml_tensor* p = feature_fusion(ctx, l4_rn, nullptr, nullptr, nullptr, nullptr, nullptr,
++                                            r4[4], r4[5], r4[6], r4[7], r4[8], r4[9], pw, ph);
++            p = temporal_module(ctx, ml_, 2, p);
++            auto r3 = rn("3");
++            p = feature_fusion(ctx, p, l3_rn, r3[0], r3[1], r3[2], r3[3], r3[4], r3[5], r3[6], r3[7], r3[8], r3[9], 2 * pw, 2 * ph);
++            return temporal_module(ctx, ml_, 3, p);                        // [2pw,2ph,64,T]
++        }, path3);
++        if (!ok) return false;
++    }
++    const size_t per = path3.size() / T;                                   // 2pw*2ph*64
++    if (per * T != path3.size()) return false;
++    // 2) frame by frame, the finer stages and the output
++    const size_t HW = (size_t)H * W;
++    depth_out.assign(HW * T, 0.f);
++    const int feat = (int)(per / ((size_t)4 * pw * ph));
++    for (int i = 0; i < T; ++i) {
++        GraphInputPool pool;
++        std::vector<float> logits;
++        bool ok = be_.compute([&](ggml_context* ctx) -> ggml_tensor* {
++            const int64_t ne[3] = { C, N, 1 };
++            ggml_tensor* l1 = project(ctx, be_.add_graph_input_nd(ctx, pool, feats[i][0].data(), ne, 3), 0);
++            ggml_tensor* l2 = project(ctx, be_.add_graph_input_nd(ctx, pool, feats[i][1].data(), ne, 3), 1);
++            ggml_tensor* l1_rn = conv2d(ctx, t("head.scratch.layer1_rn.weight"), nullptr, l1, 1, 1);
++            ggml_tensor* l2_rn = conv2d(ctx, t("head.scratch.layer2_rn.weight"), nullptr, l2, 1, 1);
++            const int64_t pne[4] = { 2 * pw, 2 * ph, feat, 1 };
++            ggml_tensor* p = be_.add_graph_input_nd(ctx, pool, path3.data() + per * i, pne, 4);
++            auto r2 = rn("2");
++            p = feature_fusion(ctx, p, l2_rn, r2[0], r2[1], r2[2], r2[3], r2[4], r2[5], r2[6], r2[7], r2[8], r2[9], 4 * pw, 4 * ph);
++            auto r1 = rn("1");
++            p = feature_fusion(ctx, p, l1_rn, r1[0], r1[1], r1[2], r1[3], r1[4], r1[5], r1[6], r1[7], r1[8], r1[9], 0, 0);
++            p = conv2d(ctx, t("head.scratch.out1.weight"), t("head.scratch.out1.bias"), p, 1, 1);
++            p = interp_bilinear_ac(ctx, p, W, H);
++            p = conv2d(ctx, t("head.scratch.out2a.weight"), t("head.scratch.out2a.bias"), p, 1, 1);
++            p = ggml_relu(ctx, p);
++            return conv2d(ctx, t("head.scratch.out2b.weight"), t("head.scratch.out2b.bias"), p, 1, 0);
++        }, logits);
++        if (!ok || logits.size() != HW) return false;
++        for (size_t k = 0; k < HW; ++k) depth_out[HW * i + k] = std::max(0.0f, logits[k]);
++    }
++    return true;
++}
++
+ } // namespace da
+diff --git a/src/dpt_head.hpp b/src/dpt_head.hpp
+index 7d14063..71278ad 100644
+--- a/src/dpt_head.hpp
++++ b/src/dpt_head.hpp
+@@ -63,6 +63,14 @@ public:
+               std::vector<float>& ray_out, std::vector<float>& ray_conf_out,
+               int& ray_h, int& ray_w);
+ 
++    // Video Depth Anything (a DA2 head with temporal modules, "head.tm.*"): the depth of a
++    // window of T frames at once (attention across the frames at every point, so the depth
++    // holds steady over time). feats[t]: frame t's 4 backbone feats. depth_out: T*H*W
++    // (relative inverse depth, near = high, relu'd), frame-major.
++    bool has_temporal() const { return ml_.tensor("head.tm.0.norm.weight") != nullptr; }
++    bool depth_video(const std::vector<std::vector<std::vector<float>>>& feats, int H, int W,
++                     std::vector<float>& depth_out);
++
+ private:
+     bool run(const std::vector<std::vector<float>>& feats, int H, int W,
+              std::vector<float>& depth_out, std::vector<float>& conf_out,
+diff --git a/src/engine.cpp b/src/engine.cpp
+index d173fc0..01add90 100644
+--- a/src/engine.cpp
++++ b/src/engine.cpp
+@@ -89,6 +89,33 @@ bool Engine::depth_relative(const Image& img, std::vector<float>& depth_out, int
+     DptHead head(ml_, be_);
+     return head.depth_relative(feats, H, W, ml_.config().head_max_depth, depth_out);
+ }
++bool Engine::is_video() const { return ml_.tensor("head.tm.0.norm.weight") != nullptr; }
++bool Engine::depth_video(const std::vector<Image>& frames, std::vector<float>& depth_out, int& H, int& W){
++    std::vector<std::vector<std::vector<float>>> feats(frames.size());
++    std::vector<std::pair<uint64_t, std::vector<std::vector<float>>>> next;
++    H = W = 0;
++    for (size_t i = 0; i < frames.size(); ++i) {
++        uint64_t hsh = 1469598103934665603ull ^ (uint64_t)frames[i].w * 31 ^ (uint64_t)frames[i].h;
++        for (unsigned char b : frames[i].rgb) hsh = (hsh ^ b) * 1099511628211ull;
++        Preprocessed p;
++        if (!preprocess_real(frames[i], ml_.config(), p)) { DA_LOG("depth_video: preprocess failed"); return false; }
++        if (i > 0 && (p.H != H || p.W != W)) { DA_LOG("depth_video: frames of different sizes"); return false; }
++        H = p.H; W = p.W;
++        bool found = false;
++        for (auto& c : video_feats_) {
++            if (c.first == hsh && !c.second.empty()) { feats[i] = c.second; found = true; break; }
++        }
++        if (!found) {
++            DinoBackbone bb(ml_, be_);
++            std::vector<std::vector<float>> cam_tokens;
++            if (!bb.forward(p.chw, H, W, feats[i], cam_tokens)) { DA_LOG("depth_video: backbone failed"); return false; }
++        }
++        next.emplace_back(hsh, feats[i]);
++    }
++    video_feats_ = std::move(next);
++    DptHead head(ml_, be_);
++    return head.depth_video(feats, H, W, depth_out);
++}
+ bool Engine::depth_relative_path(const std::string& image_path, std::vector<float>& depth_out,
+                                  int& H, int& W){
+     Image img; if (!load_image_rgb(image_path, img)) { DA_LOG("depth_relative: load image failed"); return false; }
+diff --git a/src/engine.hpp b/src/engine.hpp
+index 19e32a0..ce944d6 100644
+--- a/src/engine.hpp
++++ b/src/engine.hpp
+@@ -44,6 +44,10 @@ public:
+     bool depth_relative(const Image& img, std::vector<float>& depth_out, int& H, int& W);
+     bool depth_relative_path(const std::string& image_path, std::vector<float>& depth_out,
+                              int& H, int& W);
++    // Video Depth Anything: a window of frames (all the same size) at once -> depth_out
++    // [n*H*W], frame-major, relative inverse depth (near = high)
++    bool is_video() const;
++    bool depth_video(const std::vector<Image>& frames, std::vector<float>& depth_out, int& H, int& W);
+     // M1: debug entry returning backbone features for out_layers (filled in T16).
+     bool backbone_features(const std::vector<float>& input_image, int H, int W,
+                            std::vector<std::vector<float>>& feats_out);
+@@ -126,6 +130,9 @@ private:
+                               std::vector<float>& conf_out, int& H, int& W);
+     ModelLoader ml_;
+     Backend be_;
++    // depth_video: the backbone feats of the last window's frames by their pixels' hash (the next
++    // window repeats ten of them: its key frames)
++    std::vector<std::pair<uint64_t, std::vector<std::vector<float>>>> video_feats_;
+     std::unique_ptr<ModelLoader> metric_ml_;
+     std::unique_ptr<Backend> metric_be_;
+ };
