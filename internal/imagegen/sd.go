@@ -78,10 +78,12 @@ static int av_preview_get(int seq, unsigned char *dst, int cap, int *w, int *h, 
 
 // Logs: the last error is kept for the error message; AUDIOVIZ_DEBUG_SD=1 prints everything
 static char av_err[512];
+static char av_mem[512]; // stable-diffusion.cpp found too little free memory (its numbers)
 static int av_debug;
 static void av_log(enum sd_log_level_t l, const char *t, void *d) {
     (void)d;
     if (l >= SD_LOG_ERROR) { strncpy(av_err, t, sizeof av_err - 1); }
+    if (strstr(t, "cannot make enough memory available")) { strncpy(av_mem, t, sizeof av_mem - 1); }
     if (strstr(t, "tensors from ")) { av_loading = 1; av_lstep = 0; av_lsteps = 0; }
     else if (strstr(t, "loading tensors completed")) av_loading = 0;
     else if (strstr(t, "EDIT mode")) av_set_phase(PH_REFS);
@@ -93,6 +95,7 @@ static void av_log(enum sd_log_level_t l, const char *t, void *d) {
 }
 
 static const char *av_last_err(void) { return av_err; }
+static const char *av_last_mem(void) { return av_mem; }
 
 static void av_ggml_log(enum ggml_log_level l, const char *t, void *d) { (void)l; (void)d; if (av_debug) fputs(t, stderr); }
 
@@ -220,7 +223,7 @@ static sd_ctx_t *av_open(const char *diff, const char *llm, const char *vision, 
     const char *noseg = getenv("AUDIOVIZ_SD_NOSEG");
     if (noseg && noseg[0]) whole = noseg[0] == '1';
     if (whole && av_dev[0]) { p.params_backend = av_dev; p.disable_segmented_compute = true; }
-    av_err[0] = 0;
+    av_err[0] = 0; av_mem[0] = 0;
     return new_sd_ctx(&p);
 }
 
@@ -262,7 +265,7 @@ static int av_generate(sd_ctx_t *ctx, const char *prompt, const char *negative, 
     // Large images: the VAE decodes (and encodes) in tiles; its attention over every latent
     // pixel otherwise grows with the square of the size (217 s instead of 28 s at 1920x1088)
     g.vae_tiling_params.enabled = tile;
-    av_phase = PH_NONE; av_loading = 0; av_step = 0; av_steps = 0; av_err[0] = 0;
+    av_phase = PH_NONE; av_loading = 0; av_step = 0; av_steps = 0; av_err[0] = 0; av_mem[0] = 0;
     __atomic_store_n(&av_pseq, 0, __ATOMIC_RELEASE);
     sd_cancel_generation(ctx, SD_CANCEL_RESET);
     sd_image_generation_result_t *res = NULL;
@@ -286,8 +289,11 @@ import "C"
 
 import (
 	"errors"
+	"fmt"
 	"image"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"unsafe"
@@ -310,7 +316,18 @@ var (
 	eng engine
 )
 
+// memNeed reads stable-diffusion.cpp's "need X MB device … available Y MB device"
+var memNeed = regexp.MustCompile(`need ([0-9.]+) MB device.*available ([0-9.]+) MB device`)
+
 func lastErr(def string) error {
+	// too little free memory: say so, with what to do (the GPU of a laptop shares its memory)
+	if m := memNeed.FindStringSubmatch(C.GoString(C.av_last_mem())); m != nil {
+		need, _ := strconv.ParseFloat(m[1], 64)
+		free, _ := strconv.ParseFloat(m[2], 64)
+		return fmt.Errorf("not enough free memory for this image: it needs %.1f GB and %.1f GB are free "+
+			"(an integrated GPU shares the computer's memory). Close other programs, make the image smaller "+
+			"or use a lighter model (Q4 instead of INT8)", need/1024, free/1024)
+	}
 	if s := strings.TrimSpace(C.GoString(C.av_last_err())); s != "" {
 		return errors.New(s)
 	}
