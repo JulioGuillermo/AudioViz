@@ -18,6 +18,8 @@ const TOOLS = [
   { id: 'gradient', icon: 'blend', key: 'g', label: 'Gradient (G): drag from one level to the other (a floor, a sky…)' },
   { id: 'picker', icon: 'pipette', key: 'i', label: 'Eyedropper (I, or Alt+click): takes the level from the map' },
   { id: 'hand', icon: 'hand', key: 'h', label: 'Move the view (H, or hold Space, or the middle button)' },
+  { id: 'zoom', icon: 'zoom-in', key: 'z', label: 'Zoom: click to zoom in, Alt+click to zoom out, drag to zoom (Z; the wheel zooms too)' },
+  { id: 'rotate', icon: 'rotate-ccw', key: 'r', label: 'Rotate the view (R; Shift: steps of 15°)' },
 ];
 const TIPS = [['round', 'Round'], ['spray', 'Spray'], ['particles', 'Particles'], ['grain', 'Grain'], ['clouds', 'Clouds'], ['streaks', 'Streaks']];
 const MODES = [['set', 'Paint the level'], ['nearer', 'Bring nearer'], ['farther', 'Push farther'],
@@ -81,7 +83,7 @@ export function DepthEditor({ req, startFrame = 0, onClose, showErr }) {
   const [frameIn, setFrameIn] = useState(String(startFrame + 1));
   const [tool, setToolState] = useState('brush');
   const [o, setOptsState] = useState(loadOpts);
-  const [view, setView] = useState({ z: 1, x: 0, y: 0 });
+  const [view, setView] = useState({ z: 1, r: 0, x: 0, y: 0 });
   const [loading, setLoading] = useState(true);
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -163,7 +165,7 @@ export function DepthEditor({ req, startFrame = 0, onClose, showErr }) {
     const el = stageRef.current;
     if (!el || !w) return;
     const z = Math.min(el.clientWidth / w, el.clientHeight / h) * 0.96;
-    setView({ z, x: (el.clientWidth - w * z) / 2, y: (el.clientHeight - h * z) / 2 });
+    setView({ z, r: 0, x: (el.clientWidth - w * z) / 2, y: (el.clientHeight - h * z) / 2 });
   };
   useEffect(() => {
     api('GET', '/api/depth/edit/info?' + qs(base)).then((r) => {
@@ -462,18 +464,56 @@ export function DepthEditor({ req, startFrame = 0, onClose, showErr }) {
     pushUndo(Math.max(0, st.bb[0]), Math.max(0, st.bb[1]), Math.min(S.w, st.bb[2]), Math.min(S.h, st.bb[3]), st.base);
   };
 
-  // --- pointer: screen → map px
-  const toMap = (e) => {
-    const r = canvasRef.current.getBoundingClientRect();
-    return [(e.clientX - r.left) / r.width * S.w, (e.clientY - r.top) / r.height * S.h];
+  // --- the view (as the editor's: zoom, pan and rotation, Krita-like): a map point p shows at
+  // stage point rot(p·z, r) + (x, y)
+  const rotP = (x, y, deg) => {
+    const a = (deg * Math.PI) / 180, c = Math.cos(a), s2 = Math.sin(a);
+    return [x * c - y * s2, x * s2 + y * c];
   };
+  const stageRect = () => stageRef.current.getBoundingClientRect();
+  const toMapXY = (cx, cy) => {
+    const r = stageRect(), v = viewRef.current;
+    const [px, py] = rotP(cx - r.left - v.x, cy - r.top - v.y, -v.r);
+    return [px / v.z, py / v.z];
+  };
+  const toMap = (e) => toMapXY(e.clientX, e.clientY);
+  // the view with map point f under stage point (lx, ly), at zoom z and rotation r
+  const anchor = (f, lx, ly, z, r) => {
+    const [px, py] = rotP(f[0] * z, f[1] * z, r);
+    return { z, r, x: lx - px, y: ly - py };
+  };
+  const zoomAt = (factor, cx, cy) => {
+    const r = stageRect(), v = viewRef.current;
+    setView(anchor(toMapXY(cx, cy), cx - r.left, cy - r.top, Math.max(0.05, Math.min(32, v.z * factor)), v.r));
+  };
+  const zoomCenter = (z) => { const r = stageRect(); zoomAt(z / viewRef.current.z, r.left + r.width / 2, r.top + r.height / 2); };
+  const rotateTo = (deg) => {
+    const r = stageRect(), v = viewRef.current;
+    const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+    setView(anchor(toMapXY(cx, cy), r.width / 2, r.height / 2, v.z, ((deg % 360) + 540) % 360 - 180));
+  };
+
+  // --- pointers: one = the tool (middle button, Space or the hand: move the view; zoom and rotate
+  // tools); two touches = move + zoom + rotate together
+  const pts = useRef(new Map());
   const onDown = (e) => {
     if (!S.map || loading) return;
     const tl = toolRef.current;
-    if (e.button === 1 || tl === 'hand' || S.space) {
+    pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* not active */ }
+    if (pts.current.size === 2) {
+      cancelStroke(); // (a second finger: the view, not a stroke: what the first one began is undone)
+      const [a, b] = [...pts.current.values()];
+      const mid = [(a.x + b.x) / 2, (a.y + b.y) / 2];
+      S.pan = { kind: 'pinch', v: viewRef.current, f: toMapXY(mid[0], mid[1]), d0: Math.hypot(b.x - a.x, b.y - a.y), a0: Math.atan2(b.y - a.y, b.x - a.x) };
+      return;
+    }
+    const kind = e.button === 1 || tl === 'hand' || S.space ? 'hand' : tl === 'zoom' || tl === 'rotate' ? tl : null;
+    if (kind) {
       e.preventDefault();
-      S.pan = { x: e.clientX, y: e.clientY, v: viewRef.current };
-      e.currentTarget.setPointerCapture(e.pointerId);
+      const r = stageRect(), c = [r.left + r.width / 2, r.top + r.height / 2];
+      S.pan = { kind, x: e.clientX, y: e.clientY, v: viewRef.current, f: toMap(e), fc: toMapXY(c[0], c[1]), c,
+        a0: Math.atan2(e.clientY - c[1], e.clientX - c[0]), alt: e.altKey, moved: false };
       return;
     }
     if (e.button !== 0) return;
@@ -483,18 +523,58 @@ export function DepthEditor({ req, startFrame = 0, onClose, showErr }) {
       if (tl === 'picker') setToolState(prevTool.current);
       return;
     }
-    e.currentTarget.setPointerCapture(e.pointerId);
+    if (e.pointerType === 'touch') {
+      // a finger: the stroke waits a moment (a second finger may follow: then it is the view)
+      S.touch = { x, y, cx: e.clientX, cy: e.clientY, t: performance.now() };
+      return;
+    }
     begin(x, y, e.pointerType === 'pen' ? Math.max(0.05, e.pressure || 0.5) : 1);
   };
+  // a stroke undone as if it never was (no undo step)
+  const cancelStroke = () => {
+    S.touch = null;
+    const st = S.stroke;
+    S.stroke = null;
+    setGradLine(null);
+    if (!st || st.bb[2] < 0) return;
+    const x0 = Math.max(0, st.bb[0]), y0 = Math.max(0, st.bb[1]), x1 = Math.min(S.w, st.bb[2]), y1 = Math.min(S.h, st.bb[3]);
+    for (let y = y0; y < y1; y++) S.map.set(st.base.subarray(y * S.w + x0, y * S.w + x1), y * S.w + x0);
+    touch(x0, y0, x1, y1);
+  };
   const onMove = (e) => {
-    const r = stageRef.current.getBoundingClientRect();
+    const r = stageRect();
     setCur({ x: e.clientX - r.left, y: e.clientY - r.top });
-    if (S.pan) {
-      const p = S.pan;
-      setView({ ...p.v, x: p.v.x + e.clientX - p.x, y: p.v.y + e.clientY - p.y });
+    if (pts.current.has(e.pointerId)) pts.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    const g = S.pan;
+    if (g) {
+      if (g.kind === 'pinch') {
+        if (pts.current.size < 2) return;
+        const [a, b] = [...pts.current.values()];
+        const mid = [(a.x + b.x) / 2, (a.y + b.y) / 2];
+        const z = Math.max(0.05, Math.min(32, g.v.z * Math.hypot(b.x - a.x, b.y - a.y) / (g.d0 || 1)));
+        const rr = g.v.r + ((Math.atan2(b.y - a.y, b.x - a.x) - g.a0) * 180) / Math.PI;
+        setView(anchor(g.f, mid[0] - r.left, mid[1] - r.top, z, rr));
+        return;
+      }
+      const dx = e.clientX - g.x, dy = e.clientY - g.y;
+      if (Math.abs(dx) + Math.abs(dy) > 3) g.moved = true;
+      if (g.kind === 'hand') setView({ ...g.v, x: g.v.x + dx, y: g.v.y + dy });
+      else if (g.kind === 'zoom' && g.moved) setView(anchor(g.f, g.x - r.left, g.y - r.top, Math.max(0.05, Math.min(32, g.v.z * Math.exp(dx / 200))), g.v.r));
+      else if (g.kind === 'rotate') {
+        let rr = g.v.r + ((Math.atan2(e.clientY - g.c[1], e.clientX - g.c[0]) - g.a0) * 180) / Math.PI;
+        if (e.shiftKey) rr = Math.round(rr / 15) * 15;
+        setView(anchor(g.fc, g.c[0] - r.left, g.c[1] - r.top, g.v.z, rr));
+      }
       return;
     }
     if (S.map) { const [mx, my] = toMap(e); setPick(mx >= 0 && my >= 0 && mx < S.w && my < S.h ? levelAt(mx, my) : null); }
+    if (S.touch && pts.current.size === 1) { // (one finger that moved or stayed: now it paints)
+      const tc = S.touch;
+      if (Math.hypot(e.clientX - tc.cx, e.clientY - tc.cy) > 6 || performance.now() - tc.t > 120) {
+        S.touch = null;
+        begin(tc.x, tc.y, 1);
+      }
+    }
     if (!S.stroke) return;
     const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [e];
     for (const ev of (evs.length ? evs : [e])) {
@@ -503,14 +583,21 @@ export function DepthEditor({ req, startFrame = 0, onClose, showErr }) {
       dabTo(x, y, ev.pointerType === 'pen' ? Math.max(0.05, ev.pressure || 0.5) : 1);
     }
   };
-  const onUp = () => { if (S.pan) { S.pan = null; return; } end(); };
+  const onUp = (e) => {
+    pts.current.delete(e.pointerId);
+    if (S.touch && !S.pan) { const tc = S.touch; S.touch = null; begin(tc.x, tc.y, 1); } // (a tap: one dab)
+    const g = S.pan;
+    if (g) {
+      if (g.kind === 'zoom' && !g.moved) zoomAt(g.alt ? 1 / 1.6 : 1.6, e.clientX, e.clientY);
+      if (pts.current.size === 0) S.pan = null;
+      return;
+    }
+    end();
+  };
   const onWheel = (e) => {
     e.preventDefault();
-    const r = stageRef.current.getBoundingClientRect();
-    const mx = e.clientX - r.left, my = e.clientY - r.top;
-    const v = viewRef.current;
-    const z = Math.max(0.05, Math.min(32, v.z * Math.pow(1.0015, -e.deltaY)));
-    setView({ z, x: mx - (mx - v.x) * z / v.z, y: my - (my - v.y) * z / v.z });
+    if (e.shiftKey) { setView({ ...viewRef.current, x: viewRef.current.x - e.deltaY }); return; }
+    zoomAt(Math.exp(-e.deltaY * (e.deltaMode === 1 ? 0.05 : 0.0015)), e.clientX, e.clientY);
   };
   useEffect(() => {
     const el = stageRef.current;
@@ -535,6 +622,7 @@ export function DepthEditor({ req, startFrame = 0, onClose, showErr }) {
       if (e.key === 'ArrowLeft' || e.key === ',') { e.preventDefault(); go(frameRef.current - 1); return; }
       if (e.key === 'ArrowRight' || e.key === '.') { e.preventDefault(); go(frameRef.current + 1); return; }
       if (e.key === '0') { fit(); return; }
+      if (e.key === '1') { zoomCenter(1 / (window.devicePixelRatio || 1)); return; }
       const tl = TOOLS.find((x) => x.key === k);
       if (tl) setTool(tl.id);
     };
@@ -587,6 +675,10 @@ export function DepthEditor({ req, startFrame = 0, onClose, showErr }) {
         ${MODES.filter(([v]) => v === 'set' || v === 'lift' || v === 'sink').map(([v, l]) => html`<option value=${v}>${t(l)}</option>`)}</select></label></div>`;
   } else if (tool === 'picker') {
     opts = html`<div class="de-row"><span class="faint">${t('Click on the map to take its level for the brush')}</span>${levelCtl('level', 'Level')}</div>`;
+  } else if (tool === 'zoom') {
+    opts = html`<div class="de-row"><span class="faint">${t('Click to zoom in, Alt+click to zoom out, drag sideways to zoom · the wheel zooms where the pointer is · two fingers: move, zoom and rotate')}</span></div>`;
+  } else if (tool === 'rotate') {
+    opts = html`<div class="de-row"><span class="faint">${t('Drag around the centre to rotate the view (Shift: steps of 15°) · the button with the degrees, above, puts it straight')}</span></div>`;
   } else {
     opts = html`<div class="de-row"><span class="faint">${t('Drag to move; the wheel zooms')}</span></div>`;
   }
@@ -615,13 +707,21 @@ export function DepthEditor({ req, startFrame = 0, onClose, showErr }) {
         <span class="mono faint">${Math.round(o.show * 100)}%</span></label>
       <button class=${'btn sm' + (o.colors ? ' on' : '')} title=${t('Colors instead of grey (blue far, red near): small steps show better')}
         onClick=${() => setOpt('colors', !o.colors)}><${Icon} name="sun" size=${13} /> ${t('Colors')}</button>
-      <button class="btn icon sm ghost" title=${t('Fit (0)')} onClick=${() => fit()}><${Icon} name="maximize-2" size=${14} /></button>
+      <div class="btngroup">
+        <button class="btn sm icon" title=${t('Zoom out')} onClick=${() => zoomCenter(view.z / 1.5)}><${Icon} name="zoom-out" size=${14} /></button>
+        <span class="ed-zoom mono">${Math.round(view.z * (window.devicePixelRatio || 1) * 100)}%</span>
+        <button class="btn sm icon" title=${t('Zoom in')} onClick=${() => zoomCenter(view.z * 1.5)}><${Icon} name="zoom-in" size=${14} /></button>
+      </div>
+      <button class="btn sm icon" title=${t('Fit the frame (0)')} onClick=${() => fit()}><${Icon} name="maximize-2" size=${14} /></button>
+      <button class="btn sm" title=${t('Actual pixels (1)')} onClick=${() => zoomCenter(1 / (window.devicePixelRatio || 1))}>1:1</button>
+      <button class=${'btn sm' + (view.r ? ' on' : '')} title=${t('Rotation of the view: click to reset')} onClick=${() => rotateTo(0)}>
+        <${Icon} name="rotate-ccw" size=${14} /> ${Math.round(view.r)}°</button>
       <button class="btn icon sm ghost" disabled=${!hist.u} title=${t('Undo (Ctrl+Z)')} onClick=${undo}><${Icon} name="undo-2" size=${15} /></button>
       <button class="btn icon sm ghost" disabled=${!hist.r} title=${t('Redo (Ctrl+Shift+Z)')} onClick=${redo}><${Icon} name="redo-2" size=${15} /></button>
-      <button class="btn sm ghost" disabled=${!edited.includes(frame)} title=${t('Back to the depth that was worked out for this frame')} onClick=${revertFrame}>
-        <${Icon} name="rotate-ccw" size=${13} /> ${t(video ? 'Revert frame' : 'Revert')}</button>
-      ${video && html`<button class="btn sm ghost danger" disabled=${!edited.length} title=${t('Back to the worked out depth on every frame')} onClick=${revertAll}>
-        <${Icon} name="trash-2" size=${13} /> ${t('Revert all')}</button>`}
+      <button class="btn sm icon ghost" disabled=${!edited.includes(frame)} title=${t(video ? 'Revert frame' : 'Revert') + ': ' + t('Back to the depth that was worked out for this frame')} onClick=${revertFrame}>
+        <${Icon} name="rotate-ccw" size=${13} /></button>
+      ${video && html`<button class="btn sm icon ghost danger" disabled=${!edited.length} title=${t('Revert all') + ': ' + t('Back to the worked out depth on every frame')} onClick=${revertAll}>
+        <${Icon} name="trash-2" size=${13} /></button>`}
       <button class="btn sm primary" disabled=${!dirty || saving} title=${t('Keep this frame\'s map (Ctrl+S; it is also kept when you go to another frame or close)')} onClick=${save}>
         <${Icon} name="save" size=${13} /> ${t(saving ? 'Saving…' : dirty ? 'Save' : 'Saved')}</button>
       <button class="btn icon ghost" title=${t('Close (Esc; the changes are kept)')} onClick=${close}><${Icon} name="x" size=${16} /></button>
@@ -632,10 +732,10 @@ export function DepthEditor({ req, startFrame = 0, onClose, showErr }) {
         onClick=${() => setTool(x.id)}><${Icon} name=${x.icon} size=${17} /></button>`)}
         <div class="de-curlevel" title=${t('The brush\'s level')} style=${{ background: `rgb(${Math.round(o.level * 255)},${Math.round(o.level * 255)},${Math.round(o.level * 255)})` }}></div>
       </div>
-      <div class=${'de-stage' + (tool === 'hand' ? ' pan' : '') + (brushTool ? ' brush' : '')} ref=${stageRef}
+      <div class=${'de-stage' + (tool === 'hand' ? ' pan' : '') + (tool === 'zoom' ? ' zoom' : '') + (tool === 'rotate' ? ' rot' : '') + (brushTool ? ' brush' : '')} ref=${stageRef}
         onPointerDown=${onDown} onPointerMove=${onMove} onPointerUp=${onUp} onPointerCancel=${onUp}
         onPointerLeave=${() => { setCur(null); setPick(null); }} onContextMenu=${(e) => e.preventDefault()}>
-        <div class="de-world" style=${{ width: (S.w || 0) + 'px', height: (S.h || 0) + 'px', transform: `translate(${view.x}px,${view.y}px) scale(${view.z})` }}>
+        <div class="de-world" style=${{ width: (S.w || 0) + 'px', height: (S.h || 0) + 'px', transform: `translate(${view.x}px,${view.y}px) rotate(${view.r}deg) scale(${view.z})` }}>
           ${picURL && html`<img class="de-pic" src=${picURL} draggable="false" />`}
           <canvas ref=${canvasRef} class=${'de-map' + (view.z > 2 ? ' px' : '')} style=${{ opacity: o.show }}></canvas>
           ${gradLine && html`<svg class="de-grad" viewBox=${`0 0 ${S.w} ${S.h}`}><line x1=${gradLine[0]} y1=${gradLine[1]} x2=${gradLine[2]} y2=${gradLine[3]}
@@ -643,7 +743,7 @@ export function DepthEditor({ req, startFrame = 0, onClose, showErr }) {
         </div>
         ${cur && brushTool && html`<div class="brushcur" style=${{ left: cur.x - csz / 2 + 'px', top: cur.y - csz / 2 + 'px', width: csz + 'px', height: csz + 'px' }}></div>`}
         ${loading && html`<div class="de-loading faint"><${Icon} name="loader-circle" size=${16} cls="spin" /> ${t('Loading…')}</div>`}
-        <div class="de-status mono faint">${pick != null ? `${t('Level')} ${pick.toFixed(3)}` : ''} · ${Math.round(view.z * 100)}%${info ? ` · ${S.w}×${S.h}` : ''}</div>
+        <div class="de-status mono faint">${pick != null ? `${t('Level')} ${pick.toFixed(3)}` : ''} · ${Math.round(view.z * (window.devicePixelRatio || 1) * 100)}%${view.r ? ` · ${Math.round(view.r)}°` : ''}${info ? ` · ${S.w}×${S.h}` : ''}</div>
       </div>
     </div>
     ${video && html`<div class="de-strip" title=${t('Marks: the frames edited by hand')}>

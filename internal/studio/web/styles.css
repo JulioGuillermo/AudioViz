@@ -890,6 +890,8 @@ input[type=search]::-webkit-search-cancel-button { filter: invert(1) opacity(.6)
 .de-stage { flex: 1; position: relative; overflow: hidden; background: repeating-conic-gradient(#16181c 0 25%, #1c1e23 0 50%) 0 0 / 24px 24px; touch-action: none; }
 .de-stage.brush { cursor: none; }
 .de-stage.pan { cursor: grab; }
+.de-stage.zoom { cursor: zoom-in; }
+.de-stage.rot { cursor: alias; }
 .de-world { position: absolute; left: 0; top: 0; transform-origin: 0 0; box-shadow: 0 0 0 1px rgba(255, 255, 255, .1), 0 10px 40px rgba(0, 0, 0, .6); }
 .de-pic, .de-map, .de-grad { position: absolute; inset: 0; width: 100%; height: 100%; user-select: none; pointer-events: none; }
 .de-map.px { image-rendering: pixelated; }

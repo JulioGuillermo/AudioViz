@@ -1119,4 +1119,7 @@ export const ES = {
   // Video Depth Anything
   "Video Depth Anything Small: made for videos, the depth steady from frame to frame (116 MB)": "Video Depth Anything Small: hecho para vídeos, la profundidad estable de frame a frame (116 MB)",
   "Downloaded the first time. Non-commercial: their license only allows non-commercial use. Video Depth Anything looks at 32 frames at once: with \"Every frame of the video\" it gives the steadiest depth": "Se descarga la primera vez. No comercial: su licencia solo permite uso no comercial. Video Depth Anything mira 32 frames a la vez: con \"Todos los frames del vídeo\" da la profundidad más estable",
+  "Zoom: click to zoom in, Alt+click to zoom out, drag to zoom (Z; the wheel zooms too)": "Zoom: clic para acercar, Alt+clic para alejar, arrastra para hacer zoom (Z; la rueda también hace zoom)",
+  "Click to zoom in, Alt+click to zoom out, drag sideways to zoom · the wheel zooms where the pointer is · two fingers: move, zoom and rotate": "Clic para acercar, Alt+clic para alejar, arrastra de lado para hacer zoom · la rueda hace zoom donde está el puntero · dos dedos: mover, zoom y rotar",
+  "Drag around the centre to rotate the view (Shift: steps of 15°) · the button with the degrees, above, puts it straight": "Arrastra alrededor del centro para rotar la vista (Shift: pasos de 15°) · el botón con los grados, arriba, la endereza",
 };
