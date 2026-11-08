@@ -295,12 +295,14 @@ func (s *Server) hGenImage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, j.snapshot())
 }
 
-// preview: URL of the latest preview ("" if none yet); j.mu held
+// preview: URL of the latest preview ("" if none yet); j.mu held. The job's id is in it: each
+// generation counts its previews from 1, and a browser shows an image it already has for the
+// same URL (no-store or not), which would be the last generation's
 func (j *job) preview() string {
 	if j.Previews == 0 {
 		return ""
 	}
-	return fmt.Sprintf("/api/images/preview?n=%d", j.Previews)
+	return fmt.Sprintf("/api/images/preview?job=%s&n=%d", j.ID, j.Previews)
 }
 
 func (s *Server) hImagePreview(w http.ResponseWriter, r *http.Request) {
