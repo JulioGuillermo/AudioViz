@@ -83,6 +83,9 @@ func (s *Server) hDepth(w http.ResponseWriter, r *http.Request) {
 	j, err := s.startJob("depth", func(ctx context.Context, j *job) error {
 		t0 := time.Now()
 		_, err := depth.Make(ctx, dir, dreq, func(st string, p float64) {
+			if ctx.Err() != nil { // (stopped: late reports of the frames being finished change nothing)
+				return
+			}
 			j.mu.Lock()
 			if dreq.All { // every frame: the total and this frame's progress
 				switch st {
@@ -133,6 +136,45 @@ func (s *Server) hDepth(w http.ResponseWriter, r *http.Request) {
 	}
 	s.tagJob(j, r, req)
 	writeJSON(w, j.snapshot())
+}
+
+// GET /api/depth/partial?image=&source=&model=&detail=&flow=&all=1: the frames a stopped run of
+// a video's every frame left ({frames}; 0 for none)
+func (s *Server) hDepthPartial(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	req := depthReq{Image: q.Get("image"), Source: q.Get("source"), Model: q.Get("model"), Detail: q.Get("detail"),
+		File: q.Get("file"), Flow: q.Get("flow"), All: q.Get("all") == "1"}
+	n := 0
+	if dir := s.cacheDir(); dir != "" && req.All {
+		n = depth.Partial(dir, s.depthRequest(req))
+	}
+	writeJSON(w, map[string]int{"frames": n})
+}
+
+// POST /api/depth/discard (as /api/depth): throw away the frames a stopped run left
+func (s *Server) hDepthDiscard(w http.ResponseWriter, r *http.Request) {
+	var req depthReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		fail(w, 400, err)
+		return
+	}
+	dir := s.cacheDir()
+	if dir == "" {
+		fail(w, 400, errors.New("no project is open"))
+		return
+	}
+	s.mu.Lock()
+	running := s.job != nil && s.job.Kind == "depth" && s.job.snapshot()["status"] == "running"
+	s.mu.Unlock()
+	if running {
+		fail(w, 409, errors.New("the depth is being worked out: cancel it first"))
+		return
+	}
+	if err := depth.DiscardPartial(dir, s.depthRequest(req)); err != nil {
+		fail(w, 500, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
 }
 
 // GET /api/depth/view?image=&source=&model=&file=: the depth map (if worked out) as a grey PNG

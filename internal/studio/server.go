@@ -140,6 +140,8 @@ func Run(opt Options, ready func(url string)) error {
 	mux.HandleFunc("GET /api/stems", s.hStemsState)
 	mux.HandleFunc("POST /api/stems/open", s.hStemsOpen)
 	mux.HandleFunc("GET /api/depth/view", s.hDepthView)
+	mux.HandleFunc("GET /api/depth/partial", s.hDepthPartial)
+	mux.HandleFunc("POST /api/depth/discard", s.hDepthDiscard)
 	mux.HandleFunc("POST /api/expr", s.hExpr)
 	mux.HandleFunc("GET /api/events", s.hEvents)
 	mux.HandleFunc("POST /api/project/ops", s.hOps)
@@ -218,6 +220,7 @@ func (s *Server) open(path string) error {
 	if err != nil {
 		return err
 	}
+	sess.Live = true
 	s.mu.Lock()
 	old := s.sess
 	s.projPath, s.cfg, s.sess = abs, cfg, sess

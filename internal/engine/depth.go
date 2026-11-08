@@ -43,10 +43,16 @@ func (s *Session) depthFor(bg *config.BackgroundConfig, tv float64) ([]uint16, [
 	}
 	cache := filepath.Join(s.Cfg.Dir, "cache")
 	if d.EveryFrame && d.Source != depth.SourceFile && video.IsVideo(bg.Path) {
-		req.All = true
-		if img, norm, ver, ok := s.depthFrame(bg, req, cache, tv); ok {
+		all := req
+		all.All = true
+		if img, norm, ver, ok := s.depthFrame(bg, all, cache, tv); ok {
 			return img, norm, ver
 		}
+		return nil, nil, "" // (the preview: none until its job has made it; an export made it above)
+	}
+	if _, ok := depth.Cached(cache, req); !ok && s.Live {
+		// the studio's preview never waits for a depth to be worked out (its job does it, with
+		// progress, and can be stopped): none until then
 		return nil, nil, ""
 	}
 	cp := depth.CachePath(cache, req)
@@ -119,6 +125,17 @@ func fitDepth(m *depth.Map, W, H int, mode string) []uint16 {
 func (s *Session) depthFrame(bg *config.BackgroundConfig, req depth.Request, cache string, tv float64) ([]uint16, []uint16, string, bool) {
 	sk := depth.SeqDir(cache, req)
 	sq, ok := s.depthSeqs[sk]
+	if !ok && s.Live { // (the preview: looked for again until the studio's job has made it)
+		var found bool
+		if sq, found = depth.OpenSeq(cache, req); !found {
+			return nil, nil, "", false
+		}
+		if s.depthSeqs == nil || len(s.depthSeqs) > 16 {
+			s.depthSeqs = map[string]*depth.Seq{}
+		}
+		s.depthSeqs[sk] = sq
+		ok = true
+	}
 	if !ok {
 		var found bool
 		if sq, found = depth.OpenSeq(cache, req); !found {
@@ -139,8 +156,13 @@ func (s *Session) depthFrame(bg *config.BackgroundConfig, req depth.Request, cac
 	if sq == nil {
 		return nil, nil, "", false
 	}
+	return s.seqFrame(bg, sq, tv)
+}
+
+// seqFrame: the fitted map (and normals) of sequence sq on the frame shown at tv
+func (s *Session) seqFrame(bg *config.BackgroundConfig, sq *depth.Seq, tv float64) ([]uint16, []uint16, string, bool) {
 	i := sq.Index(tv, bg.LoopVideo)
-	key := fmt.Sprintf("%s|%d|%dx%d|%s|%g", sk, i, s.W, s.H, bg.FitMode, bg.Depth.Relief)
+	key := fmt.Sprintf("%s|%d|%dx%d|%s|%g", sq.Dir, i, s.W, s.H, bg.FitMode, bg.Depth.Relief)
 	if e, ok := s.depths[key]; ok {
 		return e.img, e.norm, e.ver, e.img != nil
 	}

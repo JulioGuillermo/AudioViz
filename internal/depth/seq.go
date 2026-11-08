@@ -49,8 +49,9 @@ func SeqDir(cacheDir string, r Request) string {
 func (s *Seq) framePath(i int) string { return filepath.Join(s.Dir, fmt.Sprintf("%05d.png", i)) }
 
 // OpenSeq: the request's sequence if it is complete
-func OpenSeq(cacheDir string, r Request) (*Seq, bool) {
-	dir := SeqDir(cacheDir, r)
+func OpenSeq(cacheDir string, r Request) (*Seq, bool) { return openSeqDir(SeqDir(cacheDir, r)) }
+
+func openSeqDir(dir string) (*Seq, bool) {
 	b, err := os.ReadFile(filepath.Join(dir, "meta.json"))
 	if err != nil {
 		return nil, false
@@ -74,6 +75,26 @@ func (s *Seq) Index(t float64, loop bool) int {
 	return max(0, min(s.N-1, int(math.Round(t*s.FPS))))
 }
 
+// Partial: how many frames a stopped run of the request's sequence left (kept to go on from)
+func Partial(cacheDir string, r Request) int {
+	es, err := os.ReadDir(SeqDir(cacheDir, r) + ".part")
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, e := range es {
+		if strings.HasSuffix(e.Name(), ".png") {
+			n++
+		}
+	}
+	return n
+}
+
+// DiscardPartial: the frames of a stopped run thrown away (the next run starts from the first)
+func DiscardPartial(cacheDir string, r Request) error {
+	return os.RemoveAll(SeqDir(cacheDir, r) + ".part")
+}
+
 // Frame: the map of frame i
 func (s *Seq) Frame(i int) (*Map, error) { return Load(s.framePath(max(0, min(s.N-1, i)))) }
 
@@ -94,9 +115,16 @@ func makeSeq(ctx context.Context, cacheDir string, r Request, stage func(string,
 		return nil, err
 	}
 	defer rd.Close()
-	s := &Seq{Dir: SeqDir(cacheDir, r), FPS: fps, N: n, Dur: pr.Duration}
+	// worked out in a folder of its own (.part: a stopped run goes on from there), which replaces
+	// the old sequence only once complete: until then the old one stays as it is
+	final := SeqDir(cacheDir, r)
+	s := &Seq{Dir: final + ".part", FPS: fps, N: n, Dur: pr.Duration}
 	if r.Force {
 		os.RemoveAll(s.Dir)
+	} else if _, err := os.Stat(s.Dir); err != nil {
+		if _, ok := openSeqDir(final); !ok { // (a run stopped before .part folders: its frames)
+			os.Rename(final, s.Dir)
+		}
 	}
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
 		return nil, err
@@ -263,6 +291,12 @@ func makeSeq(ctx context.Context, cacheDir string, r Request, stage func(string,
 	}
 	b, _ := json.Marshal(seqMeta{FPS: fps, N: n, Dur: pr.Duration})
 	if err := os.WriteFile(filepath.Join(s.Dir, "meta.json"), b, 0o644); err != nil {
+		return nil, err
+	}
+	if err := os.RemoveAll(final); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(s.Dir, final); err != nil {
 		return nil, err
 	}
 	stage("done", 1)

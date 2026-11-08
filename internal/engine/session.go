@@ -47,15 +47,18 @@ type Session struct {
 	stemsKey   string
 	depths     map[string]*depthEntry // depth maps of the backgrounds, fitted to the frame (depth.go)
 	depthSeqs  map[string]*depth.Seq  // a video's depth on every frame (nil: failed)
-	maskSeq    int
-	lyr        *lyrics.Multi
-	lyrKey     string
-	LyrVer     int // changes every time the lyrics atlas is rebuilt
-	sim        particleSim
-	fluids     map[string]*effects.Fluid // simulated fluid transitions (see fluidFor)
-	exprCache  map[string]exprEntry      // the expressions compiled (exprs.go)
-	exprFeats  []audio.FrameFeatures     // the analysis the expressions read (the frame being made)
-	silent     []audio.FrameFeatures     // when the project has no audio yet
+	// Live: the studio's preview: it never waits for a video's depth on every frame to be worked
+	// out (an export, a fork, does)
+	Live      bool
+	maskSeq   int
+	lyr       *lyrics.Multi
+	lyrKey    string
+	LyrVer    int // changes every time the lyrics atlas is rebuilt
+	sim       particleSim
+	fluids    map[string]*effects.Fluid // simulated fluid transitions (see fluidFor)
+	exprCache map[string]exprEntry      // the expressions compiled (exprs.go)
+	exprFeats []audio.FrameFeatures     // the analysis the expressions read (the frame being made)
+	silent    []audio.FrameFeatures     // when the project has no audio yet
 }
 
 type anaKey struct {

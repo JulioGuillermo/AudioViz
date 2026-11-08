@@ -1792,6 +1792,8 @@ function App() {
           ? `${t(STEP_LABEL[job.gen.steps[job.gen.current].id])} · ${Math.round(job.gen.steps[job.gen.current].progress * 100)}%`
           : job.export && job.status === 'running'
             ? `${t(job.export.stage === 'mux' ? 'Writing the MP4' : 'Exporting')} · ${Math.round(job.progress * 100)}%` : job.message}</span>
+        ${job.status === 'running' && html`<button class="btn icon ghost sm" title=${t('Cancel it')}
+          onClick=${(e) => { e.stopPropagation(); api('POST', '/api/job/cancel').catch(showErr); }}><${Icon} name="x" size=${13} /></button>`}
         <button class=${'btn icon ghost sm' + (notifyJobs ? '' : ' off')} title=${t(notifyJobs ? 'Notifying when a job ends (when this tab is not looked at)' : 'Notify me when a job ends')}
           onClick=${(e) => { e.stopPropagation(); toggleNotifyJobs(); }}><${Icon} name=${notifyJobs ? 'bell' : 'bell-off'} size=${13} /></button>
       </div>`}

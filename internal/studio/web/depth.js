@@ -41,7 +41,7 @@ const viewURL = (image, d, v) => '/api/depth/view?' + new URLSearchParams({ imag
   detail: d.detail || 'high', file: d.path || '', flow: d.flow || '', all: allFrames(image, d) ? '1' : '', v }).toString();
 
 // a job's progress: a bar by the percentage; over a video's frames, the whole and this frame's
-function DepthProgress({ job }) {
+function DepthProgress({ job, onCancel }) {
   const f = job.frames;
   const pct = (v) => ((v || 0) * 100).toFixed(1) + '%';
   return html`<div class="depth-prog">
@@ -49,7 +49,9 @@ function DepthProgress({ job }) {
       <span class="faint">${Math.round((job.progress || 0) * 100)} %</span></div>
     ${f && f.total > 0 && html`<div class="row"><div class="progress sub"><i style=${{ width: pct(f.frame) }}></i></div>
       <span class="faint">${Math.round((f.frame || 0) * 100)} %</span></div>`}
-    <div class="faint depth-prog-msg">${job.message}</div>
+    <div class="faint depth-prog-msg">${f && f.total > 0 ? `${t('Frames')} ${Math.min(f.done + 1, f.total)} / ${f.total}` : job.message}</div>
+    <div class="row depth-prog-act"><button class="btn sm ghost" title=${t('Cancel it (the frames done so far are kept: working it out again goes on from there)')} onClick=${onCancel}>
+      <${Icon} name="x" size=${13} /> ${t('Cancel')}</button></div>
   </div>`;
 }
 
@@ -77,6 +79,16 @@ export function DepthSection({ cfg, onChange, ctx }) {
   // another source or model: look again
   useEffect(() => { setMissing(false); }, [cfg.path, d.source, d.model, d.detail, d.path, d.flow, d.every_frame]);
   const on = d.source && d.source !== 'none';
+  // frames left by a stopped run (every frame of a video): go on from them, or throw them away
+  const [partial, setPartial] = useState(0);
+  const all = allFrames(cfg.path, d);
+  const body = () => ({ image: cfg.path, source: d.source, model: d.model || 'small', detail: d.detail || 'high',
+    file: d.path || '', flow: d.flow || '', all });
+  useEffect(() => {
+    if (!all || running || !cfg.path) { setPartial(0); return; }
+    api('GET', '/api/depth/partial?' + new URLSearchParams({ ...body(), all: '1' }).toString()).then((r) => setPartial(r.frames || 0)).catch(() => setPartial(0));
+  }, [cfg.path, d.source, d.model, d.detail, d.path, d.flow, all, running, ver]);
+  const discard = () => api('POST', '/api/depth/discard', body()).then(() => setPartial(0)).catch(ctx.showErr);
   const make = (force) => api('POST', '/api/depth', { image: cfg.path, source: d.source, model: d.model || 'small', detail: d.detail || 'high',
     file: d.path || '', flow: d.flow || '', all: allFrames(cfg.path, d), force: !!force }).catch(ctx.showErr);
   const isVideo = VIDEO_RE.test(cfg.path || '');
@@ -87,14 +99,18 @@ export function DepthSection({ cfg, onChange, ctx }) {
       ${!missing && cfg.path ? html`<img class="depth-img" src=${viewURL(cfg.path, d, ver)} onError=${() => setMissing(true)} onLoad=${() => setMissing(false)} />`
         : html`<div class="depth-none faint">${t(cfg.path ? 'Not worked out yet' : 'The segment has no image')}</div>`}
       <div class="row depth-ready" style="margin-top:6px">
-        ${running ? html`<${DepthProgress} job=${job} />`
+        ${running ? html`<${DepthProgress} job=${job} onCancel=${() => api('POST', '/api/job/cancel').catch(ctx.showErr)} />`
           : !missing && html`<span class="faint" style="font-size:12px"><${Icon} name="check" size=${12} /> ${t('Ready (kept in the project\'s cache)')}</span>`}
         ${job && job.status === 'error' && html`<span class="danger" style="font-size:12px">${job.message}</span>`}
-        ${missing || running ? html`<button class="btn sm primary" disabled=${running || !cfg.path} onClick=${() => make(false)}>
-          <${Icon} name=${running ? 'loader-circle' : 'wand-sparkles'} size=${13} cls=${running ? 'spin' : ''} /> ${t('Work out the depth')}</button>`
+        ${running ? null : missing ? html`<button class="btn sm primary" disabled=${!cfg.path} onClick=${() => make(false)}>
+          <${Icon} name="wand-sparkles" size=${13} /> ${t(partial ? 'Go on working out the depth' : 'Work out the depth')}</button>`
           : html`<button class="btn sm ghost" disabled=${ctx.job && ctx.job.status === 'running'} title=${t('Work it out again (another model or flow version, a better result…)')}
               onClick=${() => make(true)}><${Icon} name="rotate-ccw" size=${13} /> ${t('Work out again')}</button>`}
       </div>
+      ${partial > 0 && !running && html`<div class="row depth-partial">
+        <span class="faint">${t('{n} frames kept from a stopped run', { n: partial })}</span>
+        <button class="btn sm ghost" title=${t('Throw them away: the next run starts from the first frame')} onClick=${discard}>
+          <${Icon} name="trash-2" size=${13} /> ${t('Discard')}</button></div>`}
     </div>`}
   </${Section}>`;
 }

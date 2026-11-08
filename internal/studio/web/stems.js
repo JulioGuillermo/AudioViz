@@ -34,8 +34,10 @@ export function StemsSection({ ctx, hasAudio, audio, onAudio }) {
       : html`<div class="stems-row">
         ${running ? html`<span class="faint">${t(job.message)} · ${Math.round((job.progress || 0) * 100)} %</span>` : html`<span class="faint">${t(hasAudio ? 'Not separated yet' : 'The project has no song')}</span>`}
         <span class="spacer"></span>
-        <button class="btn sm primary" disabled=${running || !hasAudio} onClick=${go}>
-          <${Icon} name=${running ? 'loader-circle' : 'audio-waveform'} size=${13} cls=${running ? 'spin' : ''} /> ${t('Separate the song')}</button></div>`}
+        ${running ? html`<button class="btn sm ghost" onClick=${() => api('POST', '/api/job/cancel').catch(ctx.showErr)}>
+            <${Icon} name="x" size=${13} /> ${t('Cancel')}</button>`
+          : html`<button class="btn sm primary" disabled=${!hasAudio} onClick=${go}>
+            <${Icon} name="audio-waveform" size=${13} /> ${t('Separate the song')}</button>`}</div>`}
     ${job && job.status === 'error' && html`<div class="stems-row"><span class="danger">${job.message}</span></div>`}
     </div>
     ${st && !st.ready && !running && html`<p class="faint" style="margin:6px 0 0;font-size:11.5px">${t(st.model
