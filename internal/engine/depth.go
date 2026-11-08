@@ -50,25 +50,26 @@ func (s *Session) depthFor(bg *config.BackgroundConfig, tv float64) ([]uint16, [
 		}
 		return nil, nil, "" // (the preview: none until its job has made it; an export made it above)
 	}
-	if _, ok := depth.Cached(cache, req); !ok && s.Live {
-		// the studio's preview never waits for a depth to be worked out (its job does it, with
-		// progress, and can be stopped): none until then
-		return nil, nil, ""
-	}
 	cp := depth.CachePath(cache, req)
 	key := fmt.Sprintf("%s|%dx%d|%s|%g", cp, s.W, s.H, bg.FitMode, d.Relief)
 	if st, err := os.Stat(cp); err == nil {
 		key += fmt.Sprint("|", st.ModTime().UnixNano()) // (worked out again: the new one)
 	}
+	key += fmt.Sprint("|", depth.EditStamp(cache, req, 0)) // (edited by hand: the new edit)
 	if e, ok := s.depths[key]; ok {
 		return e.img, e.norm, e.ver
+	}
+	m, ok := depth.Cached(cache, req)
+	if !ok && s.Live {
+		// the studio's preview never waits for a depth to be worked out (its job does it, with
+		// progress, and can be stopped): none until then
+		return nil, nil, ""
 	}
 	if s.depths == nil || len(s.depths) > 16 {
 		s.depths = map[string]*depthEntry{}
 	}
 	e := &depthEntry{}
 	s.depths[key] = e
-	m, ok := depth.Cached(cache, req)
 	if !ok {
 		t0 := time.Now()
 		var err error
@@ -162,7 +163,7 @@ func (s *Session) depthFrame(bg *config.BackgroundConfig, req depth.Request, cac
 // seqFrame: the fitted map (and normals) of sequence sq on the frame shown at tv
 func (s *Session) seqFrame(bg *config.BackgroundConfig, sq *depth.Seq, tv float64) ([]uint16, []uint16, string, bool) {
 	i := sq.Index(tv, bg.LoopVideo)
-	key := fmt.Sprintf("%s|%d|%dx%d|%s|%g", sq.Dir, i, s.W, s.H, bg.FitMode, bg.Depth.Relief)
+	key := fmt.Sprintf("%s|%d|%dx%d|%s|%g|%d", sq.Dir, i, s.W, s.H, bg.FitMode, bg.Depth.Relief, sq.EditStamp(i))
 	if e, ok := s.depths[key]; ok {
 		return e.img, e.norm, e.ver, e.img != nil
 	}

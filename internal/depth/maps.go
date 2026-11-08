@@ -8,12 +8,15 @@ import (
 	"image"
 	"image/draw"
 	"image/png"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 
+	"audioviz/internal/fileid"
 	"audioviz/internal/video"
 )
 
@@ -282,9 +285,41 @@ type Request struct {
 	Force  bool   // worked out again though it is in the cache
 }
 
-// CachePath: where the map of a request is kept in the project's cache folder (it changes with
-// the background file, its date, the source and the model)
+// CachePath: where the map of a request is kept in the project's cache folder. It changes with
+// the background file's content (not where it is: a project copied, moved or imported from a
+// package keeps its depths and their hand edits), the source and the model
 func CachePath(cacheDir string, r Request) string {
+	h := sha1.New()
+	for _, p := range []string{r.Image, r.File} {
+		fmt.Fprintf(h, "%s|", fileid.Fingerprint(p))
+	}
+	writeModel(h, r)
+	fmt.Fprint(h, "|v3")
+	if r.All {
+		fmt.Fprint(h, "|all")
+	}
+	p := filepath.Join(cacheDir, "depth", hex.EncodeToString(h.Sum(nil))[:20]+".png")
+	migrate(cacheDir, r, p)
+	return p
+}
+
+func writeModel(h io.Writer, r Request) {
+	model := r.Model
+	switch r.Source {
+	case SourceAI, "":
+		if model == "" {
+			model = "small"
+		}
+		model += "|" + fmt.Sprint(DetailSize(r.Detail))
+	case SourceComfy: // (its flow, File, counts with its content)
+	default:
+		model = ""
+	}
+	fmt.Fprintf(h, "%s|%s", r.Source, model)
+}
+
+// legacyCachePath: where it was kept before (by the file's path and date)
+func legacyCachePath(cacheDir string, r Request) string {
 	h := sha1.New()
 	for _, p := range []string{r.Image, r.File} {
 		fmt.Fprintf(h, "%s|", p)
@@ -292,19 +327,30 @@ func CachePath(cacheDir string, r Request) string {
 			fmt.Fprintf(h, "%d|%d|", st.Size(), st.ModTime().UnixNano())
 		}
 	}
-	model := r.Model
-	switch r.Source {
-	case SourceAI:
-		model += "|" + fmt.Sprint(DetailSize(r.Detail))
-	case SourceComfy: // (its flow, File, counts with its date)
-	default:
-		model = ""
-	}
-	fmt.Fprintf(h, "%s|%s|v2", r.Source, model)
+	writeModel(h, r)
+	fmt.Fprint(h, "|v2")
 	if r.All {
 		fmt.Fprint(h, "|all")
 	}
 	return filepath.Join(cacheDir, "depth", hex.EncodeToString(h.Sum(nil))[:20]+".png")
+}
+
+// migrate: what a request had under its old name (map, sequence, a stopped run's frames, hand
+// edits) moved to the new one, once
+func migrate(cacheDir string, r Request, p string) {
+	if !fileid.Once(p) {
+		return
+	}
+	old := legacyCachePath(cacheDir, r)
+	if old == p {
+		return
+	}
+	ob, nb := strings.TrimSuffix(old, ".png"), strings.TrimSuffix(p, ".png")
+	edits := filepath.Join(filepath.Dir(cacheDir), "depth-edits")
+	for _, m := range [][2]string{{old, p}, {ob + ".seq", nb + ".seq"}, {ob + ".seq.part", nb + ".seq.part"},
+		{filepath.Join(edits, filepath.Base(ob)), filepath.Join(edits, filepath.Base(nb))}} {
+		fileid.Move(m[0], m[1])
+	}
 }
 
 // Cached: the map of a request if it is already in the cache (every frame's: its first frame's,
@@ -314,6 +360,9 @@ func Cached(cacheDir string, r Request) (*Map, bool) {
 		if _, ok := OpenSeq(cacheDir, r); !ok {
 			return nil, false
 		}
+	}
+	if m, err := Load(EditPath(cacheDir, r, 0)); err == nil { // (edited by hand: that one)
+		return m, true
 	}
 	m, err := Load(CachePath(cacheDir, r))
 	return m, err == nil

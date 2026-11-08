@@ -15,6 +15,7 @@ import (
 	"unsafe"
 
 	"audioviz/internal/audio"
+	"audioviz/internal/fileid"
 	"audioviz/internal/progress"
 )
 
@@ -66,6 +67,23 @@ func (r *Result) Text() string {
 var stepWeights = map[string]float64{"models": 0.05, "prepare": 0.03, "separate": 0.62, "recognize": 0.22, "align": 0.08, "lines": 0.08}
 
 func mb(b int64) string { return fmt.Sprintf("%.0f MB", float64(b)/1e6) }
+
+// MigrateVocals: what was kept for a song under its old key (the separated vocals and what was
+// worked out from them) moved to its new one; rate, n: the song's sample rate and samples
+func MigrateVocals(oldKey, newKey string, rate, n int) {
+	op := vocalsCachePath(fmt.Sprintf("%s|%d|%d", oldKey, rate, n))
+	np := vocalsCachePath(fmt.Sprintf("%s|%d|%d", newKey, rate, n))
+	if op == "" || np == "" || op == np {
+		return
+	}
+	ob, nb := strings.TrimSuffix(filepath.Base(op), ".f32"), strings.TrimSuffix(filepath.Base(np), ".f32")
+	es, _ := os.ReadDir(filepath.Dir(op))
+	for _, e := range es {
+		if strings.HasPrefix(e.Name(), ob+".") {
+			fileid.Move(filepath.Join(filepath.Dir(op), e.Name()), filepath.Join(filepath.Dir(op), nb+strings.TrimPrefix(e.Name(), ob)))
+		}
+	}
+}
 
 func vocalsCachePath(key string) string {
 	if key == "" {

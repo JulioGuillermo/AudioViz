@@ -29,10 +29,11 @@ const (
 
 // Seq: a complete depth sequence in the cache
 type Seq struct {
-	Dir string
-	FPS float64
-	N   int
-	Dur float64
+	Dir   string
+	Edits string // its frames edited by hand (EditDir)
+	FPS   float64
+	N     int
+	Dur   float64
 }
 
 type seqMeta struct {
@@ -49,7 +50,13 @@ func SeqDir(cacheDir string, r Request) string {
 func (s *Seq) framePath(i int) string { return filepath.Join(s.Dir, fmt.Sprintf("%05d.png", i)) }
 
 // OpenSeq: the request's sequence if it is complete
-func OpenSeq(cacheDir string, r Request) (*Seq, bool) { return openSeqDir(SeqDir(cacheDir, r)) }
+func OpenSeq(cacheDir string, r Request) (*Seq, bool) {
+	s, ok := openSeqDir(SeqDir(cacheDir, r))
+	if ok {
+		s.Edits = EditDir(cacheDir, r)
+	}
+	return s, ok
+}
 
 func openSeqDir(dir string) (*Seq, bool) {
 	b, err := os.ReadFile(filepath.Join(dir, "meta.json"))
@@ -96,7 +103,26 @@ func DiscardPartial(cacheDir string, r Request) error {
 }
 
 // Frame: the map of frame i
-func (s *Seq) Frame(i int) (*Map, error) { return Load(s.framePath(max(0, min(s.N-1, i)))) }
+func (s *Seq) Frame(i int) (*Map, error) {
+	i = max(0, min(s.N-1, i))
+	if s.Edits != "" { // (edited by hand: that one)
+		if m, err := Load(filepath.Join(s.Edits, fmt.Sprintf("%05d.png", i))); err == nil {
+			return m, nil
+		}
+	}
+	return Load(s.framePath(i))
+}
+
+// EditStamp: when frame i was last edited by hand (0: never)
+func (s *Seq) EditStamp(i int) int64 {
+	if s.Edits == "" {
+		return 0
+	}
+	if st, err := os.Stat(filepath.Join(s.Edits, fmt.Sprintf("%05d.png", max(0, min(s.N-1, i))))); err == nil {
+		return st.ModTime().UnixNano()
+	}
+	return 0
+}
 
 // makeSeq works out the sequence of a video (resuming one left half done); its first frame's map
 // is also kept where a single map goes (CachePath), so a look at the depth shows it

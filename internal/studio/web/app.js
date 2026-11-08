@@ -371,7 +371,7 @@ function TrackInspector({ proj, track, segIdx, time, meta, update, setSel, ctx, 
     <div class="insp-b">
       <${SegHeader} segs=${segs} i=${i} set=${setSeg} meta=${meta} track=${track} ctx=${ctx} />
       <${Form} fields=${def.fields} value=${seg.cfg} onChange=${(cfg) => setSeg({ ...seg, cfg })} ctx=${ctx} isFirst=${i === 0} kf=${kf} />
-      ${track === 'background' && html`<${DepthSection} cfg=${seg.cfg} ctx=${ctx} onChange=${(cfg) => setSeg({ ...seg, cfg })} />`}
+      ${track === 'background' && html`<${DepthSection} cfg=${seg.cfg} ctx=${ctx} at=${seg.at || 0} onChange=${(cfg) => setSeg({ ...seg, cfg })} />`}
       ${track === 'background' && html`<${Section} id="genimg" title=${t('Generate an image')} help=${'Create a background from a description, or edit an image, with AI on your GPU.'}>
         <button class="btn" onClick=${onImages}><${Icon} name="wand-sparkles" size=${15} /> ${t('Generate an image…')}</button></${Section}>`}
       ${track === 'lyrics' && html`<${MaskSection} clip=${segMaskOwner(seg)} screen=${true} kf=${kf}
@@ -884,6 +884,7 @@ function App() {
       if (msg.type === 'ops') { receive(msg.data); if (msg.data.agent || msg.data.reverts) setAgentRev((x) => x + 1); }
       if (msg.type === 'changes') setAgentRev((x) => x + 1);
       if (msg.type === 'comfy') loadFlows();
+      if (msg.type === 'depthedit') setRev((x) => x + 1); // (a depth edited by hand: the preview shows it)
       if (msg.type === 'chat' || msg.type === 'typing') chatEvent(msg.type, msg.data, meRef.current, notifyMsg);
       if (msg.type === 'presence') setPeers(msg.data || []);
       if (msg.type === 'cursor' && msg.data.id !== meRef.current.id) setCursors((c) => ({ ...c, [msg.data.id]: { ...msg.data, at: Date.now() } }));
@@ -1049,6 +1050,7 @@ function App() {
   const ctx = {
     job, showErr,
     seek,
+    get time() { return timeStore.get(); },
     selMask, setSelMask,
     openEditor: (tool, what) => { setEditorTool(tool || 'select'); setPathWhat(what || 'motion'); setPathNodeI(null); setEditor(true); },
     // the path node selected in the editor: { what: 'motion' | 'route', pi } or null

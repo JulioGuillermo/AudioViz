@@ -5,6 +5,7 @@ import { t } from './i18n.js';
 import { api } from './util.js';
 import { useStore } from './store.js';
 import { flowsStore, loadFlows } from './comfy.js';
+import { DepthEditor } from './depthedit.js';
 
 // The depth map of a background segment (config.DepthConfig): where it comes from, working it
 // out (a job: Depth Anything 3 on the GPU, the model downloaded the first time) and a look at it.
@@ -65,7 +66,7 @@ const depthFields = (flows) => {
   ...DEPTH_FIELDS.slice(i)];
 };
 
-export function DepthSection({ cfg, onChange, ctx }) {
+export function DepthSection({ cfg, onChange, ctx, at = 0 }) {
   const d = cfg.depth || {};
   const flows = useStore(flowsStore);
   useEffect(() => { if (d.source === 'comfy') loadFlows(); }, [d.source]);
@@ -92,6 +93,34 @@ export function DepthSection({ cfg, onChange, ctx }) {
   const make = (force) => api('POST', '/api/depth', { image: cfg.path, source: d.source, model: d.model || 'small', detail: d.detail || 'high',
     file: d.path || '', flow: d.flow || '', all: allFrames(cfg.path, d), force: !!force }).catch(ctx.showErr);
   const isVideo = VIDEO_RE.test(cfg.path || '');
+  // the editor: by hand over the picture (a video's every frame: one by one, opening at the frame
+  // under the cursor)
+  const [editing, setEditing] = useState(null);
+  const [nEdited, setNEdited] = useState(0);
+  useEffect(() => {
+    if (!on || !cfg.path || missing) { setNEdited(0); return; }
+    api('GET', '/api/depth/edit/info?' + new URLSearchParams({ ...body(), all: all ? '1' : '' }).toString())
+      .then((r) => setNEdited(r.ready ? (r.edited || []).length : 0)).catch(() => setNEdited(0));
+  }, [cfg.path, d.source, d.model, d.detail, d.path, d.flow, all, missing, ver]);
+  const openEditor = async () => {
+    let f = 0;
+    if (all) {
+      try {
+        const r = await api('GET', '/api/depth/edit/info?' + new URLSearchParams({ ...body(), all: '1' }).toString());
+        if (r.ready && r.fps > 0) {
+          let tv = Math.max(0, (ctx.time || 0) - at);
+          if (cfg.loop_video && r.frames > 0) tv %= r.frames / r.fps;
+          f = Math.max(0, Math.min(r.frames - 1, Math.round(tv * r.fps)));
+        }
+      } catch (e) { /* (the first frame) */ }
+    }
+    setEditing({ req: body(), frame: f });
+  };
+  const dropEdits = () => {
+    if (!confirm(t('Throw away the hand edits of this depth?'))) return;
+    api('DELETE', '/api/depth/edit/map?' + new URLSearchParams({ ...body(), all: all ? '1' : '', frame: 'all' }).toString())
+      .then(() => setVer((x) => x + 1)).catch(ctx.showErr);
+  };
   const fields = depthFields(flows).filter((f) => !f.video || isVideo);
   return html`<${Section} id="depth" title=${t('Depth')} help=${'How near each point of the image is: the light of the emitters follows it, and things can go behind what is nearer.'}>
     <${Form} fields=${fields} value=${d} ctx=${ctx} onChange=${(nd) => onChange({ ...cfg, depth: nd })} />
@@ -107,6 +136,14 @@ export function DepthSection({ cfg, onChange, ctx }) {
           : html`<button class="btn sm ghost" disabled=${ctx.job && ctx.job.status === 'running'} title=${t('Work it out again (another model or flow version, a better result…)')}
               onClick=${() => make(true)}><${Icon} name="rotate-ccw" size=${13} /> ${t('Work out again')}</button>`}
       </div>
+      ${!missing && !running && cfg.path && html`<div class="row depth-edit">
+        <button class="btn sm" title=${t('Paint the depth by hand over the picture (a video: frame by frame)')} onClick=${openEditor}>
+          <${Icon} name="brush" size=${13} /> ${t('Edit the depth…')}</button>
+        ${nEdited > 0 && html`<span class="faint" title=${t('Edited by hand: they win over the worked out depth (also after working it out again)')}>${t(all ? '{n} frames edited' : 'Edited by hand', { n: nEdited })}</span>
+          <button class="btn sm ghost" title=${t('Throw away the hand edits: back to the worked out depth')} onClick=${dropEdits}><${Icon} name="trash-2" size=${13} /></button>`}
+      </div>`}
+      ${editing && html`<${DepthEditor} req=${editing.req} startFrame=${editing.frame} showErr=${ctx.showErr}
+        onClose=${() => { setEditing(null); setVer((x) => x + 1); }} />`}
       ${partial > 0 && !running && html`<div class="row depth-partial">
         <span class="faint">${t('{n} frames kept from a stopped run', { n: partial })}</span>
         <button class="btn sm ghost" title=${t('Throw them away: the next run starts from the first frame')} onClick=${discard}>

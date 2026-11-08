@@ -29,6 +29,7 @@ import (
 	"audioviz/internal/config"
 	"audioviz/internal/depth"
 	"audioviz/internal/engine"
+	"audioviz/internal/fileid"
 	"audioviz/internal/gpu"
 	"audioviz/internal/lyrics"
 	"audioviz/internal/lyricsgen"
@@ -142,6 +143,9 @@ func Run(opt Options, ready func(url string)) error {
 	mux.HandleFunc("GET /api/depth/view", s.hDepthView)
 	mux.HandleFunc("GET /api/depth/partial", s.hDepthPartial)
 	mux.HandleFunc("POST /api/depth/discard", s.hDepthDiscard)
+	mux.HandleFunc("GET /api/depth/edit/info", s.hDepthEditInfo)
+	mux.HandleFunc("/api/depth/edit/map", s.hDepthEditMap)
+	mux.HandleFunc("GET /api/depth/edit/image", s.hDepthEditImage)
 	mux.HandleFunc("POST /api/expr", s.hExpr)
 	mux.HandleFunc("GET /api/events", s.hEvents)
 	mux.HandleFunc("POST /api/project/ops", s.hOps)
@@ -1138,7 +1142,7 @@ func (s *Server) hResync(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	out, source, err := lyricsgen.Resync(r.Context(), lyricsgen.ResyncOptions{Stereo: stereo, SampleRate: d.SampleRate,
-		AudioKey: audioKey(cfg.Audio.Path), Lang: req.Lang, Lines: in, Targets: req.Targets, Aligner: req.Aligner})
+		AudioKey: audioKey(cfg.Audio.Path, d.SampleRate, len(stereo)), Lang: req.Lang, Lines: in, Targets: req.Targets, Aligner: req.Aligner})
 	if err != nil {
 		fail(w, 500, err)
 		return
@@ -1155,12 +1159,18 @@ func (s *Server) hResync(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{"lines": res, "source": source})
 }
 
-// audioKey identifies an audio file for the separated-vocals cache (path, size, mtime)
-func audioKey(path string) string {
-	if st, err := os.Stat(path); err == nil {
-		return fmt.Sprintf("%s|%d|%d", path, st.Size(), st.ModTime().Unix())
+// audioKey identifies an audio file for the separated-vocals cache (by its content: the project
+// copied, moved or imported keeps it); what was kept by its path and date before is moved over
+func audioKey(path string, rate, n int) string {
+	key := "content|" + fileid.Fingerprint(path)
+	if fileid.Once("vocals|" + path) {
+		old := path
+		if st, err := os.Stat(path); err == nil {
+			old = fmt.Sprintf("%s|%d|%d", path, st.Size(), st.ModTime().Unix())
+		}
+		lyricsgen.MigrateVocals(old, key, rate, n)
 	}
-	return path
+	return key
 }
 
 // hGenLyrics generates the synchronized lyrics inside the binary itself (Demucs + Whisper + alignment)
@@ -1202,7 +1212,7 @@ func (s *Server) hGenLyrics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	d := sess.Audio
-	key := audioKey(cfg.Audio.Path)
+	key := audioKey(cfg.Audio.Path, d.SampleRate, len(d.PCM))
 	out := filepath.Join(filepath.Dir(proj), "lyrics.lrc")
 	j, err := s.startJob("lyrics", func(ctx context.Context, j *job) error {
 		stereo := make([]float32, len(d.PCM))

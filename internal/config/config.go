@@ -663,15 +663,25 @@ func (c *ProjectConfig) mapPaths(fn func(string) string) {
 	c.Output.Path = fn(c.Output.Path)
 	c.Background.Path = fn(c.Background.Path)
 	c.Lyrics.Path, c.Lyrics.Font = fn(c.Lyrics.Path), fn(c.Lyrics.Font)
+	c.Background.Depth.Path = fn(c.Background.Depth.Path)
+	masks := func(ms []MaskConfig) {
+		for k := range ms {
+			ms[k].Path = fn(ms[k].Path)
+		}
+	}
+	masks(c.Lyrics.Masks)
 	for i := range c.Timeline.Background {
-		c.Timeline.Background[i].Cfg.Path = fn(c.Timeline.Background[i].Cfg.Path)
+		b := &c.Timeline.Background[i].Cfg
+		b.Path, b.Depth.Path = fn(b.Path), fn(b.Depth.Path)
 	}
 	for i := range c.Timeline.Lyrics {
 		l := &c.Timeline.Lyrics[i].Cfg
 		l.Path, l.Font = fn(l.Path), fn(l.Font)
+		masks(l.Masks)
 	}
 	for i := range c.Texts {
 		c.Texts[i].Font = fn(c.Texts[i].Font)
+		masks(c.Texts[i].Masks)
 	}
 	for i := range c.Layers {
 		for j := range c.Layers[i].Clips {

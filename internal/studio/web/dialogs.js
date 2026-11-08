@@ -390,6 +390,8 @@ const LEVELS = [['0', 'None (fastest, largest)'], ['1', 'Fast'], ['6', 'Normal']
 export function PackageDialog({ meta, onCollected, onClose }) {
   const [level, setLevel] = useState('1');
   const [videos, setVideos] = useState(false);
+  const [depthMaps, setDepthMaps] = useState(false);
+  const [stems, setStems] = useState(false);
   const [res, setRes] = useState(null);
   const [busy, setBusy] = useState(false);
   const collect = async () => {
@@ -399,7 +401,7 @@ export function PackageDialog({ meta, onCollected, onClose }) {
   };
   return html`<${Modal} title=${t('Project package')} icon="layers" onClose=${onClose}
     footer=${html`<span class="spacer"></span><button class="btn" onClick=${onClose}>${t('Close')}</button>
-      <a class="btn primary" href=${'/api/project/package?level=' + level + '&videos=' + (videos ? 1 : 0)} download=${meta.name + '.zip'}>
+      <a class="btn primary" href=${'/api/project/package?level=' + level + '&videos=' + (videos ? 1 : 0) + '&depth=' + (depthMaps ? 1 : 0) + '&stems=' + (stems ? 1 : 0)} download=${meta.name + '.zip'}>
         <${Icon} name="download" size=${15} /> ${t('Download .zip')}</a>`}>
     <p class="faint" style="margin-top:0">${t('Everything the project uses goes into one .zip: project, lyrics, audio, backgrounds, fonts and assets/. Files from outside the project are put in assets/ and the project inside the zip points to them. Import it from Projects on any machine.')}</p>
     <div class="fld"><label>${t('Compression')}</label><div class="ctl">
@@ -407,6 +409,11 @@ export function PackageDialog({ meta, onCollected, onClose }) {
     <p class="faint" style="font-size:11.5px;margin:-2px 0 8px">${t('Audio, images and videos are already compressed and are stored as they are.')}</p>
     <div class="fld"><label>${t('Exported videos')}</label><div class="ctl">
       <${Switch} checked=${videos} onChange=${setVideos} /><span class="faint" style="font-size:12px">${t('Include the videos of exports/')}</span></div></div>
+    <div class="fld"><label>${t('Depth maps')}</label><div class="ctl">
+      <${Switch} checked=${depthMaps} onChange=${setDepthMaps} /><span class="faint" style="font-size:12px">${t('Include the worked out depth maps (no need to work them out again; a video\'s every frame can take a lot)')}</span></div></div>
+    <div class="fld"><label>${t('Instruments')}</label><div class="ctl">
+      <${Switch} checked=${stems} onChange=${setStems} /><span class="faint" style="font-size:12px">${t('Include the song separated into its instruments (no need to separate it again)')}</span></div></div>
+    <p class="faint" style="font-size:11.5px;margin:-2px 0 8px">${t('Always in the package: the depth maps edited by hand, the generated images, the ComfyUI flows and the painted masks.')}</p>
     <div class="card" style="margin-top:14px">
       <div class="row"><b style="font-size:13px">${t('Collect files into the project')}</b><span class="spacer"></span>
         <button class="btn sm" disabled=${busy} onClick=${collect}>${t('Collect')}</button></div>

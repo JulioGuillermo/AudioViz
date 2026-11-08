@@ -11,6 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"audioviz/internal/fileid"
 )
 
 // The song separated into its instruments (Demucs: drums, bass, other, vocals), kept as mono WAV
@@ -30,14 +32,21 @@ type StemFrame struct {
 	Kick, Snare, Hats          float64
 }
 
-// StemsDir: the folder of a song's stems in a cache folder (by its path, size and date)
+// StemsDir: the folder of a song's stems in a cache folder (by its content: a project copied,
+// moved or imported keeps them)
 func StemsDir(cacheDir, audioPath string) string {
 	h := sha1.New()
-	fmt.Fprintf(h, "%s|", audioPath)
-	if st, err := os.Stat(audioPath); err == nil {
-		fmt.Fprintf(h, "%d|%d|", st.Size(), st.ModTime().UnixNano())
+	fmt.Fprintf(h, "%s|stems2", fileid.Fingerprint(audioPath))
+	dir := filepath.Join(cacheDir, "stems", hex.EncodeToString(h.Sum(nil))[:20])
+	if fileid.Once(dir) { // (kept by the song's path before)
+		o := sha1.New()
+		fmt.Fprintf(o, "%s|", audioPath)
+		if st, err := os.Stat(audioPath); err == nil {
+			fmt.Fprintf(o, "%d|%d|", st.Size(), st.ModTime().UnixNano())
+		}
+		fileid.Move(filepath.Join(cacheDir, "stems", hex.EncodeToString(o.Sum(nil))[:20]), dir)
 	}
-	return filepath.Join(cacheDir, "stems", hex.EncodeToString(h.Sum(nil))[:20])
+	return dir
 }
 
 // StemsReady: whether a song's stems are in the cache

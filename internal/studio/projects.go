@@ -16,7 +16,9 @@ import (
 	"strings"
 	"time"
 
+	"audioviz/internal/audio"
 	"audioviz/internal/config"
+	"audioviz/internal/depth"
 	"audioviz/internal/video"
 )
 
@@ -156,6 +158,8 @@ func (s *Server) hPackage(w http.ResponseWriter, r *http.Request) {
 	level, _ := strconv.Atoi(r.URL.Query().Get("level"))
 	level = min(max(level, 0), 9)
 	withVideos := r.URL.Query().Get("videos") == "1"
+	withDepth := r.URL.Query().Get("depth") == "1"
+	withStems := r.URL.Query().Get("stems") == "1"
 	name := filepath.Base(filepath.Dir(projPath))
 
 	places := plan(cfg)
@@ -228,6 +232,46 @@ func (s *Server) hPackage(w http.ResponseWriter, r *http.Request) {
 	// its chat (messages and what was shared)
 	if err == nil {
 		err = walkFiles(filepath.Join(cfg.Dir, "chat"), func(p string) error { return add(relTo(cfg.Dir, p), file(p)) })
+	}
+	// the project's own folders: its ComfyUI flows, the images generated (with how they were
+	// made) and what the flows made
+	for _, d := range []string{"comfy", imagesDir, "videos", "audio", "masks"} {
+		if err == nil {
+			err = walkFiles(filepath.Join(cfg.Dir, d), func(p string) error {
+				if strings.HasSuffix(p, ".tmp") {
+					return nil
+				}
+				return add(relTo(cfg.Dir, p), file(p))
+			})
+		}
+	}
+	// the song separated into its instruments (stems=1: no need to separate it again)
+	if err == nil && withStems && cfg.Audio.Path != "" {
+		err = walkFiles(audio.StemsDir(filepath.Join(cfg.Dir, "cache"), cfg.Audio.Path), func(p string) error {
+			if strings.HasSuffix(p, ".tmp") {
+				return nil
+			}
+			return add(relTo(cfg.Dir, p), file(p))
+		})
+	}
+	// the depth maps edited by hand (the user's work: always); with depth=1 also the worked out
+	// depth maps the backgrounds use now (with a video's every frame: can be large). Their names
+	// come from the files' content, so the imported project finds them
+	if err == nil {
+		err = walkFiles(filepath.Join(cfg.Dir, "depth-edits"), func(p string) error { return add(relTo(cfg.Dir, p), file(p)) })
+	}
+	if err == nil && withDepth {
+		for _, cp := range s.depthMapsInUse(cfg) {
+			if _, e := os.Stat(cp); e == nil {
+				if err = add(relTo(cfg.Dir, cp), file(cp)); err != nil {
+					break
+				}
+			}
+			seq := strings.TrimSuffix(cp, ".png") + ".seq"
+			if err = walkFiles(seq, func(p string) error { return add(relTo(cfg.Dir, p), file(p)) }); err != nil {
+				break
+			}
+		}
 	}
 	if err == nil && withVideos {
 		for _, v := range listExports(cfg.Dir) {
@@ -532,4 +576,28 @@ func (s *Server) hDeleteExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// depthMapsInUse: where the depth maps of the project's backgrounds are kept (CachePath; for a
+// video's every frame also its first frame's map, and its sequence next to it). Finding them also
+// renames the ones kept under the old names (by the files' paths)
+func (s *Server) depthMapsInUse(cfg *config.ProjectConfig) []string {
+	cache := filepath.Join(cfg.Dir, "cache")
+	var out []string
+	for _, b := range cfg.Timeline.Background {
+		d := b.Cfg.Depth
+		if b.Cfg.Path == "" || d.Source == "" || d.Source == "none" {
+			continue
+		}
+		model, detail := d.Model, d.Detail
+		if model == "" {
+			model = "small"
+		}
+		if detail == "" {
+			detail = "high"
+		}
+		q := s.depthRequest(depthReq{Image: b.Cfg.Path, Source: d.Source, Model: model, Detail: detail, File: d.Path, Flow: d.Flow, All: d.EveryFrame})
+		out = append(out, depth.CachePath(cache, q))
+	}
+	return out
 }
