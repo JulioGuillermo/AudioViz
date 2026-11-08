@@ -9,6 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"audioviz/internal/video"
 )
@@ -98,50 +101,161 @@ func makeSeq(ctx context.Context, cacheDir string, r Request, stage func(string,
 	if err := os.MkdirAll(s.Dir, 0o755); err != nil {
 		return nil, err
 	}
-	var prev, first *Map
-	// stages: "count" (the number of frames), "frames" (done / all), "frame" (this one's progress)
-	stage("count", float64(n))
-	inner := func(st string, p float64) {
-		switch st {
-		case "download": // (the model, the first time)
-			stage(st, p)
-		case "estimate", "comfy":
-			stage("frame", 0.9*p)
-		case "refine":
-			stage("frame", 0.95)
+	if r.Source == SourceAI || r.Source == "" { // the model, once (not by two frames at a time)
+		if _, err := ModelFor(r.Model).Ensure(ctx, func(done, total int64) {
+			if total > 0 {
+				stage("download", float64(done)/float64(total))
+			}
+		}); err != nil {
+			return nil, err
 		}
 	}
-	for i := 0; i < n; i++ {
-		if err := ctx.Err(); err != nil {
-			return nil, err
+	var prev, first *Map
+	var wg sync.WaitGroup
+	var saveErr atomic.Pointer[error]
+	saves := make(chan struct{}, 2)
+	defer wg.Wait()
+	// stages: "count" (the number of frames), "frames" (done / all), "frame" (this one's progress)
+	stage("count", float64(n))
+
+	// A pipeline, two frames at a time: while the GPU works one out (Infer holds it), the CPU
+	// prepares or finishes the other; the frames are steadied and written in order. The video is
+	// read in order by one goroutine (frames left from a stopped run are only loaded back)
+	type job struct {
+		i   int
+		img *image.RGBA
+	}
+	type res struct {
+		i     int
+		m     *Map
+		saved bool // already in the cache
+		err   error
+	}
+	cctx, cancel := context.WithCancel(ctx)
+	jobs := make(chan job, 2)
+	out := make(chan res, 4)
+	defer func() {
+		cancel()
+		go func() { // (what is still on its way)
+			for range out {
+			}
+		}()
+	}()
+	var awaited atomic.Int64 // the frame whose progress is shown
+	go func() {
+		defer close(jobs)
+		for i := 0; i < n; i++ {
+			if cctx.Err() != nil {
+				return
+			}
+			if !r.Force {
+				if _, err := os.Stat(s.framePath(i)); err == nil {
+					select {
+					case out <- res{i: i, saved: true}:
+					case <-cctx.Done():
+						return
+					}
+					continue
+				}
+			}
+			fr, _ := rd.FrameAt(float64(i) / fps)
+			img := image.NewRGBA(fr.Bounds())
+			copy(img.Pix, fr.Pix)
+			select {
+			case jobs <- job{i, img}:
+			case <-cctx.Done():
+				return
+			}
 		}
+	}()
+	var workers sync.WaitGroup
+	nw := 2
+	if r.Source == SourceComfy { // (one flow at a time in ComfyUI)
+		nw = 1
+	}
+	for w := 0; w < nw; w++ {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for j := range jobs {
+				inner := func(st string, p float64) {
+					if int64(j.i) != awaited.Load() {
+						return
+					}
+					switch st {
+					case "estimate", "comfy":
+						stage("frame", 0.9*p)
+					case "refine":
+						stage("frame", 0.95)
+					}
+				}
+				t0 := time.Now()
+				m, err := frameMap(cctx, r, j.img, inner)
+				if err == nil {
+					m = shrinkMap(m, seqMaxSide)
+				}
+				debugf("frame %d: map %v", j.i, time.Since(t0))
+				select {
+				case out <- res{i: j.i, m: m, err: err}:
+				case <-cctx.Done():
+					return
+				}
+			}
+		}()
+	}
+	go func() {
+		workers.Wait()
+		close(out)
+	}()
+	pending := map[int]res{}
+	for i := 0; i < n; i++ {
+		awaited.Store(int64(i))
 		stage("frames", float64(i)/float64(n))
 		stage("frame", 0)
-		if m, err := Load(s.framePath(i)); err == nil && !r.Force { // (left from a stopped run)
-			prev = m
-			if i == 0 {
-				first = m
+		rr, ok := pending[i]
+		for !ok {
+			x, open := <-out
+			if !open {
+				if err := ctx.Err(); err != nil {
+					return nil, err
+				}
+				return nil, fmt.Errorf("frame %d of %d was not worked out", i+1, n)
 			}
-			continue
+			pending[x.i] = x
+			rr, ok = pending[i]
 		}
-		fr, _ := rd.FrameAt(float64(i) / fps)
-		img := image.NewRGBA(fr.Bounds())
-		copy(img.Pix, fr.Pix)
-		m, err := frameMap(ctx, r, img, inner)
-		if err != nil {
-			return nil, fmt.Errorf("frame %d of %d: %w", i+1, n, err)
+		delete(pending, i)
+		if rr.err != nil {
+			return nil, fmt.Errorf("frame %d of %d: %w", i+1, n, rr.err)
 		}
-		m = shrinkMap(m, seqMaxSide)
-		if prev != nil && prev.W == m.W && prev.H == m.H {
-			steady(m, prev)
-		}
-		if err := m.Save(s.framePath(i)); err != nil {
-			return nil, err
+		m := rr.m
+		if rr.saved {
+			var err error
+			if m, err = Load(s.framePath(i)); err != nil {
+				return nil, err
+			}
+		} else {
+			if prev != nil && prev.W == m.W && prev.H == m.H {
+				steady(m, prev)
+			}
+			// written while the next frames are worked out (at most two at a time)
+			saves <- struct{}{}
+			wg.Add(1)
+			go func(m *Map, path string) {
+				defer func() { <-saves; wg.Done() }()
+				if err := m.Save(path); err != nil {
+					saveErr.CompareAndSwap(nil, &err)
+				}
+			}(m, s.framePath(i))
 		}
 		prev = m
 		if i == 0 {
 			first = m
 		}
+	}
+	wg.Wait()
+	if e := saveErr.Load(); e != nil {
+		return nil, *e
 	}
 	if err := first.Save(CachePath(cacheDir, r)); err != nil {
 		return nil, err

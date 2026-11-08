@@ -126,6 +126,26 @@ direct convolution took 20 minutes there: never use it. On SYCL the VAE no longe
 covered. Optional *Fast decode* uses madebyollin's tiny decoders (taef1 for Z-Image, taef2 for the
 FLUX.2 VAE models, taeqi2_1 for Qwen): under a second.
 
+## Depth maps (Depth Anything, `internal/depth`)
+The depth models run on the image engine's device (`DA_DEVICE` is set from Settings › Plugins), so
+with the Intel plugin they use SYCL and its oneDNN convolution and attention; ggml-vulkan's
+flash-attention patch serves the Vulkan engine. A video's depth on every frame
+(`depth.every_frame`, `seq.go`) made speed matter; measured on a 145-frame 752×416 clip with DA3
+Small (`audioviz depth -all -model small -detail …`, s per frame):
+
+| | normal (504 px) Vulkan | normal SYCL | high (1008 px) Vulkan | high SYCL |
+|---|---|---|---|---|
+| first version | 0.271 | 0.177 | 0.627 | 0.348 |
+| no unused 504 px run before the larger one (DA3 high/max: the model ran twice per image) | | | 0.437 | 0.251 |
+| temporary input as PPM, not PNG; maps saved without per-pixel `Set`, fast compression, in the background | 0.247 | 0.129 | 0.375 | 0.201 |
+| two frames at a time (the CPU prepares or finishes one while the GPU works out the other) | **0.180** | **0.098** | **0.322** | **0.146** |
+
+Results are identical to the first version on Vulkan (SYCL varies slightly from run to run). Tried
+and dropped: padding the image to a multiple of 14 px instead of resizing it (no resampling, no
+refinement: 0.169 s on SYCL) changed the model's view near the edges (a figure at the border came
+out at another depth). Left: ≈ 19 ms per frame between the backbone and the head graphs (the
+features go through the host); `AUDIOVIZ_DEBUG_DEPTH=1` prints the per-frame timings.
+
 ## How to measure
 
 - `GGML_SYCL_OP_PROF=1`: after every launch (a node or a fused group) the plugin waits for the

@@ -211,6 +211,8 @@ func load(sp Spec, paths []string) error {
 func Infer(sp Spec, paths []string, imagePath string, plain bool) (*Raw, error) {
 	mu.Lock()
 	defer mu.Unlock()
+	tIn := time.Now()
+	defer func() { debugf("infer total %v", time.Since(tIn)) }()
 	if err := load(sp, paths); err != nil {
 		return nil, err
 	}

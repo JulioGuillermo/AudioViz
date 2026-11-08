@@ -2,10 +2,11 @@ package depth
 
 import (
 	"context"
+	"fmt"
 	"image"
-	"image/png"
 	"math"
 	"os"
+	"time"
 
 	xdraw "golang.org/x/image/draw"
 )
@@ -34,16 +35,18 @@ func aiMap(ctx context.Context, img *image.RGBA, r Request, stage func(string, f
 		size = min(max(W, H), 4096)
 	}
 	size = min(size, max(W, H))
-	// the whole image, as the model was trained
-	global, err := inferImage(sp, paths, img, false)
-	if err != nil {
-		return nil, err
-	}
 	var m *Map
+	plain := size > sp.Tile+sp.Tile/4 && sp.Plain() && r.Detail != "native"
+	var global *Raw
+	if !plain { // the whole image, as the model was trained (the larger plain run needs no other)
+		if global, err = inferImage(sp, paths, img, false); err != nil {
+			return nil, err
+		}
+	}
 	switch {
 	case size <= sp.Tile+sp.Tile/4:
 		m = global.Nearness()
-	case sp.Plain() && r.Detail != "native":
+	case plain:
 		// Depth Anything 3 keeps its layout at 2-3× its size in one go
 		k := float64(size) / float64(max(W, H))
 		rw, rh := max(14, int(math.Round(float64(W)*k/14))*14), max(14, int(math.Round(float64(H)*k/14))*14)
@@ -66,7 +69,10 @@ func aiMap(ctx context.Context, img *image.RGBA, r Request, stage func(string, f
 		return m, nil
 	}
 	stage("refine", 0)
-	return Guided(m, img), nil
+	t0 := time.Now()
+	g := Guided(m, img)
+	debugf("guided %dx%d -> %dx%d %v", m.W, m.H, W, H, time.Since(t0))
+	return g, nil
 }
 
 // resized: img at w×h
@@ -76,19 +82,50 @@ func resized(img image.Image, w, h int) *image.RGBA {
 	return out
 }
 
-// inferImage: the model on an image (through a temporary PNG: it reads files)
+// inferImage: the model on an image (through a temporary file: it reads files; a PPM, which costs
+// next to nothing to write and read, unlike a PNG)
 func inferImage(sp Spec, paths []string, img image.Image, plain bool) (*Raw, error) {
-	tmp, err := os.CreateTemp("", "audioviz-depth-*.png")
+	tmp, err := os.CreateTemp("", "audioviz-depth-*.ppm")
 	if err != nil {
 		return nil, err
 	}
 	defer os.Remove(tmp.Name())
-	if err := (&png.Encoder{CompressionLevel: png.BestSpeed}).Encode(tmp, img); err != nil {
-		tmp.Close()
+	_, err = tmp.Write(ppm(img))
+	tmp.Close()
+	if err != nil {
 		return nil, err
 	}
-	tmp.Close()
 	return Infer(sp, paths, tmp.Name(), plain)
+}
+
+// ppm: img as a binary PPM (P6, RGB)
+func ppm(img image.Image) []byte {
+	b := img.Bounds()
+	w, h := b.Dx(), b.Dy()
+	head := fmt.Sprintf("P6\n%d %d\n255\n", w, h)
+	out := make([]byte, len(head)+w*h*3)
+	copy(out, head)
+	px := out[len(head):]
+	rgba, ok := img.(*image.RGBA)
+	rows(h, func(y0, y1 int) {
+		for y := y0; y < y1; y++ {
+			o := y * w * 3
+			if ok {
+				src := rgba.Pix[(y+b.Min.Y-rgba.Rect.Min.Y)*rgba.Stride+(b.Min.X-rgba.Rect.Min.X)*4:]
+				for x := 0; x < w; x++ {
+					px[o], px[o+1], px[o+2] = src[x*4], src[x*4+1], src[x*4+2]
+					o += 3
+				}
+				continue
+			}
+			for x := 0; x < w; x++ {
+				r, g, bb, _ := img.At(b.Min.X+x, b.Min.Y+y).RGBA()
+				px[o], px[o+1], px[o+2] = byte(r>>8), byte(g>>8), byte(bb>>8)
+				o += 3
+			}
+		}
+	})
+	return out
 }
 
 // tiled: the depth of img (W×H) by tiles, fitted to global (a coarse look at the whole image)

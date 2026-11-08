@@ -48,7 +48,7 @@ function DepthProgress({ job }) {
     <div class="row"><div class="progress"><i style=${{ width: pct(job.progress) }}></i></div>
       <span class="faint">${Math.round((job.progress || 0) * 100)} %</span></div>
     ${f && f.total > 0 && html`<div class="row"><div class="progress sub"><i style=${{ width: pct(f.frame) }}></i></div>
-      <span class="faint">${t('Frame {n}', { n: Math.min(f.done + 1, f.total) })} · ${Math.round((f.frame || 0) * 100)} %</span></div>`}
+      <span class="faint">${Math.round((f.frame || 0) * 100)} %</span></div>`}
     <div class="faint depth-prog-msg">${job.message}</div>
   </div>`;
 }

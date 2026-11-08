@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"image"
-	"image/color"
 	"image/draw"
 	"image/png"
 	"math"
@@ -227,7 +226,8 @@ func FromImage(src image.Image, W, H int) *Map {
 func (m *Map) Save(path string) error {
 	img := image.NewGray16(image.Rect(0, 0, m.W, m.H))
 	for i, v := range m.V {
-		img.Set(i%m.W, i/m.W, color.Gray16{Y: uint16(max(0, min(1, v))*65535 + 0.5)})
+		y := uint16(max(0, min(1, v))*65535 + 0.5)
+		img.Pix[2*i], img.Pix[2*i+1] = byte(y>>8), byte(y)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -236,7 +236,7 @@ func (m *Map) Save(path string) error {
 	if err != nil {
 		return err
 	}
-	if err := png.Encode(f, img); err != nil {
+	if err := (&png.Encoder{CompressionLevel: png.BestSpeed}).Encode(f, img); err != nil {
 		f.Close()
 		return err
 	}
