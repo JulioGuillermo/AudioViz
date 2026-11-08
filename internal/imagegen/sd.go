@@ -209,6 +209,9 @@ static sd_ctx_t *av_open(const char *diff, const char *llm, const char *vision, 
     if (conv && conv[0]) p.conv_direct_mode = conv;
     p.n_threads = sd_get_num_physical_cores();
     p.diffusion_flash_attn = fa;
+    // LoRAs added at each step, not merged into the weights: their strength can change from one
+    // step to the next (sd_set_lora_step_scales; NitroFusion2's de-distillation LoRA)
+    p.lora_apply_mode = LORA_APPLY_AT_RUNTIME;
     if (av_dev[0]) p.backend = av_dev;
     // All weights on the GPU and the graph in one piece: with SYCL the auto-fit sees little free
     // memory (Level Zero reports ~7 GB on a 32 GB Lunar Lake), cuts the DiT into segments staged
@@ -233,7 +236,7 @@ static void av_reset_state(void) {
 static int av_generate(sd_ctx_t *ctx, const char *prompt, const char *negative, int w, int h, int steps,
                        float cfg, const char *sampler, const char *scheduler, int euler, long long seed,
                        sd_image_t *refs, int nrefs, sd_image_t *init, float strength, int tile,
-                       float *sigmas, int nsigmas, sd_image_t *out) {
+                       float *sigmas, int nsigmas, const char *lora, float *lscales, int nlscales, sd_image_t *out) {
     sd_img_gen_params_t g;
     sd_img_gen_params_init(&g);
     g.prompt = prompt;
@@ -252,6 +255,10 @@ static int av_generate(sd_ctx_t *ctx, const char *prompt, const char *negative, 
     // a fixed noise schedule (a distilled model's): its count sets the steps
     if (nsigmas > 0) { g.sample_params.custom_sigmas = sigmas; g.sample_params.custom_sigmas_count = nsigmas; g.sample_params.sample_steps = nsigmas - 1; }
     if (init) { g.init_image = *init; g.strength = strength; }
+    // a LoRA, with its strength on each step (the last one for the rest)
+    sd_lora_t l = { false, 1.0f, lora };
+    if (lora && lora[0]) { g.loras = &l; g.lora_count = 1; }
+    sd_set_lora_step_scales(lscales, lora && lora[0] ? nlscales : 0);
     // Large images: the VAE decodes (and encodes) in tiles; its attention over every latent
     // pixel otherwise grows with the square of the size (217 s instead of 28 s at 1920x1088)
     g.vae_tiling_params.enabled = tile;
@@ -447,6 +454,8 @@ type sampling struct {
 	strength           float32   // with an initial image
 	tile               bool      // VAE in tiles (large images)
 	sigmas             []float32 // a fixed noise schedule (nil = from the scheduler)
+	lora               string    // a LoRA's file ("" none)
+	loraSteps          []float32 // its strength on each step (the last for the rest)
 }
 
 func (sp sampling) cstr(s string) *C.char {
@@ -488,10 +497,18 @@ func (e *engine) run(prompt string, sp sampling, refs []rgb, init *rgb) (*image.
 		defer C.free(unsafe.Pointer(cs))
 		copy(unsafe.Slice((*float32)(unsafe.Pointer(cs)), len(sp.sigmas)), sp.sigmas)
 	}
+	cl := sp.cstr(sp.lora)
+	defer C.free(unsafe.Pointer(cl))
+	var cls *C.float
+	if len(sp.loraSteps) > 0 {
+		cls = (*C.float)(C.malloc(C.size_t(len(sp.loraSteps)) * 4))
+		defer C.free(unsafe.Pointer(cls))
+		copy(unsafe.Slice((*float32)(unsafe.Pointer(cls)), len(sp.loraSteps)), sp.loraSteps)
+	}
 	var out C.sd_image_t
 	if C.av_generate(e.ctx, cp, cn, C.int(sp.w), C.int(sp.h), C.int(sp.steps), C.float(sp.cfg), csa, csc,
 		C.int(btoi(sp.euler)), C.longlong(sp.seed), cr, C.int(len(refs)), ci, C.float(sp.strength), C.int(btoi(sp.tile)),
-		cs, C.int(len(sp.sigmas)), &out) == 0 {
+		cs, C.int(len(sp.sigmas)), cl, cls, C.int(len(sp.loraSteps)), &out) == 0 {
 		return nil, lastErr("the image could not be generated")
 	}
 	defer C.free(unsafe.Pointer(out.data))

@@ -37,6 +37,8 @@ type Request struct {
 	// FastDecode: the family's tiny decoder (TAE) instead of its VAE: much faster, a little
 	// less fine detail
 	FastDecode bool
+	// NoLoRA: without the family's LoRA (NitroFusion2's de-distillation LoRA)
+	NoLoRA bool
 }
 
 // Samplers and Schedulers accepted in Request (stable-diffusion.cpp names)
@@ -244,6 +246,9 @@ func Generate(ctx context.Context, req Request, report func(progress.Status), on
 	} else if f.Shift > 0 && req.Scheduler == "" {
 		sp.sigmas = shiftedSigmas(steps, f.Shift)
 	}
+	if f.LoRA != nil && steps >= f.MinLoRASteps && !req.NoLoRA && os.Getenv("AUDIOVIZ_NO_LORA") == "" {
+		sp.lora, sp.loraSteps = f.LoRA.Path(), f.LoRASteps
+	}
 	type res struct {
 		img *image.NRGBA
 		err error
@@ -352,6 +357,7 @@ func Models() []map[string]any {
 		out = append(out, map[string]any{"id": f.ID, "name": f.Name, "desc": f.Desc, "refs": f.Refs, "steps": f.Steps, "cfg": f.CFG,
 			"heavy": f.Heavy, "license": f.License, "size": size, "missing": Missing(f.Needed(false)), "layout": f.Layout,
 			"fastDecode":  f.TAE != nil,
+			"lora":        f.LoRA != nil,
 			"missingRefs": Missing(f.Needed(true))})
 	}
 	return out

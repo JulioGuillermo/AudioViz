@@ -172,6 +172,7 @@ func (s *Server) hGenImage(w http.ResponseWriter, r *http.Request) {
 		Strength  float32 `json:"strength"`
 		// the model's tiny decoder instead of its VAE: faster, a little less fine detail
 		FastDecode bool `json:"fastDecode"`
+		NoLoRA     bool `json:"noLora"`
 	}
 	if err := readJSON(r, &req); err != nil {
 		fail(w, 400, err)
@@ -227,7 +228,7 @@ func (s *Server) hGenImage(w http.ResponseWriter, r *http.Request) {
 		t0 := time.Now()
 		res, err := imagegen.Generate(ctx, imagegen.Request{Model: req.Model, Prompt: req.Prompt, Width: req.Width, Height: req.Height,
 			Steps: req.Steps, Seed: req.Seed, Refs: refs, Negative: req.Negative, CFG: req.CFG, Sampler: req.Sampler,
-			Scheduler: req.Scheduler, FlashAttn: req.FlashAttn, Init: initImg, Strength: req.Strength, FastDecode: req.FastDecode}, func(st progress.Status) {
+			Scheduler: req.Scheduler, FlashAttn: req.FlashAttn, Init: initImg, Strength: req.Strength, FastDecode: req.FastDecode, NoLoRA: req.NoLoRA}, func(st progress.Status) {
 			j.mu.Lock()
 			st.Preview = j.preview()
 			j.Gen = &st

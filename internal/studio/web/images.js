@@ -29,7 +29,7 @@ function imageSize(aspect, quality, vw, vh) {
 }
 
 // Advanced settings: empty = the model's default
-const ADV0 = { fa: 'on', cfg: '', sampler: '', scheduler: '', negative: '', init: '', strength: 0.75, fastDec: 'off' };
+const ADV0 = { fa: 'on', cfg: '', sampler: '', scheduler: '', negative: '', init: '', strength: 0.75, fastDec: 'off', lora: 'on' };
 const loadAdv = () => {
   let a = { ...ADV0 };
   try { a = { ...ADV0, ...JSON.parse(localStorage.getItem('audioviz.img.adv') || '{}'), init: '' }; } catch (e) { /* ignore */ }
@@ -126,7 +126,8 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onRun, onU
     const layout = fam && fam.layout ? fam.layout : '';
     onStart({ model, prompt: layoutPrompt(layout, prompt, boxes, w, h), refs: refs.slice(0, maxRefs), width: w, height: h, steps: +steps || 0, seed: seed === '' ? -1 : +seed,
       flashAttn: adv.fa, cfg: +adv.cfg || 0, sampler: adv.sampler, scheduler: adv.scheduler, negative: adv.negative.trim(),
-      init: adv.init, strength: adv.init ? +adv.strength : 0, fastDecode: adv.fastDec === 'on' && !!(fam && fam.fastDecode) });
+      init: adv.init, strength: adv.init ? +adv.strength : 0, fastDecode: adv.fastDec === 'on' && !!(fam && fam.fastDecode),
+      noLora: !!(fam && fam.lora) && adv.lora === 'off' });
   };
   const reuse = (im) => {
     if (im.model) set('model', setModel)(im.model);
@@ -216,6 +217,8 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onRun, onU
         <${Select} value=${adv.fa || 'on'} onChange=${(v) => setAdv('fa', v)} options=${[['on', 'On'], ['off', 'Off']]} /></div></div>
       ${fam && fam.fastDecode && html`<div class="fld"><label title=${t('Decode the image with a tiny decoder instead of the full one: many times faster, a little less fine detail (a separate download of a few MB)')}>${t('Fast decode')}</label><div class="ctl">
         <${Select} value=${adv.fastDec || 'off'} onChange=${(v) => setAdv('fastDec', v)} options=${[['off', 'Off'], ['on', 'On']]} /></div></div>`}
+      ${fam && fam.lora && html`<div class="fld"><label title=${t('NitroFusion2: its de-distillation LoRA at half strength on the first step (as its own 2-step flow): fewer artifacts and closer to what the prompt asks, a little slower. Not used with 1 step.')}>${t('De-distillation LoRA')}</label><div class="ctl">
+        <${Select} value=${adv.lora || 'on'} onChange=${(v) => setAdv('lora', v)} options=${[['on', 'On'], ['off', 'Off']]} /></div></div>`}
       ${faMem && html`<p class="ig-hint st-warn">${t('Without flash attention this size needs several GB per step and can stall: turn it on or use a smaller size.')}</p>`}
       <div class="fld"><label title=${t('How strictly the image follows the prompt. The fast models (Turbo, klein) are made for 1.')}>CFG</label><div class="ctl">
         <input type="number" min="1" max="20" step="0.5" value=${adv.cfg} placeholder=${fam ? String(fam.cfg) : ''} onInput=${(e) => setAdv('cfg', e.target.value)} /></div></div>

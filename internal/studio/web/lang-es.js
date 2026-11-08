@@ -1114,4 +1114,6 @@ export const ES = {
   // NitroFusion2
   "Z-Image Turbo distilled to 2 steps (or 1): an image in a moment, near its quality. Shares the text encoder and decoder with Z-Image Turbo.": "Z-Image Turbo destilado a 2 pasos (o 1): una imagen en un momento, casi con su calidad. Comparte el codificador de texto y el decodificador con Z-Image Turbo.",
   "NitroFusion2 with 8-bit weights: closer to the original, a larger download (7.2 GB) and somewhat slower.": "NitroFusion2 con pesos de 8 bits: más fiel al original, una descarga mayor (7,2 GB) y algo más lento.",
+  "De-distillation LoRA": "LoRA de des-destilado",
+  "NitroFusion2: its de-distillation LoRA at half strength on the first step (as its own 2-step flow): fewer artifacts and closer to what the prompt asks, a little slower. Not used with 1 step.": "NitroFusion2: su LoRA de des-destilado a media fuerza en el primer paso (como su propio flujo de 2 pasos): menos artefactos y más fiel a lo que pide el prompt, algo más lento. No se usa con 1 paso.",
 };

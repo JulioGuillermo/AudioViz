@@ -15,6 +15,11 @@ type Family struct {
 	// Sigmas: the fixed noise schedule it was distilled for (one more than its steps); used while
 	// the steps are the default and no scheduler is picked
 	Sigmas []float32 `json:"-"`
+	// LoRA: one applied while it samples, with its strength on each step (LoRASteps; the last for
+	// the rest), only from MinLoRASteps steps up
+	LoRA         *aimodel.Model `json:"-"`
+	LoRASteps    []float32      `json:"-"`
+	MinLoRASteps int            `json:"-"`
 	// Shift: a flow model's schedule shifted by this much (σ = s·t / (1 + (s−1)·t), t evenly from
 	// 1 to 0 over the steps), for any number of steps, while no scheduler is picked
 	Shift   float32 `json:"-"`
@@ -61,6 +66,11 @@ var (
 		URL: hf("madebyollin/taeqi2_1", "taeqi2_1.safetensors"), Size: 30591264}
 )
 
+// NitroFusion2's de-distillation LoRA: at half strength on the first step only (its 2-step
+// ComfyUI flow), it takes away some of the distillation's artifacts
+var nf2LoRA = aimodel.Model{Name: "nitrofusion2-lora", Label: "NitroFusion2 de-distillation LoRA", File: "nf2-dedistill-lora.safetensors",
+	URL: hf("ChenDY/NitroFusion2", "nf2-dedistill-lora.safetensors"), Size: 381553336}
+
 // The FLUX.1 VAE: Z-Image Turbo's and NitroFusion2's
 var fluxVAE = aimodel.Model{Name: "flux-vae", Label: "Image decoder (FLUX VAE)", File: "flux_ae.safetensors",
 	URL: hf("Comfy-Org/z_image_turbo", "split_files/vae/ae.safetensors"), Size: 335304388}
@@ -94,11 +104,13 @@ var Families = []*Family{
 		Steps: 2, CFG: 1, Euler: true, Shift: 6, License: "Apache-2.0",
 		Diffusion: aimodel.Model{Name: "nitrofusion2", Label: "NitroFusion2 (Q4)", File: "nf2-Q4_K_M.gguf",
 			URL: hf("ChenDY/NitroFusion2", "nf2-Q4_K_M.gguf"), Size: 5066519616},
+		LoRA: &nf2LoRA, LoRASteps: []float32{0.5, 0}, MinLoRASteps: 2,
 		LLM: qwen3_4b, VAE: fluxVAE},
 	{ID: "nitro-q8", Name: "NitroFusion2 · Q8", Desc: "NitroFusion2 with 8-bit weights: closer to the original, a larger download (7.2 GB) and somewhat slower.",
 		Steps: 2, CFG: 1, Euler: true, Shift: 6, License: "Apache-2.0",
 		Diffusion: aimodel.Model{Name: "nitrofusion2-q8", Label: "NitroFusion2 (Q8)", File: "nf2-Q8_0.gguf",
 			URL: hf("ChenDY/NitroFusion2", "nf2-Q8_0.gguf"), Size: 7222556736},
+		LoRA: &nf2LoRA, LoRASteps: []float32{0.5, 0}, MinLoRASteps: 2,
 		LLM: qwen3_4b, VAE: fluxVAE},
 	{ID: "klein", Name: "FLUX.2 klein 4B", Desc: "Fast, generates or edits: give it reference images (up to 4) and describe the change.",
 		Refs: 4, Steps: 4, CFG: 1, Euler: true, License: "Apache-2.0",
@@ -190,6 +202,9 @@ func Get(id string) *Family {
 // Needed lists the files to generate (with refs: also the vision encoder, if the family has one)
 func (f *Family) Needed(refs bool) []aimodel.Model {
 	m := []aimodel.Model{f.Diffusion, f.LLM, f.VAE}
+	if f.LoRA != nil {
+		m = append(m, *f.LoRA)
+	}
 	if f.Tokenizer != nil {
 		m = append(m, *f.Tokenizer)
 	}
