@@ -8,7 +8,7 @@ import { fmtTime } from './util.js';
 import { t } from './i18n.js';
 
 // the background effects that can be tied to background segments
-export const BIND_TRACKS = ['bass_zoom', 'shake', 'chromatic_aberration', 'ripple', 'glitch', 'color_flash'];
+export const BIND_TRACKS = ['bass_zoom', 'shake', 'chromatic_aberration', 'ripple', 'glitch', 'color_flash', 'parallax', 'depth_of_field'];
 
 // a new id for a background segment (not used by another one)
 function newSegId(segs) {

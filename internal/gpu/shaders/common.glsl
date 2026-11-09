@@ -90,7 +90,7 @@ layout(std430, set = 0, binding = 0) readonly buffer Params {
     vec4 layerA;               // background A (BG): scale, offX, offY, rot (segment motion)
     vec4 layerB;               // background B (BG2), only during a transition
     ivec4 trans;               // mode (0 = none, see config.TransitionModes), direction, has (bit0 A, bit1 B), seed
-    vec4 transP;               // progress k; drawn once per image (1: clips or effects only on one of them), on which image each effect is (2 bits each: 0 both, 1 A, 2 B; frameFX.side)
+    vec4 transP;               // progress k; drawn once per image (1: clips or effects only on one of them), on which image each effect is (2 bits each: 0 both, 1 A, 2 B; frameFX.side); the camera's edge zoom (frameFX.zoomEdge)
     vec4 burnP;                // burn: edge, roughness, max distance, point count
     vec4 burnCol;              // burn: ember color
     vec4 burnPts[8];           // burn: ignition points (x, y in units of the frame height)

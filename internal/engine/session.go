@@ -422,7 +422,8 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 	// edges with a little zoom; without one the zoom is flat and nothing depends on depth
 	if fs.DepthA != nil || fs.DepthB != nil {
 		fs.FX.par.Dolly += fs.FX.zoomDolly
-		fs.FX.zoom *= fs.FX.par.EdgeZoom(s.W, s.H)
+		fs.FX.zoomEdge = fs.FX.par.EdgeZoom(s.W, s.H)
+		fs.FX.zoom *= fs.FX.zoomEdge
 	} else {
 		fs.FX.zoom *= 1 + fs.FX.zoomDolly
 		fs.FX.par, fs.FX.dof = effects.Parallax{}, effects.DoF{}
@@ -475,13 +476,17 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 
 	// Overlay layers, and the place of the visualizer, particles and lyrics among them
 	if fs.DepthA != nil || fs.DepthB != nil {
-		fx := fs.FX.forSide(0) // (the depth: as the effects on both images move it)
+		// (the depth: as the effects on both images move it; the camera and the depth of field
+		// as they are, with the image they are on)
+		fx := fs.FX.forSide(0)
+		par := fs.FX.par
 		if fs.Trans.Fluid != nil {
-			fx.par = effects.Parallax{} // the fluid transitions don't move
+			par = effects.Parallax{} // the fluid transitions don't move
 		}
 		fs.Scene = &effects.Scene{A: fs.DepthA, B: fs.DepthB, NA: fs.NormA, NB: fs.NormB, LA: fs.LayerA, LB: fs.LayerB, K: fs.Trans.K, Tr: fs.Trans,
 			Zoom: fx.zoom, ShakeX: fx.shakeX, ShakeY: fx.shakeY, RippleAmp: fx.rippleAmp, RippleFreq: fx.rippleFreq, RippleTm: fx.rTim,
-			W: s.W, H: s.H, Par: fx.par, N: fx.par.Steps(s.W, s.H), DoF: fx.dof}
+			W: s.W, H: s.H, Par: par, N: par.Steps(s.W, s.H), DoF: fs.FX.dof,
+			ParSide: int(fs.FX.side[fxPar]), DoFSide: int(fs.FX.side[fxDoF])}
 	}
 	if fs.Scene.On() && len(fs.TextStyles) > 0 {
 		s.textsInDepth(fs)
@@ -593,7 +598,7 @@ func (s *Session) textsInDepth(fs *FrameState) {
 				}
 			}
 			st.DepthZ /= float64(max(n, 1))
-			st.ZMargin = sc.Par.MaxDisp(s.W, s.H) + sc.DoF.Blur
+			st.ZMargin = sc.Cam(0).MaxDisp(s.W, s.H) + sc.Lens(0).Blur
 			continue
 		}
 		st.ZTrack = nil
@@ -620,11 +625,11 @@ func (s *Session) textsInDepth(fs *FrameState) {
 		}
 		st.InDepth, st.Behind, st.Scene = true, st.Depth.Behind, sc
 		st.DepthZ, st.DepthSoft = z, math.Max(st.Depth.Soft, 0.005)
-		if sc.DoF.On() {
-			st.DepthBlur = float64(sc.DoF.CoC(float32(z)))
+		if lens := sc.Lens(0); lens.On() {
+			st.DepthBlur = float64(lens.CoC(float32(z)))
 		}
-		if sc.Par.On() {
-			dx, dy := sc.Par.Disp(z, ax, ay, s.W, s.H)
+		if cam := sc.Cam(0); cam.On() {
+			dx, dy := cam.Disp(z, ax, ay, s.W, s.H)
 			st.AnchorX, st.AnchorY = st.AnchorX+float32(dx), st.AnchorY+float32(dy)
 			for i := range fs.TextItems {
 				if fs.TextItems[i].Style == si {
@@ -768,10 +773,10 @@ func segBind[T any](segs []config.Seg[T], t float64) []string {
 func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures, bind *config.BgBind) (frameFX, float64) {
 	tl := &s.Cfg.Timeline
 	minDim := math.Max(math.Min(float64(s.W), float64(s.H)), 64)
-	fx := frameFX{zoom: 1, zoomBass: 1, zoomShake: 1}
+	fx := frameFX{zoom: 1, zoomBass: 1, zoomShake: 1, zoomEdge: 1}
 	var sides [nFX]int
 	for e, ids := range [nFX][]string{segBind(tl.BassZoom, t), segBind(tl.Shake, t), segBind(tl.Chromatic, t),
-		segBind(tl.Ripple, t), segBind(tl.Glitch, t), segBind(tl.ColorFlash, t)} {
+		segBind(tl.Ripple, t), segBind(tl.Glitch, t), segBind(tl.ColorFlash, t), segBind(tl.Parallax, t), segBind(tl.DoF, t)} {
 		sides[e] = bind.BindSide(ids)
 		fx.side[e] = int8(max(sides[e], 0))
 	}
@@ -779,9 +784,9 @@ func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures, bind 
 		a, b, k := config.BlendEv(tl.BassZoom, t, s.Duration(), s, "BassZoom")
 		z := lerp(zoomOf(a, feat), zoomOf(b, feat), k)
 		// with depth, part of it is the camera moving in (Prepare puts it back flat without one);
-		// not when it is only on one image (the camera is the whole frame's)
+		// not when it or the camera is only on one image (the camera is the whole frame's)
 		d := lerp(zoomDepth(a), zoomDepth(b), k)
-		if sides[fxZoom] != 0 {
+		if sides[fxZoom] != 0 || sides[fxPar] > 0 {
 			d = 0
 		}
 		fx.zoom, fx.zoomDolly = 1+(z-1)*(1-d), (z-1)*d
@@ -832,7 +837,7 @@ func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures, bind 
 		bb, bc := flashOf(b, feat)
 		fx.bright, fx.contrast = lerp(ab, bb, k), lerp(ac, bc, k)
 	}
-	{
+	if sides[fxPar] >= 0 {
 		a, b, k := config.BlendEv(tl.Parallax, t, s.Duration(), s, "Parallax")
 		pa, pb := parallaxOf(a, t, feat), parallaxOf(b, t, feat)
 		fx.par = effects.Parallax{SX: lerp(pa.SX, pb.SX, k), SY: lerp(pa.SY, pb.SY, k), Dolly: lerp(pa.Dolly, pb.Dolly, k),
@@ -846,7 +851,7 @@ func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures, bind 
 			fx.par.Focus = pa.Focus
 		}
 	}
-	{
+	if sides[fxDoF] >= 0 {
 		a, b, k := config.BlendEv(tl.DoF, t, s.Duration(), s, "DoF")
 		da, db := dofOf(a, feat), dofOf(b, feat)
 		fx.dof = effects.DoF{From: lerp(da.From, db.From, k), To: lerp(da.To, db.To, k), Soft: lerp(da.Soft, db.Soft, k),

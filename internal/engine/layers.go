@@ -423,12 +423,12 @@ func (s *Session) textExprWords() int {
 	return min(n, gpu.MaxTextStyles) * 2 * (8192 + 3*effects.MaxPathSamples)
 }
 
-// depthWords: room for the depth of the backgrounds A and B (16 bits per pixel) when some
-// segment has a depth map
+// depthWords: room for the depth of the backgrounds A and B and their surface normals (16 bits
+// per pixel each: layerData) when some segment has a depth map
 func (s *Session) depthWords() int {
 	for _, sg := range s.Cfg.Timeline.Background {
 		if d := sg.Cfg.Depth.Source; d != "" && d != "none" {
-			return 2 * ((s.W*s.H + 1) / 2)
+			return 4 * ((s.W*s.H + 1) / 2)
 		}
 	}
 	return 0
@@ -591,13 +591,13 @@ func (s *Session) placeInDepth(lf *effects.LayerFrame, d *config.ClipDepth, scen
 	if lf.ZTrack != nil || (lf.Emit != nil && lf.Emit.P.ZTrack != nil) {
 		return // its depth changes along it: blurred and moved per point (DrawLayer, render.comp)
 	}
-	if ok && scene.On() && scene.DoF.On() {
+	if lens := scene.Lens(lf.Side); ok && lens.On() {
 		// out of focus as its depth is
-		lf.Blur += float64(scene.DoF.CoC(float32(z)))
+		lf.Blur += float64(lens.CoC(float32(z)))
 	}
-	if ok && scene.On() && scene.Par.On() {
+	if cam := scene.Cam(lf.Side); ok && cam.On() {
 		// the 2.5D camera moves it as its depth
-		dx, dy := scene.Par.Disp(z, x, y, s.W, s.H)
+		dx, dy := cam.Disp(z, x, y, s.W, s.H)
 		lf.W.ShakeX += dx
 		lf.W.ShakeY += dy
 	}

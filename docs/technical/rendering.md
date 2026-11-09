@@ -275,7 +275,7 @@ same math is in Go (`effects.Compose` / `transitionPixel`, used by the CPU path)
 13 modes gives a mean difference ≤ 0.11/255. `ke = smoothstep(k)`.
 
 **Tied to background segments** (`ClipConfig.Bind`, `Seg.Bind` on bass_zoom / shake / chromatic /
-ripple / glitch / color_flash; `config.BgBind.BindSide`): outside a transition, what is tied to
+ripple / glitch / color_flash / parallax / depth_of_field; `config.BgBind.BindSide`): outside a transition, what is tied to
 segments not on screen is left out (clips) or off (effects). During one, each says on which image
 it is (0 both, 1 A, 2 B: `LayerFrame.Side` → `LayerP.xpr.w`, `frameFX.side` → `transP.z`), and
 when any is on only one (`FrameState.Sided`) the frame is drawn once per image: `shade` runs the
@@ -285,8 +285,14 @@ the transition shows it (`pickT`; dip / flash: each image on its half), the effe
 skipped; the two are mixed by `transW` (the mix weight composite uses, read at q through the zoom
 and shake on both). The CPU does the same with whole frames (`cpuSide`, `Trans.Side`,
 `effects.MixSides`). Otherwise (nothing tied, or tied to both) the frame is drawn once as before.
-The depth (parallax, lights in 2.5D) uses only the effects on both; a side-only bass zoom is flat
-(no dolly).
+The depth (lights in 2.5D, depth ranges) uses only the effects on both; a side-only bass zoom is
+flat (no dolly), and so is the bass zoom while the camera is side-only. A side-only camera
+(`fxPar`) searches only its image (`parallaxPixel`, `Scene.camOn`; the other one's hit is its
+plain depth), and the other image's pass drops its edge zoom (`frameFX.zoomEdge` → `transP.w`,
+`zoomShake`); a side-only depth of field (`fxDoF`) blurs only its image's pass (`warpedDof`). What
+is in depth gets them by `objW` / `Scene.Cam` / `Scene.Lens`: all on its image, none on the other,
+and on both images (texts, untied clips) scaled by how much the transition shows the effect's
+image (1 − k or k; displacement and blur are linear in them).
 
 | Mode | Formula |
 |---|---|

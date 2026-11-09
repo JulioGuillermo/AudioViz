@@ -135,7 +135,7 @@ type Params struct {
 	// Background layers and transition (effects.Layer / effects.Trans)
 	LayerA, LayerB [4]float32 // scale, offX, offY, rot of image A (BG) and B (BG2)
 	Trans          [4]int32   // mode, direction, has (bit0 A, bit1 B), seed
-	TransP         [4]float32 // progress k; drawn once per image (1); on which image each effect is (2 bits each)
+	TransP         [4]float32 // progress k; drawn once per image (1); on which image each effect is (2 bits each); the camera's edge zoom
 	// Burn transition: edge, roughness, max distance, point count; ember color; points (x, y)
 	BurnP   [4]float32
 	BurnCol [4]float32

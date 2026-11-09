@@ -286,9 +286,9 @@ func (e *Engine) textAt(col [3]float64, px0, py float64, ch float64, items []Ite
 		zt := st.ZTrack != nil && st.Scene.On()
 		if zt {
 			zq = float64(st.ZTrack.At(it.PS + float32(px0-float64(it.CX))*it.PTX + float32(py-float64(it.CY))*it.PTY))
-			ddx, ddy := st.Scene.Par.Disp(zq, px0-0.5, py-0.5, st.Scene.W, st.Scene.H)
+			ddx, ddy := st.Scene.Cam(0).Disp(zq, px0-0.5, py-0.5, st.Scene.W, st.Scene.H)
 			px, qy = px-ddx, py-ddy
-			bl = float64(st.Scene.DoF.CoC(float32(zq)))
+			bl = float64(st.Scene.Lens(0).CoC(float32(zq)))
 		}
 		dx, dy := px-float64(it.CX), qy-float64(it.CY)
 		rc, rs := 1.0, 0.0

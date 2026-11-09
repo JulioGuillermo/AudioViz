@@ -28,4 +28,7 @@ background_effects:
 | `focus_move` | 0 | With the music: how far the focus moves at full band (+ nearer, − farther) — a rack focus on the beat |
 | `react_to` | bass | [Source](../reactivity.md) |
 
-Its focus can also be moved with segments (their transitions travel) or keys.
+Its focus can also be moved with segments (their transitions travel) or keys. A segment can be
+tied to background segments ([studio.md](../studio.md#tied-to-background-segments)): it blurs only
+while one of them is on screen, and during a transition only that image (and what is in depth on
+it).

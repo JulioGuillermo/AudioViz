@@ -17,10 +17,55 @@ type Scene struct {
 	Par                             Parallax // the 2.5D camera
 	N                               int      // its search steps (Parallax.Steps)
 	DoF                             DoF      // the depth of field (clips in the depth blur with it)
+	// in a transition, the image the camera and the depth of field are on (tied to a background
+	// segment: 1 only A, 2 only B; 0 both)
+	ParSide, DoFSide int
 }
 
 // On: there is a depth to look at
 func (s *Scene) On() bool { return s != nil && (s.A != nil || s.B != nil) }
+
+// share: how much of an effect on image on (0 both) reaches what is in depth on image side (0
+// both: as much as the transition shows of the effect's image; as objW in render.comp)
+func (s *Scene) share(on, side int) float64 {
+	switch {
+	case on == 0:
+		return 1
+	case side != 0:
+		if side == on {
+			return 1
+		}
+		return 0
+	}
+	k := math.Max(0, math.Min(1, s.K))
+	if on == 1 {
+		return 1 - k
+	}
+	return k
+}
+
+// Cam: the 2.5D camera on what is in depth on image side (0 both)
+func (s *Scene) Cam(side int) Parallax {
+	if !s.On() {
+		return Parallax{}
+	}
+	p, w := s.Par, s.share(s.ParSide, side)
+	p.SX, p.SY, p.Dolly = p.SX*w, p.SY*w, p.Dolly*w
+	return p
+}
+
+// Lens: the depth of field on what is in depth on image side (0 both)
+func (s *Scene) Lens(side int) DoF {
+	if !s.On() {
+		return DoF{}
+	}
+	d := s.DoF
+	d.Blur *= s.share(s.DoFSide, side)
+	return d
+}
+
+// camOn: whether the camera moves background image w (0 A, 1 B)
+func (s *Scene) camOn(w int) bool { return s.Par.On() && (s.ParSide == 0 || s.ParSide == w+1) }
 
 func depthTexel(g []uint16, x, y, W, H int) float32 {
 	x, y = max(0, min(W-1, x)), max(0, min(H-1, y))
@@ -111,15 +156,23 @@ func (s *Scene) HitW(qx, qy float32) (float32, float32, float32, int) {
 		ux, uy = ubx, uby
 	}
 	near := func(x, y float32) float32 { return s.nearW(w, x, y) }
-	if s.Par.On() {
-		x, y, z := s.Par.Find(ux, uy, s.N, s.W, s.H, near)
+	if s.camOn(0) || s.camOn(1) {
+		// (each image's hit: through the camera if it moves that image)
+		find := func(i int, x, y float32) (float32, float32, float32) {
+			nr := func(x, y float32) float32 { return s.nearW(i, x, y) }
+			if !s.camOn(i) {
+				return x, y, nr(x, y)
+			}
+			return s.Par.Find(x, y, s.N, s.W, s.H, nr)
+		}
+		x, y, z := find(w, ux, uy)
 		if s.both() && wb > 0 && wb < 1 { // (each image's hit: the nearness blends)
 			o := 1 - w
 			ox, oy := uax, uay
 			if o == 1 {
 				ox, oy = ubx, uby
 			}
-			_, _, zo := s.Par.Find(ox, oy, s.N, s.W, s.H, func(x, y float32) float32 { return s.nearW(o, x, y) })
+			_, _, zo := find(o, ox, oy)
 			za, zb := z, zo
 			if w == 1 {
 				za, zb = zo, z

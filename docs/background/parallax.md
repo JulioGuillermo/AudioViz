@@ -37,3 +37,7 @@ background_effects:
 Large moves uncover more of what was hidden: thin near things (text painted in the image,
 branches) may leave a short stretch behind them. A sharp depth map (DA3 Mono Large) gives clean
 edges. The fluid and liquid transitions don't move.
+
+A segment can be tied to background segments ([studio.md](../studio.md#tied-to-background-segments)):
+the camera then moves only while one of them is on screen, and during a transition only that
+image (and what is in depth on it).

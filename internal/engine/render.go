@@ -45,9 +45,9 @@ type frameFX struct {
 	rFlash, rChroma, rRipple, rGlitch [4]float64
 	// bound to background segments (config.BgBind.BindSide), during a transition: on which
 	// image each effect is (0 both, 1 only A, 2 only B; fxZoom…); the zoom's factors of the bass
-	// zoom and of the shake (zoom has them, and the camera's edge zoom)
-	side                [nFX]int8
-	zoomBass, zoomShake float64
+	// zoom, of the shake and of the camera's edge zoom (zoom has them)
+	side                          [nFX]int8
+	zoomBass, zoomShake, zoomEdge float64
 }
 
 // the background effects that can be bound to background segments (frameFX.side)
@@ -58,6 +58,8 @@ const (
 	fxRipple
 	fxGlitch
 	fxFlash
+	fxPar // the 2.5D camera: it moves only its image (and what is in depth on it)
+	fxDoF // the depth of field: it blurs only its image (and what is in depth on it)
 	nFX
 )
 
@@ -88,6 +90,13 @@ func (fx frameFX) forSide(side int) frameFX {
 	}
 	if !fx.on(fxFlash, side) {
 		fx.bright, fx.contrast, fx.rFlash = 0, 0, [4]float64{}
+	}
+	if !fx.on(fxPar, side) {
+		fx.zoom /= fx.zoomEdge
+		fx.par = effects.Parallax{} // (only on one image: the bass zoom is flat, effectsAt)
+	}
+	if !fx.on(fxDoF, side) {
+		fx.dof = effects.DoF{}
 	}
 	return fx
 }
@@ -1248,7 +1257,7 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 		for e, sd := range fx.side {
 			sides |= int(sd) << (2 * e)
 		}
-		p.TransP[1], p.TransP[2] = 1, float32(sides)
+		p.TransP[1], p.TransP[2], p.TransP[3] = 1, float32(sides), float32(fx.zoomEdge)
 	}
 	if b := tr.Burn; len(b.Pts) > 0 {
 		p.BurnP = [4]float32{float32(b.Edge), float32(b.Rough), float32(b.MaxD), float32(len(b.Pts))}

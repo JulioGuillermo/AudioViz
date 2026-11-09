@@ -207,12 +207,23 @@ vec3 composite(vec2 q) {
 float layerDepth(int which, vec2 q);
 int depthWhich();
 
-// whether background effect e (fxZoom, fxShake, fxChroma, fxRipple, fxGlitch, fxFlash in
-// frameFX.side) is on the image drawn now: on both, or only on that one (gSide 0: only those on
-// both)
+// the image background effect e (fxZoom, fxShake, fxChroma, fxRipple, fxGlitch, fxFlash, fxPar,
+// fxDoF in frameFX.side) is on: 0 both, 1 only A, 2 only B
+int fxSide(int e) { return (int(P.transP.z) >> (2 * e)) & 3; }
+// whether background effect e is on the image drawn now: on both, or only on that one (gSide 0:
+// only those on both)
 bool fxOn(int e) {
-    int sd = (int(P.transP.z) >> (2 * e)) & 3;
+    int sd = fxSide(e);
     return sd == 0 || sd == gSide;
+}
+// how much of background effect e (the camera 6, the depth of field 7) reaches what is in depth
+// on image ls (0 both: as much as the transition shows of the effect's image; effects.Scene.share)
+float objW(int e, int ls) {
+    int on = fxSide(e);
+    if (on == 0) return 1.0;
+    if (ls != 0) return ls == on ? 1.0 : 0.0;
+    float k = clamp(P.transP.x, 0.0, 1.0);
+    return on == 1 ? 1.0 - k : k;
 }
 // the background's zoom and shake (x, y) on the image drawn now
 vec3 zoomShake() {
@@ -224,6 +235,7 @@ vec3 zoomShake() {
             z /= max(P.shake.w, 1e-3);
             sh = vec2(0.0);
         }
+        if (!fxOn(6)) z /= max(P.transP.w, 1e-3); // (the camera's edge zoom)
     }
     return vec3(z, sh);
 }
@@ -264,7 +276,7 @@ vec2 warpPoint(vec2 q, bool ripple) {
 vec3 warpedDof(vec2 q, bool ripple) {
     vec2 u = warpPoint(q, ripple);
     float zc = gHit.z;
-    float cc = (P.dof.w >= 0.5 && P.depthI.z != 0) ? dofCoC(zc) : 0.0;
+    float cc = (P.dof.w >= 0.5 && P.depthI.z != 0 && fxOn(7)) ? dofCoC(zc) : 0.0;
     int nt = cc >= 0.5 ? P.parallaxN.y : 0; // the taps (from the params: a loop kept as one)
     float zoom = max(zoomShake().x, 1.0);
     if (zoom <= 1.001) zoom = 1.0;
@@ -743,8 +755,8 @@ vec3 drawText(vec3 col, vec2 p0, float ch, int stage) {
         if (zt > 0 && P.depthI.z != 0) {
             vec4 d4 = P.tD[i];
             zq = trackAt(zt - 1, d4.x + dot(p0 - b.xy, vec2(cos(d4.y), sin(d4.y))));
-            p -= pDisp(zq, p0 - 0.5);
-            bl = dofCoC(zq);
+            p -= pDisp(zq, p0 - 0.5) * objW(6, 0);
+            bl = dofCoC(zq) * objW(7, 0);
         }
         float sc = b.z;
         float rc = cos(P.tC[i].w), rs = sin(P.tC[i].w);
@@ -1169,10 +1181,11 @@ void parallaxPixel(vec2 q) {
         return;
     }
     vec3 rz = vec3(0.0); // (each image's hit: the nearness blends as without the camera)
+    int ps = fxSide(6); // (tied to a segment: it moves only that image)
     for (int img = 0; img < 2; img++) {
         if ((has & (1 << img)) == 0) continue;
         vec2 ui = img == 0 ? ua : ub;
-        vec3 r = parallaxFind(img, ui);
+        vec3 r = ps == 0 || ps == img + 1 ? parallaxFind(img, ui) : vec3(ui, layerDepth(img, ui));
         if (img == 0) gParA = ui - r.xy;
         else gParB = ui - r.xy;
         if (img == gW) gHit = r;
@@ -1181,6 +1194,22 @@ void parallaxPixel(vec2 q) {
     if (both && tp.wb > 0.0 && tp.wb < 1.0) {
         float za = gW == 0 ? gHit.z : rz.z, zb = gW == 1 ? gHit.z : rz.z;
         gHit.z = mix(za, zb, tp.wb);
+    }
+    // drawn once per image (shade): each image is read through its own pass's zoom, ripple and
+    // shake, so its move is found there (as cpuSide composes each one; the hit stays as above)
+    if (P.transP.y > 0.5) {
+        int g0 = gSide;
+        for (int img = 0; img < 2; img++) {
+            if ((has & (1 << img)) == 0 || (ps != 0 && ps != img + 1)) continue;
+            gSide = img + 1;
+            vec2 us = bgPoint(img == 0 ? tp.qa : tp.qb);
+            vec2 ui = img == 0 ? ua : ub;
+            if (distance(us, ui) < 1e-3) continue;
+            vec3 r = parallaxFind(img, us);
+            if (img == 0) gParA = us - r.xy;
+            else gParB = us - r.xy;
+        }
+        gSide = g0;
     }
 }
 
@@ -1306,11 +1335,12 @@ vec3 drawLayer(vec3 col, int i, vec2 q) {
     // field as that point is), or one for all of it
     float zq = L.depth.y, zb = L.xf2.z;
     vec2 zd = vec2(0.0);
+    int ls = L.xpr.w; // (the image it is on: the camera and the depth of field on it, objW)
     int zt = floatBitsToInt(L.ztrack.x);
     if (zt > 0 && P.depthI.z != 0) {
         zq = trackAt(zt - 1, L.ztrack.y + dot(q - L.xf.xy, L.ztrack.zw));
-        zd = pDisp(zq, q);
-        zb += dofCoC(zq);
+        zd = pDisp(zq, q) * objW(6, ls);
+        zb += dofCoC(zq) * objW(7, ls);
     } else if ((L.info.w & 16384) != 0 && P.depthI.z != 0) {
         // an emitter's particles each at the depth of their point on their path (its depth plane,
         // after its image and lens)
@@ -1318,8 +1348,8 @@ vec3 drawLayer(vec3 col, int i, vec2 q) {
         int planes = (L.info.w & 8192) != 0 ? 2 : 1;
         float v = uintBitsToFloat(lay[L.info.x + L.info.y * L.info.z * planes + c.y * L.info.y + c.x]);
         if (v >= 0.0) zq = v;
-        zd = pDisp(zq, q);
-        zb += dofCoC(zq);
+        zd = pDisp(zq, q) * objW(6, ls);
+        zb += dofCoC(zq) * objW(7, ls);
     }
     vec2 qw = layerWarp(i, q) - zd;
     vec4 s = layerSample(i, qw, zb);
