@@ -1247,4 +1247,6 @@ export const ES = {
   "Spreads out (px²/s)": "Se expande (px²/s)",
   "How much the smoke spreads out by itself: fuller and softer; 0 = thin, sharp wisps": "Cuánto se expande el humo por sí solo: más lleno y suave; 0 = jirones finos y nítidos",
   "Storm clouds": "Nubes de tormenta",
+  "How fast the gas lives: 2 = twice as fast, 0.5 = slow motion (its particles keep their pace). Faster costs more steps": "Lo rápido que vive el gas: 2 = el doble de rápido, 0,5 = cámara lenta (sus partículas mantienen su ritmo). Más rápido cuesta más pasos",
+  "Speed": "Velocidad",
 };

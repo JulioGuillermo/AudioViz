@@ -41,6 +41,7 @@ type GasPhys struct {
 	Fade, Cool, Burn float32 // 1/s: smoke vanishing, heat lost, fuel burnt
 	Soot             float32 // smoke made per unit of fuel burnt
 	Spread           float32 // px²/s: how much the smoke spreads out by itself (diffusion: fuller, softer)
+	TimeScale        float32 // how fast the gas lives against the video (the engine's steps; 1 = real time)
 	SootCol          [3]float32
 	Seed             uint32
 }

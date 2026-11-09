@@ -536,6 +536,8 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
     { key: 'gas', label: 'Gas', type: 'group', showIf: (c) => c.look === 'gas', fields: [
       { key: 'detail', label: 'Detail (cell px)', type: 'num', min: 2, max: 32, step: 0.5, def: 7, anim: false,
         help: 'The size of the simulation\'s cells: smaller is finer but slower. The particles\' fine wisps are added on top' },
+      { key: 'speed', label: 'Speed', type: 'num', min: 0.05, max: 8, step: 0.05, def: 1,
+        help: 'How fast the gas lives: 2 = twice as fast, 0.5 = slow motion (its particles keep their pace). Faster costs more steps' },
       { key: 'smoke', label: 'Smoke per particle', type: 'num', min: 0, max: 5, step: 0.005, def: 0.2, help: 'Smoke each particle gives off per second (its color: the particles\')' },
       { key: 'heat', label: 'Heat per particle', type: 'num', min: 0, max: 5, step: 0.005, def: 0.4, help: 'Heat each particle gives off per second: hot gas rises (and glows when very hot)' },
       { key: 'fuel', label: 'Fuel per particle', type: 'num', min: 0, max: 5, step: 0.005, def: 0, help: 'Fuel each particle gives off per second: it burns as it rises, into flames (heat) and soot' },

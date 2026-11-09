@@ -2,7 +2,7 @@
 // The simulated gas on the GPU (the emitter look "gas"): the same steps as effects.GasSim (gas.go,
 // the CPU path), one kernel per step chosen by a push constant, one invocation per cell. Every
 // field lives in one buffer (FLD: field f of cell i at f·N + i).
-layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 
 layout(std430, set = 0, binding = 0) readonly buffer Cfg {
     ivec4 c0;   // cells across, down, seed, tiles across
@@ -188,6 +188,49 @@ void sor(int i) {
     float v = (sum - CS * CS * F(DIV, i)) * 0.25;
     float p = F(P, i);
     S(P, i, p + 1.8 * (v - p));
+}
+
+// 24: the pressure by blocks: each workgroup takes a block of 32×32 cells (its edge around it as it
+// is) into shared memory and runs K.a1 red-black SOR sweeps there; the blocks start a0 cells back
+// (shifted between dispatches, so their seams move); from field a2 into the other of P / T0 (read
+// from one, written to the other: a block never sees its neighbours' new values half way)
+const int PT = 16, PH = PT + 2;
+shared float sp[PH * PH];
+shared float sd[PT * PT];
+void sorTiles() {
+    int tw = (GW + PT - 1) / PT + 1;
+    int tile = int(gl_WorkGroupID.x);
+    int ox = (tile % tw) * PT - K.a0, oy = (tile / tw) * PT - K.a0;
+    int li = int(gl_LocalInvocationID.x);
+    // load: the block and its edge (outside the grid: no pressure)
+    for (int k = li; k < PH * PH; k += 256) {
+        int x = ox + k % PH - 1, y = oy + k / PH - 1;
+        sp[k] = (x >= 0 && y >= 0 && x < GW && y < GH) ? F(K.a2, y * GW + x) : 0.0;
+    }
+    for (int k = li; k < PT * PT; k += 256) {
+        int x = ox + k % PT, y = oy + k / PT;
+        sd[k] = (x >= 0 && y >= 0 && x < GW && y < GH) ? F(DIV, y * GW + x) : 0.0;
+    }
+    barrier();
+    float h2 = CS * CS;
+    for (int it = 0; it < K.a1; it++) {
+        for (int c = 0; c < 2; c++) {
+            for (int k = li; k < PT * PT; k += 256) {
+                int bx = k % PT, by = k / PT;
+                int x = ox + bx, y = oy + by;
+                if (((x + y + c) & 1) != 0 || x < 0 || y < 0 || x >= GW || y >= GH) continue;
+                int q = (by + 1) * PH + bx + 1;
+                float sum = sp[q - 1] + sp[q + 1] + sp[q - PH] + sp[q + PH];
+                float v = (sum - h2 * sd[k]) * 0.25;
+                sp[q] += 1.8 * (v - sp[q]);
+            }
+            barrier();
+        }
+    }
+    for (int k = li; k < PT * PT; k += 256) {
+        int x = ox + k % PT, y = oy + k / PT;
+        if (x >= 0 && y >= 0 && x < GW && y < GH) S(K.a2 == P ? T0 : P, y * GW + x, sp[(k / PT + 1) * PH + k % PT + 1]);
+    }
 }
 
 // 7: the pressure's gradient taken off
@@ -377,6 +420,7 @@ void pack(int i) {
 
 void main() {
     GW = C.c0.x; GH = C.c0.y; N = GW * GH; CS = C.f0.x;
+    if (K.kernel == 24) { sorTiles(); return; }
     int i = int(gl_GlobalInvocationID.x);
     if (i >= N) return;
     switch (K.kernel) {

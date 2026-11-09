@@ -191,6 +191,9 @@ type WaterLook struct {
 type GasLook struct {
 	// the simulation's cells (px): smaller is finer and slower
 	Detail float64 `yaml:"detail"`
+	// how fast the gas lives (1 = real time, 2 = twice as fast, 0.5 = slow motion); its sources
+	// keep their pace
+	Speed float64 `yaml:"speed,omitempty"`
 	// what each particle gives off per second: smoke, heat (it rises), fuel (it burns: heat and
 	// soot), and how much it pushes the gas its way (0..1)
 	Smoke float64 `yaml:"smoke"`
@@ -337,14 +340,14 @@ var EmitterPresets = map[string]EmitterConfig{
 	"smoke_real": {Rate: 200, Max: 3000, Shape: "circle", Width: 200, Direction: 0, Spread: 25, Speed: 70, SpeedVar: 0.3, Drag: 1.5,
 		Turbulence: 10, TurbFreq: 1, Life: 0.6, LifeVar: 0.3, Size: 110, SizeEnd: 140, SizeVar: 0.3,
 		ColorStart: "#c0bcb8ff", ColorMid: "#c0bcb8ff", ColorEnd: "#c0bcb800", FadeIn: 0.1, FadeOut: 0.4, Mode: "soft", Softness: 1,
-		Look: "gas", Gas: DefaultGas(), React: EmitterReact{ReactTo: "bass", Rate: 0.6}},
+		Look: "gas", Gas: func() GasLook { g := DefaultGas(); g.Speed = 1.5; return g }(), React: EmitterReact{ReactTo: "bass", Rate: 0.6}},
 	// a simulated fire: fuel burning into flames and the smoke they make
 	"fire_gas": {Rate: 450, Max: 4000, Shape: "circle", Width: 220, Direction: 0, Spread: 30, Speed: 170, SpeedVar: 0.3, Drag: 2,
 		Turbulence: 8, TurbFreq: 2, Life: 0.35, LifeVar: 0.3, Size: 48, SizeEnd: 34, SizeVar: 0.3,
 		ColorStart: "#5c5650ff", ColorMid: "#5c5650ff", ColorEnd: "#5c565000", FadeIn: 0.05, FadeOut: 0.4, Mode: "soft", Softness: 1,
 		Look: "gas", Flame: FlameLook{ColorCool: "#8a1606", ColorMid: "#ff6a14", ColorHot: "#fff2c8", Heat: 1.2, NoiseScale: 55,
 			NoiseSpeed: 280, Edge: 0.7},
-		Gas: GasLook{Detail: 5, Smoke: 0.02, Heat: 0.2, Fuel: 0.8, Push: 0.3, Rise: 300, Swirl: 3, Turbulence: 140, TurbScale: 60,
+		Gas: GasLook{Detail: 5, Speed: 1.5, Smoke: 0.02, Heat: 0.2, Fuel: 0.8, Push: 0.3, Rise: 300, Swirl: 3, Turbulence: 140, TurbScale: 60,
 			Fade: 0.15, Cool: 3.5, Burn: 4, Soot: 0.5, SootColor: "#24201d", Spread: 100,
 			Opacity: 1.6, Wisps: 0.7, WispScale: 25, LightColor: "#ffe8d0", ShadowColor: "#4a4c54", Shadow: 1, FireLight: 1.2},
 		Glow:  EmitGlow{Intensity: 0.6, Radius: 130, Color: "#ff6a18"},

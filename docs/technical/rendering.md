@@ -490,13 +490,19 @@ per second (`gasSub`), the particles alive then (`EmitFrame.At` at the step's ti
 `GasMaxCells` = 131072. Each particle feeds it over its disc ((1 − r²)² × alpha × dt): smoke, heat,
 fuel, dye = its color × smoke, and a relaxation of the velocity towards its own (`push`).
 
-A step (`GasSim.Step`, all float32, rows in parallel, deterministic):
+A step (`GasSim.Step`, all float32, rows in parallel, deterministic; dt = speed / (fps·substeps),
+substeps = ⌈60·speed / fps⌉: `speed` makes the gas live faster than the video, its particles
+still taken at their own moments):
 1. **Forces:** buoyancy −rise·heat + weight·smoke; the wind as a target velocity (relaxation
    0.4/s); the curl of a two-octave value-noise stream function (turbulence); vorticity confinement
    ε = swirl·1.5·cell.
 2. The velocity carried by itself (semi-Lagrangian, midpoint back-trace).
 3. The pressure: red-black SOR, 24 iterations, ω = 1.8, warm-started; p = 0 outside (open edges).
-   Its gradient is subtracted.
+   Its gradient is subtracted. (On the GPU, by blocks: each workgroup of 256 takes a 16×16 block
+   and its edge into shared memory and runs 8 sweeps there; 4 dispatches with the blocks shifted by
+   0, 8, 4, 12 cells, so the seams move: a dispatch's barrier costs more than its work on an iGPU.
+   Each pass reads the pressure from one field and writes it to another, P → T0 → P…, so no
+   block sees its neighbours' new values half way: the result stays the same run after run.)
 4. Smoke, dye, heat, fuel and flame temperature carried by the flow (MacCormack, clamped to the
    four source cells).
 5. Explicit diffusion of smoke, dye and heat (`spread`).

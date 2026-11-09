@@ -117,6 +117,7 @@ Three presets start from it:
           preset: fire_gas
           gas:
             detail: 5            # the simulation's cells (px): smaller is finer and slower
+            speed: 1.5           # how fast the gas lives: 2 = twice as fast, 0.5 = slow motion (costs more steps)
             smoke: 0.02          # per particle per second: smoke…
             heat: 0.2            # …heat (it rises)…
             fuel: 0.8            # …fuel (it burns: flames, heat and soot)

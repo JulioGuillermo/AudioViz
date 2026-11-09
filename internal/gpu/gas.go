@@ -103,7 +103,15 @@ type gasPush struct {
 
 func (g *GasJob) run(k, a0, a1, a2 int32, t, dt, p0, p1 float32) error {
 	p := gasPush{k, a0, a1, a2, t, dt, p0, p1}
-	if C.vkj_dispatch(g.j, unsafe.Pointer(&p), C.uint32_t((g.n+63)/64), 1, 1) != 0 {
+	if C.vkj_dispatch(g.j, unsafe.Pointer(&p), C.uint32_t((g.n+255)/256), 1, 1) != 0 {
+		return fmt.Errorf("vkCmdDispatch failed")
+	}
+	return nil
+}
+
+func (g *GasJob) runGroups(k, a0, a1, a2 int32, t, dt float32, groups int) error {
+	p := gasPush{k, a0, a1, a2, t, dt, 0, 0}
+	if C.vkj_dispatch(g.j, unsafe.Pointer(&p), C.uint32_t(groups), 1, 1) != 0 {
 		return fmt.Errorf("vkCmdDispatch failed")
 	}
 	return nil
@@ -171,11 +179,18 @@ func (g *GasJob) Step(src []float32, st GasStep) (bool, error) {
 			return false, err
 		}
 	}
-	for it := 0; it < 24; it++ {
-		for c := int32(0); c < 2; c++ {
-			if err := g.run(6, c, 0, 0, st.T, st.Dt, 0, 0); err != nil {
-				return false, err
-			}
+	// the pressure: by blocks of 16×16 cells in shared memory (gas.comp's sorTiles), 8 sweeps
+	// each, the blocks shifted between the 4 dispatches so their seams move (warm-started: the
+	// pressure carries on from the last step)
+	tiles := ((g.GW+15)/16 + 1) * ((g.GH+15)/16 + 1)
+	// (from the pressure into T0 and back: an even number of passes)
+	for k, off := range []int32{0, 8, 4, 12} {
+		from := int32(2) // P
+		if k%2 == 1 {
+			from = 14 // T0
+		}
+		if err := g.runGroups(24, off, 8, from, st.T, st.Dt, tiles); err != nil {
+			return false, err
 		}
 	}
 	f32 := func(v float32) int32 { return int32(*(*uint32)(unsafe.Pointer(&v))) }

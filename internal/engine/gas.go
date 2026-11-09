@@ -22,8 +22,18 @@ import (
 // frame (its particles and the gas's settings): when the clip changes, the simulation is kept up
 // to the first frame whose fingerprint changed (changing only how it looks keeps all of it).
 
-// gasSub: simulation steps per frame (about 60 per second)
-func gasSub(fps int) int { return max(1, int(math.Ceil(60/float64(max(fps, 1))))) }
+// gasSub: simulation steps per frame (about 60 per second of the gas's own time)
+func gasSub(fps int, speed float32) int {
+	return max(1, int(math.Ceil(60*float64(speed)/float64(max(fps, 1)))))
+}
+
+// gasSpeed: how fast the gas of emitter e lives (GasLook.Speed; 0 = 1)
+func gasSpeed(e *config.EmitterConfig) float32 {
+	if e.Gas.Speed <= 0 {
+		return 1
+	}
+	return float32(math.Min(math.Max(e.Gas.Speed, 0.05), 8))
+}
 
 type gasRun struct {
 	grid  string   // the grid's size: a new one starts over
@@ -65,7 +75,7 @@ func gasPhys(e *config.EmitterConfig, sc float64, seed uint32) effects.GasPhys {
 		WindX: f(g.Wind) * sc32, Turb: f(math.Max(g.Turbulence, 0)) * sc32, TurbScale: f(math.Max(g.TurbScale, 1)) * sc32,
 		Fade: f(math.Max(g.Fade, 0)), Cool: f(math.Max(g.Cool, 0)), Burn: f(math.Max(g.Burn, 0)), Soot: f(math.Max(g.Soot, 0)),
 		Spread:  f(math.Max(g.Spread, 0)) * sc32 * sc32,
-		SootCol: soot, Seed: seed,
+		SootCol: soot, Seed: seed, TimeScale: gasSpeed(e),
 	}
 }
 
@@ -305,8 +315,9 @@ func (s *Session) gasStep(li, ci int, c0 *config.ClipConfig, k int, feats []audi
 		return nil
 	}
 	ph := gasPhys(e, s.emitScale(), ef.P.Seed)
-	sub := gasSub(s.FPS)
-	dt := float32(1 / float64(s.FPS*sub))
+	// (faster: more and longer steps, the particles still at their own moments)
+	sub := gasSub(s.FPS, ph.TimeScale)
+	dt := ph.TimeScale / float32(s.FPS*sub)
 	srcs := make([][]effects.GasSource, sub)
 	for j := 0; j < sub; j++ {
 		ef.T = (float64(k-1) + float64(j+1)/float64(sub)) / float64(s.FPS)
