@@ -483,9 +483,6 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 		for k := range fs.FXS {
 			fx := &fs.FXS[k]
 			par := fx.par
-			if fs.Trans.Fluid != nil {
-				par = effects.Parallax{} // the fluid transitions don't move
-			}
 			fs.Scene.V[k] = effects.SceneView{Zoom: fx.zoom, ShakeX: fx.shakeX, ShakeY: fx.shakeY, RippleAmp: fx.rippleAmp,
 				RippleFreq: fx.rippleFreq, RippleTm: fx.rTim, Par: par, N: par.Steps(s.W, s.H), DoF: fx.dof}
 		}

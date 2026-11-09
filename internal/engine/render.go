@@ -1021,16 +1021,18 @@ func (s *Session) cpuSide(fs *FrameState, side int) *image.RGBA {
 	fx := fs.fxFor(side)
 	tr := fs.Trans
 	tr.Side = side
-	par := fx.par
-	if !par.On() || (fs.DepthA == nil && fs.DepthB == nil) {
-		par = effects.Parallax{}
+	// (each image with its own camera, as render.comp: the same as fx's but on the other image of
+	// a frame drawn once per image, and that one is seen only in a fluid's pieces)
+	pa, pb := fs.FXS[0].par, fs.FXS[1].par
+	if fs.DepthA == nil && fs.DepthB == nil {
+		pa, pb = effects.Parallax{}, effects.Parallax{}
 	}
-	if tr.Mode == 0 && fs.LayerA == effects.Identity && !par.On() {
+	if tr.Mode == 0 && fs.LayerA == effects.Identity && !pa.On() {
 		if fs.BgA != nil {
 			copy(frame.Pix, fs.BgA.Pix)
 		}
 	} else {
-		effects.ComposeParallax(frame, fs.BgA, fs.BgB, fs.LayerA, fs.LayerB, tr, par, fs.DepthA, fs.DepthB)
+		effects.ComposeParallax(frame, fs.BgA, fs.BgB, fs.LayerA, fs.LayerB, tr, pa, pb, fs.DepthA, fs.DepthB)
 	}
 	frame = effects.ApplyBassZoom(frame, fx.zoom, fx.shakeX, fx.shakeY)
 	// the scene's depth at each pixel, for the effects on a depth range and the depth of field
@@ -1164,7 +1166,7 @@ func (s *Session) fxSet(set *gpu.FXSet, fx *frameFX, fs *FrameState) {
 	*set = gpu.FXSet{}
 	set.ZoomRipple = [4]float32{float32(fx.zoom), float32(fx.rippleAmp), float32(fx.rippleFreq), float32(fx.rTim)}
 	set.Shake = [4]float32{float32(fx.shakeX), float32(fx.shakeY)}
-	// the 2.5D camera (with a depth map; the fluid transitions don't move)
+	// the 2.5D camera (with a depth map)
 	set.Dof = [4]float32{float32(fx.dof.From), float32(fx.dof.To), float32(fx.dof.Soft), float32(fx.dof.Blur)}
 	if fx.dof.On() {
 		set.N[3] = effects.DoFTaps // the gather's samples
@@ -1172,7 +1174,7 @@ func (s *Session) fxSet(set *gpu.FXSet, fx *frameFX, fs *FrameState) {
 	for i, r := range [4][4]float64{fx.rFlash, fx.rChroma, fx.rRipple, fx.rGlitch} {
 		set.Ranges[i] = [4]float32{float32(r[0]), float32(r[1]), float32(r[2]), float32(r[3])}
 	}
-	if par := fx.par; par.On() && (fs.DepthA != nil || fs.DepthB != nil) && fs.Trans.Fluid == nil {
+	if par := fx.par; par.On() && (fs.DepthA != nil || fs.DepthB != nil) {
 		set.Parallax = [4]float32{float32(par.SX), float32(par.SY), float32(par.Dolly), float32(par.Focus)}
 		set.N[2] = int32(par.Steps(s.W, s.H))
 	}

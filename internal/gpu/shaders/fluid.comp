@@ -6,7 +6,22 @@
 
 layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
+// the backgrounds' depth (camera.glsl), in the overlay buffer
+layout(std430, set = 0, binding = 9) readonly buffer Layers { uint lay[]; };
 #include "common.glsl"
+#include "camera.glsl"
+
+// Image img at background point u seen by its 2.5D camera (each image with its own: in a
+// transition drawn once per image, B's effects are fxB), as render.comp shows it outside the
+// fluid: the pieces carry the images as they were moving (as sampler.atCam)
+vec3 camAt(int img, vec2 u) {
+    if (P.depthI.z == 0 || (P.depthI.z & (1 << img)) == 0) return layerAt(img, u);
+    int g = gFX;
+    gFX = img == 1 && P.transP.y > 0.5 ? 1 : 0;
+    if (fParN() > 0) u = parallaxFind(img, u).xy;
+    gFX = g;
+    return layerAt(img, u);
+}
 
 // Per particle 8 floats (x, y, p, -, old piece x, y, new piece x, y) sorted by bin, then the
 // bin starts (uint) and the coarse level (floats), at the offsets in P.fluidI
@@ -50,8 +65,8 @@ void main() {
                 vec2 off = f - q.xy;
                 float p = q.z;
                 vec3 c = vec3(0.0);
-                if (p < 1.0) c = layerAt(0, src.xy + off);
-                if (p > 0.0) c = mix(c, layerAt(1, src.zw + off), p);
+                if (p < 1.0) c = camAt(0, src.xy + off);
+                if (p > 0.0) c = mix(c, camAt(1, src.zw + off), p);
                 acc += c * wgt;
                 pw += p * wgt;
                 w += wgt;
@@ -64,7 +79,7 @@ void main() {
         nb = mix(k, nb, w);
         // Where the area is almost empty, a dim mix of both images, or the soft color of the
         // particles around (bilinear on the 1/8 coarse grid)
-        vec3 g = mix(layerAt(0, f), layerAt(1, f), k) * 0.5;
+        vec3 g = mix(camAt(0, f), camAt(1, f), k) * 0.5;
         int cw = P.fluidN.z, ch = P.fluidN.w;
         vec2 q = (f + 0.5) / 8.0 - 0.5;
         int c0 = clamp(int(floor(q.x)), 0, cw - 1), r0 = clamp(int(floor(q.y)), 0, ch - 1);
@@ -79,7 +94,7 @@ void main() {
     }
     if (P.fluidF.w > 0.0 && w < 0.5) c = vec3(1.0, 0.0, 1.0);
     if (k > 0.96) {
-        c = mix(c, layerAt(1, f), smoothstep(0.96, 1.0, k));
+        c = mix(c, camAt(1, f), smoothstep(0.96, 1.0, k));
         nb = mix(nb, 1.0, smoothstep(0.96, 1.0, k));
     }
     // alpha: how much of the new image is here (render.comp transPick: the depth follows it)

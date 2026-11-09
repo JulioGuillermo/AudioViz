@@ -175,11 +175,25 @@ func newSampler(img *image.RGBA, l Layer, w, h int) sampler {
 	return sampler{img: img, l: l, w: w, h: h, cs: math.Cos(-l.Rot), sn: math.Sin(-l.Rot)}
 }
 
-func (s *sampler) at(x, y float64) rgb {
+func (s *sampler) at(x, y float64) rgb { return s.raw(x-s.pdx, y-s.pdy) }
+
+// atCam: the image at background point (x, y) seen by its camera (as camAt in fluid.comp: the
+// fluid's pieces carry the images as they were moving)
+func (s *sampler) atCam(x, y float64) rgb {
+	if s.par == nil || s.img == nil {
+		return s.raw(x, y)
+	}
+	px, py, _ := s.par.Find(float32(x), float32(y), s.n, s.w, s.h, func(x, y float32) float32 {
+		return layerDepth(s.depth, s.l, x, y, s.w, s.h)
+	})
+	return s.raw(float64(px), float64(py))
+}
+
+// raw: the image at point (x, y) of the frame through its layer (motion)
+func (s *sampler) raw(x, y float64) rgb {
 	if s.img == nil {
 		return rgb{}
 	}
-	x, y = x-s.pdx, y-s.pdy
 	cx, cy := float64(s.w)/2, float64(s.h)/2
 	dx, dy := x-cx, y-cy
 	if s.l.Rot != 0 {
@@ -207,12 +221,13 @@ func (s *sampler) at(x, y float64) rgb {
 // Compose draws the background into dst: image a with layer la, and during a transition the
 // new image b with layer lb mixed in by tr. It mirrors composite() in render.comp.
 func Compose(dst, a, b *image.RGBA, la, lb Layer, tr Trans) {
-	ComposeParallax(dst, a, b, la, lb, tr, Parallax{}, nil, nil)
+	ComposeParallax(dst, a, b, la, lb, tr, Parallax{}, Parallax{}, nil, nil)
 }
 
-// ComposeParallax is Compose seen by the 2.5D camera par, each image with its depth (da, db; nil:
-// that one doesn't move). The fluid transitions don't move (as in fluid.comp).
-func ComposeParallax(dst, a, b *image.RGBA, la, lb Layer, tr Trans, par Parallax, da, db []uint16) {
+// ComposeParallax is Compose seen by the 2.5D cameras pa (image a) and pb (image b), each image
+// with its depth (da, db; nil: that one doesn't move). In the fluid transitions the pieces carry
+// the images as their cameras show them (as fluid.comp).
+func ComposeParallax(dst, a, b *image.RGBA, la, lb Layer, tr Trans, pa, pb Parallax, da, db []uint16) {
 	w, h := dst.Bounds().Dx(), dst.Bounds().Dy()
 	if !tr.HasA {
 		a = nil
@@ -221,14 +236,11 @@ func ComposeParallax(dst, a, b *image.RGBA, la, lb Layer, tr Trans, par Parallax
 		b = nil
 	}
 	sa, sb := newSampler(a, la, w, h), newSampler(b, lb, w, h)
-	if par.On() && tr.Fluid == nil {
-		n := par.Steps(w, h)
-		if da != nil {
-			sa.par, sa.depth, sa.n = &par, da, n
-		}
-		if db != nil {
-			sb.par, sb.depth, sb.n = &par, db, n
-		}
+	if pa.On() && da != nil {
+		sa.par, sa.depth, sa.n = &pa, da, pa.Steps(w, h)
+	}
+	if pb.On() && db != nil {
+		sb.par, sb.depth, sb.n = &pb, db, pb.Steps(w, h)
 	}
 	if tr.Fluid != nil {
 		tr.Fluid.Render(dst, &sa, &sb)
@@ -241,7 +253,7 @@ func ComposeParallax(dst, a, b *image.RGBA, la, lb Layer, tr Trans, par Parallax
 				var c rgb
 				// (each image's camera move where the transition reads it)
 				ax, ay, bx, by := float64(x), float64(y), float64(x), float64(y)
-				if sa.par != nil && sb.par != nil {
+				if da != nil && db != nil && (sa.par != nil || sb.par != nil) {
 					ax, ay, bx, by, _ = TransPick(tr, float64(x), float64(y), w, h)
 				}
 				sa.moveAt(ax, ay)

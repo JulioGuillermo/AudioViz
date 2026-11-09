@@ -615,8 +615,8 @@ func (ff *FluidFrame) Render(dst *image.RGBA, sa, sb *sampler) {
 }
 
 // pixel: the pieces covering pixel (x, y), each weighted by how much of the pixel it covers
-// (antialiased squares); the uncovered part takes the soft color around. Mirrors main() in
-// fluid.comp.
+// (antialiased squares); the uncovered part takes the soft color around. Each image as its
+// camera shows it (atCam). Mirrors main() in fluid.comp.
 func (ff *FluidFrame) pixel(x, y int, sa, sb *sampler) (rgb, float64) {
 	var acc rgb
 	var w, pw float64
@@ -641,10 +641,10 @@ func (ff *FluidFrame) pixel(x, y int, sa, sb *sampler) (rgb, float64) {
 				p := float64(q[2])
 				var c rgb
 				if p < 1 {
-					c = sa.at(float64(q[4])+ox, float64(q[5])+oy)
+					c = sa.atCam(float64(q[4])+ox, float64(q[5])+oy)
 				}
 				if p > 0 {
-					c = mixc(c, sb.at(float64(q[6])+ox, float64(q[7])+oy), p)
+					c = mixc(c, sb.atCam(float64(q[6])+ox, float64(q[7])+oy), p)
 				}
 				acc = rgb{acc[0] + c[0]*wgt, acc[1] + c[1]*wgt, acc[2] + c[2]*wgt}
 				pw += p * wgt
@@ -662,7 +662,7 @@ func (ff *FluidFrame) pixel(x, y int, sa, sb *sampler) (rgb, float64) {
 		nb = ff.K + (nb-ff.K)*w
 		// Where the area is almost empty (e.g. edges the particles left), fade to a dim mix of
 		// both images instead of stretching a few particles' colors
-		dim := mixc(sa.at(float64(x), float64(y)), sb.at(float64(x), float64(y)), ff.K)
+		dim := mixc(sa.atCam(float64(x), float64(y)), sb.atCam(float64(x), float64(y)), ff.K)
 		g := rgb{dim[0] * 0.5, dim[1] * 0.5, dim[2] * 0.5}
 		// Coarse color around (bilinear on the 1/8 grid)
 		cw, chh := ff.CW, ff.CH
@@ -684,7 +684,7 @@ func (ff *FluidFrame) pixel(x, y int, sa, sb *sampler) (rgb, float64) {
 		c = rgb{255, 0, 255}
 	}
 	if out := smooth01((ff.K - 0.96) / 0.04); out > 0 {
-		c = mixc(c, sb.at(float64(x), float64(y)), out)
+		c = mixc(c, sb.atCam(float64(x), float64(y)), out)
 		nb += (1 - nb) * out
 	}
 	return c, nb
