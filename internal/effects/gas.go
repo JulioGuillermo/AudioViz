@@ -1,10 +1,7 @@
 package effects
 
 import (
-	"bytes"
-	"compress/flate"
 	"encoding/binary"
-	"io"
 	"math"
 )
 
@@ -16,8 +13,8 @@ import (
 // less, and fire lights the smoke around it from inside; fine wisps carried by the flow (two sets
 // of coordinates carried by the gas, each restarted in turn) eat its edges.
 //
-// The simulation runs on the CPU (in parallel, always the same result); the engine keeps its
-// state at checkpoints (GasSim.Save) to seek. Each frame's GasFrame (the grid with its light) is
+// The simulation runs on the CPU (in parallel, always the same result) or on the GPU (GasGPU);
+// the engine keeps its state at checkpoints (Save / Checkpoint) to seek. Each frame's GasFrame (the grid with its light) is
 // drawn by gasPixel (CPU) and by emit.comp (GPU) the same way.
 
 const (
@@ -96,42 +93,144 @@ func (s *GasSim) fields() []*[]float32 {
 // Save: the state, compressed (halves). The state is set to what is saved (the pressure
 // cleared) so that going on from here or from the saved state gives the same frames.
 func (s *GasSim) Save() []byte {
-	var raw bytes.Buffer
-	binary.Write(&raw, binary.LittleEndian, s.T)
-	h := make([]byte, 2*s.GW*s.GH)
+	var fs [][]float32
 	for _, f := range s.fields() {
-		for i, v := range *f {
-			q := F16(v)
-			(*f)[i] = HalfF(q)
-			binary.LittleEndian.PutUint16(h[2*i:], q)
-		}
-		raw.Write(h)
+		fs = append(fs, *f)
 	}
 	clear(s.P)
-	var out bytes.Buffer
-	w, _ := flate.NewWriter(&out, flate.BestSpeed)
-	w.Write(raw.Bytes())
-	w.Close()
-	return out.Bytes()
+	return encodeGas(s.T, fs, true)
 }
 
 // Load: the state saved by Save (false if it does not fit this grid)
 func (s *GasSim) Load(b []byte) bool {
-	raw, err := io.ReadAll(flate.NewReader(bytes.NewReader(b)))
-	n := s.GW * s.GH
-	if err != nil || len(raw) != 8+len(s.fields())*2*n {
-		return false
-	}
-	s.T = math.Float64frombits(binary.LittleEndian.Uint64(raw))
-	o := 8
+	var fs [][]float32
 	for _, f := range s.fields() {
-		for i := range *f {
-			(*f)[i] = HalfF(binary.LittleEndian.Uint16(raw[o+2*i:]))
-		}
-		o += 2 * n
+		fs = append(fs, *f)
 	}
-	clear(s.P)
-	return true
+	t, ok := decodeGas(b, fs)
+	if ok {
+		s.T = t
+		clear(s.P)
+	}
+	return ok
+}
+
+// encodeGas: time and fields as halves (round: the fields set to their halves), the runs of
+// zeros (most of the frame: no gas) left out: per run, how many zeros, how many values, the values
+func encodeGas(t float64, fs [][]float32, round bool) []byte {
+	out := binary.LittleEndian.AppendUint64(nil, math.Float64bits(t))
+	for _, f := range fs {
+		n := len(f)
+		i := 0
+		for i < n {
+			z := i
+			for z < n && f[z] == 0 {
+				z++
+			}
+			e := z
+			for e < n && f[e] != 0 {
+				e++
+			}
+			out = binary.AppendUvarint(out, uint64(z-i))
+			out = binary.AppendUvarint(out, uint64(e-z))
+			for k := z; k < e; k++ {
+				q := F16(f[k])
+				if round {
+					f[k] = HalfF(q)
+				}
+				out = binary.LittleEndian.AppendUint16(out, q)
+			}
+			i = e
+		}
+	}
+	return out
+}
+
+// decodeGas: what encodeGas made, into fs (of the same sizes)
+func decodeGas(b []byte, fs [][]float32) (float64, bool) {
+	if len(b) < 8 {
+		return 0, false
+	}
+	t := math.Float64frombits(binary.LittleEndian.Uint64(b))
+	o := 8
+	for _, f := range fs {
+		i := 0
+		for i < len(f) {
+			z, m := binary.Uvarint(b[o:])
+			if m <= 0 {
+				return 0, false
+			}
+			o += m
+			c, m := binary.Uvarint(b[o:])
+			if m <= 0 || i+int(z)+int(c) > len(f) || o+m+2*int(c) > len(b) {
+				return 0, false
+			}
+			o += m
+			clear(f[i : i+int(z)])
+			i += int(z)
+			for k := 0; k < int(c); k++ {
+				f[i] = HalfF(binary.LittleEndian.Uint16(b[o:]))
+				o += 2
+				i++
+			}
+		}
+	}
+	return t, o == len(b)
+}
+
+// GasSimulator: a gas simulation, on the CPU (GasSim) or on the GPU (GasGPU); checkpoints of one
+// can be restored into the other
+type GasSimulator interface {
+	// Advance: one frame: a step per list of sources (fed first), dt each
+	Advance(srcs [][]GasSource, ph *GasPhys, dt float32) error
+	// Draw: the gas now with its light
+	Draw(l GasLight) (*GasFrame, error)
+	Checkpoint() ([]byte, error)
+	Restore(b []byte) bool
+	Close()
+}
+
+func (s *GasSim) Advance(srcs [][]GasSource, ph *GasPhys, dt float32) error {
+	for _, src := range srcs {
+		s.Feed(src, ph, dt)
+		s.Step(ph, dt)
+	}
+	return nil
+}
+func (s *GasSim) Draw(l GasLight) (*GasFrame, error) { return s.Frame(l), nil }
+func (s *GasSim) Checkpoint() ([]byte, error)        { return s.Save(), nil }
+func (s *GasSim) Restore(b []byte) bool              { return s.Load(b) }
+func (s *GasSim) Close()                             {}
+
+// gasStepFactors: what a step of dt keeps of the wind's gap, diffuses, keeps of smoke, flames
+// and warmth, burns of the fuel (as GasSim.Step works them out)
+func gasStepFactors(ph *GasPhys, cs, dt float32) (wk, diff, fade, cool, warm, burn float32) {
+	wk = 1 - float32(math.Exp(-0.4*float64(dt)))
+	if ph.Spread > 0 {
+		diff = min(0.2, ph.Spread*dt/(cs*cs))
+	}
+	fade = float32(math.Exp(-float64(ph.Fade * dt)))
+	cool = float32(math.Exp(-float64(ph.Cool * dt)))
+	warm = float32(math.Exp(-float64(ph.Cool * 0.3 * dt)))
+	burn = 1 - float32(math.Exp(-float64(ph.Burn*dt)))
+	return
+}
+
+// gasRestarts: which wisp coordinate sets restart in a step from t to t + dt (bits 1, 2)
+func gasRestarts(t float64, dt float32) (bool, bool) {
+	return math.Floor(t/gasPeriod) != math.Floor((t+float64(dt))/gasPeriod),
+		math.Floor(t/gasPeriod+0.5) != math.Floor((t+float64(dt))/gasPeriod+0.5)
+}
+
+// gasW1: how much the first set of wisp coordinates counts at time t
+func gasW1(t float64) float32 {
+	ph := float32(math.Mod(t, gasPeriod) / gasPeriod)
+	return 1 - float32(math.Abs(float64(2*ph-1)))
+}
+
+// gasBlurRadii: the radii (cells) of the blurs of the light around and of the fire's light
+func gasBlurRadii(l GasLight, cs float32) (int, int) {
+	return max(1, int(math.Round(float64(l.Reach/12/cs)))), max(1, int(math.Round(float64(l.FireReach/cs/2))))
 }
 
 // Empty: whether there is no gas at all (nothing to draw)
@@ -231,7 +330,7 @@ func (s *GasSim) Step(ph *GasPhys, dt float32) {
 	cs := s.CS
 	// 1. forces: heat rises, smoke sinks, the wind, the turbulence (a curl of noise: no
 	// divergence), swirls kept alive (vorticity confinement)
-	wk := 1 - float32(math.Exp(-0.4*float64(dt)))
+	wk, diffK, fade, cool, warm, burn := gasStepFactors(ph, cs, dt)
 	turbOn := ph.Turb > 0 && ph.TurbScale > 0
 	var psi []float32
 	if turbOn {
@@ -313,16 +412,14 @@ func (s *GasSim) Step(ph *GasPhys, dt float32) {
 	// 4. the smoke, its color, heat and fuel carried by the flow (MacCormack, clamped)
 	s.advectAll([][]float32{s.D, s.R, s.G, s.B, s.Heat, s.Fuel, s.Fire}, dt)
 	// the smoke spreads out a little by itself (and its heat): fuller, softer volumes
-	if ph.Spread > 0 {
-		k := min(0.2, ph.Spread*dt/(cs*cs))
+	if diffK > 0 {
 		for _, f := range [][]float32{s.D, s.R, s.G, s.B, s.Heat} {
-			s.diffuse(f, k)
+			s.diffuse(f, diffK)
 		}
 	}
 	// the wisp coordinates: carried (semi-Lagrangian), plus the way the gas went; each set restarts
 	// in turn (gasPeriod; half a period apart)
-	k1 := math.Floor(s.T/gasPeriod) != math.Floor((s.T+float64(dt))/gasPeriod)
-	k2 := math.Floor(s.T/gasPeriod+0.5) != math.Floor((s.T+float64(dt))/gasPeriod+0.5)
+	k1, k2 := gasRestarts(s.T, dt)
 	s.rows(func(y0, y1 int) {
 		for y := y0; y < y1; y++ {
 			for x := 0; x < W; x++ {
@@ -348,12 +445,8 @@ func (s *GasSim) Step(ph *GasPhys, dt float32) {
 		clear(s.C2x)
 		clear(s.C2y)
 	}
-	// 5. fuel burns into heat and soot; smoke fades, heat cools
-	fade := float32(math.Exp(-float64(ph.Fade * dt)))
-	// the flames cool fast (Cool); the warmth that makes the gas rise stays longer
-	cool := float32(math.Exp(-float64(ph.Cool * dt)))
-	warm := float32(math.Exp(-float64(ph.Cool * 0.3 * dt)))
-	burn := 1 - float32(math.Exp(-float64(ph.Burn*dt)))
+	// 5. fuel burns into heat and soot; smoke fades, heat cools (the flames fast, the warmth
+	// that makes the gas rise slower)
 	s.rows(func(y0, y1 int) {
 		for i := y0 * W; i < y1*W; i++ {
 			if b := s.Fuel[i] * burn; b > 0 {
@@ -623,7 +716,7 @@ func (s *GasSim) Frame(l GasLight) *GasFrame {
 		}
 	})
 	// the light around: less where the smoke around is thick (a wide blur of it)
-	rad := max(1, int(math.Round(float64(l.Reach/12/cs))))
+	rad, fr := gasBlurRadii(l, cs)
 	blur := func(dst, src []float32, r int) {
 		tmp := make([]float32, n)
 		boxBlur(tmp, src, W, H, r)
@@ -638,15 +731,13 @@ func (s *GasSim) Frame(l GasLight) *GasFrame {
 	for i := range fire {
 		fire[i] = 1 - float32(math.Exp(float64(-s.Fire[i]*l.HeatK)))
 	}
-	fr := max(1, int(math.Round(float64(l.FireReach/cs/2))))
 	tmp := make([]float32, n)
 	blur(tmp, fire, fr)
 	for i := range fire {
 		fire[i] = min(1, tmp[i]*2)
 	}
 	g := &GasFrame{GW: W, GH: H, CS: cs, Cells: make([]uint32, n*GasCellWords)}
-	ph := float32(math.Mod(s.T, gasPeriod) / gasPeriod)
-	g.W1 = 1 - float32(math.Abs(float64(2*ph-1)))
+	g.W1 = gasW1(s.T)
 	pk := func(a, b float32) uint32 { return uint32(F16(a)) | uint32(F16(b))<<16 }
 	for i := 0; i < n; i++ {
 		o := i * GasCellWords

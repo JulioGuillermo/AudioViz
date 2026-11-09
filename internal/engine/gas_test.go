@@ -14,7 +14,7 @@ import (
 
 // gasSession: a small project with one emitter clip of the given preset (an audio file and a
 // background made here)
-func gasSession(t *testing.T, preset, extra string) *Session {
+func gasSession(t testing.TB, preset, extra string) *Session {
 	t.Helper()
 	dir := t.TempDir()
 	// a second of silence (16-bit mono WAV) and a plain background
@@ -45,7 +45,7 @@ func gasSession(t *testing.T, preset, extra string) *Session {
 	y := `
 audio: { path: "a.wav" }
 background: { path: "bg.png" }
-output: { width: 320, height: 180, fps: 30 }
+output: { width: ` + gasTestW + `, height: ` + gasTestH + `, fps: 30 }
 layers:
   - name: G
     kind: emitter
@@ -110,5 +110,19 @@ func TestGasSeek(t *testing.T) {
 	}
 	if math.IsNaN(sum) {
 		t.Fatal("NaN")
+	}
+}
+
+var gasTestW, gasTestH = "320", "180"
+
+// the gas of one emitter at 1080p, 86 frames from the start
+func BenchmarkGasEngine(b *testing.B) {
+	gasTestW, gasTestH = "1920", "1080"
+	defer func() { gasTestW, gasTestH = "320", "180" }()
+	for i := 0; i < b.N; i++ {
+		a := gasSession(b, "fire_gas", "")
+		if gasCells(a, 85) == nil {
+			b.Fatal("no gas")
+		}
 	}
 }

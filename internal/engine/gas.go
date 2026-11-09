@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"hash/fnv"
 	"math"
+	"os"
+	"strings"
 	"sync"
 
 	"audioviz/internal/audio"
@@ -28,10 +30,12 @@ type gasRun struct {
 	tab   string   // the clip as last fingerprinted (emitTable.key)
 	f0    int      // the clip's first frame
 	fp    []uint64 // fingerprints of the frames f0, f0+1… (checked against the clip as it is)
-	sim   *effects.GasSim
+	sim   effects.GasSimulator
 	live  int            // the frame the simulation is at (f0-1: before the first one)
 	ck    map[int][]byte // the state after frame k
 	every int            // frames between checkpoints
+	// the particles of the frames just fingerprinted, for their steps (within one call)
+	pre map[int]gasPre
 	// the last frame drawn (its frame and its light)
 	outK   int
 	outKey effects.GasLight
@@ -39,6 +43,12 @@ type gasRun struct {
 }
 
 var gasMu sync.Mutex
+
+// gasPre: an emitter clip's particles at a frame and its settings then
+type gasPre struct {
+	ef *effects.EmitFrame
+	e  *config.EmitterConfig
+}
 
 // gasPhys: how the gas of emitter e moves, at sc px per px of a 1080-line frame
 func gasPhys(e *config.EmitterConfig, sc float64, seed uint32) effects.GasPhys {
@@ -102,23 +112,68 @@ func gasFingerprint(p *effects.EmitParams, ph *effects.GasPhys, births []effects
 func (s *Session) gasFrame(li, ci int, c0 *config.ClipConfig, idx int, feats []audio.FrameFeatures, ef *effects.EmitFrame, e *config.EmitterConfig) *effects.GasFrame {
 	gasMu.Lock()
 	defer gasMu.Unlock()
+	g, err := s.gasFrameAt(li, ci, c0, idx, feats, e)
+	if err != nil {
+		// the GPU failed: everything again on the CPU
+		s.Logf("⚠️  Gas simulation on the GPU failed (%v), using the CPU", err)
+		s.gasCPU = true
+		s.closeGas()
+		g, _ = s.gasFrameAt(li, ci, c0, idx, feats, e)
+	}
+	return g
+}
+
+// newGasSim: an empty gas, on the GPU unless rendering on the CPU (or AUDIOVIZ_GAS_CPU=1, or
+// the GPU failed)
+func (s *Session) newGasSim(cs float64) effects.GasSimulator {
+	if !s.gasCPU && !strings.EqualFold(s.Cfg.Output.Renderer, "cpu") && os.Getenv("AUDIOVIZ_GAS_CPU") == "" {
+		g, err := effects.NewGasGPU(s.Cfg.Output.GPUDevice, s.W, s.H, cs)
+		if err == nil {
+			return g
+		}
+		s.Logf("⚠️  Gas simulation on the GPU not available (%v), using the CPU", err)
+		s.gasCPU = true
+	}
+	return effects.NewGasSim(s.W, s.H, cs)
+}
+
+// closeGas forgets every gas simulation (freeing what they hold on the GPU)
+func (s *Session) closeGas() {
+	for _, r := range s.gasRuns {
+		r.sim.Close()
+	}
+	s.gasRuns = nil
+}
+
+func (s *Session) gasFrameAt(li, ci int, c0 *config.ClipConfig, idx int, feats []audio.FrameFeatures, e *config.EmitterConfig) (*effects.GasFrame, error) {
 	tb := s.emitTableFor(li, ci, c0, feats)
 	id := fmt.Sprintf("%d:%d", li, ci)
 	cs := s.gasCell(e)
 	grid := fmt.Sprintf("%dx%d@%d|%g|%d", s.W, s.H, s.FPS, cs, tb.f0)
 	run := s.gasRuns[id]
 	if run == nil || run.grid != grid {
+		if run != nil {
+			run.sim.Close()
+		}
 		if s.gasRuns == nil || len(s.gasRuns) > 16 {
+			s.closeGas()
 			s.gasRuns = map[string]*gasRun{}
 		}
 		run = &gasRun{grid: grid, f0: tb.f0, live: tb.f0 - 1, ck: map[int][]byte{}, every: max(1, s.FPS), outK: -1}
-		run.sim = effects.NewGasSim(s.W, s.H, cs)
+		run.sim = s.newGasSim(cs)
+		// the empty state, to start again from
+		ck, err := run.sim.Checkpoint()
+		if err != nil {
+			run.sim.Close()
+			return nil, err
+		}
+		run.ck[run.f0-1] = ck
 		s.gasRuns[id] = run
 	}
 	// what fed each frame up to this one, as the clip is now: kept up to the first change
 	n := idx - run.f0 + 1
 	if n <= 0 {
-		return nil
+		return nil, nil
 	}
 	if run.tab != tb.key {
 		valid := 0
@@ -132,8 +187,14 @@ func (s *Session) gasFrame(li, ci int, c0 *config.ClipConfig, idx int, feats []a
 		run.tab = tb.key
 		run.drop(run.f0 + valid)
 	}
+	run.pre = map[int]gasPre{}
+	defer func() { run.pre = nil }()
 	for k := len(run.fp); k < n; k++ {
-		run.fp = append(run.fp, s.gasPrint(li, ci, c0, run.f0+k, feats, tb))
+		ef, e := s.gasClip(li, ci, c0, run.f0+k, feats)
+		run.fp = append(run.fp, gasPrintOf(ef, e, s.emitScale(), tb, run.f0+k))
+		if len(run.pre) < 4096 {
+			run.pre[run.f0+k] = gasPre{ef, e}
+		}
 	}
 	// from where it is, or the nearest checkpoint before
 	if run.live > idx {
@@ -146,21 +207,24 @@ func (s *Session) gasFrame(li, ci int, c0 *config.ClipConfig, idx int, feats []a
 		}
 	}
 	if run.live < best {
-		if best == run.f0-1 {
-			run.sim = effects.NewGasSim(s.W, s.H, cs)
-		} else {
-			run.sim.Load(run.ck[best])
-		}
+		run.sim.Restore(run.ck[best])
 		run.live = best
 		run.outK = -1
 	}
 	for run.live < idx {
 		k := run.live + 1
-		s.gasStep(li, ci, c0, k, feats, run)
+		run.live = -1 << 30 // (until this step is done)
+		if err := s.gasStep(li, ci, c0, k, feats, run); err != nil {
+			return nil, err
+		}
 		run.live = k
 		if (k-run.f0+1)%run.every == 0 {
 			if _, ok := run.ck[k]; !ok {
-				run.ck[k] = run.sim.Save()
+				ck, err := run.sim.Checkpoint()
+				if err != nil {
+					return nil, err
+				}
+				run.ck[k] = ck
 			}
 		}
 		run.outK = -1
@@ -170,10 +234,14 @@ func (s *Session) gasFrame(li, ci int, c0 *config.ClipConfig, idx int, feats []a
 		Opacity: float32(math.Max(e.Gas.Opacity, 0)), HeatK: float32(math.Max(e.Flame.Heat, 0.01)),
 		Reach: float32(320 * sc), FireReach: float32(140 * sc), Depth: float32(40 * sc)}
 	if run.outK == idx && run.outKey == l {
-		return run.out
+		return run.out, nil
 	}
-	run.out, run.outK, run.outKey = run.sim.Frame(l), idx, l
-	return run.out
+	out, err := run.sim.Draw(l)
+	if err != nil {
+		return nil, err
+	}
+	run.out, run.outK, run.outKey = out, idx, l
+	return run.out, nil
 }
 
 // drop forgets the simulation from frame k on
@@ -206,10 +274,15 @@ func (s *Session) gasClip(li, ci int, c0 *config.ClipConfig, k int, feats []audi
 // gasPrint: the fingerprint of frame k
 func (s *Session) gasPrint(li, ci int, c0 *config.ClipConfig, k int, feats []audio.FrameFeatures, tb *emitTable) uint64 {
 	ef, e := s.gasClip(li, ci, c0, k, feats)
+	return gasPrintOf(ef, e, s.emitScale(), tb, k)
+}
+
+// gasPrintOf: the fingerprint of frame k with its particles ef
+func gasPrintOf(ef *effects.EmitFrame, e *config.EmitterConfig, sc float64, tb *emitTable, k int) uint64 {
 	if ef == nil {
 		return 0
 	}
-	ph := gasPhys(e, s.emitScale(), ef.P.Seed)
+	ph := gasPhys(e, sc, ef.P.Seed)
 	j := k - tb.f0
 	lo := 0
 	if j > 0 {
@@ -220,18 +293,24 @@ func (s *Session) gasPrint(li, ci int, c0 *config.ClipConfig, k int, feats []aud
 
 // gasStep: the simulation through frame k (from the moment of frame k - 1): its steps, each fed
 // by the particles alive then
-func (s *Session) gasStep(li, ci int, c0 *config.ClipConfig, k int, feats []audio.FrameFeatures, run *gasRun) {
-	ef, e := s.gasClip(li, ci, c0, k, feats)
+func (s *Session) gasStep(li, ci int, c0 *config.ClipConfig, k int, feats []audio.FrameFeatures, run *gasRun) error {
+	var ef *effects.EmitFrame
+	var e *config.EmitterConfig
+	if p, ok := run.pre[k]; ok {
+		ef, e = p.ef, p.e
+	} else {
+		ef, e = s.gasClip(li, ci, c0, k, feats)
+	}
 	if ef == nil {
-		return
+		return nil
 	}
 	ph := gasPhys(e, s.emitScale(), ef.P.Seed)
 	sub := gasSub(s.FPS)
 	dt := float32(1 / float64(s.FPS*sub))
-	src := make([]effects.GasSource, 0, ef.I1-ef.I0)
+	srcs := make([][]effects.GasSource, sub)
 	for j := 0; j < sub; j++ {
 		ef.T = (float64(k-1) + float64(j+1)/float64(sub)) / float64(s.FPS)
-		src = src[:0]
+		src := make([]effects.GasSource, 0, ef.I1-ef.I0)
 		parts := make([]effects.Particle, ef.I1-ef.I0)
 		alive := make([]bool, len(parts))
 		effects.ParallelRange(len(parts), func(a, b int) {
@@ -245,7 +324,7 @@ func (s *Session) gasStep(li, ci int, c0 *config.ClipConfig, k int, feats []audi
 					Col: [3]float32{pt.R, pt.G, pt.B}})
 			}
 		}
-		run.sim.Feed(src, &ph, dt)
-		run.sim.Step(&ph, dt)
+		srcs[j] = src
 	}
+	return run.sim.Advance(srcs, &ph, dt)
 }

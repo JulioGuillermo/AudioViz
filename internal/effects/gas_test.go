@@ -66,3 +66,19 @@ func BenchmarkGasStep(b *testing.B) {
 		s.Step(&ph, 1.0/60)
 	}
 }
+
+func BenchmarkGasGPUFrame(b *testing.B) {
+	g, err := NewGasGPU(-1, 1920, 1080, 5)
+	if err != nil {
+		b.Skip(err)
+	}
+	defer g.Close()
+	ph := GasPhys{Density: 1, Heat: 1, Fuel: 1, Buoyancy: 300, Swirl: 2, Turb: 50, TurbScale: 140, Cool: 3, Burn: 4, Soot: 0.5, Spread: 100, Seed: 1}
+	src := []GasSource{{X: 960, Y: 1000, R: 60, A: 1}}
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := g.Advance([][]GasSource{src, src}, &ph, 1.0/60); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

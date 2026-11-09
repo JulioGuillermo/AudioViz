@@ -151,8 +151,10 @@ Changing how it looks does not simulate it again: its light and its colors, the 
 thickness, wisps, glow, opacity or blend. Changing how it moves, or the particles (their color
 too: it is the smoke's), simulates it again from the first frame that changed.
 
-How much it costs depends on **Detail**. The default 5 px cells take about 25 ms a frame for each
-gas emitter at 1080p, on the CPU, whatever the renderer.
+It is simulated on the GPU (on the CPU when the renderer is the CPU, or without a usable GPU).
+How much it costs depends on **Detail**: with the default 5 px cells, about 5 ms a frame for each
+gas emitter at 1080p on the GPU (about 18 ms on the CPU). The first jump far into the clip has to
+simulate up to there; from then on, scrubbing goes on from the nearest second.
 
 The **Light source** preset (`lamp`) is `hidden: true` with its light on and a soft glow: set the
 glow's strength to 0 for a light with nothing visible.

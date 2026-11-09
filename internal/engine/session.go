@@ -42,6 +42,7 @@ type Session struct {
 	masks      map[string]maskEntry
 	emitTabs   map[string]*emitTable // births of the emitter clips (emitters.go)
 	gasRuns    map[string]*gasRun    // the gas of the emitter clips with the gas look (gas.go)
+	gasCPU     bool                  // their simulation failed on the GPU: on the CPU from then on
 	textPts    map[string][]float32  // points on the letters of the texts emitters are born on
 	stems      []audio.StemFrame     // the separated song per frame (stems.go), nil until separated
 	stemsKey   string
@@ -92,6 +93,9 @@ func (s *Session) Close() {
 		delete(s.media, k)
 	}
 	s.closeLayerMedia()
+	gasMu.Lock()
+	s.closeGas()
+	gasMu.Unlock()
 }
 
 func (s *Session) closeLayerMedia() {

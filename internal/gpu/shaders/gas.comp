@@ -1,0 +1,408 @@
+#version 450
+// The simulated gas on the GPU (the emitter look "gas"): the same steps as effects.GasSim (gas.go,
+// the CPU path), one kernel per step chosen by a push constant, one invocation per cell. Every
+// field lives in one buffer (FLD: field f of cell i at f·N + i).
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Cfg {
+    ivec4 c0;   // cells across, down, seed, tiles across
+    vec4 f0;    // cell size (px), smoke per s, heat per s, fuel per s
+    vec4 f1;    // push, rise, weight, swirl
+    vec4 f2;    // wind x, wind y, turbulence, its scale
+    vec4 f3;    // spread, soot, -, -
+    vec4 f4;    // soot color r, g, b, -
+    vec4 f5;    // light: angle's x, y; opacity·shadow, steps' length (px)
+    vec4 f6;    // light: depth (px per unit), opacity, flame heat k, -
+    ivec4 c1;   // ambient blur radius, fire blur radius, -, -
+} C;
+layout(std430, set = 0, binding = 1) buffer Fields { float fld[]; };
+layout(std430, set = 0, binding = 2) readonly buffer Src { float src[]; };    // 10 per source
+layout(std430, set = 0, binding = 3) readonly buffer Tiles { uint tl[]; };    // per substep: per tile start, count; then indices
+layout(std430, set = 0, binding = 4) writeonly buffer Out { uint outc[]; };   // GasFrame.Cells
+
+layout(push_constant) uniform Push {
+    int kernel;
+    int a0, a1, a2; // kernel arguments (tile list offset, source offset, flags, field…)
+    float t;        // seconds since it started
+    float dt;
+    float p0, p1;   // per step factors
+} K;
+
+// fields
+const int VX = 0, VY = 1, P = 2, D = 3, R = 4, G = 5, B = 6, HEAT = 7, FUEL = 8, FIRE = 9;
+const int C1X = 10, C1Y = 11, C2X = 12, C2Y = 13;
+const int T0 = 14, T1 = 15, T2 = 16, T3 = 17, BX = 18, BY = 19, CURL = 20, PSI = 21, DIV = 22;
+const int ADV = 23; // 7 fields × (back, lowest, highest)
+const int SUN = 44, AMB = 45, FIRE_E = 46, BL1 = 47, BL2 = 48;
+// (GasFieldCount in gpu/gas.go)
+
+int GW, GH, N;
+float CS;
+
+float F(int f, int i) { return fld[f * N + i]; }
+void S(int f, int i, float v) { fld[f * N + i] = v; }
+
+// field f at (x, y) in cells (centers at i + 0.5): bilinear; outside: the edge (edge) or nothing
+float sampleF(int f, float x, float y, bool edge) {
+    x -= 0.5; y -= 0.5;
+    float fx = floor(x), fy = floor(y);
+    int ix = int(fx), iy = int(fy);
+    float ux = x - fx, uy = y - fy;
+    float v[4];
+    for (int q = 0; q < 4; q++) {
+        int i = ix + (q & 1), j = iy + (q >> 1);
+        if (i < 0 || j < 0 || i >= GW || j >= GH) {
+            if (!edge) { v[q] = 0.0; continue; }
+            i = clamp(i, 0, GW - 1); j = clamp(j, 0, GH - 1);
+        }
+        v[q] = F(f, j * GW + i);
+    }
+    return (v[0] + (v[1] - v[0]) * ux) * (1.0 - uy) + (v[2] + (v[3] - v[2]) * ux) * uy;
+}
+
+vec2 back(int x, int y, float dt) {
+    float k = dt / CS;
+    float px = float(x) + 0.5, py = float(y) + 0.5;
+    int i = y * GW + x;
+    float mx = px - 0.5 * k * F(VX, i), my = py - 0.5 * k * F(VY, i);
+    return vec2(px - k * sampleF(VX, mx, my, true), py - k * sampleF(VY, mx, my, true));
+}
+
+// value noise (as effects.evnoise)
+uint pcg(uint v) {
+    uint s = v * 747796405u + 2891336453u;
+    uint w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+    return (w >> 22u) ^ w;
+}
+float hash2(int ix, int iy, uint seed) {
+    return float(pcg(uint(ix) * 1597334677u ^ uint(iy) * 3812015801u ^ seed)) * (1.0 / 4294967296.0);
+}
+float vnoise(float x, float y, uint seed) {
+    float fx = floor(x), fy = floor(y);
+    int ix = int(fx), iy = int(fy);
+    float ux = x - fx, uy = y - fy;
+    ux = ux * ux * (3.0 - 2.0 * ux); uy = uy * uy * (3.0 - 2.0 * uy);
+    float a = hash2(ix, iy, seed), b = hash2(ix + 1, iy, seed);
+    float c = hash2(ix, iy + 1, seed), d = hash2(ix + 1, iy + 1, seed);
+    return a + (b - a) * ux + (c - a) * uy + (a - b - c + d) * ux * uy;
+}
+
+// 0: the particles feed the gas (each cell takes the sources over its tile, in their order)
+void feed(int i) {
+    int x = i % GW, y = i / GW;
+    int tile = (y / 16) * C.c0.w + x / 16;
+    uint st = tl[K.a0 + 2 * tile], cnt = tl[K.a0 + 2 * tile + 1];
+    float cx = (float(x) + 0.5) * CS, cy = (float(y) + 0.5) * CS;
+    float dt = K.dt;
+    float d0 = F(D, i), r0 = F(R, i), g0 = F(G, i), b0 = F(B, i), h0 = F(HEAT, i), fu = F(FUEL, i);
+    float vx = F(VX, i), vy = F(VY, i);
+    for (uint k = 0u; k < cnt; k++) {
+        int o = K.a1 + int(tl[st + k]) * 10;
+        float sx = src[o], sy = src[o + 1], sr = src[o + 2], sa = src[o + 3];
+        float r = max(sr, CS * 0.75);
+        float dx = cx - sx, dy = cy - sy;
+        float q = (dx * dx + dy * dy) / (r * r);
+        if (q >= 1.0) continue;
+        float w = (1.0 - q) * (1.0 - q) * sa;
+        float a = w * dt;
+        float dd = C.f0.y * a;
+        d0 += dd;
+        r0 += dd * src[o + 6]; g0 += dd * src[o + 7]; b0 += dd * src[o + 8];
+        h0 += C.f0.z * a;
+        fu += C.f0.w * a;
+        float m = min(1.0, C.f1.x * w * dt * 12.0);
+        if (m > 0.0) {
+            vx += (src[o + 4] - vx) * m;
+            vy += (src[o + 5] - vy) * m;
+        }
+    }
+    S(D, i, d0); S(R, i, r0); S(G, i, g0); S(B, i, b0); S(HEAT, i, h0); S(FUEL, i, fu);
+    S(VX, i, vx); S(VY, i, vy);
+}
+
+// 1: the velocity's curl, and the turbulence's stream function
+void curl(int i) {
+    int x = i % GW, y = i / GW;
+    int xl = max(x - 1, 0), xr = min(x + 1, GW - 1), yu = max(y - 1, 0), yd = min(y + 1, GH - 1);
+    S(CURL, i, ((F(VY, y * GW + xr) - F(VY, y * GW + xl)) - (F(VX, yd * GW + x) - F(VX, yu * GW + x))) / (2.0 * CS));
+    if (C.f2.z > 0.0 && C.f2.w > 0.0) {
+        float ls = C.f2.w, tt = K.t;
+        float u = (float(x) + 0.5) * CS / ls, v = (float(y) + 0.5) * CS / ls;
+        uint seed = uint(C.c0.z);
+        S(PSI, i, vnoise(u + tt * 0.13, v - tt * 0.05, seed + 101u) + 0.5 * vnoise(1.9 * u - tt * 0.21 + 3.3, 1.9 * v + tt * 0.07, seed + 202u));
+    }
+}
+
+// 2: the forces (into T1, T3)
+void forces(int i) {
+    int x = i % GW, y = i / GW;
+    float dt = K.dt, wk = K.p0;
+    float vx = F(VX, i), vy = F(VY, i);
+    float fx = wk * (C.f2.x - vx) / dt;
+    float fy = wk * (C.f2.y - vy) / dt - C.f1.y * F(HEAT, i) + C.f1.z * F(D, i);
+    int xl = max(x - 1, 0), xr = min(x + 1, GW - 1), yu = max(y - 1, 0), yd = min(y + 1, GH - 1);
+    float w = F(CURL, i);
+    if (C.f1.w > 0.0) {
+        float gx = (abs(F(CURL, y * GW + xr)) - abs(F(CURL, y * GW + xl))) / (2.0 * CS);
+        float gy = (abs(F(CURL, yd * GW + x)) - abs(F(CURL, yu * GW + x))) / (2.0 * CS);
+        float l = sqrt(gx * gx + gy * gy);
+        if (l > 1e-6) {
+            float e = C.f1.w * CS * 1.5;
+            fx += e * (gy / l) * w;
+            fy -= e * (gx / l) * w;
+        }
+    }
+    if (C.f2.z > 0.0 && C.f2.w > 0.0) {
+        float k = C.f2.z * C.f2.w * 2.0 / (2.0 * CS);
+        fx += k * (F(PSI, yd * GW + x) - F(PSI, yu * GW + x));
+        fy -= k * (F(PSI, y * GW + xr) - F(PSI, y * GW + xl));
+    }
+    S(T1, i, vx + fx * dt);
+    S(T3, i, vy + fy * dt);
+}
+
+// 4: the velocity carried by itself (into T1, T3)
+void advVel(int i) {
+    int x = i % GW, y = i / GW;
+    vec2 b = back(x, y, K.dt);
+    S(T1, i, sampleF(VX, b.x, b.y, true));
+    S(T3, i, sampleF(VY, b.x, b.y, true));
+}
+
+// 5: the divergence
+void divergence(int i) {
+    int x = i % GW, y = i / GW;
+    int xl = max(x - 1, 0), xr = min(x + 1, GW - 1), yu = max(y - 1, 0), yd = min(y + 1, GH - 1);
+    S(DIV, i, ((F(VX, y * GW + xr) - F(VX, y * GW + xl)) + (F(VY, yd * GW + x) - F(VY, yu * GW + x))) / (2.0 * CS));
+}
+
+// 6: one colour of a red-black SOR sweep of the pressure (a0: the colour)
+void sor(int i) {
+    int x = i % GW, y = i / GW;
+    if (((x + y + K.a0) & 1) != 0) return;
+    float sum = 0.0;
+    if (x > 0) sum += F(P, i - 1);
+    if (x < GW - 1) sum += F(P, i + 1);
+    if (y > 0) sum += F(P, i - GW);
+    if (y < GH - 1) sum += F(P, i + GW);
+    float v = (sum - CS * CS * F(DIV, i)) * 0.25;
+    float p = F(P, i);
+    S(P, i, p + 1.8 * (v - p));
+}
+
+// 7: the pressure's gradient taken off
+void gradient(int i) {
+    int x = i % GW, y = i / GW;
+    float pl = x > 0 ? F(P, i - 1) : 0.0, pr = x < GW - 1 ? F(P, i + 1) : 0.0;
+    float pu = y > 0 ? F(P, i - GW) : 0.0, pd = y < GH - 1 ? F(P, i + GW) : 0.0;
+    S(VX, i, F(VX, i) - (pr - pl) / (2.0 * CS));
+    S(VY, i, F(VY, i) - (pd - pu) / (2.0 * CS));
+}
+
+// the four cells around (x, y) and their weights (outside: -1)
+void corners(float x, float y, out ivec4 idx, out vec4 w) {
+    x -= 0.5; y -= 0.5;
+    float fx = floor(x), fy = floor(y);
+    int ix = int(fx), iy = int(fy);
+    float ux = x - fx, uy = y - fy;
+    w = vec4((1.0 - ux) * (1.0 - uy), ux * (1.0 - uy), (1.0 - ux) * uy, ux * uy);
+    for (int q = 0; q < 4; q++) {
+        int cx = ix + (q & 1), cy = iy + (q >> 1);
+        idx[q] = (cx < 0 || cy < 0 || cx >= GW || cy >= GH) ? -1 : cy * GW + cx;
+    }
+}
+
+const int NADV = 7;
+int advField(int j) { return j == 0 ? D : j == 1 ? R : j == 2 ? G : j == 3 ? B : j == 4 ? HEAT : j == 5 ? FUEL : FIRE; }
+
+// 9: back (each carried field's value where it came from, and the range of those four cells)
+void adv1(int i) {
+    ivec4 idx; vec4 w;
+    corners(F(BX, i), F(BY, i), idx, w);
+    for (int j = 0; j < NADV; j++) {
+        int f = advField(j);
+        float v = 0.0, lo = 3.402823e38, hi = -3.402823e38;
+        for (int q = 0; q < 4; q++) {
+            float c = idx[q] >= 0 ? F(f, idx[q]) : 0.0;
+            v += w[q] * c;
+            lo = min(lo, c); hi = max(hi, c);
+        }
+        S(ADV + 3 * j, i, v); S(ADV + 3 * j + 1, i, lo); S(ADV + 3 * j + 2, i, hi);
+    }
+}
+// 10: forth and the correction, within the range (into the lowest's place)
+void adv2(int i) {
+    int x = i % GW, y = i / GW;
+    float k = K.dt / CS;
+    ivec4 idx; vec4 w;
+    corners(float(x) + 0.5 + k * F(VX, i), float(y) + 0.5 + k * F(VY, i), idx, w);
+    for (int j = 0; j < NADV; j++) {
+        int fb = ADV + 3 * j;
+        float bk = 0.0;
+        for (int q = 0; q < 4; q++)
+            if (idx[q] >= 0) bk += w[q] * F(fb, idx[q]);
+        float v = F(fb, i) + 0.5 * (F(advField(j), i) - bk);
+        S(fb + 1, i, max(F(fb + 1, i), min(F(fb + 2, i), v)));
+    }
+}
+// 11: the results in place
+void adv3(int i) {
+    for (int j = 0; j < NADV; j++) S(advField(j), i, F(ADV + 3 * j + 1, i));
+}
+
+// 8: where each cell's gas came from
+void backs(int i) {
+    vec2 b = back(i % GW, i / GW, K.dt);
+    S(BX, i, b.x); S(BY, i, b.y);
+}
+
+// 12: diffusion of smoke, its color and heat (into the advection's places; p0: k)
+int difField(int j) { return j == 0 ? D : j == 1 ? R : j == 2 ? G : j == 3 ? B : HEAT; }
+void diffuse(int i) {
+    int x = i % GW, y = i / GW;
+    float k = K.p0;
+    for (int j = 0; j < 5; j++) {
+        int f = difField(j);
+        float sum = 0.0;
+        if (x > 0) sum += F(f, i - 1);
+        if (x < GW - 1) sum += F(f, i + 1);
+        if (y > 0) sum += F(f, i - GW);
+        if (y < GH - 1) sum += F(f, i + GW);
+        float v = F(f, i);
+        S(ADV + 3 * j, i, v + k * (sum - 4.0 * v));
+    }
+}
+void diffuse2(int i) {
+    for (int j = 0; j < 5; j++) S(difField(j), i, F(ADV + 3 * j, i));
+}
+
+// 14: the wisp coordinates carried (into T0..T3); 15: in place, a set restarted (a0: bits)
+void coords(int i) {
+    float bx = F(BX, i), by = F(BY, i);
+    float vx = F(VX, i) * K.dt, vy = F(VY, i) * K.dt;
+    S(T0, i, sampleF(C1X, bx, by, true) - vx);
+    S(T1, i, sampleF(C1Y, bx, by, true) - vy);
+    S(T2, i, sampleF(C2X, bx, by, true) - vx);
+    S(T3, i, sampleF(C2Y, bx, by, true) - vy);
+}
+void coords2(int i) {
+    bool k1 = (K.a0 & 1) != 0, k2 = (K.a0 & 2) != 0;
+    S(C1X, i, k1 ? 0.0 : F(T0, i)); S(C1Y, i, k1 ? 0.0 : F(T1, i));
+    S(C2X, i, k2 ? 0.0 : F(T2, i)); S(C2Y, i, k2 ? 0.0 : F(T3, i));
+}
+
+// 16: fuel burns, smoke fades, heat cools (p0: smoke kept, p1: flames kept; a-floats in Cfg)
+void react(int i) {
+    float fade = K.p0, cool = K.p1;
+    float warm = uintBitsToFloat(uint(K.a1)), burn = uintBitsToFloat(uint(K.a2));
+    float fu = F(FUEL, i);
+    float d = F(D, i), r = F(R, i), g = F(G, i), b = F(B, i), h = F(HEAT, i), fi = F(FIRE, i);
+    float bb = fu * burn;
+    if (bb > 0.0) {
+        fu -= bb;
+        h += bb * 3.0;
+        fi += bb * 3.0;
+        float so = bb * C.f3.y;
+        d += so; r += so * C.f4.x; g += so * C.f4.y; b += so * C.f4.z;
+    }
+    d *= fade; r *= fade; g *= fade; b *= fade;
+    h *= warm; fi *= cool;
+    if (d < 1e-5) { d = 0.0; r = 0.0; g = 0.0; b = 0.0; }
+    if (h < 1e-5) h = 0.0;
+    if (fi < 1e-5) fi = 0.0;
+    S(FUEL, i, fu); S(D, i, d); S(R, i, r); S(G, i, g); S(B, i, b); S(HEAT, i, h); S(FIRE, i, fi);
+}
+
+// 3: copy T1, T3 → the velocity
+void copyVel(int i) { S(VX, i, F(T1, i)); S(VY, i, F(T3, i)); }
+
+// 17: the state as halves (what a checkpoint keeps), the pressure cleared
+void quant(int i) {
+    for (int f = 0; f < 14; f++) {
+        if (f == P) { S(P, i, 0.0); continue; }
+        S(f, i, unpackHalf2x16(packHalf2x16(vec2(F(f, i), 0.0))).x);
+    }
+}
+
+// 18: the light reaching each cell (24 steps towards the light)
+void sun(int i) {
+    if (F(D, i) <= 0.0) { S(SUN, i, 1.0); return; }
+    float px = float(i % GW) + 0.5, py = float(i / GW) + 0.5;
+    float st = C.f5.w;
+    float tau = 0.0;
+    for (int k = 1; k <= 24; k++) {
+        float d = (float(k) - 0.5) * st / CS;
+        tau += sampleF(D, px + C.f5.x * d, py + C.f5.y * d, false);
+    }
+    tau *= st / C.f6.x;
+    float kk = C.f5.z * tau;
+    S(SUN, i, 0.7 * exp(-kk) + 0.3 * exp(-0.25 * kk));
+}
+// 19: the flames' glow
+void fireE(int i) { S(FIRE_E, i, 1.0 - exp(-F(FIRE, i) * C.f6.z)); }
+// 20 / 21: a box blur across / down (a0: from, a1: to, a2: radius); outside counts as nothing
+void boxH(int i) {
+    int x = i % GW, y = i / GW, r = K.a2;
+    float acc = 0.0;
+    for (int k = -r; k <= r; k++) {
+        int xx = x + k;
+        if (xx >= 0 && xx < GW) acc += F(K.a0, y * GW + xx);
+    }
+    S(K.a1, i, acc / float(2 * r + 1));
+}
+void boxV(int i) {
+    int x = i % GW, y = i / GW, r = K.a2;
+    float acc = 0.0;
+    for (int k = -r; k <= r; k++) {
+        int yy = y + k;
+        if (yy >= 0 && yy < GH) acc += F(K.a0, yy * GW + x);
+    }
+    S(K.a1, i, acc / float(2 * r + 1));
+}
+// 22: the light around (from its blur in AMB) and the fire's (from its blur in FIRE_E)
+void lightEnd(int i) {
+    S(AMB, i, 0.35 + 0.65 * exp(-C.f6.y * 0.5 * F(AMB, i)));
+    S(FIRE_E, i, min(1.0, F(FIRE_E, i) * 2.0));
+}
+// 23: the frame's cells (halves)
+void pack(int i) {
+    int o = i * 6;
+    outc[o] = packHalf2x16(vec2(F(D, i), F(FIRE, i)));
+    outc[o + 1] = packHalf2x16(vec2(F(SUN, i), F(AMB, i)));
+    outc[o + 2] = packHalf2x16(vec2(F(FIRE_E, i), F(R, i)));
+    outc[o + 3] = packHalf2x16(vec2(F(G, i), F(B, i)));
+    outc[o + 4] = packHalf2x16(vec2(F(C1X, i), F(C1Y, i)));
+    outc[o + 5] = packHalf2x16(vec2(F(C2X, i), F(C2Y, i)));
+}
+
+void main() {
+    GW = C.c0.x; GH = C.c0.y; N = GW * GH; CS = C.f0.x;
+    int i = int(gl_GlobalInvocationID.x);
+    if (i >= N) return;
+    switch (K.kernel) {
+    case 0: feed(i); break;
+    case 1: curl(i); break;
+    case 2: forces(i); break;
+    case 3: copyVel(i); break;
+    case 4: advVel(i); break;
+    case 5: divergence(i); break;
+    case 6: sor(i); break;
+    case 7: gradient(i); break;
+    case 8: backs(i); break;
+    case 9: adv1(i); break;
+    case 10: adv2(i); break;
+    case 11: adv3(i); break;
+    case 12: diffuse(i); break;
+    case 13: diffuse2(i); break;
+    case 14: coords(i); break;
+    case 15: coords2(i); break;
+    case 16: react(i); break;
+    case 17: quant(i); break;
+    case 18: sun(i); break;
+    case 19: fireE(i); break;
+    case 20: boxH(i); break;
+    case 21: boxV(i); break;
+    case 22: lightEnd(i); break;
+    case 23: pack(i); break;
+    }
+}

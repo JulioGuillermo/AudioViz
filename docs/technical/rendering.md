@@ -506,8 +506,21 @@ A step (`GasSim.Step`, all float32, rows in parallel, deterministic):
    dye += soot·b.
 8. **Decay:** smoke and dye ×e^(−fade·dt); flame ×e^(−cool·dt); heat ×e^(−0.3·cool·dt).
 
-**Checkpoints and fingerprints:** `GasSim.Save` stores the state every second, as halves
-compressed with flate. Saving also sets the live state to those halves and clears the pressure, so
+**On the GPU** (`effects.GasGPU`, `gpu.GasJob`, `shaders/gas.comp`): the same steps, one kernel
+each, over one buffer holding 49 fields (the state, then scratch). Unless the renderer is the CPU,
+`AUDIOVIZ_GAS_CPU` is set or the GPU failed (`Session.gasCPU`: everything goes on on the CPU). Per
+frame, its substeps are recorded and run in one submission on the simulation device (shared with the
+fluid transitions, `simMu`). The sources go into a mapped buffer with, per 16×16-cell tile, the list
+of the sources whose disc reaches it. Each cell feeds itself from its tile's list in the sources'
+order: the same sums as the CPU's source-by-source `Feed`. The frame's light (24-step march, the box
+blurs, packing into halves) is computed there too, and the cells are copied out. The GPU and CPU
+simulations are not bit-identical (a chaotic flow then drifts apart), but every renderer draws the
+same simulated frames.
+
+**Checkpoints and fingerprints:** the state is stored every second as halves, with the runs of
+zeros left out (`encodeGas`; the GPU's fields are copied out at once first: mapped memory is slow
+to read value by value). Checkpoints of the CPU and GPU simulations are the same format.
+Saving also sets the live state to those halves and clears the pressure, so
 going on from the live state or from a checkpoint gives the same frames (`TestGasSeek`). Each
 frame has a fingerprint, an FNV hash of its particles' sim-relevant `EmitParams`, its births and
 the `GasPhys`. When the clip's YAML changes, the fingerprints are compared and the state is kept up
