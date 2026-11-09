@@ -28,13 +28,27 @@ The image over the whole window, at any zoom:
   turning; the degrees button puts it straight. Only the view turns, not the image.
 - **← / →** (or the side arrows): the previous / next image of the list. **Esc** closes.
 
-**Edit** (*E*) opens a basic editor on the right:
+**Edit** (*E*) opens the editor: tools on the left, their settings on the right. It works on
+the image's own pixels (full size), and everything can be undone (**Ctrl+Z** / **Ctrl+Shift+Z**).
+- **Brushes** (size, hardness, strength; *[* and *]* change the size; a pen's pressure makes them
+  thinner and lighter):
+  - **Brush** (*B*): paints a color (*Alt+click* takes it from the image).
+  - **Restore** (*E*): paints the original image back where it passes.
+  - **Blur** (*L*) / **Sharpen** (*N*): softens, or brings out details and edges.
+  - **Smudge** (*M*): drags the colors along, like a finger on wet paint.
+  - **Lighten / darken** (*O*; *Alt*: the other one).
+  - **Clone** (*S*): *Alt+click* where to copy from, then paint elsewhere (the place it copies
+    from follows the brush, marked with a cross).
+  - **Eyedropper** (*I*): takes a color for the brush.
+- **Move the view** (*H*, or hold *Space*, or the middle button); the wheel and two fingers zoom
+  as always.
 - **Turn and flip**: 90° left / right, flip horizontally / vertically.
 - **Crop** (*C*): drag its corners and sides, inside to move it, outside to draw a new one; a
   shape (*Free*, *Original*, *Like the video*, 16:9, 1:1, 9:16, 4:3, 3:4; Shift frees it for a
-  moment). The size of the result is shown at the top.
-- **Light and color**: exposure, contrast, saturation, warmth, tint and hue (double-click a
-  slider: back to 0). **Compare** (hold): without them.
+  moment); *Enter* or *Apply* cuts it. The size of the result is shown at the top.
+- **Light and color**: exposure, contrast, saturation, warmth, tint and hue over the whole image
+  (double-click a slider: back to 0).
+- **Compare** (hold): the original.
 - **Save as new image** (Ctrl+S): a PNG next to it in `assets/` (`<name>-edit.png`); the original
   is never changed. It opens enlarged. **Cancel** / *Esc* drops the changes.
 
