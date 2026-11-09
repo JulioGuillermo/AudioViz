@@ -8,6 +8,7 @@ import { keyTimes } from './keys.js';
 import { isEmitterLayer, presetLabel } from './emitters.js';
 import { keyLabel, targetKey, isPicked, pickedTimes, pickKey, moveKeysAt, keyMenuItems, FocusChip } from './keymarks.js';
 import { openMenu } from './menu.js';
+import { bound } from './bind.js';
 
 const H = { ruler: 26, audio: 74, lyrics: 30, track: 28, textRow: 24, zone: 22, stem: 30 };
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -531,7 +532,7 @@ function TimelineInner({ openStems, toggleStems,  proj, meta, ana, lyr, timeStor
             onContextMenu=${(e) => onContext(e, { kind: 'seg', track: tr.id, seg: i, at: snap(xToT(e.clientX), e) })}>
           ${fade > 0 && html`<div class="fade" style=${{ width: fade + 'px' }}></div>`}
           ${i > 0 && html`<div class="grip"></div>`}
-          <span class="t">${s.label ? html`<b>${s.label}</b> · ` : ''}${segSummary(tr.id, s.cfg)}</span>
+          <span class="t">${bound(proj, s.bind) && html`<span title=${t('Tied to background segments')}><${Icon} name="link" size=${10} /> </span>`}${s.label ? html`<b>${s.label}</b> · ` : ''}${segSummary(tr.id, s.cfg)}</span>
         </div>${s.keys && keyMarks(s.keys, s.at, end, { track: tr.id, seg: i }, on && sel.seg === i)}`;
       }),
     };
@@ -619,7 +620,7 @@ function TimelineInner({ openStems, toggleStems,  proj, meta, ana, lyr, timeStor
             onMouseDown=${(e) => clipDrag(e, l.id, j)} onDblClick=${(e) => e.stopPropagation()}
             onContextMenu=${(e) => onContext(e, { kind: 'clip', id: l.id, clip: j, at: snap(xToT(e.clientX), e) })}>
           <div class="grip" onMouseDown=${(e) => clipDrag(e, l.id, j, 'start')}></div>
-          <span class="t">${name}</span>
+          <span class="t">${bound(proj, c.bind) && html`<span title=${t('Tied to background segments')}><${Icon} name="link" size=${10} /> </span>`}${name}</span>
           <div class="grip end" onMouseDown=${(e) => clipDrag(e, l.id, j, 'end')}></div>
         </div>${c.keys && keyMarks(c.keys, c.start, c.end, { layer: l.id, clip: j }, son)}`;
       }),

@@ -36,3 +36,8 @@ Each one can react to a different band with [`react_to`](../reactivity.md).
 | [ripple](ripple.md) | Ripple |
 | [glitch](glitch.md) | Displaced stripes |
 | [color_flash](color_flash.md) | Brightness/contrast flash |
+
+Any of these segments can be **tied to background segments** (`bind`, see
+[studio.md](../studio.md#tied-to-background-segments)): it applies only while one of them is on
+screen, and during a transition only to its image. (Parallax and depth of field move the
+camera, so they are always on the whole frame.)

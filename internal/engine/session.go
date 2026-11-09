@@ -313,6 +313,25 @@ type FrameState struct {
 	Layers               []effects.LayerFrame
 	layerStack           []int // layer index + 1 of each clip (to resolve z_index)
 	ZParts, ZViz, ZLyric int
+	// the background segments on screen (what clips and effects are bound to)
+	bind config.BgBind
+}
+
+// Sided: whether the frame is drawn once per image of its transition (some clip or effect is
+// only on one of them), then mixed as the transition mixes them
+func (fs *FrameState) Sided() bool {
+	if fs.Trans.Mode == 0 {
+		return false
+	}
+	if fs.FX.bound() {
+		return true
+	}
+	for i := range fs.Layers {
+		if fs.Layers[i].Side != 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // Stage of a z_index among the frame's clips: above the clips whose layer is at or below z
@@ -347,8 +366,10 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 	s.exprFeats = base
 	fs := &FrameState{Idx: idx, T: t, Feat: &base[idx]}
 
-	// Background effects: their results are blended (so enabling/disabling also fades)
-	fs.FX, fs.GlitchAmount = s.effectsAt(t, idx, fs.Feat)
+	// Background effects: their results are blended (so enabling/disabling also fades); those
+	// bound to background segments only while they are on screen (and on their image)
+	fs.bind = tl.BgBindAt(t)
+	fs.FX, fs.GlitchAmount = s.effectsAt(t, idx, fs.Feat, &fs.bind)
 
 	// Background: each segment's image with its motion; during a transition the previous one
 	// (A) and the new one (B) are both drawn and mixed by the transition
@@ -454,7 +475,7 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 
 	// Overlay layers, and the place of the visualizer, particles and lyrics among them
 	if fs.DepthA != nil || fs.DepthB != nil {
-		fx := fs.FX
+		fx := fs.FX.forSide(0) // (the depth: as the effects on both images move it)
 		if fs.Trans.Fluid != nil {
 			fx.par = effects.Parallax{} // the fluid transitions don't move
 		}
@@ -469,7 +490,7 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 		s.textLights(fs)
 	}
 	if len(cfg.Layers) > 0 {
-		if fs.Layers, fs.layerStack, err = s.layersAt(t, idx, base, fs.FX, fs.GlitchAmount, fs.Scene); err != nil {
+		if fs.Layers, fs.layerStack, err = s.layersAt(t, idx, base, fs.FX, fs.GlitchAmount, fs.Scene, &fs.bind); err != nil {
 			return nil, err
 		}
 	}
@@ -734,25 +755,47 @@ func flashOf(c *config.ColorFlashConfig, feat *audio.FrameFeatures) (float64, fl
 	return c.BrightnessBoost * v, c.ContrastBoost * v
 }
 
-func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures) (frameFX, float64) {
+// segBind: the background segments the segment of the track active at t is bound to
+func segBind[T any](segs []config.Seg[T], t float64) []string {
+	if len(segs) == 0 {
+		return nil
+	}
+	return segs[config.Active(segs, t)].Bind
+}
+
+// effectsAt: the background effects at t; those bound to background segments not on screen are
+// off, and during a transition each one says on which image it is (frameFX.side)
+func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures, bind *config.BgBind) (frameFX, float64) {
 	tl := &s.Cfg.Timeline
 	minDim := math.Max(math.Min(float64(s.W), float64(s.H)), 64)
-	var fx frameFX
-	{
+	fx := frameFX{zoom: 1, zoomBass: 1, zoomShake: 1}
+	var sides [nFX]int
+	for e, ids := range [nFX][]string{segBind(tl.BassZoom, t), segBind(tl.Shake, t), segBind(tl.Chromatic, t),
+		segBind(tl.Ripple, t), segBind(tl.Glitch, t), segBind(tl.ColorFlash, t)} {
+		sides[e] = bind.BindSide(ids)
+		fx.side[e] = int8(max(sides[e], 0))
+	}
+	if sides[fxZoom] >= 0 {
 		a, b, k := config.BlendEv(tl.BassZoom, t, s.Duration(), s, "BassZoom")
 		z := lerp(zoomOf(a, feat), zoomOf(b, feat), k)
-		// with depth, part of it is the camera moving in (Prepare puts it back flat without one)
+		// with depth, part of it is the camera moving in (Prepare puts it back flat without one);
+		// not when it is only on one image (the camera is the whole frame's)
 		d := lerp(zoomDepth(a), zoomDepth(b), k)
+		if sides[fxZoom] != 0 {
+			d = 0
+		}
 		fx.zoom, fx.zoomDolly = 1+(z-1)*(1-d), (z-1)*d
+		fx.zoomBass = fx.zoom
 	}
-	{
+	if sides[fxShake] >= 0 {
 		a, b, k := config.BlendEv(tl.Shake, t, s.Duration(), s, "Shake")
 		ax, ay, az := shakeOf(a, t, feat, minDim)
 		bx, by, bz := shakeOf(b, t, feat, minDim)
 		fx.shakeX, fx.shakeY = lerp(ax, bx, k), lerp(ay, by, k)
-		fx.zoom *= lerp(az, bz, k)
+		fx.zoomShake = lerp(az, bz, k)
+		fx.zoom *= fx.zoomShake
 	}
-	{
+	if sides[fxRipple] >= 0 {
 		a, b, k := config.BlendEv(tl.Ripple, t, s.Duration(), s, "Ripple")
 		aa, af, at := rippleOf(a, idx, feat)
 		ba, bf, bt := rippleOf(b, idx, feat)
@@ -763,7 +806,7 @@ func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures) (fram
 			fx.rippleFreq, fx.rTim = af, at
 		}
 	}
-	{
+	if sides[fxChroma] >= 0 {
 		a, b, k := config.BlendEv(tl.Chromatic, t, s.Duration(), s, "Chromatic")
 		as, am := chromaOf(a, feat)
 		bs, bm := chromaOf(b, feat)
@@ -774,7 +817,7 @@ func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures) (fram
 		}
 	}
 	glitchAmt := 0.0
-	{
+	if sides[fxGlitch] >= 0 {
 		a, b, k := config.BlendEv(tl.Glitch, t, s.Duration(), s, "Glitch")
 		c := a
 		if k >= 0.5 {
@@ -783,7 +826,7 @@ func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures) (fram
 		fx.glitch = glitchOn(c, feat)
 		glitchAmt = c.Intensity
 	}
-	{
+	if sides[fxFlash] >= 0 {
 		a, b, k := config.BlendEv(tl.ColorFlash, t, s.Duration(), s, "ColorFlash")
 		ab, ac := flashOf(a, feat)
 		bb, bc := flashOf(b, feat)
@@ -826,19 +869,19 @@ func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures) (fram
 		from, to, soft := r.Range()
 		return [4]float64{from, to, soft, 1}
 	}
-	{
+	if sides[fxFlash] >= 0 {
 		a, b, k := config.BlendEv(tl.ColorFlash, t, s.Duration(), s, "ColorFlash")
 		fx.rFlash = rangeOf(&a.DepthRange, &b.DepthRange, k)
 	}
-	{
+	if sides[fxChroma] >= 0 {
 		a, b, k := config.BlendEv(tl.Chromatic, t, s.Duration(), s, "Chromatic")
 		fx.rChroma = rangeOf(&a.DepthRange, &b.DepthRange, k)
 	}
-	{
+	if sides[fxRipple] >= 0 {
 		a, b, k := config.BlendEv(tl.Ripple, t, s.Duration(), s, "Ripple")
 		fx.rRipple = rangeOf(&a.DepthRange, &b.DepthRange, k)
 	}
-	{
+	if sides[fxGlitch] >= 0 {
 		a, b, k := config.BlendEv(tl.Glitch, t, s.Duration(), s, "Glitch")
 		fx.rGlitch = rangeOf(&a.DepthRange, &b.DepthRange, k)
 	}

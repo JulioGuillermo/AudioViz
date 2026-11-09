@@ -66,6 +66,9 @@ type ClipConfig struct {
 	Effects    LayerEffects `yaml:"effects"`
 	// Masks: where the clip is seen (all of them apply)
 	Masks []MaskConfig `yaml:"masks,omitempty"`
+	// Bind: the background segments it belongs to (their ids; none: all). It is seen only while
+	// one of them is on screen, and in a transition only on their image (see BindSide)
+	Bind []string `yaml:"bind,omitempty"`
 	// Motion along a path (instead of x, y)
 	Motion Motion `yaml:"motion,omitempty"`
 	// Particles (clips of an emitter layer; Path is not used)

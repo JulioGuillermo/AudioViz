@@ -32,7 +32,7 @@ struct LayerP {
     vec4 light4;   // rim light: from (px), soft (px), width (px), gain (0 = off)
     vec4 light5;   // rim light: edge (depth step)
     vec4 ztrack;   // depth from its path: track offset + 1 (float bits; 0 none), center along it (px), direction x, y
-    ivec4 xpr;     // properties per pixel (expressions): their table's offset in lay + 1 (0 none), seed, frame
+    ivec4 xpr;     // properties per pixel (expressions): their table's offset in lay + 1 (0 none), seed, frame; in a transition on both images (0), only on A (1) or B (2)
     vec4 xps;      // along its path: its center (px), direction x, y; its opacity's factor (fades, reaction)
 };
 
@@ -70,7 +70,7 @@ layout(std430, set = 0, binding = 0) readonly buffer Params {
     vec4 waveColL;
     vec4 waveColR;
     vec4 gradInfo;    // axis (0 index, 1 length), fit (0 bar, 1 max), maxHeight, -
-    vec4 shake;       // camera offset dx, dy
+    vec4 shake;       // camera offset dx, dy; the zoom's factors of the bass zoom and of the shake
     vec4 grad[MAX_GRAD];       // rgb + offset in w
     vec4 glitch[MAX_GLITCH];   // y0, y1, shiftX, -
     vec4 bars[MAX_BARS];       // heightL, heightR, magL, magR
@@ -90,7 +90,7 @@ layout(std430, set = 0, binding = 0) readonly buffer Params {
     vec4 layerA;               // background A (BG): scale, offX, offY, rot (segment motion)
     vec4 layerB;               // background B (BG2), only during a transition
     ivec4 trans;               // mode (0 = none, see config.TransitionModes), direction, has (bit0 A, bit1 B), seed
-    vec4 transP;               // progress k
+    vec4 transP;               // progress k; drawn once per image (1: clips or effects only on one of them), on which image each effect is (2 bits each: 0 both, 1 A, 2 B; frameFX.side)
     vec4 burnP;                // burn: edge, roughness, max distance, point count
     vec4 burnCol;              // burn: ember color
     vec4 burnPts[8];           // burn: ignition points (x, y in units of the frame height)

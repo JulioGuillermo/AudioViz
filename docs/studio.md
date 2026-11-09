@@ -140,6 +140,17 @@ new segment starts at its own instant and replaces that track's configuration fr
   is not static (see [background/motion.md](background/motion.md)).
 - **Name**: give segments names ("Chorus", "Bridge") to see them on the timeline.
 
+### Tied to background segments
+A clip (an image, a video, an emitter…) or a segment of a background effect (bass zoom, shake,
+chromatic aberration, ripple, glitch, color flash) can be tied to one or more background segments:
+*Background segments* in its inspector, one button per background segment. It then shows (or
+applies) only while one of them is on screen, and during a transition only on its image: in a
+fade, the fire tied to the old background fades out with it and its light never reaches the new
+one; in a burn it burns with the paper; a ripple tied to the new background only ripples it. Its
+own times stay free. With none chosen it is on every background, as always. A link icon marks
+what is tied on the timeline. (Splitting an effect's segment keeps it tied; a new background
+segment is a new one.)
+
 **Texts (titles)**: *Titles and texts* in the left panel or the *Texts* lane of the timeline. Add
 one at the cursor (or double-click the lane), drag its block to move it and its edges to change
 when it starts and ends, and **drag on the preview** to place it. Each text has all the lyrics

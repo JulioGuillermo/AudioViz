@@ -41,6 +41,7 @@ type LayerFrame struct {
 	W                              Warp
 	LayerID                        string // the layer (config.LayerConfig.ID) and index of the clip it shows
 	Clip                           int
+	Side                           int // in a transition: on both images (0), only on A (1) or B (2)
 	// Mask: where it is seen (the image's space, any size; nil = everywhere)
 	Mask    *image.Alpha
 	MaskVer string

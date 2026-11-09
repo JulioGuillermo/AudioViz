@@ -92,6 +92,8 @@ func (t Transition) DirectionIndex() int {
 type Seg[T any] struct {
 	At         float64
 	Label      string
+	ID         string   // a name that stays (background segments: what clips and effects bind to)
+	Bind       []string // background effects: the background segments it applies to (ids; none: all)
 	Transition Transition
 	Cfg        T
 	Keys       Keys  // keyframes of its properties (times from At); see keys.go
@@ -135,6 +137,59 @@ func BlendEv[T any](segs []Seg[T], t, end float64, ev Evaluator, id string) (pre
 		}
 	}
 	return
+}
+
+// BgBind is which background segments are on screen: A, and during a transition (Trans) B
+// coming in over it (their ids), and the ids the background track has (Known)
+type BgBind struct {
+	A, B  string
+	Trans bool
+	Known map[string]bool
+}
+
+// BindSide: where something bound to these background segments shows (ids it no longer has
+// count for nothing; none left: it belongs to all): -1 nowhere, 0 everywhere, 1 only on image A
+// of the transition, 2 only on B
+func (b *BgBind) BindSide(ids []string) int {
+	inA, inB, has := false, false, false
+	for _, id := range ids {
+		if id == "" || !b.Known[id] {
+			continue
+		}
+		has = true
+		inA = inA || id == b.A
+		inB = inB || (b.Trans && id == b.B)
+	}
+	switch {
+	case !has || (inA && (inB || !b.Trans)):
+		return 0
+	case inA:
+		return 1
+	case inB:
+		return 2
+	}
+	return -1
+}
+
+// BgBindAt: the background segments on screen at t (as the frame's transition: the one coming
+// in is B until it has fully entered)
+func (tl *Timeline) BgBindAt(t float64) BgBind {
+	segs := tl.Background
+	b := BgBind{Known: map[string]bool{}}
+	for _, s := range segs {
+		if s.ID != "" {
+			b.Known[s.ID] = true
+		}
+	}
+	if len(segs) == 0 {
+		return b
+	}
+	i := Active(segs, t)
+	b.A = segs[i].ID
+	if i > 0 && segs[i].Transition.Animated() && t < segs[i].At+segs[i].Transition.Duration {
+		b.Trans, b.A, b.B = true, segs[i-1].ID, segs[i].ID
+	}
+	return b
 }
 
 // Marker is a named mark on the timeline (song sections)
@@ -198,6 +253,8 @@ func buildTrack[T any](base T, nodes []yaml.Node, fix func(*T)) ([]Seg[T], error
 	type head struct {
 		At         *float64    `yaml:"at"`
 		Label      string      `yaml:"label"`
+		ID         string      `yaml:"id"`
+		Bind       []string    `yaml:"bind"`
 		Transition *Transition `yaml:"transition"`
 		Keys       Keys        `yaml:"keys"`
 		Exprs      Exprs       `yaml:"exprs"`
@@ -229,7 +286,7 @@ func buildTrack[T any](base T, nodes []yaml.Node, fix func(*T)) ([]Seg[T], error
 			var kept []*yaml.Node
 			for i := 0; i+1 < len(body.Content); i += 2 {
 				switch body.Content[i].Value {
-				case "at", "label", "transition", "keys":
+				case "at", "label", "id", "bind", "transition", "keys":
 					continue
 				}
 				kept = append(kept, body.Content[i], body.Content[i+1])
@@ -248,10 +305,11 @@ func buildTrack[T any](base T, nodes []yaml.Node, fix func(*T)) ([]Seg[T], error
 			}
 		}
 		p.h.Keys.Sort()
-		seg := Seg[T]{At: *p.h.At, Label: p.h.Label, Transition: tr, Cfg: cfg, Keys: p.h.Keys, Exprs: p.h.Exprs}
+		seg := Seg[T]{At: *p.h.At, Label: p.h.Label, ID: p.h.ID, Bind: p.h.Bind, Transition: tr, Cfg: cfg, Keys: p.h.Keys, Exprs: p.h.Exprs}
 		if seg.At <= 0 {
-			// A segment at 0 replaces the base (or only gives it a name or keyframes)
+			// A segment at 0 replaces the base (or only gives it a name, id or keyframes)
 			segs[0].Cfg, segs[0].Label, segs[0].Keys, segs[0].Exprs = cfg, p.h.Label, p.h.Keys, p.h.Exprs
+			segs[0].ID, segs[0].Bind = p.h.ID, p.h.Bind
 			continue
 		}
 		segs = append(segs, seg)
@@ -365,6 +423,12 @@ func segNode[T any](s Seg[T]) (*yaml.Node, error) {
 	if s.Label != "" {
 		add("label", s.Label)
 	}
+	if s.ID != "" {
+		add("id", s.ID)
+	}
+	if len(s.Bind) > 0 {
+		add("bind", s.Bind)
+	}
 	add("transition", s.Transition)
 	if len(s.Keys) > 0 {
 		add("keys", s.Keys)
@@ -378,8 +442,8 @@ func segNode[T any](s Seg[T]) (*yaml.Node, error) {
 
 func trackNodes[T any](segs []Seg[T]) ([]*yaml.Node, error) {
 	var out []*yaml.Node
-	// The first segment is the top-level block; its name and keyframes go in an entry at 0
-	if s := segs[0]; s.Label != "" || len(s.Keys) > 0 || len(s.Exprs) > 0 {
+	// The first segment is the top-level block; its name, id and keyframes go in an entry at 0
+	if s := segs[0]; s.Label != "" || s.ID != "" || len(s.Bind) > 0 || len(s.Keys) > 0 || len(s.Exprs) > 0 {
 		n := &yaml.Node{Kind: yaml.MappingNode}
 		add := func(k string, v any) {
 			var vn yaml.Node
@@ -389,6 +453,12 @@ func trackNodes[T any](segs []Seg[T]) ([]*yaml.Node, error) {
 		add("at", 0)
 		if s.Label != "" {
 			add("label", s.Label)
+		}
+		if s.ID != "" {
+			add("id", s.ID)
+		}
+		if len(s.Bind) > 0 {
+			add("bind", s.Bind)
 		}
 		if len(s.Keys) > 0 {
 			add("keys", s.Keys)

@@ -95,6 +95,26 @@ with its tool.
             path: masks/abc123.png        # white / opaque = inside
 ```
 
+## Tied to background segments
+A clip can belong to one or more [background segments](studio.md#tied-to-background-segments):
+in the clip inspector, *Background segments*, click the ones it belongs to (again to untie it;
+none: on every background, as before). Its own times do not change, you still move and trim it
+freely. Then:
+
+- it is seen only while one of its segments is on screen;
+- during a [transition](background/transitions.md) it is only on its segment's image, as if it
+  were part of it: with a fade it fades out (or in) with that image, with a burn it burns with
+  the paper (or only shows through the holes), with a wipe, slide, circle, glitch… it is cut
+  where the other image is. An emitter's light, glow and particles too: they do not reach the
+  other image.
+
+Tied to both segments of a transition, it is on both (as an untied one). A link icon marks it on
+the timeline.
+
+```yaml
+        bind: [bg1k2m3n]           # the ids of the background segments it belongs to
+```
+
 ## Motion path
 
 A clip or a text can travel along a path drawn on the screen (like a motion path in a video

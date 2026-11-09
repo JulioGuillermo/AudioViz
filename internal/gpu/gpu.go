@@ -135,7 +135,7 @@ type Params struct {
 	// Background layers and transition (effects.Layer / effects.Trans)
 	LayerA, LayerB [4]float32 // scale, offX, offY, rot of image A (BG) and B (BG2)
 	Trans          [4]int32   // mode, direction, has (bit0 A, bit1 B), seed
-	TransP         [4]float32 // progress k, -, -, -
+	TransP         [4]float32 // progress k; drawn once per image (1); on which image each effect is (2 bits each)
 	// Burn transition: edge, roughness, max distance, point count; ember color; points (x, y)
 	BurnP   [4]float32
 	BurnCol [4]float32
@@ -212,7 +212,8 @@ type LayerP struct {
 	// depth from its path, per point: its track (offset in words + 1, as float bits; 0 = none),
 	// how far along the path its center is (px), the path's direction there (unit x, y)
 	ZTrack [4]float32
-	// properties per pixel (expressions): their table's offset + 1 (0 none), seed, frame; along its
+	// properties per pixel (expressions): their table's offset + 1 (0 none), seed, frame, and in a
+	// transition on which image it is (0 both, 1 A, 2 B); along its
 	// path: how far its center is (px), the path's direction x, y, its opacity's factor
 	Xpr [4]int32
 	Xps [4]float32

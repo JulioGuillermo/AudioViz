@@ -25,6 +25,9 @@ layout(std430, set = 0, binding = 10) readonly buffer EmitAcc { uint eacc[]; };
 vec2 gParA = vec2(0.0), gParB = vec2(0.0);
 vec3 gHit = vec3(0.0);
 int gW = 0; // the background whose depth this pixel uses (0 the old, 1 the new: parallaxPixel)
+// the image of the transition drawn now (shade: once per image when clips or effects are only on
+// one of them): 0 the frame as a whole, 1 only the old one (A), 2 only the new one (B)
+int gSide = 0;
 #include "common.glsl"
 
 // Per-tile (workgroup) lists: particles and words that may touch the tile
@@ -80,6 +83,10 @@ float fbm(vec2 p, uint seed) {
 }
 
 // how far past the fire's front q is (> 0: burned; as effects.burnFront)
+// the transition's mix of the old image a and the new one b (w: how much of b), or only the one
+// drawn now (gSide)
+vec3 pickT(vec3 a, vec3 b, float w) { return gSide == 1 ? a : gSide == 2 ? b : mix(a, b, w); }
+
 float burnFront(vec2 q, float k, uint seed) {
     float ke = k * k * (3.0 - 2.0 * k);
     vec2 u = q / float(H);
@@ -104,7 +111,7 @@ vec3 burnPixel(vec2 q, float k, uint seed) {
     a = mix(a, a * vec3(0.55, 0.38, 0.22), ch * 0.8);
     a = mix(a, vec3(13.0, 8.0, 5.0) / 255.0, smoothstep(-charW * 0.35, 0.0, s) * 0.9);
     if (s > 0.0) b *= 1.0 - 0.45 * exp(-s / (charW * 0.4));
-    vec3 c = mix(a, b, smoothstep(0.0, 1.5 / Hf, s));
+    vec3 c = pickT(a, b, smoothstep(0.0, 1.5 / Hf, s));
     float brk = smoothstep(0.3, 0.7, vnoise(u * 25.0 + vec2(k * 6.0, -k * 4.0), seed + 11u));
     float e = (s + emberW * 1.2) / emberW;
     float em = exp(-e * e) * (0.35 + 0.9 * brk);
@@ -131,10 +138,13 @@ vec3 composite(vec2 q) {
     uint seed = uint(P.trans.w);
     if (mode == 2) { // dissolve
         float n = hash3(uint(floor(q.x * 0.5)), uint(floor(q.y * 0.5)), seed);
-        return mix(layerAt(0, q), layerAt(1, q), smoothstep(n, n + 0.1, k * 1.1));
+        return pickT(layerAt(0, q), layerAt(1, q), smoothstep(n, n + 0.1, k * 1.1));
     }
     if (mode == 3 || mode == 4) { // dip to black / flash through white
         vec3 mid = mode == 3 ? vec3(0.0) : vec3(1.0);
+        // (each image on its half: the old one goes to black / white, the new one comes from it)
+        if (gSide == 1) return k < 0.5 ? mix(layerAt(0, q), mid, smoothstep(0.0, 1.0, 2.0 * k)) : mid;
+        if (gSide == 2) return k < 0.5 ? mid : mix(mid, layerAt(1, q), smoothstep(0.0, 1.0, 2.0 * k - 1.0));
         if (k < 0.5) return mix(layerAt(0, q), mid, smoothstep(0.0, 1.0, 2.0 * k));
         return mix(mid, layerAt(1, q), smoothstep(0.0, 1.0, 2.0 * k - 1.0));
     }
@@ -143,40 +153,40 @@ vec3 composite(vec2 q) {
         float u = d == 1 ? q.x / S.x : d == 2 ? 1.0 - q.y / S.y : d == 3 ? q.y / S.y : 1.0 - q.x / S.x;
         const float f = 0.02;
         float e = ke * (1.0 + 2.0 * f) - f;
-        return mix(layerAt(0, q), layerAt(1, q), 1.0 - smoothstep(e - f, e + f, u));
+        return pickT(layerAt(0, q), layerAt(1, q), 1.0 - smoothstep(e - f, e + f, u));
     }
     if (mode == 6 || mode == 7) { // slide (new over old) / push (new pushes old)
         vec2 dv = dirVec(P.trans.y);
         vec2 qb = q + dv * S * (1.0 - ke);
-        if (qb.x >= 0.0 && qb.x < S.x && qb.y >= 0.0 && qb.y < S.y) return layerAt(1, qb);
+        if (gSide == 2 || (gSide == 0 && qb.x >= 0.0 && qb.x < S.x && qb.y >= 0.0 && qb.y < S.y)) return layerAt(1, qb);
         return mode == 7 ? layerAt(0, q - dv * S * ke) : layerAt(0, q);
     }
     if (mode == 8) { // zoom_in: fly into the old image while the new one settles
         float s = 1.0 + 1.5 * ke;
         float sb = 1.0 + 0.2 * (1.0 - ke);
-        return mix(layerAt(0, c + (q - c) / s), layerAt(1, c + (q - c) / sb), smoothstep(0.3, 1.0, k));
+        return pickT(layerAt(0, c + (q - c) / s), layerAt(1, c + (q - c) / sb), smoothstep(0.3, 1.0, k));
     }
     if (mode == 9) { // zoom_out: the new image arrives from very close
         float s = 1.0 + 1.5 * (1.0 - ke);
-        return mix(layerAt(0, q), layerAt(1, c + (q - c) / s), smoothstep(0.0, 0.7, k));
+        return pickT(layerAt(0, q), layerAt(1, c + (q - c) / s), smoothstep(0.0, 0.7, k));
     }
     if (mode == 10) { // circle (iris opening from the center)
         float diag = length(S) * 0.5;
         float f = 0.01 * diag;
         float r = ke * (diag + f);
-        return mix(layerAt(0, q), layerAt(1, q), 1.0 - smoothstep(r - f, r + f, length(q - c)));
+        return pickT(layerAt(0, q), layerAt(1, q), 1.0 - smoothstep(r - f, r + f, length(q - c)));
     }
     if (mode == 11) { // clock (radial sweep from 12 o'clock)
         float ang = atan(q.x - c.x, -(q.y - c.y));
         if (ang < 0.0) ang += 6.28318530718;
         float e = ke * (6.28318530718 + 0.04);
-        return mix(layerAt(0, q), layerAt(1, q), 1.0 - smoothstep(e - 0.04, e, ang));
+        return pickT(layerAt(0, q), layerAt(1, q), 1.0 - smoothstep(e - 0.04, e, ang));
     }
     if (mode == 12) { // glitch: bands switch to the new image with shifts and RGB split
         float g = sin(3.14159265 * k);
         uint band = uint(int(floor(q.y)) / max(1, H / 24));
         uint stp = uint(k * 16.0);
-        int img = hash3(band, stp, seed) < k ? 1 : 0;
+        int img = gSide != 0 ? gSide - 1 : hash3(band, stp, seed) < k ? 1 : 0;
         float shift = (hash3(band, stp + 97u, seed) - 0.5) * S.x * 0.08 * g;
         float split = 8.0 * g * (S.y / 1080.0);
         float xs = q.x + shift;
@@ -187,9 +197,9 @@ vec3 composite(vec2 q) {
     if (mode == 13) { // pixelate: blocks grow, swap at the middle, shrink
         float bs = 1.0 + floor(sin(3.14159265 * k) * 48.0 * (S.y / 1080.0));
         vec2 qp = (floor(q / bs) + 0.5) * bs;
-        return mix(layerAt(0, qp), layerAt(1, qp), smoothstep(0.4, 0.6, k));
+        return pickT(layerAt(0, qp), layerAt(1, qp), smoothstep(0.4, 0.6, k));
     }
-    return mix(layerAt(0, q), layerAt(1, q), k); // fade
+    return pickT(layerAt(0, q), layerAt(1, q), k); // fade
 }
 
 // Warp map: ripple then centered zoom (each effect reads the previous one's output)
@@ -197,9 +207,31 @@ vec3 composite(vec2 q) {
 float layerDepth(int which, vec2 q);
 int depthWhich();
 
+// whether background effect e (fxZoom, fxShake, fxChroma, fxRipple, fxGlitch, fxFlash in
+// frameFX.side) is on the image drawn now: on both, or only on that one (gSide 0: only those on
+// both)
+bool fxOn(int e) {
+    int sd = (int(P.transP.z) >> (2 * e)) & 3;
+    return sd == 0 || sd == gSide;
+}
+// the background's zoom and shake (x, y) on the image drawn now
+vec3 zoomShake() {
+    float z = P.zoomRipple.x;
+    vec2 sh = P.shake.xy;
+    if (P.transP.z != 0.0) {
+        if (!fxOn(0)) z /= max(P.shake.z, 1e-3);
+        if (!fxOn(1)) {
+            z /= max(P.shake.w, 1e-3);
+            sh = vec2(0.0);
+        }
+    }
+    return vec3(z, sh);
+}
+
 // how much a background effect applies at this pixel's depth (P.ranges[i]: from, to, soft, on;
-// as effects.RangeMask)
+// as effects.RangeMask) and on the image drawn now (i: flash, chromatic aberration, ripple, glitch)
 float rangeMask(int i) {
+    if (!fxOn(i == 0 ? 5 : i + 1)) return 0.0;
     vec4 r = P.ranges[i];
     if (r.w < 0.5 || P.depthI.z == 0) return 1.0;
     float e = max(r.z, 1e-4);
@@ -221,11 +253,11 @@ vec2 warpPoint(vec2 q, bool ripple) {
         q += vec2(sin(ph), cos(ph)) * amp;
         q = clamp(q, vec2(0.0), vec2(float(W - 1), float(H - 1)));
     }
-    float zoom = P.zoomRipple.x;
-    if (zoom > 1.001) {
-        q = c + (q - c) / zoom;
+    vec3 zs = zoomShake();
+    if (zs.x > 1.001) {
+        q = c + (q - c) / zs.x;
     }
-    return q - P.shake.xy;
+    return q - zs.yz;
 }
 // the background at q, blurred by the depth of field: a golden-angle spiral of samples, what is
 // nearer only counting if it is blurred enough to reach (as effects.ApplyDoF)
@@ -234,7 +266,8 @@ vec3 warpedDof(vec2 q, bool ripple) {
     float zc = gHit.z;
     float cc = (P.dof.w >= 0.5 && P.depthI.z != 0) ? dofCoC(zc) : 0.0;
     int nt = cc >= 0.5 ? P.parallaxN.y : 0; // the taps (from the params: a loop kept as one)
-    float zoom = P.zoomRipple.x > 1.001 ? P.zoomRipple.x : 1.0;
+    float zoom = max(zoomShake().x, 1.0);
+    if (zoom <= 1.001) zoom = 1.0;
     int w = depthWhich();
     vec3 c = vec3(0.0), sum = vec3(0.0);
     float ws = 0.0;
@@ -942,14 +975,14 @@ float layerDepth(int which, vec2 q) {
 vec2 bgPoint(vec2 q) {
     vec2 c = vec2(float(W), float(H)) * 0.5;
     float amp = P.zoomRipple.y;
-    if (amp > 0.2) {
+    if (amp > 0.2 && fxOn(3)) {
         float ph = q.y * P.zoomRipple.z + P.zoomRipple.w;
         q += vec2(sin(ph), cos(ph)) * amp;
         q = clamp(q, vec2(0.0), vec2(float(W - 1), float(H - 1)));
     }
-    float zoom = P.zoomRipple.x;
-    if (zoom > 1.001) q = c + (q - c) / zoom;
-    return q - P.shake.xy;
+    vec3 zs = zoomShake();
+    if (zs.x > 1.001) q = c + (q - c) / zs.x;
+    return q - zs.yz;
 }
 // which background's depth the scene has now (B from halfway through a transition)
 // The surface normal at background point q of depth map which (as effects.Scene.Normal): the
@@ -1061,6 +1094,16 @@ TPick transPick(vec2 q) {
     t.wb = wb;
     t.img = wb >= 0.5 ? 1 : 0;
     return t;
+}
+
+// how much of the new image the transition shows at q, as composite mixes them (the weight of
+// the frame drawn once per image; as effects.TransW)
+float transW(vec2 q) {
+    int mode = P.trans.x;
+    float k = clamp(P.transP.x, 0.0, 1.0);
+    if (mode == 3 || mode == 4) return k < 0.5 ? 0.0 : 1.0;
+    if (mode >= 15 && P.fluidI.w <= 0) return k; // (no fluid drawn: a fade)
+    return transPick(q).wb;
 }
 
 // The 2.5D camera (as effects.Parallax): a point at nearness z seen at u is moved by
@@ -1482,38 +1525,67 @@ vec3 shade(vec2 q) {
         gW = wQ;
         return viewColor(q);
     }
-    vec2 qs = lensAt <= nl ? qb : q;
-    vec2 p = qs + 0.5;
-    vec3 col = background(qs);
     int zp = min(P.zIdx.x, nl), zv = min(P.zIdx.y, nl);
     int tmask = P.zIdx.z; // the text styles drawn (bit per style)
-    for (int st = 0; st <= nl; st++) {
-        if (st == lensAt) {
-            // the water and what is above it: here
-            qs = q;
-            p = q + 0.5;
-            gParA = paQ;
-            gParB = pbQ;
-            gHit = hitQ;
-            gW = wQ;
-        }
-        if (st > 0) col = drawLayer(col, st - 1, qs);
-        if (zp == st) col = drawParticles(col, p);
-        if (zv == st) col = drawViz(col, p);
-        // texts of this stage (those set beyond the clips drawn go with the last stage)
-        bool txt = false;
-        for (int s = 0; s < MAX_TSTYLE; s++)
-            if (((tmask >> s) & 1) != 0 && min(P.ts[s].gradN.y, nl) == st) txt = true;
-        if (txt) {
-            // the texts of this stage that light the scene, then the texts
-            for (int l = 0; l < MAX_TLIGHTS; l++) {
-                ivec4 li = P.tlightI[l];
-                if (li.x > 0 && min(P.ts[li.w].gradN.y, P.layerN.x) == st) col = applyTextLight(col, l, q);
-            }
-            col = drawTexts(col, p, st);
-        }
+    // Once per image of the transition when some clip or effect is only on one of them: each
+    // image with what is on it, mixed as the transition mixes them (at q through the zoom and
+    // shake on both; as effects.TransW). Else once (side 0).
+    float wb = 0.0;
+    int s0 = 0, s1 = 0;
+    if (P.transP.y > 0.5) {
+        vec3 zs = zoomShake();
+        vec2 c = vec2(float(W), float(H)) * 0.5;
+        vec2 wq = zs.x > 1.001 ? c + (q - c) / zs.x : q;
+        wb = transW(wq - zs.yz);
+        s0 = wb < 0.9999 ? 1 : 2;
+        s1 = wb > 1e-4 ? 2 : 1;
     }
-    return col;
+    vec2 paS = gParA, pbS = gParB;
+    vec3 hitS = gHit;
+    int wS = gW;
+    vec3 res = vec3(0.0);
+    [[dont_unroll]] for (int side = s0; side <= s1; side++) {
+        gSide = side;
+        gParA = paS;
+        gParB = pbS;
+        gHit = hitS;
+        gW = wS;
+        vec2 qs = lensAt <= nl ? qb : q;
+        vec2 p = qs + 0.5;
+        vec3 col = background(qs);
+        for (int st = 0; st <= nl; st++) {
+            if (st == lensAt) {
+                // the water and what is above it: here
+                qs = q;
+                p = q + 0.5;
+                gParA = paQ;
+                gParB = pbQ;
+                gHit = hitQ;
+                gW = wQ;
+            }
+            if (st > 0) {
+                int ls = P.layers[st - 1].xpr.w; // (on both images, or on the one drawn now)
+                if (side == 0 || ls == 0 || ls == side) col = drawLayer(col, st - 1, qs);
+            }
+            if (zp == st) col = drawParticles(col, p);
+            if (zv == st) col = drawViz(col, p);
+            // texts of this stage (those set beyond the clips drawn go with the last stage)
+            bool txt = false;
+            for (int s = 0; s < MAX_TSTYLE; s++)
+                if (((tmask >> s) & 1) != 0 && min(P.ts[s].gradN.y, nl) == st) txt = true;
+            if (txt) {
+                // the texts of this stage that light the scene, then the texts
+                for (int l = 0; l < MAX_TLIGHTS; l++) {
+                    ivec4 li = P.tlightI[l];
+                    if (li.x > 0 && min(P.ts[li.w].gradN.y, P.layerN.x) == st) col = applyTextLight(col, l, q);
+                }
+                col = drawTexts(col, p, st);
+            }
+        }
+        res += col * (s0 == s1 ? 1.0 : side == 1 ? 1.0 - wb : wb);
+    }
+    gSide = 0;
+    return res;
 }
 
 uint packBytes(float a, float b, float c, float d) {

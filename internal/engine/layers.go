@@ -57,18 +57,25 @@ func contrastFactor(contrast float64) float64 {
 
 // layersAt resolves the overlay clips visible at t, bottom to top, and the stack position of each
 // (its layer's index + 1), to place the visualizer, particles and texts among them
-func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx frameFX, glitchAmt float64, scene *effects.Scene) ([]effects.LayerFrame, []int, error) {
+func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx0 frameFX, glitchAmt float64, scene *effects.Scene, bind *config.BgBind) ([]effects.LayerFrame, []int, error) {
 	feat := &feats[idx]
 	var out []effects.LayerFrame
 	var stack []int
 	W, H := float64(s.W), float64(s.H)
 	minDim := math.Max(math.Min(W, H), 64)
-	// The background's effects, for the clips that follow them
-	bg := effects.Warp{Zoom: fx.zoom, RippleAmp: fx.rippleAmp, RippleFreq: fx.rippleFreq, RippleTm: fx.rTim,
-		ShakeX: fx.shakeX, ShakeY: fx.shakeY, Chroma: fx.chromaShift, ChromaMode: fx.chromaMode,
-		FlashCF: contrastFactor(fx.contrast), FlashBright: fx.bright}
-	if fx.glitch {
-		bg.Glitch = effects.GlitchSlices(s.W, s.H, glitchAmt, int64(idx))
+	// The background's effects, for the clips that follow them: those on the clip's image (side:
+	// 0 both, 1 A, 2 B)
+	var bgs [3]effects.Warp
+	var shakes [3]bool
+	for side := range bgs {
+		fx := fx0.forSide(side)
+		bgs[side] = effects.Warp{Zoom: fx.zoom, RippleAmp: fx.rippleAmp, RippleFreq: fx.rippleFreq, RippleTm: fx.rTim,
+			ShakeX: fx.shakeX, ShakeY: fx.shakeY, Chroma: fx.chromaShift, ChromaMode: fx.chromaMode,
+			FlashCF: contrastFactor(fx.contrast), FlashBright: fx.bright}
+		if fx.glitch {
+			bgs[side].Glitch = effects.GlitchSlices(s.W, s.H, glitchAmt, int64(idx))
+		}
+		shakes[side] = fx0.on(fxShake, side)
 	}
 	for li := range s.Cfg.Layers {
 		layer := &s.Cfg.Layers[li]
@@ -78,6 +85,12 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx f
 			if t < c0.Start || t >= c0.End || (c0.Path == "" && !emit) {
 				continue
 			}
+			// bound to background segments: only while one of them is on screen, on its image
+			side := bind.BindSide(c0.Bind)
+			if side < 0 {
+				continue
+			}
+			bg, shakeOn := bgs[side], shakes[side]
 			c := c0
 			if len(c0.Keys) > 0 || len(c0.Exprs) > 0 {
 				c = config.Animate(c0, c0.Keys, s.clipFrameExprs(c0, emit), s, config.ExprCtx{T: t, U: t - c0.Start, Dur: c0.End - c0.Start, ID: clipID(layer.ID, ci)})
@@ -102,8 +115,8 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx f
 				lf := effects.LayerFrame{Emit: ef, Ver: "emit", CX: W / 2, CY: H / 2, SX: 1, SY: 1,
 					Opacity: math.Max(0, math.Min(1, op)), Blend: c.BlendIndex(),
 					Brightness: c.Brightness, Contrast: c.Contrast, Saturate: c.Saturation, Hue: c.Hue * math.Pi / 180, Blur: c.Blur}
-				lf.LayerID, lf.Clip = layer.ID, ci
-				lf.W = s.clipWarp(&c.Effects, bg, t, idx, li, feat, minDim)
+				lf.LayerID, lf.Clip, lf.Side = layer.ID, ci, side
+				lf.W = s.clipWarp(&c.Effects, bg, t, idx, li, feat, minDim, shakeOn)
 				if len(c.Masks) > 0 {
 					lf.Mask, lf.MaskVer = s.maskFor(c.Masks, s.W, s.H)
 				}
@@ -255,9 +268,9 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx f
 			} else {
 				lf.KeyColor = [3]float64{0, 1, 0}
 			}
-			lf.LayerID, lf.Clip = layer.ID, ci
+			lf.LayerID, lf.Clip, lf.Side = layer.ID, ci, side
 			s.clipPxExprs(&lf, c0, c, opk, config.ExprCtx{T: t, U: t - c0.Start, Dur: c0.End - c0.Start, ID: clipID(layer.ID, ci)}, pathA)
-			lf.W = s.clipWarp(&c.Effects, bg, t, idx, li, feat, minDim)
+			lf.W = s.clipWarp(&c.Effects, bg, t, idx, li, feat, minDim, shakeOn)
 			if len(c.Masks) > 0 {
 				lf.Mask, lf.MaskVer = s.maskFor(c.Masks, int(tw), int(th))
 			}
@@ -281,7 +294,7 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx f
 }
 
 // clipWarp: the background effects a clip follows (inherit), its own, or none
-func (s *Session) clipWarp(e *config.LayerEffects, bg effects.Warp, t float64, idx, li int, feat *audio.FrameFeatures, minDim float64) effects.Warp {
+func (s *Session) clipWarp(e *config.LayerEffects, bg effects.Warp, t float64, idx, li int, feat *audio.FrameFeatures, minDim float64, shakeOn bool) effects.Warp {
 	w := effects.Warp{Zoom: 1, FlashCF: 1}
 	zoom := 1.0
 	switch config.EffectMode(e.Zoom.Mode) {
@@ -293,7 +306,7 @@ func (s *Session) clipWarp(e *config.LayerEffects, bg effects.Warp, t float64, i
 	switch config.EffectMode(e.Shake.Mode) {
 	case 0:
 		w.ShakeX, w.ShakeY = bg.ShakeX, bg.ShakeY
-		if config.EffectMode(e.Zoom.Mode) != 0 {
+		if config.EffectMode(e.Zoom.Mode) != 0 && shakeOn {
 			// the background's zoom includes the shake's edge zoom
 			_, _, z := shakeOf(&s.Cfg.Timeline.Shake[config.Active(s.Cfg.Timeline.Shake, t)].Cfg, t, feat, minDim)
 			zoom *= z

@@ -23,6 +23,8 @@ type TransJSON struct {
 type SegJSON struct {
 	At         float64        `json:"at"`
 	Label      string         `json:"label"`
+	ID         string         `json:"id,omitempty"`   // background segments: what clips and effects bind to
+	Bind       []string       `json:"bind,omitempty"` // background effects: the background segments it applies to
 	Transition TransJSON      `json:"transition"`
 	Cfg        map[string]any `json:"cfg"`
 	Keys       config.Keys    `json:"keys,omitempty"`  // keyframes: property path → keys (times from At)
@@ -118,7 +120,7 @@ func fromMap(m map[string]any, dst any) error {
 func segsToJSON[T any](segs []config.Seg[T]) []SegJSON {
 	out := make([]SegJSON, len(segs))
 	for i, s := range segs {
-		out[i] = SegJSON{At: s.At, Label: s.Label, Transition: TransJSON{s.Transition.Mode, s.Transition.Duration, s.Transition.Direction, s.Transition.Burn, s.Transition.Fluid}, Cfg: toMap(s.Cfg), Keys: s.Keys, Exprs: s.Exprs}
+		out[i] = SegJSON{At: s.At, Label: s.Label, ID: s.ID, Bind: s.Bind, Transition: TransJSON{s.Transition.Mode, s.Transition.Duration, s.Transition.Direction, s.Transition.Burn, s.Transition.Fluid}, Cfg: toMap(s.Cfg), Keys: s.Keys, Exprs: s.Exprs}
 	}
 	return out
 }
@@ -147,7 +149,7 @@ func segsFromJSON[T any](name string, in []SegJSON, def T, fix func(*T)) ([]conf
 			mode = "cut"
 		}
 		s.Keys.Sort()
-		out = append(out, config.Seg[T]{At: at, Label: s.Label, Cfg: cfg, Keys: s.Keys, Exprs: s.Exprs,
+		out = append(out, config.Seg[T]{At: at, Label: s.Label, ID: s.ID, Bind: s.Bind, Cfg: cfg, Keys: s.Keys, Exprs: s.Exprs,
 			Transition: config.Transition{Mode: mode, Duration: s.Transition.Duration, Direction: s.Transition.Direction, Burn: s.Transition.Burn, Fluid: s.Transition.Fluid}})
 	}
 	// Sort by time (the first one always at 0)

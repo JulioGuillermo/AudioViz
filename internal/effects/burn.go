@@ -163,7 +163,7 @@ func burnPixel(sa, sb *sampler, x, y float64, w, h int, tr Trans) rgb {
 		f := 1 - 0.45*math.Exp(-s/(charW*0.4))
 		b = rgb{b[0] * f, b[1] * f, b[2] * f}
 	}
-	c := mixc(a, b, smoothstep(0, 1.5/H, s))
+	c := tr.pick(a, b, smoothstep(0, 1.5/H, s))
 	// Ember: a thin line on the paper side of the edge (a black crisp rim stays between it and the
 	// hole), broken into glowing stretches that flicker, plus a soft halo of light
 	brk := smoothstep(0.3, 0.7, vnoise(u[0]*25+k*6, u[1]*25-k*4, tr.Seed+11))

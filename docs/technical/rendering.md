@@ -146,7 +146,7 @@ Must match `gpu.Params` field for field (`gpu.go`). Limits: `MAX_GRAD 8`, `MAX_G
 | `prev` | preview scale (0/1 = off), preview width, preview height |
 | `layerA`, `layerB` | scale, offX, offY, rot of BG and BG2 (segment motion) |
 | `trans` | mode (index in `config.TransitionModes`, 0 = none), direction, has (bit0 A, bit1 B), seed |
-| `transP` | x = transition progress k |
+| `transP` | x = transition progress k; y = 1: drawn once per image (below); z = on which image each background effect is (2 bits each, `frameFX.side`) |
 | `burnP`, `burnCol`, `burnPts[8]` | burn: edge, roughness, max distance, point count; ember color; ignition points |
 | `fluidI` | fluid / liquid: word offsets in `FLUID` of the bin starts, (unused), the coarse level; bin side in px (0 = no fluid frame) |
 | `fluidN` | bins across, bins down, coarse width, coarse height |
@@ -273,6 +273,20 @@ image with its layer, B = new image with its layer, and `composite()` mixes them
 same math is in Go (`effects.Compose` / `transitionPixel`, used by the CPU path) and GLSL
 (`composite()`), including the PCG hash used for `dissolve` and `glitch`; rendering both on the
 13 modes gives a mean difference ≤ 0.11/255. `ke = smoothstep(k)`.
+
+**Tied to background segments** (`ClipConfig.Bind`, `Seg.Bind` on bass_zoom / shake / chromatic /
+ripple / glitch / color_flash; `config.BgBind.BindSide`): outside a transition, what is tied to
+segments not on screen is left out (clips) or off (effects). During one, each says on which image
+it is (0 both, 1 A, 2 B: `LayerFrame.Side` → `LayerP.xpr.w`, `frameFX.side` → `transP.z`), and
+when any is on only one (`FrameState.Sided`) the frame is drawn once per image: `shade` runs the
+background and the whole stack with `gSide` = 1 then 2, `composite` returning only that image as
+the transition shows it (`pickT`; dip / flash: each image on its half), the effects not on it off
+(`fxOn`: their depth-range masks at 0, `zoomShake` without its factor), the clips not on it
+skipped; the two are mixed by `transW` (the mix weight composite uses, read at q through the zoom
+and shake on both). The CPU does the same with whole frames (`cpuSide`, `Trans.Side`,
+`effects.MixSides`). Otherwise (nothing tied, or tied to both) the frame is drawn once as before.
+The depth (parallax, lights in 2.5D) uses only the effects on both; a side-only bass zoom is flat
+(no dolly).
 
 | Mode | Formula |
 |---|---|

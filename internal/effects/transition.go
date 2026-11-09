@@ -106,6 +106,20 @@ type Trans struct {
 	HasA, HasB bool // false = that side is black (no background)
 	Burn       BurnParams
 	Fluid      *FluidFrame // fluid / liquid: the particles at this instant
+	// Side: the mix (0), or only the old image (1) or the new one (2) as the transition shows it
+	// (the frame drawn once per image: MixSides)
+	Side int
+}
+
+// pick: the transition's mix of a and b (w: how much of b), or only the side drawn
+func (tr *Trans) pick(a, b rgb, w float64) rgb {
+	switch tr.Side {
+	case 1:
+		return a
+	case 2:
+		return b
+	}
+	return mixc(a, b, w)
 }
 
 // Hash as in the shader (PCG): deterministic noise for dissolve and glitch
@@ -346,6 +360,53 @@ func TransPick(tr Trans, x, y float64, w, h int) (ax, ay, bx, by, wb float64) {
 	return
 }
 
+// TransW: how much of the new image the transition shows at (x, y), as transitionPixel mixes
+// them (as transW in render.comp)
+func TransW(tr Trans, x, y float64, w, h int) float64 {
+	k := math.Max(0, math.Min(1, tr.K))
+	mode := ""
+	if tr.Mode >= 0 && tr.Mode < len(config.TransitionModes) {
+		mode = config.TransitionModes[tr.Mode]
+	}
+	switch mode {
+	case "dip_black", "flash":
+		if k < 0.5 {
+			return 0
+		}
+		return 1
+	case "fluid", "liquid":
+		if f := tr.Fluid; f == nil || len(f.New) != w*h {
+			return k // (no fluid drawn: a fade)
+		}
+	}
+	_, _, _, _, wb := TransPick(tr, x, y, w, h)
+	return wb
+}
+
+// MixSides: the frame drawn once per image of transition tr (a: with what is on the old image,
+// b: on the new one) mixed as the transition mixes them, at each pixel through the zoom and the
+// shake on both (as shade in render.comp); into a
+func MixSides(a, b *image.RGBA, tr Trans, zoom, shakeX, shakeY float64) {
+	w, h := a.Bounds().Dx(), a.Bounds().Dy()
+	cx, cy := float64(w)/2, float64(h)/2
+	parallelFor(h, func(y0, y1 int) {
+		for y := y0; y < y1; y++ {
+			for x := 0; x < w; x++ {
+				qx, qy := float64(x), float64(y)
+				if zoom > 1.001 {
+					qx, qy = cx+(qx-cx)/zoom, cy+(qy-cy)/zoom
+				}
+				k := TransW(tr, qx-shakeX, qy-shakeY, w, h)
+				o := y*a.Stride + x*4
+				for c := 0; c < 3; c++ {
+					va, vb := float64(a.Pix[o+c]), float64(b.Pix[o+c])
+					a.Pix[o+c] = uint8(math.Max(0, math.Min(255, va+(vb-va)*k+0.5)))
+				}
+			}
+		}
+	})
+}
+
 // dirVec: unit vector where the new image moves (left, right, up, down)
 func dirVec(d int) (float64, float64) {
 	switch d {
@@ -368,17 +429,25 @@ func transitionPixel(sa, sb *sampler, x, y float64, w, h int, tr Trans) rgb {
 	switch config.TransitionModes[tr.Mode] {
 	case "dissolve":
 		n := hash3(uint32(int(x)/2), uint32(int(y)/2), tr.Seed)
-		return mixc(sa.at(x, y), sb.at(x, y), smoothstep(n, n+0.1, k*1.1))
-	case "dip_black":
-		if k < 0.5 {
-			return mixc(sa.at(x, y), rgb{}, smoothstep(0, 1, 2*k))
+		return tr.pick(sa.at(x, y), sb.at(x, y), smoothstep(n, n+0.1, k*1.1))
+	case "dip_black", "flash":
+		mid := rgb{}
+		if config.TransitionModes[tr.Mode] == "flash" {
+			mid = white
 		}
-		return mixc(rgb{}, sb.at(x, y), smoothstep(0, 1, 2*k-1))
-	case "flash":
-		if k < 0.5 {
-			return mixc(sa.at(x, y), white, smoothstep(0, 1, 2*k))
+		// (each image on its half: the old one goes to black / white, the new one comes from it)
+		switch {
+		case tr.Side == 1 && k < 0.5:
+			return mixc(sa.at(x, y), mid, smoothstep(0, 1, 2*k))
+		case tr.Side == 2 && k >= 0.5:
+			return mixc(mid, sb.at(x, y), smoothstep(0, 1, 2*k-1))
+		case tr.Side != 0:
+			return mid
 		}
-		return mixc(white, sb.at(x, y), smoothstep(0, 1, 2*k-1))
+		if k < 0.5 {
+			return mixc(sa.at(x, y), mid, smoothstep(0, 1, 2*k))
+		}
+		return mixc(mid, sb.at(x, y), smoothstep(0, 1, 2*k-1))
 	case "wipe":
 		var u float64 // 0 where the new image appears first
 		switch tr.Dir {
@@ -393,12 +462,12 @@ func transitionPixel(sa, sb *sampler, x, y float64, w, h int, tr Trans) rgb {
 		}
 		const f = 0.02
 		e := ke*(1+2*f) - f
-		return mixc(sa.at(x, y), sb.at(x, y), 1-smoothstep(e-f, e+f, u))
+		return tr.pick(sa.at(x, y), sb.at(x, y), 1-smoothstep(e-f, e+f, u))
 	case "slide", "push":
 		dx, dy := dirVec(tr.Dir)
 		// B comes from the side opposite to its movement
 		bx, by := x+dx*W*(1-ke), y+dy*H*(1-ke)
-		if inside(bx, by) {
+		if tr.Side == 2 || (tr.Side == 0 && inside(bx, by)) {
 			return sb.at(bx, by)
 		}
 		if config.TransitionModes[tr.Mode] == "push" {
@@ -409,29 +478,32 @@ func transitionPixel(sa, sb *sampler, x, y float64, w, h int, tr Trans) rgb {
 		cx, cy := W/2, H/2
 		s := 1 + 1.5*ke
 		sb2 := 1 + 0.2*(1-ke)
-		return mixc(sa.at(cx+(x-cx)/s, cy+(y-cy)/s), sb.at(cx+(x-cx)/sb2, cy+(y-cy)/sb2), smoothstep(0.3, 1, k))
+		return tr.pick(sa.at(cx+(x-cx)/s, cy+(y-cy)/s), sb.at(cx+(x-cx)/sb2, cy+(y-cy)/sb2), smoothstep(0.3, 1, k))
 	case "zoom_out": // the new image arrives from very close
 		cx, cy := W/2, H/2
 		s := 1 + 1.5*(1-ke)
-		return mixc(sa.at(x, y), sb.at(cx+(x-cx)/s, cy+(y-cy)/s), smoothstep(0, 0.7, k))
+		return tr.pick(sa.at(x, y), sb.at(cx+(x-cx)/s, cy+(y-cy)/s), smoothstep(0, 0.7, k))
 	case "circle":
 		diag := math.Hypot(W, H) / 2
 		f := 0.01 * diag
 		r := ke * (diag + f)
 		d := math.Hypot(x-W/2, y-H/2)
-		return mixc(sa.at(x, y), sb.at(x, y), 1-smoothstep(r-f, r+f, d))
+		return tr.pick(sa.at(x, y), sb.at(x, y), 1-smoothstep(r-f, r+f, d))
 	case "clock":
 		ang := math.Atan2(x-W/2, -(y - H/2))
 		if ang < 0 {
 			ang += 2 * math.Pi
 		}
 		e := ke * (2*math.Pi + 0.04)
-		return mixc(sa.at(x, y), sb.at(x, y), 1-smoothstep(e-0.04, e, ang))
+		return tr.pick(sa.at(x, y), sb.at(x, y), 1-smoothstep(e-0.04, e, ang))
 	case "glitch":
 		g := math.Sin(math.Pi * k)
 		band := uint32(int(y) / max(1, h/24))
 		step := uint32(k * 16)
 		useB := hash3(band, step, tr.Seed) < k
+		if tr.Side != 0 {
+			useB = tr.Side == 2
+		}
 		shift := (hash3(band, step+97, tr.Seed) - 0.5) * W * 0.08 * g
 		split := 8 * g * (H / 1080)
 		s := sa
@@ -445,7 +517,7 @@ func transitionPixel(sa, sb *sampler, x, y float64, w, h int, tr Trans) rgb {
 	case "pixelate":
 		bs := 1 + math.Floor(math.Sin(math.Pi*k)*48*(H/1080))
 		px, py := (math.Floor(x/bs)+0.5)*bs, (math.Floor(y/bs)+0.5)*bs
-		return mixc(sa.at(px, py), sb.at(px, py), smoothstep(0.4, 0.6, k))
+		return tr.pick(sa.at(px, py), sb.at(px, py), smoothstep(0.4, 0.6, k))
 	}
-	return mixc(sa.at(x, y), sb.at(x, y), k) // fade
+	return tr.pick(sa.at(x, y), sb.at(x, y), k) // fade
 }

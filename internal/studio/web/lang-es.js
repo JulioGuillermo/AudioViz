@@ -1,5 +1,14 @@
 // Spanish UI strings (English source → Spanish)
 export const ES = {
+  'Background segments': 'Tramos de fondo',
+  'Tie it to background segments: it is seen only while one of them is on screen, and during a transition only on its image (its light, particles and effects do not reach the other one). Its own times stay as they are. None chosen: on every background.': 'Lígalo a tramos de fondo: solo se ve mientras uno de ellos está en pantalla, y durante una transición solo sobre su imagen (su luz, sus partículas y sus efectos no llegan a la otra). Sus propios tiempos no cambian. Sin ninguno elegido: sobre todos los fondos.',
+  'Starts at {t}': 'Empieza en {t}',
+  'Applies only while one of them is on screen; in a transition, only to its image.': 'Solo se aplica mientras uno de ellos está en pantalla; en una transición, solo a su imagen.',
+  'Seen only while one of them is on screen; in a transition, only on its image.': 'Solo se ve mientras uno de ellos está en pantalla; en una transición, solo sobre su imagen.',
+  'Applies to every background. Choose segments to tie it to them.': 'Se aplica a todos los fondos. Elige tramos para ligarlo a ellos.',
+  'On every background. Choose segments to tie it to them.': 'Sobre todos los fondos. Elige tramos para ligarlo a ellos.',
+  'Untie': 'Desligar',
+  'Tied to background segments': 'Ligado a tramos de fondo',
   'Import project': 'Importar proyecto',
   'Unpacks a project .zip into the workspace and opens it.': 'Descomprime un proyecto .zip en el espacio de trabajo y lo abre.',
   'Your projects': 'Tus proyectos',

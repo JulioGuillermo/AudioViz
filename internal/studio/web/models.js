@@ -33,11 +33,11 @@ export function ModelsSection({ Section, showErr }) {
   return html`<${Section} title=${t('Downloaded models')} id="models"
       help=${'The AI models AudioViz has downloaded (images, lyrics, depth…), shared by every project. Delete the ones you do not use to free disk space: they download again when you use them.'}>
     ${!st ? html`<p class="faint">…</p>` : html`
-      <p class="faint md-total">${t('{s} in {n} files', { s: fmtSize(st.total), n: st.files.length })}
+      <p class="faint md-total">${t('{s} in {n} files', { s: fmtSize(st.total), n: (st.files || []).length })}
         <button class="btn icon ghost sm" title=${t('Refresh')} onClick=${load}><${Icon} name="rotate-ccw" size=${12} /></button></p>
       <div class="pl-list">
-        ${!st.files.length && html`<p class="faint">${t('No models downloaded yet.')}</p>`}
-        ${st.files.map((f) => html`<div class="pl-row" key=${f.file}>
+        ${!(st.files || []).length && html`<p class="faint">${t('No models downloaded yet.')}</p>`}
+        ${(st.files || []).map((f) => html`<div class="pl-row" key=${f.file}>
           <div class="pl-name"><b title=${f.file}>${f.label || f.file}</b><span class="faint">${fmtSize(f.size)}</span></div>
           <div class="pl-line">
             <span class="faint md-use">${f.partial ? t('Unfinished download')

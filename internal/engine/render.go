@@ -43,6 +43,53 @@ type frameFX struct {
 	dof                         effects.DoF      // depth of field
 	// background effects only on a depth range: from, to, soft, on
 	rFlash, rChroma, rRipple, rGlitch [4]float64
+	// bound to background segments (config.BgBind.BindSide), during a transition: on which
+	// image each effect is (0 both, 1 only A, 2 only B; fxZoom…); the zoom's factors of the bass
+	// zoom and of the shake (zoom has them, and the camera's edge zoom)
+	side                [nFX]int8
+	zoomBass, zoomShake float64
+}
+
+// the background effects that can be bound to background segments (frameFX.side)
+const (
+	fxZoom = iota
+	fxShake
+	fxChroma
+	fxRipple
+	fxGlitch
+	fxFlash
+	nFX
+)
+
+// bound: whether some effect is only on one of the transition's images
+func (fx *frameFX) bound() bool { return fx.side != [nFX]int8{} }
+
+// on: whether effect e is on the side's image (side 0: the frame as a whole: only the effects
+// on both)
+func (fx *frameFX) on(e, side int) bool { return fx.side[e] == 0 || int(fx.side[e]) == side }
+
+// forSide: the effects on the side's image (0: those on both), the others off
+func (fx frameFX) forSide(side int) frameFX {
+	if !fx.on(fxZoom, side) {
+		fx.zoom /= fx.zoomBass
+	}
+	if !fx.on(fxShake, side) {
+		fx.zoom /= fx.zoomShake
+		fx.shakeX, fx.shakeY = 0, 0
+	}
+	if !fx.on(fxChroma, side) {
+		fx.chromaShift, fx.chromaMode, fx.rChroma = 0, 0, [4]float64{}
+	}
+	if !fx.on(fxRipple, side) {
+		fx.rippleAmp, fx.rRipple = 0, [4]float64{}
+	}
+	if !fx.on(fxGlitch, side) {
+		fx.glitch, fx.rGlitch = false, [4]float64{}
+	}
+	if !fx.on(fxFlash, side) {
+		fx.bright, fx.contrast, fx.rFlash = 0, 0, [4]float64{}
+	}
+	return fx
 }
 
 // RenderOptions are CLI options for preview or partial rendering
@@ -418,7 +465,7 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 	for k := 0; k < n; k++ {
 		l := &fs.Layers[k]
 		lp := &lps[k]
-		lp.Xpr, lp.Xps = [4]int32{}, [4]float32{}
+		lp.Xpr, lp.Xps = [4]int32{3: int32(l.Side)}, [4]float32{}
 		x0 := l.FirstX()
 		if x0 == nil {
 			continue
@@ -446,7 +493,7 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 			put(off+2*j+1, math.Float32bits(float32(l.XV[j]))) // its value (the expression's value)
 			o += effects.PixExprWords(x)
 		}
-		lp.Xpr = [4]int32{int32(off + 1), int32(x0.Seed), int32(x0.Frame)}
+		lp.Xpr = [4]int32{int32(off + 1), int32(x0.Seed), int32(x0.Frame), int32(l.Side)}
 		lp.Xps = [4]float32{l.XS0, l.XTX, l.XTY, float32(l.OpK)}
 		off += need
 	}
@@ -979,19 +1026,35 @@ func Execute(cfg *config.ProjectConfig, opts RenderOptions) error {
 // ---------------------------------------------------------------- CPU
 
 func (s *Session) cpuFrame(fs *FrameState) *image.RGBA {
+	if !fs.Sided() {
+		return s.cpuSide(fs, 0)
+	}
+	// once per image of the transition (some clip or effect is only on one of them), mixed as
+	// the transition mixes them
+	a, b := s.cpuSide(fs, 1), s.cpuSide(fs, 2)
+	fx := fs.FX.forSide(0)
+	effects.MixSides(a, b, fs.Trans, fx.zoom, fx.shakeX, fx.shakeY)
+	return a
+}
+
+// cpuSide: the frame (side 0), or only one image of the transition with the clips and effects on
+// it (1 the old one, 2 the new one)
+func (s *Session) cpuSide(fs *FrameState, side int) *image.RGBA {
 	frame := image.NewRGBA(image.Rect(0, 0, s.W, s.H))
-	par := fs.FX.par
+	fx := fs.FX.forSide(side)
+	tr := fs.Trans
+	tr.Side = side
+	par := fx.par
 	if !par.On() || (fs.DepthA == nil && fs.DepthB == nil) {
 		par = effects.Parallax{}
 	}
-	if fs.Trans.Mode == 0 && fs.LayerA == effects.Identity && !par.On() {
+	if tr.Mode == 0 && fs.LayerA == effects.Identity && !par.On() {
 		if fs.BgA != nil {
 			copy(frame.Pix, fs.BgA.Pix)
 		}
 	} else {
-		effects.ComposeParallax(frame, fs.BgA, fs.BgB, fs.LayerA, fs.LayerB, fs.Trans, par, fs.DepthA, fs.DepthB)
+		effects.ComposeParallax(frame, fs.BgA, fs.BgB, fs.LayerA, fs.LayerB, tr, par, fs.DepthA, fs.DepthB)
 	}
-	fx := fs.FX
 	frame = effects.ApplyBassZoom(frame, fx.zoom, fx.shakeX, fx.shakeY)
 	// the scene's depth at each pixel, for the effects on a depth range and the depth of field
 	var z []float32
@@ -1027,7 +1090,7 @@ func (s *Session) cpuFrame(fs *FrameState) *image.RGBA {
 	items, styles := fs.TextItems, fs.TextStyles
 	dc := gg.NewContextForRGBA(frame)
 	for st := 0; st <= len(fs.Layers); st++ {
-		if st > 0 {
+		if st > 0 && (side == 0 || fs.Layers[st-1].Side == 0 || fs.Layers[st-1].Side == side) {
 			l := &fs.Layers[st-1]
 			if l.Emit != nil && l.Img == nil {
 				l.Img, l.Light = effects.DrawEmitter(l.Emit, s.W, s.H)
@@ -1179,6 +1242,14 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 	p.LayerA, p.LayerB = layer(fs.LayerA), layer(fs.LayerB)
 	p.Trans = [4]int32{int32(tr.Mode), int32(tr.Dir), has, int32(tr.Seed & 0x7fffffff)}
 	p.TransP = [4]float32{float32(tr.K)}
+	if fs.Sided() {
+		// drawn once per image (render.comp shade): on, and on which image each effect is
+		sides := 0
+		for e, sd := range fx.side {
+			sides |= int(sd) << (2 * e)
+		}
+		p.TransP[1], p.TransP[2] = 1, float32(sides)
+	}
 	if b := tr.Burn; len(b.Pts) > 0 {
 		p.BurnP = [4]float32{float32(b.Edge), float32(b.Rough), float32(b.MaxD), float32(len(b.Pts))}
 		p.BurnCol = [4]float32{float32(b.Color[0]), float32(b.Color[1]), float32(b.Color[2])}
@@ -1204,7 +1275,7 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 			}
 		})
 	}
-	p.Shake = [4]float32{float32(fx.shakeX), float32(fx.shakeY)}
+	p.Shake = [4]float32{float32(fx.shakeX), float32(fx.shakeY), float32(fx.zoomBass), float32(fx.zoomShake)}
 
 	// Visualizer
 	vizType := int32(0)

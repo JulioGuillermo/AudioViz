@@ -10,6 +10,7 @@ import { MaskSection } from './masks.js';
 import { helpMenu } from './help.js';
 import { pathKeyNames } from './exprs.js';
 import { MotionSection, RouteSection, NodeSection, hasPath, movePath } from './motion.js';
+import { BindSection } from './bind.js';
 
 // Overlay layers (config.LayerConfig): proj.layers is bottom to top (drawing order); the studio
 // shows them front first, as a stack of cards.
@@ -300,6 +301,8 @@ export function LayerInspector({ proj, sel, setSel, update, time, meta, ctx }) {
       ${c && ctx.pathNode && html`<${NodeSection} obj=${c} what=${ctx.pathNode.what} pi=${ctx.pathNode.pi} edit=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}
       ${c && html`<${MaskSection} clip=${c} kf=${kf} selMask=${ctx.selMask} setSelMask=${ctx.setSelMask} ctx=${ctx}
         openEditor=${ctx.openEditor} editClip=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}
+      ${c && html`<${BindSection} proj=${proj} bind=${c.bind} update=${update}
+        target=${(p) => { const l = p.layers.find((x) => x.id === sel.id); return l && l.clips[j]; }} />`}
       <${Section} id="layer" title=${t('Layer')} help=${'Layers higher in the list are drawn in front. Drag them in the left panel to change the order.'}>
         <button class="btn sm ghost danger" onClick=${() => { if (confirm(t('Delete the layer “{n}” and its clips?', { n: layerName(layer, li) }))) {
           update((p) => { p.layers = p.layers.filter((l) => l.id !== sel.id); }); setSel({ kind: 'output' }); } }}>

@@ -40,8 +40,29 @@ timeline:
 | `particles` | `particles` (layers are replaced as a whole) |
 | `lyrics` | `lyrics` style (the path and the offset are always those of the first segment) |
 
-Each segment accepts `at` (seconds, required), `label` (name) and `transition`. The transition rules
-are in [studio.md](studio.md#segments-changing-effects-over-the-song). Background segments have many
+Each segment accepts `at` (seconds, required), `label` (name) and `transition`. A background
+segment can have an `id` (any unique name: the studio makes one when something is tied to it), and
+a clip or a segment of `bass_zoom`, `shake`, `chromatic_aberration`, `ripple`, `glitch` or
+`color_flash` a `bind`: the background segments it belongs to (it applies only while one of them
+is on screen, and during a transition only to its image; see
+[studio.md](studio.md#tied-to-background-segments)):
+
+```yaml
+background: { path: "assets/city.png" }
+timeline:
+  background:
+    - { at: 0, id: city }
+    - { at: 30, id: forest, path: "assets/forest.png", transition: { mode: burn, duration: 2 } }
+  glitch:
+    - { at: 0, enabled: true, intensity: 0.6, bind: [city] }   # only the city glitches
+layers:
+  - name: Fire
+    kind: emitter
+    clips:
+      - { start: 20, end: 40, bind: [city], emitter: { preset: fire_real } }   # burns away with it
+```
+
+The transition rules are in [studio.md](studio.md#segments-changing-effects-over-the-song). Background segments have many
 visual transitions (slide, wipe, circle, glitch...): see [background/transitions.md](background/transitions.md);
 the other tracks use `cut` or `fade`.
 

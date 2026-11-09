@@ -28,6 +28,7 @@ import { ChatPanel, chatStore, loadChat, chatEvent, unreadCount, notifyMsg } fro
 import { AgentChanges } from './review.js';
 import { ComfySection, ComfyRunDialog, loadFlows, flowsStore } from './comfy.js';
 import { PluginsSection } from './plugins.js';
+import { BindSection, BIND_TRACKS } from './bind.js';
 import { ModelsSection } from './models.js';
 
 // ------------------------------------------------------------------ preview
@@ -371,6 +372,8 @@ function TrackInspector({ proj, track, segIdx, time, meta, update, setSel, ctx, 
     <div class="insp-b">
       <${SegHeader} segs=${segs} i=${i} set=${setSeg} meta=${meta} track=${track} ctx=${ctx} />
       <${Form} fields=${def.fields} value=${seg.cfg} onChange=${(cfg) => setSeg({ ...seg, cfg })} ctx=${ctx} isFirst=${i === 0} kf=${kf} />
+      ${BIND_TRACKS.includes(track) && html`<${BindSection} proj=${proj} bind=${seg.bind} update=${update} what="effect"
+        target=${(p) => p.tracks[track][i]} />`}
       ${track === 'background' && html`<${DepthSection} cfg=${seg.cfg} ctx=${ctx} at=${seg.at || 0} onChange=${(cfg) => setSeg({ ...seg, cfg })} />`}
       ${track === 'background' && html`<${Section} id="genimg" title=${t('Generate an image')} help=${'Create a background from a description, or edit an image, with AI on your GPU.'}>
         <button class="btn" onClick=${onImages}><${Icon} name="wand-sparkles" size=${15} /> ${t('Generate an image…')}</button></${Section}>`}
@@ -1288,6 +1291,7 @@ function App() {
       const segs = p.tracks[track], s = segs[i];
       const u = +(tt - s.at).toFixed(3);
       const ns = { at: +tt.toFixed(3), label: '', transition: { mode: 'cut', duration: 1 }, cfg: clone(s.cfg) };
+      if (s.bind) ns.bind = [...s.bind]; // (an effect's halves stay on the same backgrounds; a background's id is not copied)
       if (s.keys) {
         const left = {}, right = {};
         for (const path in s.keys) {

@@ -19,7 +19,9 @@ always give the same result: any frame can be seen or rendered directly.
 - **Preset**: the buttons at the top of the inspector start again from another preset.
 - Like any clip: opacity, fades, **blend** (*Add* for light: fire, sparks; *Normal* for smoke),
   filters, the background effects it follows, [masks](layers.md#masks) (on the screen: it can go
-  behind something, or only show in a zone) and keys for every number and color.
+  behind something, or only show in a zone), the [background segments](layers.md#tied-to-background-segments)
+  it belongs to (in a transition its particles and its light stay on its image) and keys for
+  every number and color.
 
 ## Settings
 
