@@ -372,7 +372,7 @@ function TrackInspector({ proj, track, segIdx, time, meta, update, setSel, ctx, 
     <div class="insp-b">
       <${SegHeader} segs=${segs} i=${i} set=${setSeg} meta=${meta} track=${track} ctx=${ctx} />
       <${Form} fields=${def.fields} value=${seg.cfg} onChange=${(cfg) => setSeg({ ...seg, cfg })} ctx=${ctx} isFirst=${i === 0} kf=${kf} />
-      ${BIND_TRACKS.includes(track) && html`<${BindSection} proj=${proj} bind=${seg.bind} update=${update} what="effect"
+      ${BIND_TRACKS.includes(track) && html`<${BindSection} proj=${proj} bind=${seg.bind} update=${update} what="effect" time=${time}
         target=${(p) => p.tracks[track][i]} />`}
       ${track === 'background' && html`<${DepthSection} cfg=${seg.cfg} ctx=${ctx} at=${seg.at || 0} onChange=${(cfg) => setSeg({ ...seg, cfg })} />`}
       ${track === 'background' && html`<${Section} id="genimg" title=${t('Generate an image')} help=${'Create a background from a description, or edit an image, with AI on your GPU.'}>

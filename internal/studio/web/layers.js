@@ -301,7 +301,7 @@ export function LayerInspector({ proj, sel, setSel, update, time, meta, ctx }) {
       ${c && ctx.pathNode && html`<${NodeSection} obj=${c} what=${ctx.pathNode.what} pi=${ctx.pathNode.pi} edit=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}
       ${c && html`<${MaskSection} clip=${c} kf=${kf} selMask=${ctx.selMask} setSelMask=${ctx.setSelMask} ctx=${ctx}
         openEditor=${ctx.openEditor} editClip=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}
-      ${c && html`<${BindSection} proj=${proj} bind=${c.bind} update=${update}
+      ${c && html`<${BindSection} proj=${proj} bind=${c.bind} update=${update} time=${time}
         target=${(p) => { const l = p.layers.find((x) => x.id === sel.id); return l && l.clips[j]; }} />`}
       <${Section} id="layer" title=${t('Layer')} help=${'Layers higher in the list are drawn in front. Drag them in the left panel to change the order.'}>
         <button class="btn sm ghost danger" onClick=${() => { if (confirm(t('Delete the layer “{n}” and its clips?', { n: layerName(layer, li) }))) {

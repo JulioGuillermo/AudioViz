@@ -7,6 +7,7 @@ import { Select } from './fields.js';
 import { t } from './i18n.js';
 import { Modal, GenSteps, fmtDur, fmtSize, fmtDate, thumbURL } from './dialogs.js';
 import { BoxCanvas, BoxFields, layoutPrompt } from './layout.js';
+import { ImageViewer } from './imgview.js';
 
 // Image generation: a prompt (and optionally reference images to edit or combine) becomes an
 // image in the project's images/ folder, made inside the binary on the GPU. The images can then be
@@ -57,6 +58,7 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onRun, onU
   const [steps, setSteps] = useState('');
   const [seed, setSeed] = useState('');
   const [cur, setCur] = useState(null); // image shown big (list view)
+  const [big, setBig] = useState(null); // image shown over the whole window (its path; ImageViewer)
   // Views: 'list' (all the images, the default), 'create' (the generator). A running
   // generation opens on the generator.
   const [view, setView] = useState(() => (job && (job.kind === 'image' || job.kind === 'comfy') && job.status === 'running' ? 'create' : 'list'));
@@ -265,7 +267,7 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onRun, onU
   if (view === 'list' && cur) {
     // ---- one image, big
     body = html`<div class="ig-detail">
-      <div class="ig-stage"><img src=${media(cur.path)} alt="" /></div>
+      <div class="ig-stage"><img src=${media(cur.path)} alt="" class="ig-zoomable" title=${t('Enlarge')} onClick=${() => setBig(cur.path)} /></div>
       <div class="ig-meta">
         <div class="row" style="gap:6px"><span class=${'badge' + (cur.gen ? ' ig-genb' : '')}>${t(cur.gen ? 'Generated' : 'Project')}</span><b class="ig-name">${cur.name}</b></div>
         ${cur.gen && html`<p class="ig-ptext">${cur.prompt}</p>
@@ -276,6 +278,7 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onRun, onU
         ${!cur.gen && html`<div class="faint mono" style="font-size:11px;word-break:break-all">${cur.path}</div>`}
         <div class="ig-actions">
           <button class="btn primary" onClick=${() => onUseBackground(cur.path)}><${Icon} name="image" size=${14} /> ${t('Use as background')}</button>
+          <button class="btn" onClick=${() => setBig(cur.path)} title=${t('See it big: zoom, move and turn it, or edit it')}><${Icon} name="maximize-2" size=${14} /> ${t('Enlarge')}</button>
           <button class="btn" onClick=${() => editWith(cur.path, 'ref')} title=${t('Edit this image: it becomes the reference of a new one')}><${Icon} name="wand-sparkles" size=${14} /> ${t('Edit with AI')}</button>
           <button class="btn" onClick=${() => editWith(cur.path, 'init')} title=${t('Start from an image instead of noise: the result keeps its composition (img2img)')}><${Icon} name="layers" size=${14} /> ${t('Use as initial image')}</button>
           ${cur.gen && html`<button class="btn" onClick=${() => reuse(cur)} title=${t('Load its prompt, model and seed')}><${Icon} name="rotate-ccw" size=${14} /> ${t('Reuse settings')}</button>`}
@@ -377,5 +380,9 @@ export function ImagesDialog({ meta, job, onClose, onCancel, onStart, onRun, onU
         : html`<button class="btn primary" onClick=${() => { setCur(null); setRefs([]); setAdv('init', ''); setView('create'); }}><${Icon} name="plus" size=${15} /> ${t('New image')}</button>`}`}>
     ${err && html`<div class="alert err" style="margin-bottom:10px"><${Icon} name="triangle-alert" size=${15} />${err}</div>`}
     ${body}
+    ${big && html`<${ImageViewer} items=${shown.some((x) => x.path === big) ? shown : items} path=${big}
+      setPath=${(p) => { setBig(p); const x = items.find((i) => i.path === p); if (x && cur) setCur(x); }}
+      onClose=${() => setBig(null)} videoAR=${(meta.width || 16) / (meta.height || 9)}
+      onSaved=${(p) => load().then((d) => { setBig(p); if (d) setCur({ path: p, name: basename(p), gen: false }); })} />`}
   </${Modal}>`;
 }

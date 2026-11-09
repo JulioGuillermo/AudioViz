@@ -17,6 +17,26 @@ Click an image to see it big, with:
 - **Use as initial image**: img2img from it (see *Initial image* below).
 - **Reuse settings** (generated): loads its prompt, model, seed and advanced settings.
 - **Download**, and **Delete** (only generated images).
+- **Enlarge** (or click the image): it fills the window (below).
+
+### Enlarged: look and edit
+The image over the whole window, at any zoom:
+- **Zoom**: the wheel (where the pointer is), a trackpad or two fingers, *+* / *−*, or the
+  percentage buttons; **0** fits it, **1** shows it at its actual size (1 image pixel = 1 screen
+  pixel); a double-click switches between the two.
+- **Move**: drag. **Turn the view**: *R* / *Shift+R* (90°), *Shift+wheel* (15°), or two fingers
+  turning; the degrees button puts it straight. Only the view turns, not the image.
+- **← / →** (or the side arrows): the previous / next image of the list. **Esc** closes.
+
+**Edit** (*E*) opens a basic editor on the right:
+- **Turn and flip**: 90° left / right, flip horizontally / vertically.
+- **Crop** (*C*): drag its corners and sides, inside to move it, outside to draw a new one; a
+  shape (*Free*, *Original*, *Like the video*, 16:9, 1:1, 9:16, 4:3, 3:4; Shift frees it for a
+  moment). The size of the result is shown at the top.
+- **Light and color**: exposure, contrast, saturation, warmth, tint and hue (double-click a
+  slider: back to 0). **Compare** (hold): without them.
+- **Save as new image** (Ctrl+S): a PNG next to it in `assets/` (`<name>-edit.png`); the original
+  is never changed. It opens enlarged. **Cancel** / *Esc* drops the changes.
 
 **New image** opens the generator; *All images* goes back to the list:
 1. Choose the **model** (see below).

@@ -26,7 +26,7 @@ export function bound(proj, bind) {
 
 // BindSection: the background segments obj (a clip or an effect's segment) belongs to. update:
 // the project's update; target(p): obj in the project being changed
-export function BindSection({ proj, bind, update, target, what }) {
+export function BindSection({ proj, bind, update, target, what, time }) {
   const segs = (proj.tracks && proj.tracks.background) || [];
   const on = new Set((bind || []).filter((id) => segs.some((s) => s.id === id)));
   if (segs.length < 2 && on.size === 0) return null;
@@ -42,13 +42,16 @@ export function BindSection({ proj, bind, update, target, what }) {
     if (b.size) o.bind = all.filter((x) => b.has(x.id)).map((x) => x.id);
     else delete o.bind;
   });
+  // the background segment on screen at the cursor
+  let now = -1;
+  segs.forEach((s, k) => { if (time != null && (k === 0 || s.at <= time)) now = k; });
   const clear = () => update((p) => { const o = target(p); if (o) delete o.bind; });
   return html`<${Section} id="bind" title=${t('Background segments')}
       extra=${on.size > 0 && html`<span class="bind-n"><${Icon} name="link" size=${11} />${on.size}</span>`}
       help=${'Tie it to background segments: it is seen only while one of them is on screen, and during a transition only on its image (its light, particles and effects do not reach the other one). Its own times stay as they are. None chosen: on every background.'}>
-    <div class="bindchips">${segs.map((s, k) => html`<button class=${'btn sm' + (s.id && on.has(s.id) ? ' on' : '')}
-        title=${t('Starts at {t}', { t: fmtTime(s.at) })} onClick=${() => toggle(k)}>
-        <span class="mono faint">${fmtTime(s.at, false)}</span> ${s.label || t('Segment {n}', { n: k + 1 })}</button>`)}</div>
+    <div class="bindchips">${segs.map((s, k) => html`<button class=${'btn sm' + (s.id && on.has(s.id) ? ' on' : '') + (k === now ? ' now' : '')}
+        title=${(s.label || t('Segment {n}', { n: k + 1 })) + ' · ' + t('Starts at {t}', { t: fmtTime(s.at) }) + (k === now ? ' · ' + t('On screen at the cursor') : '')} onClick=${() => toggle(k)}>
+        <span class="mono bt">${fmtTime(s.at, false)}</span><span class="bn">${s.label || t('Segment {n}', { n: k + 1 })}</span></button>`)}</div>
     <div class="card-note">${on.size
       ? t(what === 'effect' ? 'Applies only while one of them is on screen; in a transition, only to its image.' : 'Seen only while one of them is on screen; in a transition, only on its image.')
       : t(what === 'effect' ? 'Applies to every background. Choose segments to tie it to them.' : 'On every background. Choose segments to tie it to them.')}
