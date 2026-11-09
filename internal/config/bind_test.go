@@ -79,3 +79,76 @@ func TestBind(t *testing.T) {
 		t.Fatalf("not kept on save:\n%s", out)
 	}
 }
+
+// the segment of a tied effect that works on each image of a background transition (Picks)
+func TestPicks(t *testing.T) {
+	const y = `
+audio: { path: "a.flac" }
+background: { path: "a.png" }
+timeline:
+  background:
+    - { at: 0, id: a }
+    - { at: 10, id: b, path: "b.png", transition: { mode: fade, duration: 4 } }
+  parallax:
+    - { at: 0, enabled: true, bind: [a] }
+    - { at: 8, enabled: true, bind: [a] }
+    - { at: 12, enabled: true, bind: [b] }
+  glitch:
+    - { at: 0, enabled: true, bind: [a], hold: false }
+    - { at: 11, enabled: true, bind: [b] }
+  ripple:
+    - { at: 0, enabled: true }
+    - { at: 9, enabled: true, bind: [a] }
+    - { at: 16, enabled: true, bind: [b] }
+  shake:
+    - { at: 0, enabled: true, bind: [a] }
+    - { at: 10, enabled: true, bind: [b] }
+`
+	c, err := ParseConfig([]byte(y), "/proj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tl := &c.Timeline
+	if !tl.Glitch[0].NoHold || tl.Glitch[1].NoHold {
+		t.Fatal("hold not read")
+	}
+	act := func(i int) Pick { return Pick{Mode: PickActive, Seg: i} }
+	held := func(i int) Pick { return Pick{Mode: PickHeld, Seg: i} }
+	off := Pick{}
+	check := func(name string, at float64, got [3]Pick, want [3]Pick) {
+		t.Helper()
+		if got != want {
+			t.Errorf("%s at %v: %v, want %v", name, at, got, want)
+		}
+	}
+	p3 := func(a, b, c Pick) [3]Pick { return [3]Pick{a, b, c} }
+	for _, k := range []struct {
+		at        float64
+		par, glit [3]Pick
+		rip, shk  [3]Pick
+	}{
+		{5, p3(act(0), act(0), act(0)), p3(act(0), act(0), act(0)), p3(act(0), act(0), act(0)), p3(act(0), act(0), act(0))},
+		// the transition (10–14): A keeps the one tied to it active at 10, B takes the one
+		// active at 14 already; glitch on A is not held; ripple: B has none tied at 14, the
+		// active one is tied to A
+		// (shake: the next one starts with the transition, A keeps the one before)
+		{11, p3(off, act(1), held(2)), p3(off, off, act(1)), p3(off, act(1), off), p3(off, held(0), act(1))},
+		{13, p3(off, held(1), act(2)), p3(off, off, act(1)), p3(off, act(1), off), p3(off, held(0), act(1))},
+		{15, p3(act(2), act(2), act(2)), p3(act(1), act(1), act(1)), p3(off, off, off), p3(act(1), act(1), act(1))},
+	} {
+		b := tl.BgBindAt(k.at)
+		check("parallax", k.at, p3(Picks(tl.Parallax, k.at, &b)), k.par)
+		check("glitch", k.at, p3(Picks(tl.Glitch, k.at, &b)), k.glit)
+		check("ripple", k.at, p3(Picks(tl.Ripple, k.at, &b)), k.rip)
+		check("shake", k.at, p3(Picks(tl.Shake, k.at, &b)), k.shk)
+	}
+	// hold survives saving
+	out, err := c.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	c2, err := ParseConfig(out, "/proj")
+	if err != nil || !c2.Timeline.Glitch[0].NoHold || c2.Timeline.Glitch[1].NoHold {
+		t.Fatalf("hold not kept on save: %v\n%s", err, out)
+	}
+}

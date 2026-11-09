@@ -153,6 +153,18 @@ own times stay free. With none chosen it is on every background, as always. A li
 what is tied on the timeline. (Splitting an effect's segment keeps it tied; a new background
 segment is a new one.)
 
+**Held through transitions.** An effect's segment tied to a background keeps working on its
+image through the whole transition, even when the next segment of the track has already started.
+The segment tied to the old background that is on screen until the transition starts stays on
+the old image until it ends. The segment tied to the new background that is on screen when the
+transition ends works on the new image from its start. So each image keeps its own camera, zoom,
+ripple… while they cross: put a parallax on A tied to A and one on B tied to B, and A leaves with
+its camera moving as B comes in with its own. Effects' segments have no gaps (each lasts until
+the next one), so "on screen" is simply the one active then. The hatched band on the effect's
+lane marks where a segment is held past its own time. Turn **Hold through transitions** off (under
+the segment buttons) for a segment to stop on its image as soon as the transition starts. Clips
+need none of this: they overlap on their layers.
+
 **Texts (titles)**: *Titles and texts* in the left panel or the *Texts* lane of the timeline. Add
 one at the cursor (or double-click the lane), drag its block to move it and its edges to change
 when it starts and ends, and **drag on the preview** to place it. Each text has all the lyrics

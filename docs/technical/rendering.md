@@ -275,24 +275,27 @@ same math is in Go (`effects.Compose` / `transitionPixel`, used by the CPU path)
 13 modes gives a mean difference ≤ 0.11/255. `ke = smoothstep(k)`.
 
 **Tied to background segments** (`ClipConfig.Bind`, `Seg.Bind` on bass_zoom / shake / chromatic /
-ripple / glitch / color_flash / parallax / depth_of_field; `config.BgBind.BindSide`): outside a transition, what is tied to
-segments not on screen is left out (clips) or off (effects). During one, each says on which image
-it is (0 both, 1 A, 2 B: `LayerFrame.Side` → `LayerP.xpr.w`, `frameFX.side` → `transP.z`), and
-when any is on only one (`FrameState.Sided`) the frame is drawn once per image: `shade` runs the
-background and the whole stack with `gSide` = 1 then 2, `composite` returning only that image as
-the transition shows it (`pickT`; dip / flash: each image on its half), the effects not on it off
-(`fxOn`: their depth-range masks at 0, `zoomShake` without its factor), the clips not on it
-skipped; the two are mixed by `transW` (the mix weight composite uses, read at q through the zoom
-and shake on both). The CPU does the same with whole frames (`cpuSide`, `Trans.Side`,
-`effects.MixSides`). Otherwise (nothing tied, or tied to both) the frame is drawn once as before.
-The depth (lights in 2.5D, depth ranges) uses only the effects on both; a side-only bass zoom is
-flat (no dolly), and so is the bass zoom while the camera is side-only. A side-only camera
-(`fxPar`) searches only its image (`parallaxPixel`, `Scene.camOn`; the other one's hit is its
-plain depth), and the other image's pass drops its edge zoom (`frameFX.zoomEdge` → `transP.w`,
-`zoomShake`); a side-only depth of field (`fxDoF`) blurs only its image's pass (`warpedDof`). What
-is in depth gets them by `objW` / `Scene.Cam` / `Scene.Lens`: all on its image, none on the other,
-and on both images (texts, untied clips) scaled by how much the transition shows the effect's
-image (1 − k or k; displacement and blur are linear in them).
+ripple / glitch / color_flash / parallax / depth_of_field; `config.BgBind.BindSide`): outside a
+transition, what is tied to segments not on screen is left out (clips) or off (effects). During
+one, a clip says on which image it is (0 both, 1 A, 2 B: `LayerFrame.Side` → `LayerP.xpr.w`), and
+each background effect's track picks a segment per image (`config.Picks`): the active one if it
+is tied to that image; else the one tied to it held through the transition (A: the one active
+until the transition started, B: the one active when it ends; not with `hold: false`); else the
+active one if it is tied to nothing; else none. The frame as a whole (`FrameState.FX`) takes the
+active one unless it is tied to only one image. When an image picks otherwise, or a clip is on
+only one (`FrameState.Sided`), the frame is drawn once per image with that image's effects
+(`FrameState.FXS`, `fxFor`): `shade` runs the background and the whole stack with `gSide` = 1
+then 2, `composite` returning only that image as the transition shows it (`pickT`; dip / flash:
+each image on its half), the effects read from that image's set (`gFX`: the Params fields for A,
+`Params.fxB` for B: `FXSet`, through `fZoomRipple`, `fDof`…), the clips not on it skipped; the
+two are mixed by `transW` read at q through the zoom and shake of the frame as a whole
+(`Params.mixZS`). The CPU does the same with whole frames (`cpuSide`, `Trans.Side`,
+`effects.MixSides`). Otherwise the frame is drawn once as before. The depth is worked out per
+image with its own set (`parallaxPixel`, `effects.Scene.V`): its zoom, ripple, shake and camera;
+the hit is that of the image the transition shows there, the nearness blended where both are. What
+is in depth takes the camera and the depth of field of its image, and on both images (texts,
+untied clips) the two mixed as much as the transition shows each one (`pDispOn` / `dofCoCOn`,
+`Scene.Disp` / `Scene.CoC`; displacement and blur, not their settings).
 
 | Mode | Formula |
 |---|---|

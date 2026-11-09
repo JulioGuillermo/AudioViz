@@ -57,7 +57,7 @@ func contrastFactor(contrast float64) float64 {
 
 // layersAt resolves the overlay clips visible at t, bottom to top, and the stack position of each
 // (its layer's index + 1), to place the visualizer, particles and texts among them
-func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx0 frameFX, glitchAmt float64, scene *effects.Scene, bind *config.BgBind) ([]effects.LayerFrame, []int, error) {
+func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fs *FrameState, scene *effects.Scene, bind *config.BgBind) ([]effects.LayerFrame, []int, error) {
 	feat := &feats[idx]
 	var out []effects.LayerFrame
 	var stack []int
@@ -68,14 +68,17 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fx0 
 	var bgs [3]effects.Warp
 	var shakes [3]bool
 	for side := range bgs {
-		fx := fx0.forSide(side)
+		fx := fs.fxFor(side)
 		bgs[side] = effects.Warp{Zoom: fx.zoom, RippleAmp: fx.rippleAmp, RippleFreq: fx.rippleFreq, RippleTm: fx.rTim,
 			ShakeX: fx.shakeX, ShakeY: fx.shakeY, Chroma: fx.chromaShift, ChromaMode: fx.chromaMode,
 			FlashCF: contrastFactor(fx.contrast), FlashBright: fx.bright}
 		if fx.glitch {
-			bgs[side].Glitch = effects.GlitchSlices(s.W, s.H, glitchAmt, int64(idx))
+			bgs[side].Glitch = effects.GlitchSlices(s.W, s.H, fx.glitchAmt, int64(idx))
 		}
-		shakes[side] = fx0.on(fxShake, side)
+		shakes[side] = fx.on[fxShake]
+		// the GPU has it as the background's on the image drawn (a clip on both images of a frame
+		// drawn once per image with other effects on each takes its own copy)
+		bgs[side].GlitchBG = side != 0 || !fs.fxSided
 	}
 	for li := range s.Cfg.Layers {
 		layer := &s.Cfg.Layers[li]
@@ -331,7 +334,7 @@ func (s *Session) clipWarp(e *config.LayerEffects, bg effects.Warp, t float64, i
 	}
 	switch config.EffectMode(e.Glitch.Mode) {
 	case 0:
-		w.Glitch, w.GlitchBG = bg.Glitch, len(bg.Glitch) > 0
+		w.Glitch, w.GlitchBG = bg.Glitch, len(bg.Glitch) > 0 && bg.GlitchBG
 	case 1:
 		if glitchOn(&e.Glitch.Own, feat) {
 			w.Glitch = effects.GlitchSlices(s.W, s.H, e.Glitch.Own.Intensity, int64(idx)*31+int64(li)+7)
@@ -591,13 +594,13 @@ func (s *Session) placeInDepth(lf *effects.LayerFrame, d *config.ClipDepth, scen
 	if lf.ZTrack != nil || (lf.Emit != nil && lf.Emit.P.ZTrack != nil) {
 		return // its depth changes along it: blurred and moved per point (DrawLayer, render.comp)
 	}
-	if lens := scene.Lens(lf.Side); ok && lens.On() {
+	if ok && scene.Blurs(lf.Side) {
 		// out of focus as its depth is
-		lf.Blur += float64(lens.CoC(float32(z)))
+		lf.Blur += float64(scene.CoC(lf.Side, float32(z)))
 	}
-	if cam := scene.Cam(lf.Side); ok && cam.On() {
+	if ok && scene.Moves(lf.Side) {
 		// the 2.5D camera moves it as its depth
-		dx, dy := cam.Disp(z, x, y, s.W, s.H)
+		dx, dy := scene.Disp(lf.Side, z, x, y)
 		lf.W.ShakeX += dx
 		lf.W.ShakeY += dy
 	}

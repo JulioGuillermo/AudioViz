@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 
@@ -90,10 +91,13 @@ func (t Transition) DirectionIndex() int {
 
 // Seg is a segment of a track
 type Seg[T any] struct {
-	At         float64
-	Label      string
-	ID         string   // a name that stays (background segments: what clips and effects bind to)
-	Bind       []string // background effects: the background segments it applies to (ids; none: all)
+	At    float64
+	Label string
+	ID    string   // a name that stays (background segments: what clips and effects bind to)
+	Bind  []string // background effects: the background segments it applies to (ids; none: all)
+	// bound background effects: not held through the background's transitions (Picks):
+	// cut on its image when the transition starts (yaml hold: false)
+	NoHold     bool
 	Transition Transition
 	Cfg        T
 	Keys       Keys  // keyframes of its properties (times from At); see keys.go
@@ -139,12 +143,72 @@ func BlendEv[T any](segs []Seg[T], t, end float64, ev Evaluator, id string) (pre
 	return
 }
 
-// BgBind is which background segments are on screen: A, and during a transition (Trans) B
-// coming in over it (their ids), and the ids the background track has (Known)
+// BgBind is which background segments are on screen: A, and during a transition (Trans, from
+// T0 to T1) B coming in over it (their ids), and the ids the background track has (Known)
 type BgBind struct {
-	A, B  string
-	Trans bool
-	Known map[string]bool
+	A, B   string
+	Trans  bool
+	T0, T1 float64
+	Known  map[string]bool
+}
+
+// tied: whether ids name background segment id (one the track still has)
+func (b *BgBind) tied(ids []string, id string) bool {
+	return id != "" && b.Known[id] && slices.Contains(ids, id)
+}
+
+// Pick is which segment of a background effect's track works on an image: none (Off), the one
+// active now with its own transition (Active), or segment Seg held (Held)
+type Pick struct {
+	Mode int
+	Seg  int
+}
+
+const (
+	PickOff = iota
+	PickActive
+	PickHeld
+)
+
+// Picks: which segment of a background effect's track works at t on the frame as a whole (both:
+// the one active now unless it is tied to only one image, or to none on screen) and, during a
+// transition, on each image. On an image: the one active now if it is tied to that image's
+// segment; else, held through the transition, the one tied to it that was active until the
+// transition started (A, the old one) or is when it ends (B, the new one), unless it says
+// hold: false; else the one active now if it is tied to nothing
+func Picks[T any](segs []Seg[T], t float64, b *BgBind) (both, a, bb Pick) {
+	if len(segs) == 0 {
+		return
+	}
+	i := Active(segs, t)
+	side := b.BindSide(segs[i].Bind)
+	if side == 0 {
+		both = Pick{Mode: PickActive, Seg: i}
+	}
+	if !b.Trans {
+		return both, both, both
+	}
+	untied := true
+	for _, id := range segs[i].Bind {
+		if id != "" && b.Known[id] {
+			untied = false
+		}
+	}
+	on := func(id string, j int) Pick {
+		if b.tied(segs[i].Bind, id) {
+			return Pick{Mode: PickActive, Seg: i}
+		}
+		if j != i && !segs[j].NoHold && b.tied(segs[j].Bind, id) {
+			return Pick{Mode: PickHeld, Seg: j}
+		}
+		if untied {
+			return Pick{Mode: PickActive, Seg: i}
+		}
+		return Pick{}
+	}
+	// (A: the one active until the transition starts, also when the next one starts with it)
+	before := max(sort.Search(len(segs), func(k int) bool { return segs[k].At >= b.T0 })-1, 0)
+	return both, on(b.A, before), on(b.B, Active(segs, b.T1))
 }
 
 // BindSide: where something bound to these background segments shows (ids it no longer has
@@ -188,6 +252,7 @@ func (tl *Timeline) BgBindAt(t float64) BgBind {
 	b.A = segs[i].ID
 	if i > 0 && segs[i].Transition.Animated() && t < segs[i].At+segs[i].Transition.Duration {
 		b.Trans, b.A, b.B = true, segs[i-1].ID, segs[i].ID
+		b.T0, b.T1 = segs[i].At, segs[i].At+segs[i].Transition.Duration
 	}
 	return b
 }
@@ -255,6 +320,7 @@ func buildTrack[T any](base T, nodes []yaml.Node, fix func(*T)) ([]Seg[T], error
 		Label      string      `yaml:"label"`
 		ID         string      `yaml:"id"`
 		Bind       []string    `yaml:"bind"`
+		Hold       *bool       `yaml:"hold"`
 		Transition *Transition `yaml:"transition"`
 		Keys       Keys        `yaml:"keys"`
 		Exprs      Exprs       `yaml:"exprs"`
@@ -286,7 +352,7 @@ func buildTrack[T any](base T, nodes []yaml.Node, fix func(*T)) ([]Seg[T], error
 			var kept []*yaml.Node
 			for i := 0; i+1 < len(body.Content); i += 2 {
 				switch body.Content[i].Value {
-				case "at", "label", "id", "bind", "transition", "keys":
+				case "at", "label", "id", "bind", "hold", "transition", "keys":
 					continue
 				}
 				kept = append(kept, body.Content[i], body.Content[i+1])
@@ -305,11 +371,12 @@ func buildTrack[T any](base T, nodes []yaml.Node, fix func(*T)) ([]Seg[T], error
 			}
 		}
 		p.h.Keys.Sort()
-		seg := Seg[T]{At: *p.h.At, Label: p.h.Label, ID: p.h.ID, Bind: p.h.Bind, Transition: tr, Cfg: cfg, Keys: p.h.Keys, Exprs: p.h.Exprs}
+		noHold := p.h.Hold != nil && !*p.h.Hold
+		seg := Seg[T]{At: *p.h.At, Label: p.h.Label, ID: p.h.ID, Bind: p.h.Bind, NoHold: noHold, Transition: tr, Cfg: cfg, Keys: p.h.Keys, Exprs: p.h.Exprs}
 		if seg.At <= 0 {
 			// A segment at 0 replaces the base (or only gives it a name, id or keyframes)
 			segs[0].Cfg, segs[0].Label, segs[0].Keys, segs[0].Exprs = cfg, p.h.Label, p.h.Keys, p.h.Exprs
-			segs[0].ID, segs[0].Bind = p.h.ID, p.h.Bind
+			segs[0].ID, segs[0].Bind, segs[0].NoHold = p.h.ID, p.h.Bind, noHold
 			continue
 		}
 		segs = append(segs, seg)
@@ -429,6 +496,9 @@ func segNode[T any](s Seg[T]) (*yaml.Node, error) {
 	if len(s.Bind) > 0 {
 		add("bind", s.Bind)
 	}
+	if s.NoHold {
+		add("hold", false)
+	}
 	add("transition", s.Transition)
 	if len(s.Keys) > 0 {
 		add("keys", s.Keys)
@@ -443,7 +513,7 @@ func segNode[T any](s Seg[T]) (*yaml.Node, error) {
 func trackNodes[T any](segs []Seg[T]) ([]*yaml.Node, error) {
 	var out []*yaml.Node
 	// The first segment is the top-level block; its name, id and keyframes go in an entry at 0
-	if s := segs[0]; s.Label != "" || s.ID != "" || len(s.Bind) > 0 || len(s.Keys) > 0 || len(s.Exprs) > 0 {
+	if s := segs[0]; s.Label != "" || s.ID != "" || len(s.Bind) > 0 || s.NoHold || len(s.Keys) > 0 || len(s.Exprs) > 0 {
 		n := &yaml.Node{Kind: yaml.MappingNode}
 		add := func(k string, v any) {
 			var vn yaml.Node
@@ -459,6 +529,9 @@ func trackNodes[T any](segs []Seg[T]) ([]*yaml.Node, error) {
 		}
 		if len(s.Bind) > 0 {
 			add("bind", s.Bind)
+		}
+		if s.NoHold {
+			add("hold", false)
 		}
 		if len(s.Keys) > 0 {
 			add("keys", s.Keys)

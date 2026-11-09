@@ -42,10 +42,11 @@ timeline:
 
 Each segment accepts `at` (seconds, required), `label` (name) and `transition`. A background
 segment can have an `id` (any unique name: the studio makes one when something is tied to it), and
-a clip or a segment of `bass_zoom`, `shake`, `chromatic_aberration`, `ripple`, `glitch` or
-`color_flash` a `bind`: the background segments it belongs to (it applies only while one of them
-is on screen, and during a transition only to its image; see
-[studio.md](studio.md#tied-to-background-segments)):
+a clip or a segment of `bass_zoom`, `shake`, `chromatic_aberration`, `ripple`, `glitch`,
+`color_flash`, `parallax` or `depth_of_field` a `bind`: the background segments it belongs to (it
+applies only while one of them is on screen, and during a transition only to its image; see
+[studio.md](studio.md#tied-to-background-segments)). A tied effect's segment is held on its image
+through the background's transitions; `hold: false` cuts it there instead:
 
 ```yaml
 background: { path: "assets/city.png" }
@@ -55,6 +56,10 @@ timeline:
     - { at: 30, id: forest, path: "assets/forest.png", transition: { mode: burn, duration: 2 } }
   glitch:
     - { at: 0, enabled: true, intensity: 0.6, bind: [city] }   # only the city glitches
+  parallax:
+    - { at: 0, enabled: true, x: 1, bind: [city] }     # the city leaves with its camera…
+    - { at: 30, enabled: true, x: -1, bind: [forest] } # …as the forest comes in with its own
+    - { at: 50, enabled: false, bind: [forest], hold: false }
 layers:
   - name: Fire
     kind: emitter

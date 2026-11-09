@@ -6,66 +6,96 @@ import "math"
 // backgrounds A and B (fitted to the frame) seen through the background's own ripple, zoom,
 // shake, motion and transition. Same math as sceneDepth in render.comp, in float32.
 type Scene struct {
-	A, B                            []uint16 // W×H, 65535 = near
-	NA, NB                          []uint16 // their surface normals (NormalMap; nil: from the slope)
-	LA, LB                          Layer
-	K                               float64 // transition progress: B from halfway on
-	Tr                              Trans   // the transition (its geometry: TransPick) while A and B both have depth
+	A, B   []uint16 // W×H, 65535 = near
+	NA, NB []uint16 // their surface normals (NormalMap; nil: from the slope)
+	LA, LB Layer
+	K      float64 // transition progress: B from halfway on
+	Tr     Trans   // the transition (its geometry: TransPick) while A and B both have depth
+	W, H   int
+	// how each image (A, B) is seen: its background effects (the same on both, but in a
+	// transition where an image takes other segments: config.Picks)
+	V [2]SceneView
+}
+
+// SceneView is how a background image is seen: its ripple, zoom and shake, the 2.5D camera and
+// the depth of field (clips in the depth blur with it)
+type SceneView struct {
 	Zoom, ShakeX, ShakeY            float64
 	RippleAmp, RippleFreq, RippleTm float64
-	W, H                            int
 	Par                             Parallax // the 2.5D camera
 	N                               int      // its search steps (Parallax.Steps)
-	DoF                             DoF      // the depth of field (clips in the depth blur with it)
-	// in a transition, the image the camera and the depth of field are on (tied to a background
-	// segment: 1 only A, 2 only B; 0 both)
-	ParSide, DoFSide int
+	DoF                             DoF
 }
 
 // On: there is a depth to look at
 func (s *Scene) On() bool { return s != nil && (s.A != nil || s.B != nil) }
 
-// share: how much of an effect on image on (0 both) reaches what is in depth on image side (0
-// both: as much as the transition shows of the effect's image; as objW in render.comp)
-func (s *Scene) share(on, side int) float64 {
+// mix: how much of image B's view what is in depth on image side gets (0 both: as much as the
+// transition shows of B; as pDispOn in render.comp); -1: the views are the same, A's
+func (s *Scene) mix(side int) float64 {
 	switch {
-	case on == 0:
+	case side == 1 || s.V[0] == s.V[1]:
+		return -1
+	case side == 2:
 		return 1
-	case side != 0:
-		if side == on {
-			return 1
-		}
+	}
+	return math.Max(0, math.Min(1, s.K))
+}
+
+// Disp: how far the 2.5D camera moves what is at nearness z at (x, y) on image side (0 both)
+func (s *Scene) Disp(side int, z, x, y float64) (float64, float64) {
+	if !s.On() {
+		return 0, 0
+	}
+	ax, ay := s.V[0].Par.Disp(z, x, y, s.W, s.H)
+	k := s.mix(side)
+	if k < 0 {
+		return ax, ay
+	}
+	bx, by := s.V[1].Par.Disp(z, x, y, s.W, s.H)
+	if k == 1 {
+		return bx, by
+	}
+	return ax + (bx-ax)*k, ay + (by-ay)*k
+}
+
+// CoC: how blurred (px) the depth of field leaves what is at nearness z on image side (0 both)
+func (s *Scene) CoC(side int, z float32) float32 {
+	if !s.On() {
 		return 0
 	}
-	k := math.Max(0, math.Min(1, s.K))
-	if on == 1 {
-		return 1 - k
+	a := s.V[0].DoF.CoC(z)
+	k := s.mix(side)
+	if k < 0 {
+		return a
 	}
-	return k
+	b := s.V[1].DoF.CoC(z)
+	if k == 1 {
+		return b
+	}
+	return a + (b-a)*float32(k)
 }
 
-// Cam: the 2.5D camera on what is in depth on image side (0 both)
-func (s *Scene) Cam(side int) Parallax {
+// Moves, Blurs: whether the camera moves, or the depth of field blurs, what is in depth on image
+// side (0 both)
+func (s *Scene) Moves(side int) bool {
+	return s.On() && ((side != 2 && s.V[0].Par.On()) || (side != 1 && s.V[1].Par.On()))
+}
+func (s *Scene) Blurs(side int) bool {
+	return s.On() && ((side != 2 && s.V[0].DoF.On()) || (side != 1 && s.V[1].DoF.On()))
+}
+
+// ZMargin: how far (px) the camera and the depth of field reach at most
+func (s *Scene) ZMargin() float64 {
 	if !s.On() {
-		return Parallax{}
+		return 0
 	}
-	p, w := s.Par, s.share(s.ParSide, side)
-	p.SX, p.SY, p.Dolly = p.SX*w, p.SY*w, p.Dolly*w
-	return p
-}
-
-// Lens: the depth of field on what is in depth on image side (0 both)
-func (s *Scene) Lens(side int) DoF {
-	if !s.On() {
-		return DoF{}
+	m := 0.0
+	for _, v := range s.V {
+		m = math.Max(m, v.Par.MaxDisp(s.W, s.H)+v.DoF.Blur)
 	}
-	d := s.DoF
-	d.Blur *= s.share(s.DoFSide, side)
-	return d
+	return m
 }
-
-// camOn: whether the camera moves background image w (0 A, 1 B)
-func (s *Scene) camOn(w int) bool { return s.Par.On() && (s.ParSide == 0 || s.ParSide == w+1) }
 
 func depthTexel(g []uint16, x, y, W, H int) float32 {
 	x, y = max(0, min(W-1, x)), max(0, min(H-1, y))
@@ -93,19 +123,20 @@ func layerDepth(g []uint16, L Layer, qx, qy float32, W, H int) float32 {
 	return a + (b-a)*fy
 }
 
-// bgPoint: frame point q through the background's ripple, zoom and shake
-func (s *Scene) bgPoint(qx, qy float32) (float32, float32) {
+// bgPoint: frame point q through image w's ripple, zoom and shake
+func (s *Scene) bgPoint(w int, qx, qy float32) (float32, float32) {
+	v := &s.V[w]
 	cx, cy := float32(s.W)*0.5, float32(s.H)*0.5
-	if amp := float32(s.RippleAmp); amp > 0.2 {
-		ph := float64(qy)*s.RippleFreq + s.RippleTm
+	if amp := float32(v.RippleAmp); amp > 0.2 {
+		ph := float64(qy)*v.RippleFreq + v.RippleTm
 		qx += float32(math.Sin(ph)) * amp
 		qy += float32(math.Cos(ph)) * amp
 		qx, qy = max(0, min(float32(s.W-1), qx)), max(0, min(float32(s.H-1), qy))
 	}
-	if z := float32(s.Zoom); z > 1.001 {
+	if z := float32(v.Zoom); z > 1.001 {
 		qx, qy = cx+(qx-cx)/z, cy+(qy-cy)/z
 	}
-	return qx - float32(s.ShakeX), qy - float32(s.ShakeY)
+	return qx - float32(v.ShakeX), qy - float32(v.ShakeY)
 }
 
 // The depths in a transition, per frame pixel (as parallaxPixel in render.comp): each image's depth
@@ -149,44 +180,36 @@ func (s *Scene) HitW(qx, qy float32) (float32, float32, float32, int) {
 			w = 1
 		}
 	}
-	uax, uay := s.bgPoint(ax, ay)
-	ubx, uby := s.bgPoint(bx, by)
+	uax, uay := s.bgPoint(0, ax, ay)
+	ubx, uby := s.bgPoint(1, bx, by)
 	ux, uy := uax, uay
 	if w == 1 {
 		ux, uy = ubx, uby
 	}
-	near := func(x, y float32) float32 { return s.nearW(w, x, y) }
-	if s.camOn(0) || s.camOn(1) {
-		// (each image's hit: through the camera if it moves that image)
-		find := func(i int, x, y float32) (float32, float32, float32) {
-			nr := func(x, y float32) float32 { return s.nearW(i, x, y) }
-			if !s.camOn(i) {
-				return x, y, nr(x, y)
-			}
-			return s.Par.Find(x, y, s.N, s.W, s.H, nr)
+	// each image's hit: through the camera if it moves that image
+	find := func(i int, x, y float32) (float32, float32, float32) {
+		nr := func(x, y float32) float32 { return s.nearW(i, x, y) }
+		v := &s.V[i]
+		if !v.Par.On() {
+			return x, y, nr(x, y)
 		}
-		x, y, z := find(w, ux, uy)
-		if s.both() && wb > 0 && wb < 1 { // (each image's hit: the nearness blends)
-			o := 1 - w
-			ox, oy := uax, uay
-			if o == 1 {
-				ox, oy = ubx, uby
-			}
-			_, _, zo := find(o, ox, oy)
-			za, zb := z, zo
-			if w == 1 {
-				za, zb = zo, z
-			}
-			z = za + (zb-za)*float32(wb)
-		}
-		return x, y, z, w
+		return v.Par.Find(x, y, v.N, s.W, s.H, nr)
 	}
-	z := near(ux, uy)
-	if s.both() && wb > 0 && wb < 1 { // (blends: both)
-		za, zb := s.nearW(0, uax, uay), s.nearW(1, ubx, uby)
+	x, y, z := find(w, ux, uy)
+	if s.both() && wb > 0 && wb < 1 { // (the nearness blends)
+		o := 1 - w
+		ox, oy := uax, uay
+		if o == 1 {
+			ox, oy = ubx, uby
+		}
+		_, _, zo := find(o, ox, oy)
+		za, zb := z, zo
+		if w == 1 {
+			za, zb = zo, z
+		}
 		z = za + (zb-za)*float32(wb)
 	}
-	return ux, uy, z, w
+	return x, y, z, w
 }
 
 // Normal: the surface normal at background point (x, y) (as layerNormal in render.comp); false
@@ -203,9 +226,17 @@ func (s *Scene) Normal(x, y float32) (float32, float32, float32, bool) {
 	return nx, ny, nz, true
 }
 
+// nearImg: the image Near and Ground look at (B from halfway through the transition)
+func (s *Scene) nearImg() int {
+	if s.B != nil && (s.A == nil || s.K >= 0.5) {
+		return 1
+	}
+	return 0
+}
+
 // Near: the nearness at background point (x, y) (as Hit gives; no camera)
 func (s *Scene) Near(x, y float32) float32 {
-	if s.B != nil && (s.A == nil || s.K >= 0.5) {
+	if s.nearImg() == 1 {
 		return layerDepth(s.B, s.LB, x, y, s.W, s.H)
 	}
 	return layerDepth(s.A, s.LA, x, y, s.W, s.H)
@@ -224,7 +255,7 @@ func (s *Scene) Ground(qx, qy float32) float32 {
 	if !s.On() {
 		return 0
 	}
-	return s.Near(s.bgPoint(qx, qy))
+	return s.Near(s.bgPoint(s.nearImg(), qx, qy))
 }
 
 // At: the nearness at frame point q

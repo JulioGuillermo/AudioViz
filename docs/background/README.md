@@ -40,4 +40,6 @@ Each one can react to a different band with [`react_to`](../reactivity.md).
 Any of these segments can be **tied to background segments** (`bind`, see
 [studio.md](../studio.md#tied-to-background-segments)): it applies only while one of them is on
 screen, and during a transition only to its image (parallax and depth of field too: the camera
-moves, or the lens blurs, only that image and what is in depth on it).
+moves, or the lens blurs, only that image and what is in depth on it). Through a transition each image keeps the
+segment tied to it, held until it has left or from when it starts coming in (*Hold through
+transitions*, on by default).

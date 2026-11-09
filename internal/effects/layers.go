@@ -355,15 +355,15 @@ func DrawLayer(dst *image.RGBA, l *LayerFrame) {
 				zb := l.Blur
 				if l.ZTrack != nil && l.Scene.On() {
 					zq = l.zAt(float64(x), float64(y))
-					zx, zy = l.Scene.Cam(l.Side).Disp(float64(zq), float64(x), float64(y), W, H)
-					zb += float64(l.Scene.Lens(l.Side).CoC(zq))
+					zx, zy = l.Scene.Disp(l.Side, float64(zq), float64(x), float64(y))
+					zb += float64(l.Scene.CoC(l.Side, zq))
 				} else if l.Emit != nil && l.Emit.ZPlane != nil && l.Scene.On() {
 					// an emitter's particles each at the depth of their point on their path
 					if v := l.Emit.ZPlane[y*W+x]; v >= 0 {
 						zq = v
 					}
-					zx, zy = l.Scene.Cam(l.Side).Disp(float64(zq), float64(x), float64(y), W, H)
-					zb += float64(l.Scene.Lens(l.Side).CoC(zq))
+					zx, zy = l.Scene.Disp(l.Side, float64(zq), float64(x), float64(y))
+					zb += float64(l.Scene.CoC(l.Side, zq))
 				}
 				s := l.at(float64(x), float64(y), W, H, zx, zy, zb)
 				if s[3] <= 1e-4 {

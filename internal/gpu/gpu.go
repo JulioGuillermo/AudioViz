@@ -135,7 +135,7 @@ type Params struct {
 	// Background layers and transition (effects.Layer / effects.Trans)
 	LayerA, LayerB [4]float32 // scale, offX, offY, rot of image A (BG) and B (BG2)
 	Trans          [4]int32   // mode, direction, has (bit0 A, bit1 B), seed
-	TransP         [4]float32 // progress k; drawn once per image (1); on which image each effect is (2 bits each); the camera's edge zoom
+	TransP         [4]float32 // progress k; drawn once per image (1: B's effects in FXB)
 	// Burn transition: edge, roughness, max distance, point count; ember color; points (x, y)
 	BurnP   [4]float32
 	BurnCol [4]float32
@@ -180,7 +180,27 @@ type Params struct {
 	ViewI [4]int32
 	ViewP [4]float32
 	ViewQ [4]float32
+	// Drawn once per image of a transition (TransP[1]): the zoom and shake on both (for the mix),
+	// and image B's background effects (the fields above are A's)
+	MixZS [4]float32
+	FXB   FXSet
 	// then the overlay clips (LayerP, as many as the renderer's Layers: see LayerParams)
+}
+
+// FXSet mirrors 'FXSet' in common.glsl: a set of background effects (as the Params fields of the
+// same names; N: the glitch's bands, the chromatic aberration's mode, the camera's search steps,
+// the depth of field's taps)
+type FXSet struct {
+	ZoomRipple [4]float32
+	Shake      [4]float32
+	Chroma     [4]float32
+	ColorAdj   [4]float32
+	FxFlash    [4]float32
+	Parallax   [4]float32
+	Dof        [4]float32
+	Ranges     [4][4]float32
+	N          [4]int32
+	Glitch     [MaxGlitch][4]float32
 }
 
 // LayerP mirrors 'LayerP' in render.comp: one overlay clip

@@ -8,7 +8,7 @@ import { keyTimes } from './keys.js';
 import { isEmitterLayer, presetLabel } from './emitters.js';
 import { keyLabel, targetKey, isPicked, pickedTimes, pickKey, moveKeysAt, keyMenuItems, FocusChip } from './keymarks.js';
 import { openMenu } from './menu.js';
-import { bound } from './bind.js';
+import { bound, BIND_TRACKS } from './bind.js';
 
 const H = { ruler: 26, audio: 74, lyrics: 30, track: 28, textRow: 24, zone: 22, stem: 30 };
 const cssVar = (n) => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
@@ -534,8 +534,36 @@ function TimelineInner({ openStems, toggleStems,  proj, meta, ana, lyr, timeStor
           ${i > 0 && html`<div class="grip"></div>`}
           <span class="t">${bound(proj, s.bind) && html`<span title=${t('Tied to background segments')}><${Icon} name="link" size=${10} /> </span>`}${s.label ? html`<b>${s.label}</b> · ` : ''}${segSummary(tr.id, s.cfg)}</span>
         </div>${s.keys && keyMarks(s.keys, s.at, end, { track: tr.id, seg: i }, on && sel.seg === i)}`;
-      }),
+      }).concat(BIND_TRACKS.includes(tr.id) ? heldSpans(segs).map((h, k) => html`<div class="seg-hold" key=${'h' + k}
+          style=${{ left: h.from * effPps + 'px', width: Math.max(2, (h.to - h.from) * effPps) + 'px' }}
+          title=${t('Held on its background through the transition')}></div>`) : []),
     };
+  };
+  // where an effect's segments are held on their image through the background's transitions
+  // (as config.Picks): the old image keeps the one tied to it until the transition ends, the new
+  // one takes the one tied to it from the start
+  const heldSpans = (segs) => {
+    const bgs = proj.tracks.background || [];
+    const out = [];
+    const tied = (s, id) => !!id && (s.bind || []).includes(id);
+    for (let i = 1; i < bgs.length; i++) {
+      const tr = bgs[i].transition;
+      if (!tr || tr.mode === 'cut' || !(tr.duration > 0)) continue;
+      const t0 = bgs[i].at, t1 = t0 + tr.duration;
+      let ja = 0, jb = 0;
+      segs.forEach((s, j) => { if (j === 0 || s.at < t0) ja = j; if (j === 0 || s.at <= t1) jb = j; });
+      // (where the segment active there is not tied to that image itself)
+      const span = (j, id, from, to) => {
+        for (let k = 0; k < segs.length; k++) {
+          const a = Math.max(k === 0 ? 0 : segs[k].at, from), b = Math.min(k + 1 < segs.length ? segs[k + 1].at : duration, to);
+          if (b > a && k !== j && !tied(segs[k], id)) out.push({ from: a, to: b });
+        }
+      };
+      const endA = ja + 1 < segs.length ? segs[ja + 1].at : duration;
+      if (tied(segs[ja], bgs[i - 1].id) && segs[ja].hold !== false) span(ja, bgs[i - 1].id, Math.max(endA, t0), t1);
+      if (tied(segs[jb], bgs[i].id) && segs[jb].hold !== false) span(jb, bgs[i].id, t0, Math.min(segs[jb].at, t1));
+    }
+    return out;
   };
   const linesRow = {
     key: 'lines', h: H.lyrics, onName: () => onSelect('lyrics', 0), onDown: seekDrag,

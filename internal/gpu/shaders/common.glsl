@@ -37,6 +37,21 @@ struct LayerP {
 };
 
 // One entry of the per-frame text style table (lyrics = 0, fixed texts after)
+// a set of background effects (as the Params fields of the same names; n: the glitch's bands,
+// the chromatic aberration's mode, the camera's search steps, the depth of field's taps)
+struct FXSet {
+    vec4 zoomRipple;
+    vec4 shake;
+    vec4 chroma;
+    vec4 colorAdj;
+    vec4 fxFlash;
+    vec4 parallax;
+    vec4 dof;
+    vec4 ranges[4];
+    ivec4 n;
+    vec4 glitch[MAX_GLITCH];
+};
+
 struct TStyle {
     vec4 info;        // outlineW, glowRadius, glowIntensity, chromaPx (0 = none)
     vec4 color;
@@ -90,7 +105,7 @@ layout(std430, set = 0, binding = 0) readonly buffer Params {
     vec4 layerA;               // background A (BG): scale, offX, offY, rot (segment motion)
     vec4 layerB;               // background B (BG2), only during a transition
     ivec4 trans;               // mode (0 = none, see config.TransitionModes), direction, has (bit0 A, bit1 B), seed
-    vec4 transP;               // progress k; drawn once per image (1: clips or effects only on one of them), on which image each effect is (2 bits each: 0 both, 1 A, 2 B; frameFX.side); the camera's edge zoom (frameFX.zoomEdge)
+    vec4 transP;               // progress k; drawn once per image (1: clips or effects only on one of them; B's effects in fxB)
     vec4 burnP;                // burn: edge, roughness, max distance, point count
     vec4 burnCol;              // burn: ember color
     vec4 burnPts[8];           // burn: ignition points (x, y in units of the frame height)
@@ -122,6 +137,10 @@ layout(std430, set = 0, binding = 0) readonly buffer Params {
     ivec4 viewI;      // studio view instead of the frame: 0 the frame, 1 depth, 2 lit range, 3 object, 4 solid
     vec4 viewP;       // 2: from, to, soft; 3: its depth, soft; 4: its depth, band
     vec4 viewQ;       // 4: where it is born: x, y, radius
+    // drawn once per image of a transition (transP.y): the zoom and shake on both (for the mix),
+    // and image B's background effects (the fields above are A's)
+    vec4 mixZS;
+    FXSet fxB;
     LayerP layers[];  // the overlay clips drawn (layerN.x; as many as the renderer has room for)
 } P;
 

@@ -43,14 +43,11 @@ type frameFX struct {
 	dof                         effects.DoF      // depth of field
 	// background effects only on a depth range: from, to, soft, on
 	rFlash, rChroma, rRipple, rGlitch [4]float64
-	// bound to background segments (config.BgBind.BindSide), during a transition: on which
-	// image each effect is (0 both, 1 only A, 2 only B; fxZoom…); the zoom's factors of the bass
-	// zoom, of the shake and of the camera's edge zoom (zoom has them)
-	side                          [nFX]int8
-	zoomBass, zoomShake, zoomEdge float64
+	glitchAmt                         float64   // the glitch's intensity
+	on                                [nFX]bool // the effects that work here (a segment picked: config.Picks)
 }
 
-// the background effects that can be bound to background segments (frameFX.side)
+// the background effects that can be bound to background segments (config.Picks)
 const (
 	fxZoom = iota
 	fxShake
@@ -63,42 +60,13 @@ const (
 	nFX
 )
 
-// bound: whether some effect is only on one of the transition's images
-func (fx *frameFX) bound() bool { return fx.side != [nFX]int8{} }
-
-// on: whether effect e is on the side's image (side 0: the frame as a whole: only the effects
-// on both)
-func (fx *frameFX) on(e, side int) bool { return fx.side[e] == 0 || int(fx.side[e]) == side }
-
-// forSide: the effects on the side's image (0: those on both), the others off
-func (fx frameFX) forSide(side int) frameFX {
-	if !fx.on(fxZoom, side) {
-		fx.zoom /= fx.zoomBass
+// fxFor: the background effects on image side of the frame's transition (1 A, 2 B; 0 the frame
+// as a whole)
+func (fs *FrameState) fxFor(side int) *frameFX {
+	if side == 0 {
+		return &fs.FX
 	}
-	if !fx.on(fxShake, side) {
-		fx.zoom /= fx.zoomShake
-		fx.shakeX, fx.shakeY = 0, 0
-	}
-	if !fx.on(fxChroma, side) {
-		fx.chromaShift, fx.chromaMode, fx.rChroma = 0, 0, [4]float64{}
-	}
-	if !fx.on(fxRipple, side) {
-		fx.rippleAmp, fx.rRipple = 0, [4]float64{}
-	}
-	if !fx.on(fxGlitch, side) {
-		fx.glitch, fx.rGlitch = false, [4]float64{}
-	}
-	if !fx.on(fxFlash, side) {
-		fx.bright, fx.contrast, fx.rFlash = 0, 0, [4]float64{}
-	}
-	if !fx.on(fxPar, side) {
-		fx.zoom /= fx.zoomEdge
-		fx.par = effects.Parallax{} // (only on one image: the bass zoom is flat, effectsAt)
-	}
-	if !fx.on(fxDoF, side) {
-		fx.dof = effects.DoF{}
-	}
-	return fx
+	return &fs.FXS[side-1]
 }
 
 // RenderOptions are CLI options for preview or partial rendering
@@ -548,7 +516,8 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 	// Stages beyond the clips drawn (n) go on top: render.comp clamps them to n
 	p.LayerN = [4]int32{int32(n)}
 	p.ZIdx[0], p.ZIdx[1] = int32(fs.ZParts), int32(fs.ZViz)
-	p.FxFlash = [4]float32{float32(contrastFactor(fs.FX.contrast)), float32(fs.FX.bright)}
+	fa := fs.fxFor(1) // (image A's, or the frame's: fillParams)
+	p.FxFlash = [4]float32{float32(contrastFactor(fa.contrast)), float32(fa.bright)}
 	if g.Emitters == 0 {
 		return false
 	}
@@ -1041,8 +1010,7 @@ func (s *Session) cpuFrame(fs *FrameState) *image.RGBA {
 	// once per image of the transition (some clip or effect is only on one of them), mixed as
 	// the transition mixes them
 	a, b := s.cpuSide(fs, 1), s.cpuSide(fs, 2)
-	fx := fs.FX.forSide(0)
-	effects.MixSides(a, b, fs.Trans, fx.zoom, fx.shakeX, fx.shakeY)
+	effects.MixSides(a, b, fs.Trans, fs.FX.zoom, fs.FX.shakeX, fs.FX.shakeY)
 	return a
 }
 
@@ -1050,7 +1018,7 @@ func (s *Session) cpuFrame(fs *FrameState) *image.RGBA {
 // it (1 the old one, 2 the new one)
 func (s *Session) cpuSide(fs *FrameState, side int) *image.RGBA {
 	frame := image.NewRGBA(image.Rect(0, 0, s.W, s.H))
-	fx := fs.FX.forSide(side)
+	fx := fs.fxFor(side)
 	tr := fs.Trans
 	tr.Side = side
 	par := fx.par
@@ -1082,7 +1050,7 @@ func (s *Session) cpuSide(fs *FrameState, side int) *image.RGBA {
 		frame = effects.MaskedBlend(frame, effects.ApplyChromaticAberration(frame, fx.chromaShift, mode), effects.RangeMaskField(z, fx.rChroma))
 	}
 	if fx.glitch {
-		frame = effects.MaskedBlend(frame, effects.ApplyGlitch(frame, fs.GlitchAmount, int64(fs.Idx)), effects.RangeMaskField(z, fx.rGlitch))
+		frame = effects.MaskedBlend(frame, effects.ApplyGlitch(frame, fx.glitchAmt, int64(fs.Idx)), effects.RangeMaskField(z, fx.rGlitch))
 	}
 	if m := effects.RangeMaskField(z, fx.rFlash); m != nil {
 		// the flash only on its depths: the colors without it, then with it, mixed
@@ -1189,10 +1157,49 @@ func rgbaF(hex string) [4]float32 {
 	return [4]float32{float32(c.R) / 255, float32(c.G) / 255, float32(c.B) / 255, float32(c.A) / 255}
 }
 
+// fxSet: a set of background effects as render.comp reads them (gpu.FXSet)
+func (s *Session) fxSet(set *gpu.FXSet, fx *frameFX, fs *FrameState) {
+	c := fx.contrast * 128.0
+	cf := (259.0 * (c + 255.0)) / (255.0 * (259.0 - c))
+	*set = gpu.FXSet{}
+	set.ZoomRipple = [4]float32{float32(fx.zoom), float32(fx.rippleAmp), float32(fx.rippleFreq), float32(fx.rTim)}
+	set.Shake = [4]float32{float32(fx.shakeX), float32(fx.shakeY)}
+	// the 2.5D camera (with a depth map; the fluid transitions don't move)
+	set.Dof = [4]float32{float32(fx.dof.From), float32(fx.dof.To), float32(fx.dof.Soft), float32(fx.dof.Blur)}
+	if fx.dof.On() {
+		set.N[3] = effects.DoFTaps // the gather's samples
+	}
+	for i, r := range [4][4]float64{fx.rFlash, fx.rChroma, fx.rRipple, fx.rGlitch} {
+		set.Ranges[i] = [4]float32{float32(r[0]), float32(r[1]), float32(r[2]), float32(r[3])}
+	}
+	if par := fx.par; par.On() && (fs.DepthA != nil || fs.DepthB != nil) && fs.Trans.Fluid == nil {
+		set.Parallax = [4]float32{float32(par.SX), float32(par.SY), float32(par.Dolly), float32(par.Focus)}
+		set.N[2] = int32(par.Steps(s.W, s.H))
+	}
+	set.ColorAdj = [4]float32{float32(cf), float32(-fs.BG.Darken + fx.bright), float32(fs.BG.Opacity), float32(fs.BG.Vignette)}
+	if fs.BgA == nil && fs.BgB == nil {
+		set.ColorAdj[2] = 0 // no background: black
+	}
+	set.FxFlash = [4]float32{float32(contrastFactor(fx.contrast)), float32(fx.bright)}
+	set.Chroma = [4]float32{float32(fx.chromaShift)}
+	set.N[1] = int32(fx.chromaMode)
+	if fx.glitch {
+		n := 0
+		for _, sl := range effects.GlitchSlices(s.W, s.H, fx.glitchAmt, int64(fs.Idx)) {
+			if n == gpu.MaxGlitch {
+				break
+			}
+			set.Glitch[n] = [4]float32{float32(sl.Y0), float32(sl.Y1), float32(sl.ShiftX)}
+			n++
+		}
+		set.N[0] = int32(n)
+	}
+}
+
 func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writeRGBA bool) {
 	v := &fs.Viz
 	feat := fs.VizFeat
-	fx := fs.FX
+	fx := fs.fxFor(1)
 	W, H := float64(s.W), float64(s.H)
 	b2i := func(b bool) int32 {
 		if b {
@@ -1203,38 +1210,13 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 
 	p.Dims = [4]int32{int32(s.W), int32(s.H), int32(padW), int32(padH)}
 
-	// Background
-	c := fx.contrast * 128.0
-	cf := (259.0 * (c + 255.0)) / (255.0 * (259.0 - c))
-	p.ZoomRipple = [4]float32{float32(fx.zoom), float32(fx.rippleAmp), float32(fx.rippleFreq), float32(fx.rTim)}
-	// the 2.5D camera (with a depth map; the fluid transitions don't move)
-	p.Parallax, p.ParallaxN = [4]float32{}, [4]int32{}
-	p.Dof = [4]float32{float32(fx.dof.From), float32(fx.dof.To), float32(fx.dof.Soft), float32(fx.dof.Blur)}
-	if fx.dof.On() {
-		p.ParallaxN[1] = effects.DoFTaps // the gather's samples
-	}
-	for i, r := range [4][4]float64{fx.rFlash, fx.rChroma, fx.rRipple, fx.rGlitch} {
-		p.Ranges[i] = [4]float32{float32(r[0]), float32(r[1]), float32(r[2]), float32(r[3])}
-	}
-	if par := fx.par; par.On() && (fs.DepthA != nil || fs.DepthB != nil) && fs.Trans.Fluid == nil {
-		p.Parallax = [4]float32{float32(par.SX), float32(par.SY), float32(par.Dolly), float32(par.Focus)}
-		p.ParallaxN[0] = int32(par.Steps(s.W, s.H))
-	}
-	p.ColorAdj = [4]float32{float32(cf), float32(-fs.BG.Darken + fx.bright), float32(fs.BG.Opacity), float32(fs.BG.Vignette)}
-	if fs.BgA == nil && fs.BgB == nil {
-		p.ColorAdj[2] = 0 // no background: black
-	}
-	p.Chroma = [4]float32{float32(fx.chromaShift)}
-	nGlitch := 0
-	if fx.glitch {
-		for _, sl := range effects.GlitchSlices(s.W, s.H, fs.GlitchAmount, int64(fs.Idx)) {
-			if nGlitch == gpu.MaxGlitch {
-				break
-			}
-			p.Glitch[nGlitch] = [4]float32{float32(sl.Y0), float32(sl.Y1), float32(sl.ShiftX)}
-			nGlitch++
-		}
-	}
+	// Background: its effects (image A's in a transition drawn once per image; B's in FXB)
+	var set gpu.FXSet
+	s.fxSet(&set, fx, fs)
+	p.ZoomRipple, p.Shake, p.Chroma, p.ColorAdj = set.ZoomRipple, set.Shake, set.Chroma, set.ColorAdj
+	p.Parallax, p.Dof, p.Ranges, p.Glitch = set.Parallax, set.Dof, set.Ranges, set.Glitch
+	p.ParallaxN = [4]int32{set.N[2], set.N[3]}
+	nGlitch := int(set.N[0])
 	p.BgMix = [4]float32{0, float32(fs.VizAlpha)}
 	// Background layers (motion) and transition (see composite() in render.comp)
 	layer := func(l effects.Layer) [4]float32 {
@@ -1251,13 +1233,13 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 	p.LayerA, p.LayerB = layer(fs.LayerA), layer(fs.LayerB)
 	p.Trans = [4]int32{int32(tr.Mode), int32(tr.Dir), has, int32(tr.Seed & 0x7fffffff)}
 	p.TransP = [4]float32{float32(tr.K)}
+	p.FXB, p.MixZS = gpu.FXSet{}, [4]float32{}
 	if fs.Sided() {
-		// drawn once per image (render.comp shade): on, and on which image each effect is
-		sides := 0
-		for e, sd := range fx.side {
-			sides |= int(sd) << (2 * e)
-		}
-		p.TransP[1], p.TransP[2], p.TransP[3] = 1, float32(sides), float32(fx.zoomEdge)
+		// drawn once per image (render.comp shade): B's effects, and the zoom and shake on both
+		// for the mix
+		p.TransP[1] = 1
+		s.fxSet(&p.FXB, fs.fxFor(2), fs)
+		p.MixZS = [4]float32{float32(fs.FX.zoom), float32(fs.FX.shakeX), float32(fs.FX.shakeY)}
 	}
 	if b := tr.Burn; len(b.Pts) > 0 {
 		p.BurnP = [4]float32{float32(b.Edge), float32(b.Rough), float32(b.MaxD), float32(len(b.Pts))}
@@ -1284,7 +1266,6 @@ func (s *Session) fillParams(p *gpu.Params, fs *FrameState, padW, padH int, writ
 			}
 		})
 	}
-	p.Shake = [4]float32{float32(fx.shakeX), float32(fx.shakeY), float32(fx.zoomBass), float32(fx.zoomShake)}
 
 	// Visualizer
 	vizType := int32(0)

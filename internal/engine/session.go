@@ -278,8 +278,12 @@ type FrameState struct {
 	T    float64
 	Feat *audio.FrameFeatures // energies (base analysis)
 
-	FX frameFX
-	BG config.BackgroundConfig // darken/opacity/vignette (interpolated)
+	// the background effects on the frame as a whole (those on both images), and on each image
+	// of a transition (fxSided: some image takes other segments than the frame: config.Picks)
+	FX      frameFX
+	FXS     [2]frameFX
+	fxSided bool
+	BG      config.BackgroundConfig // darken/opacity/vignette (interpolated)
 	// Background images: A always (the previous one during a transition), B the new one during
 	// a transition. Ver* identifies the image so it isn't re-uploaded to the GPU if unchanged.
 	// Layer* place each image (segment motion); Trans says how B replaces A.
@@ -291,7 +295,6 @@ type FrameState struct {
 	VerDA, VerDB   string
 	LayerA, LayerB effects.Layer
 	Trans          effects.Trans
-	GlitchAmount   float64
 
 	Viz      config.VisualizerConfig
 	VizFeat  *audio.FrameFeatures
@@ -323,7 +326,7 @@ func (fs *FrameState) Sided() bool {
 	if fs.Trans.Mode == 0 {
 		return false
 	}
-	if fs.FX.bound() {
+	if fs.fxSided {
 		return true
 	}
 	for i := range fs.Layers {
@@ -369,7 +372,13 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 	// Background effects: their results are blended (so enabling/disabling also fades); those
 	// bound to background segments only while they are on screen (and on their image)
 	fs.bind = tl.BgBindAt(t)
-	fs.FX, fs.GlitchAmount = s.effectsAt(t, idx, fs.Feat, &fs.bind)
+	pBoth, pA, pB, sided := s.fxPicks(t, &fs.bind)
+	fs.FX = s.effectsAt(t, idx, fs.Feat, &pBoth)
+	fs.FXS = [2]frameFX{fs.FX, fs.FX}
+	if sided && fs.bind.Trans {
+		fs.FXS = [2]frameFX{s.effectsAt(t, idx, fs.Feat, &pA), s.effectsAt(t, idx, fs.Feat, &pB)}
+		fs.fxSided = true
+	}
 
 	// Background: each segment's image with its motion; during a transition the previous one
 	// (A) and the new one (B) are both drawn and mixed by the transition
@@ -418,18 +427,10 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 		}
 	}
 
-	// With a depth map: the zoom's share that moves in goes to the camera, which hides the frame's
-	// edges with a little zoom; without one the zoom is flat and nothing depends on depth
-	if fs.DepthA != nil || fs.DepthB != nil {
-		fs.FX.par.Dolly += fs.FX.zoomDolly
-		fs.FX.zoomEdge = fs.FX.par.EdgeZoom(s.W, s.H)
-		fs.FX.zoom *= fs.FX.zoomEdge
-	} else {
-		fs.FX.zoom *= 1 + fs.FX.zoomDolly
-		fs.FX.par, fs.FX.dof = effects.Parallax{}, effects.DoF{}
-		fs.FX.rFlash, fs.FX.rChroma, fs.FX.rRipple, fs.FX.rGlitch = [4]float64{}, [4]float64{}, [4]float64{}, [4]float64{}
-	}
-	fs.FX.zoomDolly = 0
+	depth := fs.DepthA != nil || fs.DepthB != nil
+	fs.FX.withDepth(depth, s.W, s.H)
+	fs.FXS[0].withDepth(depth, s.W, s.H)
+	fs.FXS[1].withDepth(depth, s.W, s.H)
 
 	// Visualizer: same type -> interpolate; type change -> one fades out and the other fades in
 	pv, cv, kv := config.BlendEv(tl.Visualizer, t, s.Duration(), s, "Visualizer")
@@ -476,17 +477,18 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 
 	// Overlay layers, and the place of the visualizer, particles and lyrics among them
 	if fs.DepthA != nil || fs.DepthB != nil {
-		// (the depth: as the effects on both images move it; the camera and the depth of field
-		// as they are, with the image they are on)
-		fx := fs.FX.forSide(0)
-		par := fs.FX.par
-		if fs.Trans.Fluid != nil {
-			par = effects.Parallax{} // the fluid transitions don't move
-		}
+		// (each image's depth as its effects move it)
 		fs.Scene = &effects.Scene{A: fs.DepthA, B: fs.DepthB, NA: fs.NormA, NB: fs.NormB, LA: fs.LayerA, LB: fs.LayerB, K: fs.Trans.K, Tr: fs.Trans,
-			Zoom: fx.zoom, ShakeX: fx.shakeX, ShakeY: fx.shakeY, RippleAmp: fx.rippleAmp, RippleFreq: fx.rippleFreq, RippleTm: fx.rTim,
-			W: s.W, H: s.H, Par: par, N: par.Steps(s.W, s.H), DoF: fs.FX.dof,
-			ParSide: int(fs.FX.side[fxPar]), DoFSide: int(fs.FX.side[fxDoF])}
+			W: s.W, H: s.H}
+		for k := range fs.FXS {
+			fx := &fs.FXS[k]
+			par := fx.par
+			if fs.Trans.Fluid != nil {
+				par = effects.Parallax{} // the fluid transitions don't move
+			}
+			fs.Scene.V[k] = effects.SceneView{Zoom: fx.zoom, ShakeX: fx.shakeX, ShakeY: fx.shakeY, RippleAmp: fx.rippleAmp,
+				RippleFreq: fx.rippleFreq, RippleTm: fx.rTim, Par: par, N: par.Steps(s.W, s.H), DoF: fx.dof}
+		}
 	}
 	if fs.Scene.On() && len(fs.TextStyles) > 0 {
 		s.textsInDepth(fs)
@@ -495,7 +497,7 @@ func (s *Session) Prepare(idx int) (*FrameState, error) {
 		s.textLights(fs)
 	}
 	if len(cfg.Layers) > 0 {
-		if fs.Layers, fs.layerStack, err = s.layersAt(t, idx, base, fs.FX, fs.GlitchAmount, fs.Scene, &fs.bind); err != nil {
+		if fs.Layers, fs.layerStack, err = s.layersAt(t, idx, base, fs, fs.Scene, &fs.bind); err != nil {
 			return nil, err
 		}
 	}
@@ -598,7 +600,7 @@ func (s *Session) textsInDepth(fs *FrameState) {
 				}
 			}
 			st.DepthZ /= float64(max(n, 1))
-			st.ZMargin = sc.Cam(0).MaxDisp(s.W, s.H) + sc.Lens(0).Blur
+			st.ZMargin = sc.ZMargin()
 			continue
 		}
 		st.ZTrack = nil
@@ -625,11 +627,11 @@ func (s *Session) textsInDepth(fs *FrameState) {
 		}
 		st.InDepth, st.Behind, st.Scene = true, st.Depth.Behind, sc
 		st.DepthZ, st.DepthSoft = z, math.Max(st.Depth.Soft, 0.005)
-		if lens := sc.Lens(0); lens.On() {
-			st.DepthBlur = float64(lens.CoC(float32(z)))
+		if sc.Blurs(0) {
+			st.DepthBlur = float64(sc.CoC(0, float32(z)))
 		}
-		if cam := sc.Cam(0); cam.On() {
-			dx, dy := cam.Disp(z, ax, ay, s.W, s.H)
+		if sc.Moves(0) {
+			dx, dy := sc.Disp(0, z, ax, ay)
 			st.AnchorX, st.AnchorY = st.AnchorX+float32(dx), st.AnchorY+float32(dy)
 			for i := range fs.TextItems {
 				if fs.TextItems[i].Style == si {
@@ -760,107 +762,60 @@ func flashOf(c *config.ColorFlashConfig, feat *audio.FrameFeatures) (float64, fl
 	return c.BrightnessBoost * v, c.ContrastBoost * v
 }
 
-// segBind: the background segments the segment of the track active at t is bound to
-func segBind[T any](segs []config.Seg[T], t float64) []string {
-	if len(segs) == 0 {
-		return nil
+// fxPicks: which segment of each background effect's track works on the frame as a whole, on
+// image A and on image B of a transition (config.Picks); sided: some image takes another one
+func (s *Session) fxPicks(t float64, b *config.BgBind) (both, a, bb [nFX]config.Pick, sided bool) {
+	tl := &s.Cfg.Timeline
+	set := func(e int) func(p0, pa, pb config.Pick) {
+		return func(p0, pa, pb config.Pick) {
+			both[e], a[e], bb[e] = p0, pa, pb
+			sided = sided || pa != p0 || pb != p0
+		}
 	}
-	return segs[config.Active(segs, t)].Bind
+	set(fxZoom)(config.Picks(tl.BassZoom, t, b))
+	set(fxShake)(config.Picks(tl.Shake, t, b))
+	set(fxChroma)(config.Picks(tl.Chromatic, t, b))
+	set(fxRipple)(config.Picks(tl.Ripple, t, b))
+	set(fxGlitch)(config.Picks(tl.Glitch, t, b))
+	set(fxFlash)(config.Picks(tl.ColorFlash, t, b))
+	set(fxPar)(config.Picks(tl.Parallax, t, b))
+	set(fxDoF)(config.Picks(tl.DoF, t, b))
+	return
 }
 
-// effectsAt: the background effects at t; those bound to background segments not on screen are
-// off, and during a transition each one says on which image it is (frameFX.side)
-func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures, bind *config.BgBind) (frameFX, float64) {
+// pickedCfg: a track's settings as picked: the active segment blended with the one before it
+// (prev, cur, k as config.BlendEv), a held segment on its own; ok false: off
+func pickedCfg[T any](s *Session, segs []config.Seg[T], p config.Pick, t float64, id string) (a, b *T, k float64, ok bool) {
+	switch p.Mode {
+	case config.PickActive:
+		a, b, k = config.BlendEv(segs, t, s.Duration(), s, id)
+		return a, b, k, true
+	case config.PickHeld:
+		c := segs[p.Seg].CfgAtEv(t, config.SegDur(segs, p.Seg, s.Duration()), s, id+strconv.Itoa(p.Seg))
+		return c, c, 1, true
+	}
+	return nil, nil, 0, false
+}
+
+// effectsAt: the background effects at t with the segments picked (fxPicks)
+func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures, pk *[nFX]config.Pick) frameFX {
 	tl := &s.Cfg.Timeline
 	minDim := math.Max(math.Min(float64(s.W), float64(s.H)), 64)
-	fx := frameFX{zoom: 1, zoomBass: 1, zoomShake: 1, zoomEdge: 1}
-	var sides [nFX]int
-	for e, ids := range [nFX][]string{segBind(tl.BassZoom, t), segBind(tl.Shake, t), segBind(tl.Chromatic, t),
-		segBind(tl.Ripple, t), segBind(tl.Glitch, t), segBind(tl.ColorFlash, t), segBind(tl.Parallax, t), segBind(tl.DoF, t)} {
-		sides[e] = bind.BindSide(ids)
-		fx.side[e] = int8(max(sides[e], 0))
+	fx := frameFX{zoom: 1}
+	for e := range pk {
+		fx.on[e] = pk[e].Mode != config.PickOff
 	}
-	if sides[fxZoom] >= 0 {
-		a, b, k := config.BlendEv(tl.BassZoom, t, s.Duration(), s, "BassZoom")
+	if a, b, k, ok := pickedCfg(s, tl.BassZoom, pk[fxZoom], t, "BassZoom"); ok {
 		z := lerp(zoomOf(a, feat), zoomOf(b, feat), k)
-		// with depth, part of it is the camera moving in (Prepare puts it back flat without one);
-		// not when it or the camera is only on one image (the camera is the whole frame's)
+		// with depth, part of it is the camera moving in (Prepare puts it back flat without one)
 		d := lerp(zoomDepth(a), zoomDepth(b), k)
-		if sides[fxZoom] != 0 || sides[fxPar] > 0 {
-			d = 0
-		}
 		fx.zoom, fx.zoomDolly = 1+(z-1)*(1-d), (z-1)*d
-		fx.zoomBass = fx.zoom
 	}
-	if sides[fxShake] >= 0 {
-		a, b, k := config.BlendEv(tl.Shake, t, s.Duration(), s, "Shake")
+	if a, b, k, ok := pickedCfg(s, tl.Shake, pk[fxShake], t, "Shake"); ok {
 		ax, ay, az := shakeOf(a, t, feat, minDim)
 		bx, by, bz := shakeOf(b, t, feat, minDim)
 		fx.shakeX, fx.shakeY = lerp(ax, bx, k), lerp(ay, by, k)
-		fx.zoomShake = lerp(az, bz, k)
-		fx.zoom *= fx.zoomShake
-	}
-	if sides[fxRipple] >= 0 {
-		a, b, k := config.BlendEv(tl.Ripple, t, s.Duration(), s, "Ripple")
-		aa, af, at := rippleOf(a, idx, feat)
-		ba, bf, bt := rippleOf(b, idx, feat)
-		fx.rippleAmp, fx.rippleFreq, fx.rTim = lerp(aa, ba, k), lerp(af, bf, k), lerp(at, bt, k)
-		if !a.Enabled {
-			fx.rippleFreq, fx.rTim = bf, bt
-		} else if !b.Enabled {
-			fx.rippleFreq, fx.rTim = af, at
-		}
-	}
-	if sides[fxChroma] >= 0 {
-		a, b, k := config.BlendEv(tl.Chromatic, t, s.Duration(), s, "Chromatic")
-		as, am := chromaOf(a, feat)
-		bs, bm := chromaOf(b, feat)
-		fx.chromaShift = lerp(as, bs, k)
-		fx.chromaMode = bm
-		if bm == 0 || (k < 0.5 && am != 0) {
-			fx.chromaMode = am
-		}
-	}
-	glitchAmt := 0.0
-	if sides[fxGlitch] >= 0 {
-		a, b, k := config.BlendEv(tl.Glitch, t, s.Duration(), s, "Glitch")
-		c := a
-		if k >= 0.5 {
-			c = b
-		}
-		fx.glitch = glitchOn(c, feat)
-		glitchAmt = c.Intensity
-	}
-	if sides[fxFlash] >= 0 {
-		a, b, k := config.BlendEv(tl.ColorFlash, t, s.Duration(), s, "ColorFlash")
-		ab, ac := flashOf(a, feat)
-		bb, bc := flashOf(b, feat)
-		fx.bright, fx.contrast = lerp(ab, bb, k), lerp(ac, bc, k)
-	}
-	if sides[fxPar] >= 0 {
-		a, b, k := config.BlendEv(tl.Parallax, t, s.Duration(), s, "Parallax")
-		pa, pb := parallaxOf(a, t, feat), parallaxOf(b, t, feat)
-		fx.par = effects.Parallax{SX: lerp(pa.SX, pb.SX, k), SY: lerp(pa.SY, pb.SY, k), Dolly: lerp(pa.Dolly, pb.Dolly, k),
-			Focus: lerp(pa.Focus, pb.Focus, k)}
-		switch {
-		case !a.Enabled && !b.Enabled:
-			fx.par.Focus = 0 // only the zoom moves in: what is far stays
-		case !a.Enabled:
-			fx.par.Focus = pb.Focus
-		case !b.Enabled:
-			fx.par.Focus = pa.Focus
-		}
-	}
-	if sides[fxDoF] >= 0 {
-		a, b, k := config.BlendEv(tl.DoF, t, s.Duration(), s, "DoF")
-		da, db := dofOf(a, feat), dofOf(b, feat)
-		fx.dof = effects.DoF{From: lerp(da.From, db.From, k), To: lerp(da.To, db.To, k), Soft: lerp(da.Soft, db.Soft, k),
-			Blur: lerp(da.Blur, db.Blur, k)}
-		if !a.Enabled {
-			fx.dof.From, fx.dof.To, fx.dof.Soft = db.From, db.To, db.Soft
-		} else if !b.Enabled {
-			fx.dof.From, fx.dof.To, fx.dof.Soft = da.From, da.To, da.Soft
-		}
+		fx.zoom *= lerp(az, bz, k)
 	}
 	// only on a depth range (the segment in front during a fade)
 	rangeOf := func(a, b *config.DepthRange, k float64) [4]float64 {
@@ -874,23 +829,80 @@ func (s *Session) effectsAt(t float64, idx int, feat *audio.FrameFeatures, bind 
 		from, to, soft := r.Range()
 		return [4]float64{from, to, soft, 1}
 	}
-	if sides[fxFlash] >= 0 {
-		a, b, k := config.BlendEv(tl.ColorFlash, t, s.Duration(), s, "ColorFlash")
-		fx.rFlash = rangeOf(&a.DepthRange, &b.DepthRange, k)
-	}
-	if sides[fxChroma] >= 0 {
-		a, b, k := config.BlendEv(tl.Chromatic, t, s.Duration(), s, "Chromatic")
-		fx.rChroma = rangeOf(&a.DepthRange, &b.DepthRange, k)
-	}
-	if sides[fxRipple] >= 0 {
-		a, b, k := config.BlendEv(tl.Ripple, t, s.Duration(), s, "Ripple")
+	if a, b, k, ok := pickedCfg(s, tl.Ripple, pk[fxRipple], t, "Ripple"); ok {
+		aa, af, at := rippleOf(a, idx, feat)
+		ba, bf, bt := rippleOf(b, idx, feat)
+		fx.rippleAmp, fx.rippleFreq, fx.rTim = lerp(aa, ba, k), lerp(af, bf, k), lerp(at, bt, k)
+		if !a.Enabled {
+			fx.rippleFreq, fx.rTim = bf, bt
+		} else if !b.Enabled {
+			fx.rippleFreq, fx.rTim = af, at
+		}
 		fx.rRipple = rangeOf(&a.DepthRange, &b.DepthRange, k)
 	}
-	if sides[fxGlitch] >= 0 {
-		a, b, k := config.BlendEv(tl.Glitch, t, s.Duration(), s, "Glitch")
+	if a, b, k, ok := pickedCfg(s, tl.Chromatic, pk[fxChroma], t, "Chromatic"); ok {
+		as, am := chromaOf(a, feat)
+		bs, bm := chromaOf(b, feat)
+		fx.chromaShift = lerp(as, bs, k)
+		fx.chromaMode = bm
+		if bm == 0 || (k < 0.5 && am != 0) {
+			fx.chromaMode = am
+		}
+		fx.rChroma = rangeOf(&a.DepthRange, &b.DepthRange, k)
+	}
+	if a, b, k, ok := pickedCfg(s, tl.Glitch, pk[fxGlitch], t, "Glitch"); ok {
+		c := a
+		if k >= 0.5 {
+			c = b
+		}
+		fx.glitch = glitchOn(c, feat)
+		fx.glitchAmt = c.Intensity
 		fx.rGlitch = rangeOf(&a.DepthRange, &b.DepthRange, k)
 	}
-	return fx, glitchAmt
+	if a, b, k, ok := pickedCfg(s, tl.ColorFlash, pk[fxFlash], t, "ColorFlash"); ok {
+		ab, ac := flashOf(a, feat)
+		bb, bc := flashOf(b, feat)
+		fx.bright, fx.contrast = lerp(ab, bb, k), lerp(ac, bc, k)
+		fx.rFlash = rangeOf(&a.DepthRange, &b.DepthRange, k)
+	}
+	if a, b, k, ok := pickedCfg(s, tl.Parallax, pk[fxPar], t, "Parallax"); ok {
+		pa, pb := parallaxOf(a, t, feat), parallaxOf(b, t, feat)
+		fx.par = effects.Parallax{SX: lerp(pa.SX, pb.SX, k), SY: lerp(pa.SY, pb.SY, k), Dolly: lerp(pa.Dolly, pb.Dolly, k),
+			Focus: lerp(pa.Focus, pb.Focus, k)}
+		switch {
+		case !a.Enabled && !b.Enabled:
+			fx.par.Focus = 0 // only the zoom moves in: what is far stays
+		case !a.Enabled:
+			fx.par.Focus = pb.Focus
+		case !b.Enabled:
+			fx.par.Focus = pa.Focus
+		}
+	}
+	if a, b, k, ok := pickedCfg(s, tl.DoF, pk[fxDoF], t, "DoF"); ok {
+		da, db := dofOf(a, feat), dofOf(b, feat)
+		fx.dof = effects.DoF{From: lerp(da.From, db.From, k), To: lerp(da.To, db.To, k), Soft: lerp(da.Soft, db.Soft, k),
+			Blur: lerp(da.Blur, db.Blur, k)}
+		if !a.Enabled {
+			fx.dof.From, fx.dof.To, fx.dof.Soft = db.From, db.To, db.Soft
+		} else if !b.Enabled {
+			fx.dof.From, fx.dof.To, fx.dof.Soft = da.From, da.To, da.Soft
+		}
+	}
+	return fx
+}
+
+// withDepth: with a depth map the zoom's share that moves in goes to the camera, which hides the
+// frame's edges with a little zoom; without one the zoom is flat and nothing depends on depth
+func (fx *frameFX) withDepth(depth bool, W, H int) {
+	if depth {
+		fx.par.Dolly += fx.zoomDolly
+		fx.zoom *= fx.par.EdgeZoom(W, H)
+	} else {
+		fx.zoom *= 1 + fx.zoomDolly
+		fx.par, fx.dof = effects.Parallax{}, effects.DoF{}
+		fx.rFlash, fx.rChroma, fx.rRipple, fx.rGlitch = [4]float64{}, [4]float64{}, [4]float64{}, [4]float64{}
+	}
+	fx.zoomDolly = 0
 }
 
 // ---------------------------------------------------------------- particles

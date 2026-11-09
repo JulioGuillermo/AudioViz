@@ -194,6 +194,9 @@ input[type=color]::-moz-color-swatch { border: 0; border-radius: 3px; }
 .bindchips .btn.now { box-shadow: inset 3px 0 0 var(--accent); }
 .bindchips .btn.now .bt { color: var(--accent-hi); font-weight: 600; }
 .bind-untie { color: var(--accent-hi); }
+.bind-hold { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-2); padding: 4px 0 2px; }
+.seg-hold { position: absolute; bottom: 4px; height: 5px; pointer-events: none; z-index: 1; border-radius: 2px;
+  background: repeating-linear-gradient(135deg, var(--accent) 0 3px, transparent 3px 6px); opacity: .85; }
 .bind-n { display: inline-flex; align-items: center; gap: 2px; margin-left: 6px; font-size: 11px; color: var(--accent-hi); }
 .layer { border: 1px solid var(--border); border-radius: var(--r-lg); margin: 6px 0; background: var(--surface-2); }
 .layer > .lh { display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 6px 0 10px; cursor: pointer; font-size: 12.5px; }

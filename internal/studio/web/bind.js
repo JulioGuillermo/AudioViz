@@ -2,7 +2,7 @@
 // while one of those segments is on screen, and during a transition only on its image
 // (config.ClipConfig.Bind, config.Seg.Bind; the segments' ids, config.Seg.ID)
 import { html } from './vendor/preact-htm.js';
-import { Section } from './fields.js';
+import { Section, Switch } from './fields.js';
 import { Icon } from './icons.js';
 import { fmtTime } from './util.js';
 import { t } from './i18n.js';
@@ -26,7 +26,7 @@ export function bound(proj, bind) {
 
 // BindSection: the background segments obj (a clip or an effect's segment) belongs to. update:
 // the project's update; target(p): obj in the project being changed
-export function BindSection({ proj, bind, update, target, what, time }) {
+export function BindSection({ proj, bind, update, target, what, time, hold }) {
   const segs = (proj.tracks && proj.tracks.background) || [];
   const on = new Set((bind || []).filter((id) => segs.some((s) => s.id === id)));
   if (segs.length < 2 && on.size === 0) return null;
@@ -46,6 +46,13 @@ export function BindSection({ proj, bind, update, target, what, time }) {
   let now = -1;
   segs.forEach((s, k) => { if (time != null && (k === 0 || s.at <= time)) now = k; });
   const clear = () => update((p) => { const o = target(p); if (o) delete o.bind; });
+  // an effect's segment: held on its image through the background's transitions (config.Picks)
+  const setHold = (v) => update((p) => {
+    const o = target(p);
+    if (!o) return;
+    if (v) delete o.hold;
+    else o.hold = false;
+  });
   return html`<${Section} id="bind" title=${t('Background segments')}
       extra=${on.size > 0 && html`<span class="bind-n"><${Icon} name="link" size=${11} />${on.size}</span>`}
       help=${'Tie it to background segments: it is seen only while one of them is on screen, and during a transition only on its image (its light, particles and effects do not reach the other one). Its own times stay as they are. None chosen: on every background.'}>
@@ -56,5 +63,9 @@ export function BindSection({ proj, bind, update, target, what, time }) {
       ? t(what === 'effect' ? 'Applies only while one of them is on screen; in a transition, only to its image.' : 'Seen only while one of them is on screen; in a transition, only on its image.')
       : t(what === 'effect' ? 'Applies to every background. Choose segments to tie it to them.' : 'On every background. Choose segments to tie it to them.')}
       ${on.size > 0 && html` <a href="#" class="bind-untie" onClick=${(e) => { e.preventDefault(); clear(); }}>${t('Untie')}</a>`}</div>
+    ${what === 'effect' && on.size > 0 && html`<div class="bind-hold">
+      <${Switch} checked=${hold !== false} onChange=${setHold}
+        title=${t('On: if it is on screen when a transition of its background starts (or ends), it keeps working on that image through the whole transition. Off: it stops on its image as the transition starts.')} />
+      <span>${t('Hold through transitions')}</span></div>`}
   </${Section}>`;
 }

@@ -372,7 +372,7 @@ function TrackInspector({ proj, track, segIdx, time, meta, update, setSel, ctx, 
     <div class="insp-b">
       <${SegHeader} segs=${segs} i=${i} set=${setSeg} meta=${meta} track=${track} ctx=${ctx} />
       <${Form} fields=${def.fields} value=${seg.cfg} onChange=${(cfg) => setSeg({ ...seg, cfg })} ctx=${ctx} isFirst=${i === 0} kf=${kf} />
-      ${BIND_TRACKS.includes(track) && html`<${BindSection} proj=${proj} bind=${seg.bind} update=${update} what="effect" time=${time}
+      ${BIND_TRACKS.includes(track) && html`<${BindSection} proj=${proj} bind=${seg.bind} hold=${seg.hold} update=${update} what="effect" time=${time}
         target=${(p) => p.tracks[track][i]} />`}
       ${track === 'background' && html`<${DepthSection} cfg=${seg.cfg} ctx=${ctx} at=${seg.at || 0} onChange=${(cfg) => setSeg({ ...seg, cfg })} />`}
       ${track === 'background' && html`<${Section} id="genimg" title=${t('Generate an image')} help=${'Create a background from a description, or edit an image, with AI on your GPU.'}>
@@ -1292,6 +1292,7 @@ function App() {
       const u = +(tt - s.at).toFixed(3);
       const ns = { at: +tt.toFixed(3), label: '', transition: { mode: 'cut', duration: 1 }, cfg: clone(s.cfg) };
       if (s.bind) ns.bind = [...s.bind]; // (an effect's halves stay on the same backgrounds; a background's id is not copied)
+      if (s.hold === false) ns.hold = false;
       if (s.keys) {
         const left = {}, right = {};
         for (const path in s.keys) {
