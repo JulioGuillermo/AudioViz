@@ -266,3 +266,11 @@ func ApplyGlitch(src *image.RGBA, intensity float64, seed int64) *image.RGBA {
 	}
 	return dst
 }
+
+// ParallelRange runs fn over [0, n) split among the CPUs
+func ParallelRange(n int, fn func(a, b int)) {
+	if n <= 0 {
+		return
+	}
+	parallelFor(n, fn)
+}

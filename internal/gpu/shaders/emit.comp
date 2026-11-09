@@ -16,7 +16,7 @@ layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 layout(push_constant) uniform Push { int phase, e0, n; } pc;
 
-layout(std430, set = 0, binding = 9) writeonly buffer Layers { uint lay[]; };
+layout(std430, set = 0, binding = 9) buffer Layers { uint lay[]; }; // (read: the gas look's grid)
 layout(std430, set = 0, binding = 10) buffer Acc { uint acc[]; };
 layout(std430, set = 0, binding = 11) readonly buffer EData { uint ed[]; };
 
@@ -456,6 +456,8 @@ void splatOne(int j) {
     float edge = max(r * fd.w, 0.5);
     float l2 = dot(st, st);
     uint base = accBase(e);
+    // the gas look: its particles are not drawn (they feed the gas; only their light and glow)
+    if (ed[h + 43] == 4u) py1 = py0 - 1;
     for (int yy = py0; yy <= py1; yy++) {
         for (int xx = px0; xx <= px1; xx++) {
             vec2 q = (vec2(float(xx), float(yy)) + 0.5) * float(dv) - pos;
@@ -566,6 +568,80 @@ vec4 waterPixel(int h, uint base, int GW, int GH, int dv, vec2 pp, float T, uint
     return vec4(col, max(al * body, max(col.r, max(col.g, col.b))));
 }
 
+// The gas look (as effects.gasPixel): its grid (GasFrame) in the overlay buffer at ed[h+104]-1,
+// ed[h+105]×ed[h+106] cells of edf(h+107) px, 6 words (pairs of halves) per cell: smoke, heat;
+// the light reaching it, the light around it; the fire's light, red; green, blue (× smoke); the
+// two sets of wisp coordinates
+float gasV[12];
+void gasCell(int o, int gw, int gh, int i, int j, float w) {
+    i = clamp(i, 0, gw - 1);
+    j = clamp(j, 0, gh - 1);
+    int c = o + (j * gw + i) * 6;
+    for (int k = 0; k < 6; k++) {
+        vec2 v = unpackHalf2x16(lay[c + k]);
+        gasV[2 * k] += w * v.x;
+        gasV[2 * k + 1] += w * v.y;
+    }
+}
+float gasNoise(vec2 p, uint seed) {
+    return 0.7 * fbm(p, seed) + 0.3 * fbm(vec2(2.7 * p.x + 5.1, 2.7 * p.y + 1.9), seed + 7u);
+}
+vec3 flameRamp(int h, float ht) {
+    vec3 cool = vec3(edf(h + 44), edf(h + 45), edf(h + 46));
+    vec3 mid = vec3(edf(h + 47), edf(h + 48), edf(h + 49));
+    vec3 hot = vec3(edf(h + 50), edf(h + 51), edf(h + 52));
+    if (ht < 0.35) return cool;
+    if (ht < 0.7) return cool + (mid - cool) * ((ht - 0.35) / 0.35);
+    return mid + (hot - mid) * ((ht - 0.7) / 0.3);
+}
+vec4 gasPixel(int h, vec2 pp, uint seed) {
+    int o = int(ed[h + 104]) - 1;
+    if (o < 0) return vec4(0.0);
+    int gw = int(ed[h + 105]), gh = int(ed[h + 106]);
+    float cs = edf(h + 107);
+    vec2 q = pp / cs - 0.5;
+    vec2 cc = floor(q + 0.5);
+    vec2 t = q - cc;
+    vec3 wx = vec3(0.5 * (0.5 - t.x) * (0.5 - t.x), 0.75 - t.x * t.x, 0.5 * (0.5 + t.x) * (0.5 + t.x));
+    vec3 wy = vec3(0.5 * (0.5 - t.y) * (0.5 - t.y), 0.75 - t.y * t.y, 0.5 * (0.5 + t.y) * (0.5 + t.y));
+    for (int k = 0; k < 12; k++) gasV[k] = 0.0;
+    for (int j = 0; j < 3; j++)
+        for (int i = 0; i < 3; i++) gasCell(o, gw, gh, int(cc.x) + i - 1, int(cc.y) + j - 1, wx[i] * wy[j]);
+    float d0 = gasV[0], heat = gasV[1];
+    if (d0 < 1e-4 && heat < 1e-4) return vec4(0.0);
+    float sc = max(edf(h + 111), 1.0);
+    float w1 = edf(h + 108), w2 = 1.0 - w1;
+    float na = gasNoise(vec2((pp.x + gasV[8]) / sc, (pp.y + gasV[9]) / sc), seed + 41u);
+    float nb = gasNoise(vec2((pp.x + gasV[10]) / sc + 31.7, (pp.y + gasV[11]) / sc + 17.1), seed + 41u);
+    float n = w1 * na + w2 * nb;
+    n = 0.5 + (n - 0.5) / sqrt(w1 * w1 + w2 * w2);
+    float wsp = edf(h + 110);
+    float d = max(0.0, d0 * (1.0 + wsp * 2.4 * (n - 0.5)) - wsp * 0.12 * (1.0 - n));
+    float al = 1.0 - exp(-edf(h + 109) * d);
+    float inv = 1.0 / max(d0, 1e-3);
+    float sun = clamp(gasV[2] * (1.0 + wsp * 0.5 * (n - 0.5)), 0.0, 1.0);
+    float amb = gasV[3], fire = gasV[4];
+    vec3 dye = clamp(vec3(gasV[5], gasV[6], gasV[7]) * inv, 0.0, 1.0);
+    vec3 lc = vec3(edf(h + 112), edf(h + 113), edf(h + 114));
+    vec3 sh = vec3(edf(h + 115), edf(h + 116), edf(h + 117));
+    vec3 mid = vec3(edf(h + 47), edf(h + 48), edf(h + 49));
+    vec3 lit = dye * (lc * sun + sh * amb + mid * fire * edf(h + 118));
+    vec4 c = vec4(lit * al, al);
+    if (heat > 1e-4) {
+        float ht = 1.0 - exp(-heat * edf(h + 53));
+        float edge = edf(h + 57);
+        if (edge > 0.0) {
+            float k = edge * (1.0 - n) * 0.6;
+            ht = clamp((ht - k) / (1.0 - k), 0.0, 1.0);
+        }
+        vec3 fc = flameRamp(h, ht);
+        float af = smoothstep(0.02, 0.3, ht);
+        float ac = af * 0.7; // light: it adds its glow and only partly hides what is behind it
+        c = vec4(fc * af + c.rgb * (1.0 - ac), ac + c.a * (1.0 - ac));
+    }
+    return c;
+}
+
 void resolveOne(uint id) {
     int n = W * H;
     int e = int(id) / n, p = int(id) - e * n;
@@ -622,6 +698,8 @@ void resolveOne(uint id) {
         }
     } else if (ed[h + 43] == 3u) {
         c = waterPixel(h, base, GW, GH, dv, pp, T, seed);
+    } else if (ed[h + 43] == 4u) {
+        c = gasPixel(h, pp, seed);
     } else {
         vec4 s = dv == 1 ? cellSum(base, GW, GH, x, y) : sumAt(base, GW, GH, dv, pp);
         if ((v1.w & 1) != 0) {

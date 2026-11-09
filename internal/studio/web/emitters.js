@@ -15,7 +15,7 @@ export const presetLabel = (k) => { const p = EMITTER_PRESETS.find((x) => x[0] =
 export const presetIcon = (k) => { const p = EMITTER_PRESETS.find((x) => x[0] === k); return p ? p[2] : 'sparkles'; };
 
 // Where a preset starts on the frame (0..1)
-const START = { fire: [0.5, 0.95], fire_real: [0.5, 0.95], sparks: [0.5, 0.8], smoke: [0.5, 0.8], dust: [0.5, 0.5], light: [0.5, 0.5],
+const START = { fire: [0.5, 0.95], fire_real: [0.5, 0.95], sparks: [0.5, 0.8], smoke: [0.5, 0.8], smoke_real: [0.5, 0.85], fire_gas: [0.5, 0.9], clouds_gas: [0.5, 0.03], dust: [0.5, 0.5], light: [0.5, 0.5],
   explosion: [0.5, 0.5], snow: [0.5, -0.02] };
 
 // A new emitter clip from a preset, from st for dur seconds
@@ -34,8 +34,8 @@ export const emitterMenuItems = (onPick) => EMITTER_PRESETS.map(([k, label, icon
 export function PresetPicker({ clip, onPick }) {
   const cur = clip.emitter && clip.emitter.preset;
   return html`<div class="presets">${EMITTER_PRESETS.map(([k, label, icon]) => html`<button key=${k}
-      class=${'btn sm' + (cur === k ? ' on' : '')} title=${t('Start again from this preset (its settings replace the current ones)')}
-      onClick=${() => onPick(k)}><${Icon} name=${icon} size=${13} /> ${t(label)}</button>`)}</div>`;
+      class=${'btn sm' + (cur === k ? ' on' : '')} title=${t(label) + ' · ' + t('Start again from this preset (its settings replace the current ones)')}
+      onClick=${() => onPick(k)}><${Icon} name=${icon} size=${13} /><span class="pl">${t(label)}</span></button>`)}</div>`;
 }
 
 // The circles of a light around its center (frame px cx, cy) over a view of the frame: its

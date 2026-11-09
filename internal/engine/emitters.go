@@ -189,8 +189,22 @@ func (s *Session) emitTableFor(li, ci int, c0 *config.ClipConfig, feats []audio.
 	return tb
 }
 
-// emitFrame: the emitter clip c0 (keys applied: c) at frame idx
+// emitFrame: the emitter clip c0 (keys applied: c) at frame idx (with the gas look, its gas
+// simulated up to then: gas.go)
 func (s *Session) emitFrame(li, ci int, c0, c *config.ClipConfig, idx int, feats []audio.FrameFeatures) *effects.EmitFrame {
+	ef := s.emitParticles(li, ci, c0, c, idx, feats)
+	if ef == nil {
+		return nil
+	}
+	if e := c.Emitter; e != nil && e.Look == "gas" {
+		ef.P.Gas = s.gasFrame(li, ci, c0, idx, feats, ef, e)
+	}
+	return ef
+}
+
+// emitParticles: the emitter clip c0 (keys applied: c) at frame idx: its settings and the
+// particles alive
+func (s *Session) emitParticles(li, ci int, c0, c *config.ClipConfig, idx int, feats []audio.FrameFeatures) *effects.EmitFrame {
 	tb := s.emitTableFor(li, ci, c0, feats)
 	k := idx - tb.f0
 	if k < 0 || k >= len(tb.at) {
@@ -229,6 +243,16 @@ func (s *Session) emitFrame(li, ci int, c0, c *config.ClipConfig, idx int, feats
 		p.Heat, p.Noise, p.NoiseScale, p.NoiseSpeed, p.Edge = math.Max(fl.Heat, 0), fl.Noise*sc, math.Max(fl.NoiseScale*sc, 1), fl.NoiseSpeed*sc, math.Min(math.Max(fl.Edge, 0), 1)
 	}
 	p.Hidden = e.Hidden
+	if e.Look == "gas" {
+		// the gas look: the flame's colors for its fire, its light and wisps
+		g, fl := e.Gas, e.Flame
+		rgb := func(h, def string) [3]float64 { c := col(h, def); return [3]float64{c[0], c[1], c[2]} }
+		p.GasOn = true
+		p.FlameCol = [3][3]float64{rgb(fl.ColorCool, "#b8200a"), rgb(fl.ColorMid, "#ff8a1e"), rgb(fl.ColorHot, "#fff4d0")}
+		p.Heat, p.Edge = math.Max(fl.Heat, 0.01), math.Min(math.Max(fl.Edge, 0), 1)
+		p.GasOpacity, p.GasWisp, p.GasWispScale = math.Max(g.Opacity, 0), math.Min(math.Max(g.Wisps, 0), 1), math.Max(g.WispScale, 1)*sc
+		p.GasLightCol, p.GasShadow, p.GasFireLight = rgb(g.LightColor, "#fff2e0"), rgb(g.ShadowColor, "#3a4250"), math.Max(g.FireLight, 0)
+	}
 	if e.Look == "smoke" {
 		sm := e.Smoke
 		p.Smoke = true
@@ -314,7 +338,9 @@ func (s *Session) emitFrame(li, ci int, c0, c *config.ClipConfig, idx int, feats
 		}
 	}
 	// big particles are splatted on a coarser grid (they are soft: the same look, far fewer pixels)
-	if big := math.Max(p.Size, p.SizeEnd) * (1 + e.SizeVar) * (1 + e.React.Size); big >= 160 && p.Softness >= 0.5 {
+	if p.GasOn {
+		p.Div = 4 // not drawn (only their glow)
+	} else if big := math.Max(p.Size, p.SizeEnd) * (1 + e.SizeVar) * (1 + e.React.Size); big >= 160 && p.Softness >= 0.5 {
 		p.Div = 4
 	} else if big >= 64 && p.Softness >= 0.5 {
 		p.Div = 2

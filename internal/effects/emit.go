@@ -124,6 +124,15 @@ type EmitParams struct {
 	WaterTh, WaterClear, WaterShine, WaterBump float64
 	WaterRipple, WaterScale, WaterSpeed        float64
 	WaterLens                                  float64 // px: what is under it is seen bent through it
+	// Gas look (gas.go): the gas their particles feed, this frame (nil: none yet); how thick it
+	// looks per unit of smoke, its wisps (how much, their size px), the light's color and the
+	// color in its shadow, how much its fire lights it (the flame's colors, heat and edge: Flame…)
+	GasOn                  bool
+	Gas                    *GasFrame
+	GasOpacity, GasWisp    float64
+	GasWispScale           float64
+	GasLightCol, GasShadow [3]float64
+	GasFireLight           float64
 	// What they go round in the scene: a signed distance (px; < 0 inside) on a CGW×CGH grid of
 	// CDiv px cells (nil: nothing)
 	CSDF           []float32
@@ -882,7 +891,9 @@ func DrawEmitter(e *EmitFrame, W, H int) (*image.RGBA, *LightField) {
 					if pt.A *= p.occl(pt.X, pt.Y, pt.Z); pt.A <= 0 {
 						continue
 					}
-					splat(&pt, p.Streak, p.Softness, acc, GW, GH, div, zacc)
+					if !p.GasOn {
+						splat(&pt, p.Streak, p.Softness, acc, GW, GH, div, zacc)
+					}
 					if p.GlowI > 0 && p.GlowR > 0 {
 						splatGlow(&pt, float32(p.GlowR), glow, LW, LH)
 					}
@@ -1129,6 +1140,10 @@ func resolvePixel(p *EmitParams, T float32, acc []uint32, GW, GH, div int, glow 
 		}
 	} else if p.Water {
 		o, *lens = waterPixel(p, T, acc, GW, GH, div, px, py)
+	} else if p.GasOn {
+		if p.Gas != nil {
+			o = gasPixel(p, p.Gas, px, py)
+		}
 	} else {
 		var s [4]float32
 		if div == 1 {

@@ -10,6 +10,9 @@ export function useFrameStream(canvas, { meta, time, scale, rev, playing, view =
   // frame from before a jump backwards would otherwise stall the playback until time caught up)
   const st = useRef({ epoch: 0, inflight: 0, lat: 40, shownKey: null, shownF: -1, shownSeq: 0, seq: 0, lastReq: '', lastT: 0 });
   const [info, setInfo] = useState({ ms: 0, fps: 0, layers: [], texts: [] });
+  // a still frame that failed or timed out is asked again (one that takes long, a simulated gas
+  // worked out up to there, goes on where the server got to)
+  const [retry, setRetry] = useState(0);
   const geo = useRef([]); // where the overlay clips are in the frame on screen (X-Layers)
   const tgeo = useRef([]); // and the fixed texts (X-Texts)
   const fpsWin = useRef([]);
@@ -49,7 +52,11 @@ export function useFrameStream(canvas, { meta, time, scale, rev, playing, view =
         fpsWin.current = [...fpsWin.current.filter((x) => now - x < 1000), now];
         setInfo({ ms: Math.round(s.lat), fps: fpsWin.current.length, layers: geo.current, texts: tgeo.current });
       })
-      .catch(() => { if (s.lastReq === key) s.lastReq = ''; })
+      .catch(() => {
+        if (s.lastReq === key) s.lastReq = '';
+        if (s.retryKey !== key) { s.retryKey = key; s.retryN = 0; }
+        if (!s.playing && epoch === s.epoch && s.retryN++ < 30) setTimeout(() => setRetry((n) => n + 1), 250);
+      })
       .finally(() => { clearTimeout(to); s.inflight--; });
   };
 
@@ -57,6 +64,7 @@ export function useFrameStream(canvas, { meta, time, scale, rev, playing, view =
   useEffect(() => { const s = st.current; s.epoch++; s.shownF = -1; s.lastReq = ''; }, [playing]);
   useEffect(() => {
     const s = st.current;
+    s.playing = playing;
     const fps = meta.fps;
     // A jump (seeking while playing) restarts the frame sequence, otherwise a jump backwards
     // would never be requested
@@ -82,7 +90,7 @@ export function useFrameStream(canvas, { meta, time, scale, rev, playing, view =
       if (st.current.inflight === 0) { clearInterval(id); if (st.current.shownKey !== key) request(f, key); }
     }, 15);
     return () => clearInterval(id);
-  }, [time, scale, rev, meta.frames, playing, view]);
+  }, [time, scale, rev, meta.frames, playing, view, retry]);
 
   return info;
 }

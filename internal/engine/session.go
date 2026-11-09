@@ -41,6 +41,7 @@ type Session struct {
 	layerMedia map[string]*layerMedia
 	masks      map[string]maskEntry
 	emitTabs   map[string]*emitTable // births of the emitter clips (emitters.go)
+	gasRuns    map[string]*gasRun    // the gas of the emitter clips with the gas look (gas.go)
 	textPts    map[string][]float32  // points on the letters of the texts emitters are born on
 	stems      []audio.StemFrame     // the separated song per frame (stems.go), nil until separated
 	stemsKey   string

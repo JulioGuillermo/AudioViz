@@ -34,7 +34,7 @@ always give the same result: any frame can be seen or rendered directly.
 | Floor and the scene | a floor px below the emitter, or **the scene's** (with a depth map: where the depth below the emitter comes up to its own): with gravity they fall onto it and **bounce**, keeping part of their speed (bounce) and of their sideways speed. **They go round the scene**: with a depth map, what is in the scene at their depth (within *Solid within*, in depth, of the emitter's) is solid and they slide off it — smoke goes round a wing, fire licks a rock; what is nearer hides them and what is farther is behind them. Where they are born is left free. While you adjust it the preview shows what is solid in cyan. **Bounce off it**: 0 they slide along it (flames lick it); more, they bounce off walls and ceilings (sparks) keeping that much speed — on what faces up they still slide (the floor above bounces them) |
 | Life and size | life (s) and its variation; size at birth and at the end, and its variation |
 | Color and look | colors at birth, halfway and at the end (their opacity fades them), fade in / out, how they add up (*light* or *matter*), streak (stretched along their motion), soft edge, random seed |
-| Look | *particles* (each as it is) or *flame*: they melt into one flame — the color comes from the heat that piles up (colors of its edges, body and core; heat), and rising noise cuts its edges into long tongues (how far, the size of the whirls, how fast they rise, how much they eat the edges) — or *smoke*: soft matter torn into wisps by noise (how much, the size of the wisps, how fast the pattern rises, how far it swirls) — or *water*: they melt into one liquid with a surface lit from the top left (where it becomes liquid: how much of them must pile up; how see-through its body is, its edges staying; its shine; how rounded it looks; ripples: how far, their size and speed; **lens**, px: what is behind it is seen through it bent like through glass — the drops magnify it, and turn it upside down when strong). **Only its light (and glow)**: the particles are not drawn, only their light on the scene and their glow — an invisible light source (preset *Light source*) |
+| Look | *particles* (each as it is) or *flame*: they melt into one flame — the color comes from the heat that piles up (colors of its edges, body and core; heat), and rising noise cuts its edges into long tongues (how far, the size of the whirls, how fast they rise, how much they eat the edges) — or *smoke*: soft matter torn into wisps by noise (how much, the size of the wisps, how fast the pattern rises, how far it swirls) — or *water*: they melt into one liquid with a surface lit from the top left (where it becomes liquid: how much of them must pile up; how see-through its body is, its edges staying; its shine; how rounded it looks; ripples: how far, their size and speed; **lens**, px: what is behind it is seen through it bent like through glass — the drops magnify it, and turn it upside down when strong) — or *gas*: the particles are not drawn, they feed a simulated gas of smoke, heat and fuel that moves by itself (see [Simulated gas](#simulated-gas-smoke-fire-clouds) below). **Only its light (and glow)**: the particles are not drawn, only their light on the scene and their glow — an invisible light source (preset *Light source*) |
 | Glow | a halo of light around them: strength, reach (px) and color (empty = the particles' own; the flame's body color with the flame look) |
 | Light | it lights up what is behind it (the background and the layers below it), from where its particles are: strength, reach (px, where it is still strong), where it fades out (px; 0 = 2.5 × the reach), color (empty = the particles' own; the flame's body), how (*soft*: lights and tints what is there; *add*: adds its color, like neon) and flicker. On by default for fire, realistic fire and explosion |
 | Audio reaction | the band (bass, mids, treble, volume, transients, beats) makes more of them, faster, bigger, and a burst on each beat |
@@ -54,7 +54,7 @@ layers:
         y: 0.95
         blend: add
         emitter:
-          preset: fire          # fire, fire_real, sparks, smoke, dust, light, explosion, lamp, water, water_clear, splash, rain, snow
+          preset: fire          # fire, fire_real, sparks, smoke, smoke_real, fire_gas, clouds_gas, dust, light, explosion, lamp, water, water_clear, splash, rain, snow
           rate: 650             # anything not written comes from the preset
           react: { react_to: bass, rate: 1, size: 0.35 }
         keys:
@@ -86,6 +86,73 @@ throws a splash on each beat and `rain` falls across the frame; `water_clear` (*
           route_fixed: false     # true: along it where it is drawn, not from where each is born
           route_strength: 1      # 0 as if there were no route … 1 only the route
 ```
+
+## Simulated gas: smoke, fire, clouds
+
+With the **gas** look the particles are not drawn: each one gives off smoke, heat and fuel where
+it is, and that gas is **simulated** over the whole frame, moving by itself:
+- hot gas rises,
+- heavy smoke sinks,
+- the air swirls into curls,
+- turbulence and wind carry it,
+- fuel burns into flames and soot,
+- smoke fades and flames cool.
+
+It is lit like a volume. The smoke shades itself from a light (its far side is in its own shadow),
+its thick core gets less of the light around it, and its flames light the smoke around them from
+inside. Fine wisps carried by the flow tear its edges.
+
+The particles stay the source, with everything they already have: shape, where they are born,
+direction, speed, motion path, text, music reaction and colors (the smoke's color).
+
+Three presets start from it:
+- **Simulated smoke** (`smoke_real`): a column of grey smoke rising and curling.
+- **Simulated fire** (`fire_gas`): fuel burning into flames with tongues, and the dark
+  smoke they make. It has a glow and lights the scene.
+- **Storm clouds** (`clouds_gas`): a line across the top of the frame giving off heavy
+  smoke that sinks in lit lobes with ragged edges, like a storm front.
+
+```yaml
+        emitter:
+          preset: fire_gas
+          gas:
+            detail: 5            # the simulation's cells (px): smaller is finer and slower
+            smoke: 0.02          # per particle per second: smoke…
+            heat: 0.2            # …heat (it rises)…
+            fuel: 0.8            # …fuel (it burns: flames, heat and soot)
+            push: 0.3            # how much the particles drag the gas their way (0..1)
+            rise: 300            # px/s² per unit of heat
+            weight: 0            # px/s² per unit of smoke: heavy smoke sinks (negative floats)
+            swirl: 3             # keeps its curls alive
+            wind: 0              # px/s, to the right
+            turbulence: 140      # px/s, how strongly the air stirs it…
+            turb_scale: 60       # …and the size of its whirls (px)
+            fade: 0.15           # 1/s: smoke vanishing
+            cool: 3.5            # 1/s: flames cooling (their length); the warmth that lifts the gas lasts longer
+            burn: 4              # 1/s: how fast the fuel burns
+            soot: 0.5            # smoke made by the fuel burnt…
+            soot_color: "#24201d" # …and its color
+            spread: 100          # px²/s: the smoke spreads out by itself (fuller, softer)
+            opacity: 1.6         # how thick it looks
+            wisps: 0.7           # fine detail tearing its edges (0..1)…
+            wisp_scale: 25       # …and its size (px)
+            light_angle: 0       # where its light comes from (°; 0 = above, 90 = right)
+            light_color: "#ffe8d0"
+            shadow_color: "#4a4c54" # the light from around (the sky) in its shadows
+            shadow: 1            # how dark its own shadow gets
+            fire_light: 1.2      # how much its flames light the smoke
+          flame: { color_cool: "#8a1606", color_mid: "#ff6a14", color_hot: "#fff2c8", heat: 1.2, edge: 0.7 }   # the flames' colors
+```
+
+The simulation starts at the clip's start and runs on from frame to frame. The studio keeps its
+state every second, so jumping around the timeline goes on from the nearest second before.
+
+Changing how it looks does not simulate it again: its light and its colors, the flames' colors,
+thickness, wisps, glow, opacity or blend. Changing how it moves, or the particles (their color
+too: it is the smoke's), simulates it again from the first frame that changed.
+
+How much it costs depends on **Detail**. The default 5 px cells take about 25 ms a frame for each
+gas emitter at 1080p, on the CPU, whatever the renderer.
 
 The **Light source** preset (`lamp`) is `hidden: true` with its light on and a soft glow: set the
 glow's strength to 0 for a light with nothing visible.

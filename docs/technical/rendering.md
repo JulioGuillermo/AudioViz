@@ -483,6 +483,55 @@ waves) and the clip's opacity. CPU: `DrawEmitter` returns the same `LightField`,
 it. Any number at once: the renderer is sized by `Session.EmitterCount` (the most on screen at
 once, an event sweep over the clips, with margin: `roomFor`), the images by `emitterWords`.
 
+**Gas look** (`effects/gas.go`, `engine/gas.go`): the one stateful emitter look. The particles are
+not splatted (`GasOn`; only their glow and their light sources). Instead, at each of the ~60 steps
+per second (`gasSub`), the particles alive then (`EmitFrame.At` at the step's time) feed a
+`GasSim`. The grid covers the frame, with cells of `detail`·scale px, coarser past
+`GasMaxCells` = 131072. Each particle feeds it over its disc ((1 − r²)² × alpha × dt): smoke, heat,
+fuel, dye = its color × smoke, and a relaxation of the velocity towards its own (`push`).
+
+A step (`GasSim.Step`, all float32, rows in parallel, deterministic):
+1. **Forces:** buoyancy −rise·heat + weight·smoke; the wind as a target velocity (relaxation
+   0.4/s); the curl of a two-octave value-noise stream function (turbulence); vorticity confinement
+   ε = swirl·1.5·cell.
+2. The velocity carried by itself (semi-Lagrangian, midpoint back-trace).
+3. The pressure: red-black SOR, 24 iterations, ω = 1.8, warm-started; p = 0 outside (open edges).
+   Its gradient is subtracted.
+4. Smoke, dye, heat, fuel and flame temperature carried by the flow (MacCormack, clamped to the
+   four source cells).
+5. Explicit diffusion of smoke, dye and heat (`spread`).
+6. Two sets of wisp coordinates advected semi-Lagrangian, minus v·dt. Each is cleared every
+   `gasPeriod` = 0.8 s, half a period apart.
+7. **Combustion:** b = fuel·(1 − e^(−burn·dt)); heat and flame temperature += 3b; smoke and soot
+   dye += soot·b.
+8. **Decay:** smoke and dye ×e^(−fade·dt); flame ×e^(−cool·dt); heat ×e^(−0.3·cool·dt).
+
+**Checkpoints and fingerprints:** `GasSim.Save` stores the state every second, as halves
+compressed with flate. Saving also sets the live state to those halves and clears the pressure, so
+going on from the live state or from a checkpoint gives the same frames (`TestGasSeek`). Each
+frame has a fingerprint, an FNV hash of its particles' sim-relevant `EmitParams`, its births and
+the `GasPhys`. When the clip's YAML changes, the fingerprints are compared and the state is kept up
+to the first changed frame. A change of look keeps all of it.
+
+**Frame** (`GasSim.Frame`, per drawn frame), per cell:
+- the light reaching it: 24 steps towards the light over 320·scale px, τ = Σ smoke·step / (40·scale),
+  sun = 0.7e^(−k) + 0.3e^(−k/4), k = opacity·shadow·τ;
+- the light around it: 0.35 + 0.65e^(−opacity·0.5·blur(smoke)), a box blur ×2 of reach/12;
+- the flames' light: a box blur ×2 of 1 − e^(−flame·heatK), over 140·scale/2 px.
+
+These are packed with smoke, flame, dye and the two coordinate sets as 6 words of halves per cell
+(`GasFrame`). The GPU gets the grid after the emitter's image in `LAYERS` (written every frame;
+`emit.comp` reads binding 9; header words 104–118).
+
+**Pixel** (`gasPixel`, identical in Go and GLSL):
+1. Quadratic B-spline over 3×3 cells.
+2. Noise n from the two coordinate sets: 0.7·fbm + 0.3·fbm at 2.7×, weights 1 − |2·phase − 1|,
+   contrast restored by 1/√(w1² + w2²).
+3. The smoke eroded by it: d·(1 + 2.4·wisps·(n − ½)) − 0.12·wisps·(1 − n).
+4. α = 1 − e^(−opacity·d), colored dye·(light·sun + shadow·around + flameMid·fire·fireLight).
+5. The flames on top: the flame look's ramp of 1 − e^(−flame·heat), eaten by n·edge. Their alpha
+   is 0.7 of their emission, so they partly add light.
+
 Motion paths (`config.Motion`, `effects.PathAt`): the path's Béziers (the masks' nodes, in frame
 px) sampled 24 times per segment with their cumulative length; progress × length gives the point
 (linear between samples) and the direction of that sample (`orient`). Clips: the centre instead of

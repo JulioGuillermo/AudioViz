@@ -98,14 +98,16 @@ type EmitterConfig struct {
 	Seed     int          `yaml:"seed"`
 	React    EmitterReact `yaml:"react"`
 	// Look: "plain" (each particle as it is), "flame" (they melt into one flame: the color
-	// comes from how much heat piles up, and rising noise cuts its edges into tongues), "smoke"
-	// or "water" (they melt into one liquid with a lit surface: WaterLook)
+	// comes from how much heat piles up, and rising noise cuts its edges into tongues), "smoke",
+	// "water" (they melt into one liquid with a lit surface: WaterLook) or "gas" (they are not
+	// drawn: they feed a simulated gas, smoke and fire: GasLook)
 	Look string `yaml:"look"`
 	// Only its light (and its glow): the particles themselves are not drawn (a light source)
 	Hidden bool      `yaml:"hidden,omitempty"`
 	Flame  FlameLook `yaml:"flame"`
 	Smoke  SmokeLook `yaml:"smoke,omitempty"`
 	Water  WaterLook `yaml:"water,omitempty"`
+	Gas    GasLook   `yaml:"gas,omitempty"`
 	Glow   EmitGlow  `yaml:"glow"`
 	Light  EmitLight `yaml:"light"`
 }
@@ -180,6 +182,56 @@ type WaterLook struct {
 	// a lens: what is under it is seen through it, bent by its surface (px; 0 = none): drops
 	// magnify what is behind them, and turn it upside down when strong
 	Lens float64 `yaml:"lens,omitempty"`
+}
+
+// GasLook (look "gas"): the particles are not drawn, they feed a gas simulated over the frame
+// (effects.GasSim) that then moves by itself. The particles stay the source: where, how many,
+// how fast and how big they are, and their color (the smoke's). Lengths in px (of a 1080-line
+// frame), times in s.
+type GasLook struct {
+	// the simulation's cells (px): smaller is finer and slower
+	Detail float64 `yaml:"detail"`
+	// what each particle gives off per second: smoke, heat (it rises), fuel (it burns: heat and
+	// soot), and how much it pushes the gas its way (0..1)
+	Smoke float64 `yaml:"smoke"`
+	Heat  float64 `yaml:"heat"`
+	Fuel  float64 `yaml:"fuel"`
+	Push  float64 `yaml:"push"`
+	// how fast heat rises and smoke sinks (px/s² per unit), the swirls (0..3), the wind (px/s,
+	// to the right), the air's turbulence (px/s) and the size of its whirls (px)
+	Rise       float64 `yaml:"rise"`
+	Weight     float64 `yaml:"weight"`
+	Swirl      float64 `yaml:"swirl"`
+	Wind       float64 `yaml:"wind"`
+	Turbulence float64 `yaml:"turbulence"`
+	TurbScale  float64 `yaml:"turb_scale"`
+	// how fast smoke vanishes, heat is lost, fuel burns (1/s); the smoke a unit of fuel makes and
+	// its color
+	Fade float64 `yaml:"fade"`
+	Cool float64 `yaml:"cool"`
+	Burn float64 `yaml:"burn"`
+	// how much the smoke spreads out by itself (px²/s): fuller, softer
+	Spread    float64 `yaml:"spread"`
+	Soot      float64 `yaml:"soot"`
+	SootColor string  `yaml:"soot_color"`
+	// how it looks: how thick (per unit of smoke), its wisps (how much 0..1, their size px), the
+	// light (where it comes from: degrees, 0 = from above, clockwise; its color), the color in
+	// its shadow, how dark its own shadow gets (0..2) and how much its fire lights it
+	Opacity     float64 `yaml:"opacity"`
+	Wisps       float64 `yaml:"wisps"`
+	WispScale   float64 `yaml:"wisp_scale"`
+	LightAngle  float64 `yaml:"light_angle"`
+	LightColor  string  `yaml:"light_color"`
+	ShadowColor string  `yaml:"shadow_color"`
+	Shadow      float64 `yaml:"shadow"`
+	FireLight   float64 `yaml:"fire_light"`
+}
+
+// DefaultGas: cool smoke rising slowly
+func DefaultGas() GasLook {
+	return GasLook{Detail: 7, Smoke: 0.2, Heat: 0.4, Push: 0.1, Rise: 250, Swirl: 2.5, Turbulence: 50, TurbScale: 140,
+		Fade: 0.12, Cool: 3, Burn: 2.5, Soot: 0.6, SootColor: "#2a2623", Spread: 300,
+		Opacity: 1.6, Wisps: 0.4, WispScale: 60, LightColor: "#fff2e0", ShadowColor: "#66707e", Shadow: 0.6, FireLight: 1}
 }
 
 // DefaultWater: the water look's settings
@@ -281,6 +333,31 @@ var EmitterPresets = map[string]EmitterConfig{
 		ColorStart: "#d4eaffb0", ColorMid: "#d4eaffb0", ColorEnd: "#d4eaff00", FadeIn: 0.05, FadeOut: 0.1, Mode: "soft", Softness: 0.8,
 		Look: "water", Water: WaterLook{Threshold: 0.3, Clear: 0.6, Shine: 1.4, Bump: 0.6, Ripple: 0, RippleScale: 40, RippleSpeed: 0},
 		React: EmitterReact{ReactTo: "bass", Rate: 0.5}},
+	// a simulated gas: realistic smoke rising and curling
+	"smoke_real": {Rate: 200, Max: 3000, Shape: "circle", Width: 200, Direction: 0, Spread: 25, Speed: 70, SpeedVar: 0.3, Drag: 1.5,
+		Turbulence: 10, TurbFreq: 1, Life: 0.6, LifeVar: 0.3, Size: 110, SizeEnd: 140, SizeVar: 0.3,
+		ColorStart: "#c0bcb8ff", ColorMid: "#c0bcb8ff", ColorEnd: "#c0bcb800", FadeIn: 0.1, FadeOut: 0.4, Mode: "soft", Softness: 1,
+		Look: "gas", Gas: DefaultGas(), React: EmitterReact{ReactTo: "bass", Rate: 0.6}},
+	// a simulated fire: fuel burning into flames and the smoke they make
+	"fire_gas": {Rate: 450, Max: 4000, Shape: "circle", Width: 220, Direction: 0, Spread: 30, Speed: 170, SpeedVar: 0.3, Drag: 2,
+		Turbulence: 8, TurbFreq: 2, Life: 0.35, LifeVar: 0.3, Size: 48, SizeEnd: 34, SizeVar: 0.3,
+		ColorStart: "#5c5650ff", ColorMid: "#5c5650ff", ColorEnd: "#5c565000", FadeIn: 0.05, FadeOut: 0.4, Mode: "soft", Softness: 1,
+		Look: "gas", Flame: FlameLook{ColorCool: "#8a1606", ColorMid: "#ff6a14", ColorHot: "#fff2c8", Heat: 1.2, NoiseScale: 55,
+			NoiseSpeed: 280, Edge: 0.7},
+		Gas: GasLook{Detail: 5, Smoke: 0.02, Heat: 0.2, Fuel: 0.8, Push: 0.3, Rise: 300, Swirl: 3, Turbulence: 140, TurbScale: 60,
+			Fade: 0.15, Cool: 3.5, Burn: 4, Soot: 0.5, SootColor: "#24201d", Spread: 100,
+			Opacity: 1.6, Wisps: 0.7, WispScale: 25, LightColor: "#ffe8d0", ShadowColor: "#4a4c54", Shadow: 1, FireLight: 1.2},
+		Glow:  EmitGlow{Intensity: 0.6, Radius: 130, Color: "#ff6a18"},
+		React: EmitterReact{ReactTo: "bass", Rate: 0.8, Speed: 0.4}},
+	// a bank of storm clouds: heavy smoke from the top of the frame that sinks in lobes
+	"clouds_gas": {Rate: 600, Max: 9000, Shape: "line", Width: 2400, Direction: 180, Spread: 20, Speed: 60, SpeedVar: 0.3, Drag: 1.5,
+		Turbulence: 10, TurbFreq: 1, Life: 0.8, LifeVar: 0.3, Size: 120, SizeEnd: 140, SizeVar: 0.3,
+		ColorStart: "#d8d0c8ff", ColorMid: "#d8d0c8ff", ColorEnd: "#d8d0c800", FadeIn: 0.1, FadeOut: 0.4, Mode: "soft", Softness: 1,
+		Look: "gas",
+		Gas: GasLook{Detail: 5, Smoke: 0.2, Push: 0.2, Rise: 250, Weight: 120, Swirl: 3, Turbulence: 20, TurbScale: 300,
+			Fade: 0.01, Cool: 3, Burn: 2.5, Soot: 0.6, SootColor: "#2a2623", Spread: 100,
+			Opacity: 1.6, Wisps: 0.5, WispScale: 40, LightColor: "#fff0e2", ShadowColor: "#9aa4b0", Shadow: 0.45, FireLight: 1},
+		React: EmitterReact{ReactTo: "bass", Rate: 0.3}},
 	"snow": {Rate: 70, Max: 6000, Shape: "line", Width: 2100, Direction: 180, Spread: 20, Speed: 70, SpeedVar: 0.5, Gravity: 20, Wind: 10, Drag: 0.3,
 		Turbulence: 35, TurbFreq: 0.3, Life: 14, LifeVar: 0.2, Size: 5, SizeEnd: 5, SizeVar: 0.6,
 		ColorStart: "#ffffffe0", ColorMid: "#ffffffe0", ColorEnd: "#ffffff00", FadeIn: 0.02, FadeOut: 0.1, Mode: "soft", Softness: 0.6},
@@ -323,9 +400,12 @@ func init() {
 		if e.Look == "" {
 			e.Look = "plain"
 		}
+		if e.Gas == (GasLook{}) {
+			e.Gas = DefaultGas()
+		}
 		if e.Light.Reach == 0 {
 			e.Light = EmitLight{Intensity: 0.8, Reach: 450, Mode: "soft", Flicker: 0.25, Depth: 2.5, Shade: 0.6, From: 1, To: 0, RangeSoft: 0.05}
-			if k == "fire" || k == "fire_real" || k == "explosion" || k == "lamp" {
+			if k == "fire" || k == "fire_real" || k == "explosion" || k == "lamp" || k == "fire_gas" {
 				e.Light.Enabled = true
 			}
 		}

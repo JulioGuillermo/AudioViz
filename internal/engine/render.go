@@ -223,6 +223,7 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 	type emitAt struct {
 		e   *effects.EmitFrame
 		off int
+		gas int // where its gas grid is (the gas look)
 	}
 	var emits []emitAt
 	type trackAt struct {
@@ -230,6 +231,11 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		t   *effects.PathTrack
 	}
 	var tracks []trackAt
+	type gasAt struct {
+		off int
+		g   *effects.GasFrame
+	}
+	var gases []gasAt
 	for i := range fs.Layers {
 		l := &fs.Layers[i]
 		iw, ih := r.s.W, r.s.H
@@ -250,6 +256,12 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 			planes++ // its particles' depth (a float per pixel)
 		}
 		px *= planes
+		// the gas look: its grid after its image (written every frame)
+		gwords := 0
+		if l.Emit != nil && l.Emit.P.Gas != nil {
+			gwords = len(l.Emit.P.Gas.Cells)
+		}
+		px += gwords
 		mwords := 0
 		if l.Mask != nil {
 			mwords = (len(l.Mask.Pix) + 3) / 4
@@ -262,7 +274,7 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		if n == g.Layers || off+px+mwords+twords > g.LayerWords {
 			break
 		}
-		vers = append(vers, fmt.Sprintf("%s|%s|%d", l.Ver, l.MaskVer, twords))
+		vers = append(vers, fmt.Sprintf("%s|%s|%d|%d", l.Ver, l.MaskVer, twords, gwords))
 		lp := &lps[n]
 		flags := int32(l.Blend & 15)
 		if l.Key {
@@ -314,7 +326,12 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 					}
 				}
 			}
-			emits = append(emits, emitAt{l.Emit, off})
+			ea := emitAt{e: l.Emit, off: off}
+			if gwords > 0 {
+				ea.gas = off + px - gwords
+				gases = append(gases, gasAt{ea.gas, l.Emit.P.Gas})
+			}
+			emits = append(emits, ea)
 		}
 		lp.Xf = [4]float32{float32(l.CX), float32(l.CY), float32(l.SX), float32(l.SY)}
 		lp.Xf2 = [4]float32{float32(l.Rot), float32(l.Opacity), float32(l.Blur), float32(l.Hue)}
@@ -381,6 +398,9 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 				if t := l.Emit.P.ZTrack; t != nil && len(t.S) <= 256 {
 					off += r.s.W * r.s.H
 				}
+				if g := l.Emit.P.Gas; g != nil {
+					off += len(g.Cells)
+				}
 			} else {
 				copy(buf[off*4:], l.Img.Pix)
 				off += len(l.Img.Pix) / 4
@@ -401,6 +421,12 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 	}
 	for _, tr := range tracks {
 		putTrack(buf, tr.off, tr.t)
+	}
+	for _, ga := range gases {
+		b := buf[ga.off*4:]
+		for i, v := range ga.g.Cells {
+			binary.LittleEndian.PutUint32(b[i*4:], v)
+		}
 	}
 	// the texts' depth along their paths and their twist as ribbons, after everything (written
 	// every frame)
@@ -657,6 +683,21 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		u[h+85] = 0
 		if P.Hidden {
 			u[h+85] = 1
+		}
+		// the gas look (effects.GasFrame, gasPixel): its grid in the overlay buffer (+1; 0: none
+		// yet), its size, cells, the first wisps' weight; how it looks
+		if P.GasOn {
+			u[h+43] = 4
+			u[h+104], u[h+105], u[h+106] = 0, 0, 0
+			if gf := P.Gas; gf != nil && em.gas > 0 {
+				u[h+104], u[h+105], u[h+106] = uint32(em.gas+1), uint32(gf.GW), uint32(gf.GH)
+				f[h+107], f[h+108] = gf.CS, gf.W1
+			}
+			f[h+109], f[h+110], f[h+111] = float32(P.GasOpacity), float32(P.GasWisp), float32(P.GasWispScale)
+			for j := 0; j < 3; j++ {
+				f[h+112+j], f[h+115+j] = float32(P.GasLightCol[j]), float32(P.GasShadow[j])
+			}
+			f[h+118] = float32(P.GasFireLight)
 		}
 		if P.CSDF != nil && P.CGW*P.CGH <= effects.MaxCollideCells {
 			copy(f[co:], P.CSDF)
