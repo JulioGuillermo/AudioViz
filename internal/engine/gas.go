@@ -92,7 +92,7 @@ func (s *Session) gasCell(e *config.EmitterConfig) float64 {
 
 // gasFingerprint: what feeds the gas at a frame: its particles' settings, the births of that
 // frame and how the gas moves
-func gasFingerprint(p *effects.EmitParams, ph *effects.GasPhys, births []effects.Birth, solid []uint8) uint64 {
+func gasFingerprint(p *effects.EmitParams, ph any, births []effects.Birth, solid []uint8) uint64 {
 	h := fnv.New64a()
 	w := func(v ...any) {
 		for _, x := range v {
@@ -112,7 +112,7 @@ func gasFingerprint(p *effects.EmitParams, ph *effects.GasPhys, births []effects
 	if len(p.Exprs) > 0 {
 		fmt.Fprintf(h, "%v", p.Exprs)
 	}
-	w(*ph)
+	w(ph)
 	for _, b := range births {
 		w(b)
 	}
@@ -290,15 +290,14 @@ func (s *Session) gasClip(li, ci int, c0 *config.ClipConfig, k int, feats []audi
 	ef := s.emitParticles(li, ci, c0, c, k, feats)
 	g := gasPre{ef: ef, e: e}
 	if ef != nil && e.Collide {
-		g.solid = s.gasSolid(c, e, ef, t)
+		g.solid = s.gasSolid(c, e, ef, t, s.gasCell(e))
 	}
 	return g
 }
 
-// gasSolid: the cells of the gas grid it goes round at time t: where the background's depth (the
-// segment on screen then, as it moves; without the camera's effects) is within the band of the
-// emitter's depth, but not around where it is born (as the particles' collide in layersAt)
-func (s *Session) gasSolid(c *config.ClipConfig, e *config.EmitterConfig, ef *effects.EmitFrame, t float64) []uint8 {
+// simScene: the scene's depth at time t for the simulations (gas, liquid): the background segment
+// on screen then, as it moves, without the camera's effects (nil: no depth)
+func (s *Session) simScene(t float64) *effects.Scene {
 	tl := &s.Cfg.Timeline
 	bi := config.Active(tl.Background, t)
 	if bi < 0 {
@@ -309,7 +308,17 @@ func (s *Session) gasSolid(c *config.ClipConfig, e *config.EmitterConfig, ef *ef
 	if dA == nil {
 		return nil
 	}
-	scene := &effects.Scene{A: dA, NA: nA, LA: s.motionAt(bi, t), W: s.W, H: s.H}
+	return &effects.Scene{A: dA, NA: nA, LA: s.motionAt(bi, t), W: s.W, H: s.H}
+}
+
+// gasSolid: the cells of the gas grid it goes round at time t: where the background's depth (the
+// segment on screen then, as it moves; without the camera's effects) is within the band of the
+// emitter's depth, but not around where it is born (as the particles' collide in layersAt)
+func (s *Session) gasSolid(c *config.ClipConfig, e *config.EmitterConfig, ef *effects.EmitFrame, t, cell float64) []uint8 {
+	scene := s.simScene(t)
+	if scene == nil {
+		return nil
+	}
 	ox, oy := float64(s.W)/2, float64(s.H)/2
 	if n := len(ef.Births); n > 0 {
 		ox, oy = ef.Births[n-1].X, ef.Births[n-1].Y
@@ -324,7 +333,7 @@ func (s *Session) gasSolid(c *config.ClipConfig, e *config.EmitterConfig, ef *ef
 	}
 	sc := s.emitScale() * math.Max(c.Scale, 0.01)
 	free := math.Max(e.Width, e.Height)*sc/2 + 24*s.emitScale()
-	gw, gh, cs := effects.GasGrid(s.W, s.H, s.gasCell(e))
+	gw, gh, cs := effects.GasGrid(s.W, s.H, cell)
 	solid := make([]uint8, gw*gh)
 	found := false
 	for cy := 0; cy < gh; cy++ {

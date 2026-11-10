@@ -224,7 +224,13 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		e   *effects.EmitFrame
 		off int
 		gas int // where its gas grid is (the gas look)
+		sim int // where its simulated particles are (the liquid look)
 	}
+	type simAt struct {
+		off int
+		ps  []effects.Particle
+	}
+	var sims []simAt
 	var emits []emitAt
 	type trackAt struct {
 		off int
@@ -262,6 +268,13 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 			gwords = len(l.Emit.P.Gas.Cells) + len(l.Emit.P.Gas.Light)
 		}
 		px += gwords
+		// the liquid look: its drops after that (room for the most it can have, so the layout
+		// stays the same from frame to frame)
+		swords := 0
+		if l.Emit != nil && l.Emit.Sim != nil {
+			swords = simCap(&l.Emit.P) * 9
+		}
+		px += swords
 		mwords := 0
 		if l.Mask != nil {
 			mwords = (len(l.Mask.Pix) + 3) / 4
@@ -274,7 +287,7 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		if n == g.Layers || off+px+mwords+twords > g.LayerWords {
 			break
 		}
-		vers = append(vers, fmt.Sprintf("%s|%s|%d|%d", l.Ver, l.MaskVer, twords, gwords))
+		vers = append(vers, fmt.Sprintf("%s|%s|%d|%d|%d", l.Ver, l.MaskVer, twords, gwords, swords))
 		lp := &lps[n]
 		flags := int32(l.Blend & 15)
 		if l.Key {
@@ -328,8 +341,12 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 			}
 			ea := emitAt{e: l.Emit, off: off}
 			if gwords > 0 {
-				ea.gas = off + px - gwords
+				ea.gas = off + px - swords - gwords
 				gases = append(gases, gasAt{ea.gas, l.Emit.P.Gas})
+			}
+			if swords > 0 {
+				ea.sim = off + px - swords
+				sims = append(sims, simAt{ea.sim, l.Emit.Sim})
 			}
 			emits = append(emits, ea)
 		}
@@ -401,6 +418,9 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 				if g := l.Emit.P.Gas; g != nil {
 					off += len(g.Cells) + len(g.Light)
 				}
+				if l.Emit.Sim != nil {
+					off += simCap(&l.Emit.P) * 9
+				}
 			} else {
 				copy(buf[off*4:], l.Img.Pix)
 				off += len(l.Img.Pix) / 4
@@ -421,6 +441,15 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 	}
 	for _, tr := range tracks {
 		putTrack(buf, tr.off, tr.t)
+	}
+	for _, sa := range sims {
+		b := buf[sa.off*4:]
+		for q, pt := range sa.ps[:min(len(sa.ps), len(b)/36)] {
+			o := q * 36
+			for j, v := range [9]float32{pt.X, pt.Y, pt.VX, pt.VY, pt.Size, pt.R, pt.G, pt.B, pt.A} {
+				binary.LittleEndian.PutUint32(b[o+4*j:], math.Float32bits(v))
+			}
+		}
 	}
 	for _, ga := range gases {
 		// (in one copy each: the buffer is write-combined memory; little-endian, as the GPU)
@@ -571,6 +600,14 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		flags := uint32(0)
 		if P.Soft {
 			flags = 1
+		}
+		if em.e.Sim != nil {
+			// the liquid look: its drops as simulated (no births)
+			bs, i0, cnt = nil, 0, min(len(em.e.Sim), simCap(P))
+		}
+		u[h+120] = 0
+		if em.sim > 0 {
+			u[h+120] = uint32(em.sim + 1)
 		}
 		u[h], u[h+1], u[h+2], u[h+3] = uint32(base), uint32(i0), uint32(cnt), uint32(bo)
 		u[h+4], u[h+5], u[h+6], u[h+7] = uint32(len(bs)), uint32(em.off), uint32(P.Shape), flags
@@ -1523,3 +1560,6 @@ func putTrack(buf []byte, off int, t *effects.PathTrack) {
 		put(1+2*n+k, float32(t.E[k]))
 	}
 }
+
+// simCap: the most simulated particles an emitter can have on the GPU (its most alive)
+func simCap(p *effects.EmitParams) int { return min(max(p.Count, 1), effects.LiquidMax) }

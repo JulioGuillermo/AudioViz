@@ -338,6 +338,8 @@ type EmitFrame struct {
 	T      float64
 	// the water's lens (DrawEmitter): where what is under each pixel is seen from, moved (x, y px; nil = none)
 	Lens []float32
+	// Sim: the particles as simulated (the liquid look): drawn instead of those of the births
+	Sim []Particle
 	// the depth of its particles at each pixel (DrawEmitter, with EmitParams.ZTrack; -1: none there)
 	ZPlane []float32
 }
@@ -360,6 +362,12 @@ type Particle struct {
 	Size         float32 // diameter, px
 	R, G, B, A   float32 // straight color and alpha
 	Z            float32 // its depth from the path it goes along (EmitParams.ZTrack; -1: none)
+}
+
+// BirthOf: when particle i is born (ok false: out of the table)
+func (e *EmitFrame) BirthOf(i int) (float64, bool) {
+	b, ok := e.birthOf(i)
+	return b.T, ok
 }
 
 // birthOf: the moment particle i is born (it is born when the count passes i + 0.5); ok = false
@@ -875,6 +883,9 @@ func DrawEmitter(e *EmitFrame, W, H int) (*image.RGBA, *LightField) {
 		src = make([]uint32, XW*XH)
 	}
 	n := e.I1 - e.I0
+	if e.Sim != nil {
+		n = len(e.Sim)
+	}
 	if n > 0 {
 		nw := min(16, max(1, n/256))
 		var wg sync.WaitGroup
@@ -882,8 +893,14 @@ func DrawEmitter(e *EmitFrame, W, H int) (*image.RGBA, *LightField) {
 			wg.Add(1)
 			go func(k int) {
 				defer wg.Done()
-				for i := e.I0 + k; i < e.I1; i += nw {
-					pt, ok := e.At(i)
+				for j := k; j < n; j += nw {
+					var pt Particle
+					ok := true
+					if e.Sim != nil {
+						pt = e.Sim[j] // simulated (the liquid look)
+					} else {
+						pt, ok = e.At(e.I0 + j)
+					}
 					if !ok || pt.A <= 0 {
 						continue
 					}

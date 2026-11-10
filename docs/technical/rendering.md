@@ -534,6 +534,25 @@ units of smoke (`gasSolidShade`). The emitter's light sources are the flames: pe
 Σ (1 − e^(−flame·heatK))·cell² / (250·scale²) (`GasFrame.LightSources`). They are uploaded after the
 grid; `emit.comp`'s light phase reads them instead of the particles' (header word 119).
 
+**Liquid look** (`effects/liquid.go`, `engine/liquid.go`): FLIP on a staggered (MAC) grid of
+`liquid.detail`·scale px, on the CPU. Each frame:
+- the substeps keep the fastest drop under a cell per step (1–8);
+- per step: cells solid (the scene within the band, below the floor), liquid where a non-spray drop
+  is, else air; the drops' velocities splatted on the cells' sides (tent weights, in their order);
+  the forces; nothing through solid sides; the pressure (red-black SOR, 60 sweeps, ω 1.7, air p = 0,
+  solid Neumann); the velocity extrapolated two cells into the air;
+- back to the drops: `splash`·(own + grid change) + (1 − `splash`)·grid; moved by the grid (midpoint),
+  sliding off what is solid; dropped when out of the frame;
+- spray (fewer than 6 drops in the 3×3 cells around, or born less than 0.25 s ago) flies by itself
+  and stays out of the grid;
+- the frame's newborn drops are added after the steps, where `EmitFrame.At` puts their particles
+  at that moment (their own age).
+
+The state (drops, exactly) is checkpointed every second like the gas. The drops are drawn as the
+emitter's particles with the water look: `EmitFrame.Sim` on the CPU; on the GPU uploaded after the
+image (9 floats each, room for `max`), and `emit.comp`'s splat reads them (header word 120) through
+`drawParticle`.
+
 **Checkpoints and fingerprints:** the state is stored every second as halves, with the runs of
 zeros left out (`encodeGas`; the GPU's fields are copied out at once first: mapped memory is slow
 to read value by value). Checkpoints of the CPU and GPU simulations are the same format.

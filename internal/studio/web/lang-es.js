@@ -1250,4 +1250,12 @@ export const ES = {
   "Storm clouds": "Nubes de tormenta",
   "How fast the gas lives: 2 = twice as fast, 0.5 = slow motion (its particles keep their pace). Faster costs more steps": "Lo rápido que vive el gas: 2 = el doble de rápido, 0,5 = cámara lenta (sus partículas mantienen su ritmo). Más rápido cuesta más pasos",
   "Speed": "Velocidad",
+  "Simulated water": "Agua simulada",
+  "Simulated splash": "Salpicadura simulada",
+  "Liquid (simulated water)": "Líquido (agua simulada)",
+  "Liquid": "Líquido",
+  "The size of the simulation's cells: smaller is finer but slower": "El tamaño de las celdas de la simulación: más pequeño es más fino pero más lento",
+  "Splash": "Salpicadura",
+  "How lively it is: 1 splashes and keeps every ripple, 0 calm and thick, like honey": "Lo vivo que es: 1 salpica y conserva cada onda, 0 tranquilo y espeso, como la miel",
+  "How fast it lives: 2 = twice as fast, 0.5 = slow motion": "Lo rápido que vive: 2 = el doble de rápido, 0,5 = cámara lenta",
 };

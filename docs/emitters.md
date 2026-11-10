@@ -34,7 +34,7 @@ always give the same result: any frame can be seen or rendered directly.
 | Floor and the scene | a floor px below the emitter, or **the scene's** (with a depth map: where the depth below the emitter comes up to its own): with gravity they fall onto it and **bounce**, keeping part of their speed (bounce) and of their sideways speed. **They go round the scene**: with a depth map, what is in the scene at their depth (within *Solid within*, in depth, of the emitter's) is solid and they slide off it — smoke goes round a wing, fire licks a rock; what is nearer hides them and what is farther is behind them. Where they are born is left free. While you adjust it the preview shows what is solid in cyan. **Bounce off it**: 0 they slide along it (flames lick it); more, they bounce off walls and ceilings (sparks) keeping that much speed — on what faces up they still slide (the floor above bounces them) |
 | Life and size | life (s) and its variation; size at birth and at the end, and its variation |
 | Color and look | colors at birth, halfway and at the end (their opacity fades them), fade in / out, how they add up (*light* or *matter*), streak (stretched along their motion), soft edge, random seed |
-| Look | *particles* (each as it is) or *flame*: they melt into one flame — the color comes from the heat that piles up (colors of its edges, body and core; heat), and rising noise cuts its edges into long tongues (how far, the size of the whirls, how fast they rise, how much they eat the edges) — or *smoke*: soft matter torn into wisps by noise (how much, the size of the wisps, how fast the pattern rises, how far it swirls) — or *water*: they melt into one liquid with a surface lit from the top left (where it becomes liquid: how much of them must pile up; how see-through its body is, its edges staying; its shine; how rounded it looks; ripples: how far, their size and speed; **lens**, px: what is behind it is seen through it bent like through glass — the drops magnify it, and turn it upside down when strong) — or *gas*: the particles are not drawn, they feed a simulated gas of smoke, heat and fuel that moves by itself (see [Simulated gas](#simulated-gas-smoke-fire-clouds) below). **Only its light (and glow)**: the particles are not drawn, only their light on the scene and their glow — an invisible light source (preset *Light source*) |
+| Look | *particles* (each as it is) or *flame*: they melt into one flame — the color comes from the heat that piles up (colors of its edges, body and core; heat), and rising noise cuts its edges into long tongues (how far, the size of the whirls, how fast they rise, how much they eat the edges) — or *smoke*: soft matter torn into wisps by noise (how much, the size of the wisps, how fast the pattern rises, how far it swirls) — or *water*: they melt into one liquid with a surface lit from the top left (where it becomes liquid: how much of them must pile up; how see-through its body is, its edges staying; its shine; how rounded it looks; ripples: how far, their size and speed; **lens**, px: what is behind it is seen through it bent like through glass — the drops magnify it, and turn it upside down when strong) — or *gas*: the particles are not drawn, they feed a simulated gas of smoke, heat and fuel that moves by itself (see [Simulated gas](#simulated-gas-smoke-fire-clouds) below) — or *liquid*: they are born as drops of a simulated liquid (see [Simulated liquid](#simulated-liquid-water) below). **Only its light (and glow)**: the particles are not drawn, only their light on the scene and their glow — an invisible light source (preset *Light source*) |
 | Glow | a halo of light around them: strength, reach (px) and color (empty = the particles' own; the flame's body color with the flame look) |
 | Light | it lights up what is behind it (the background and the layers below it), from where its particles are: strength, reach (px, where it is still strong), where it fades out (px; 0 = 2.5 × the reach), color (empty = the particles' own; the flame's body), how (*soft*: lights and tints what is there; *add*: adds its color, like neon) and flicker. On by default for fire, realistic fire and explosion |
 | Audio reaction | the band (bass, mids, treble, volume, transients, beats) makes more of them, faster, bigger, and a burst on each beat |
@@ -54,7 +54,7 @@ layers:
         y: 0.95
         blend: add
         emitter:
-          preset: fire          # fire, fire_real, sparks, smoke, smoke_real, fire_gas, clouds_gas, dust, light, explosion, lamp, water, water_clear, splash, rain, snow
+          preset: fire          # fire, fire_real, sparks, smoke, smoke_real, fire_gas, clouds_gas, water_sim, splash_sim, dust, light, explosion, lamp, water, water_clear, splash, rain, snow
           rate: 650             # anything not written comes from the preset
           react: { react_to: bass, rate: 1, size: 0.35 }
         keys:
@@ -167,6 +167,37 @@ It is simulated on the GPU (on the CPU when the renderer is the CPU, or without 
 How much it costs depends on **Detail**: with the default 5 px cells, about 5 ms a frame for each
 gas emitter at 1080p on the GPU (about 18 ms on the CPU). The first jump far into the clip has to
 simulate up to there; from then on, scrubbing goes on from the nearest second.
+
+## Simulated liquid: water
+
+With the **liquid** look the particles are born as drops of a liquid simulated over the frame, and
+from then on the simulation moves them, not their launch:
+- the emitter's **gravity** and **wind** pull it;
+- it keeps its **volume**: it piles up into pools, makes waves and splashes, and flows round
+  things;
+- its **floor** (*Floor below it*, or the scene's) and, with *They go round the scene*, what is at
+  its depth in the scene hold it;
+- drops with few others around (spray) and the newborn, for their first quarter of a second, fly
+  by themselves: a jet or a splash is thrown before it joins the liquid.
+
+It is drawn with the water look (the *Water* settings: where it becomes liquid, see-through, shine,
+ripples, lens). The drops live until they leave the frame; past **Most alive at once** the oldest
+go. Its settings (*Liquid*): **Detail** (the cells, px), **Splash** (1 lively, splashing; 0 calm and
+thick, like honey) and **Speed**.
+
+Two presets start from it: **Simulated water** (`water_sim`, a fountain falling onto a floor) and
+**Simulated splash** (`splash_sim`, a splash on each beat).
+
+```yaml
+        emitter:
+          preset: water_sim
+          liquid: { detail: 6, splash: 0.95, speed: 1 }
+          floor: 330
+```
+
+Like the gas, it is simulated from the clip's start, kept every second for seeking, and changing
+only how it looks does not simulate it again. For now it runs on the CPU (about 6 ms a frame for a
+few thousand drops).
 
 The **Light source** preset (`lamp`) is `hidden: true` with its light on and a soft glow: set the
 glow's strength to 0 for a light with nothing visible.

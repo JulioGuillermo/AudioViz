@@ -199,6 +199,12 @@ func (s *Session) emitFrame(li, ci int, c0, c *config.ClipConfig, idx int, feats
 	if e := c.Emitter; e != nil && e.Look == "gas" {
 		ef.P.Gas = s.gasFrame(li, ci, c0, idx, feats, ef, e)
 	}
+	if e := c.Emitter; e != nil && e.Look == "liquid" {
+		ef.Sim = s.liquidFrame(li, ci, c0, idx, feats, e)
+		if ef.Sim == nil {
+			ef.Sim = []effects.Particle{} // (none yet: not the births' particles either)
+		}
+	}
 	return ef
 }
 
@@ -259,7 +265,7 @@ func (s *Session) emitParticles(li, ci int, c0, c *config.ClipConfig, idx int, f
 		p.SmokeWisp, p.SmokeScale = math.Min(math.Max(sm.Wisp, 0), 1), math.Max(sm.Scale*sc, 1)
 		p.SmokeSpeed, p.SmokeWarp = sm.Speed*sc, sm.Warp*sc
 	}
-	if e.Look == "water" {
+	if e.Look == "water" || e.Look == "liquid" {
 		w := e.Water
 		p.Water = true
 		p.WaterTh, p.WaterClear, p.WaterShine = math.Max(w.Threshold, 0.01), math.Min(math.Max(w.Clear, 0), 1), math.Max(w.Shine, 0)

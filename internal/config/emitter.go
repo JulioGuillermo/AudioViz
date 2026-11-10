@@ -99,17 +99,19 @@ type EmitterConfig struct {
 	React    EmitterReact `yaml:"react"`
 	// Look: "plain" (each particle as it is), "flame" (they melt into one flame: the color
 	// comes from how much heat piles up, and rising noise cuts its edges into tongues), "smoke",
-	// "water" (they melt into one liquid with a lit surface: WaterLook) or "gas" (they are not
-	// drawn: they feed a simulated gas, smoke and fire: GasLook)
+	// "water" (they melt into one liquid with a lit surface: WaterLook), "gas" (they are not
+	// drawn: they feed a simulated gas, smoke and fire: GasLook) or "liquid" (they are born as
+	// drops of a simulated liquid, drawn as the water look: LiquidLook)
 	Look string `yaml:"look"`
 	// Only its light (and its glow): the particles themselves are not drawn (a light source)
-	Hidden bool      `yaml:"hidden,omitempty"`
-	Flame  FlameLook `yaml:"flame"`
-	Smoke  SmokeLook `yaml:"smoke,omitempty"`
-	Water  WaterLook `yaml:"water,omitempty"`
-	Gas    GasLook   `yaml:"gas,omitempty"`
-	Glow   EmitGlow  `yaml:"glow"`
-	Light  EmitLight `yaml:"light"`
+	Hidden bool       `yaml:"hidden,omitempty"`
+	Flame  FlameLook  `yaml:"flame"`
+	Smoke  SmokeLook  `yaml:"smoke,omitempty"`
+	Water  WaterLook  `yaml:"water,omitempty"`
+	Gas    GasLook    `yaml:"gas,omitempty"`
+	Liquid LiquidLook `yaml:"liquid,omitempty"`
+	Glow   EmitGlow   `yaml:"glow"`
+	Light  EmitLight  `yaml:"light"`
 }
 
 // EmitLight: the emitter lights up what is drawn behind it (the background and the layers below
@@ -237,6 +239,23 @@ func DefaultGas() GasLook {
 		Opacity: 1.6, Wisps: 0.4, WispScale: 60, LightColor: "#fff2e0", ShadowColor: "#66707e", Shadow: 0.6, FireLight: 1}
 }
 
+// LiquidLook (look "liquid"): the particles are born as drops of a liquid simulated over the
+// frame (effects.LiquidSim): the emitter's gravity and wind pull it, it keeps its volume (it
+// piles up into pools, splashes and flows round things), its floor and, with collide, the scene
+// at its depth hold it. Drawn with the water look (Water). The drops live until they leave the
+// frame (at most Max of them: the oldest go).
+type LiquidLook struct {
+	// the simulation's cells (px of a 1080-line frame): smaller is finer and slower
+	Detail float64 `yaml:"detail"`
+	// how lively: 1 splashes and keeps every ripple, 0 calm and thick like honey
+	Splash float64 `yaml:"splash"`
+	// how fast it lives (1 = real time)
+	Speed float64 `yaml:"speed,omitempty"`
+}
+
+// DefaultLiquid: water at real speed
+func DefaultLiquid() LiquidLook { return LiquidLook{Detail: 6, Splash: 0.95, Speed: 1} }
+
 // DefaultWater: the water look's settings
 func DefaultWater() WaterLook {
 	return WaterLook{Threshold: 0.5, Clear: 0.7, Shine: 1, Bump: 1, Ripple: 3, RippleScale: 40, RippleSpeed: 50}
@@ -361,6 +380,18 @@ var EmitterPresets = map[string]EmitterConfig{
 			Fade: 0.01, Cool: 3, Burn: 2.5, Soot: 0.6, SootColor: "#2a2623", Spread: 100,
 			Opacity: 1.6, Wisps: 0.5, WispScale: 40, LightColor: "#fff0e2", ShadowColor: "#9aa4b0", Shadow: 0.45, FireLight: 1},
 		React: EmitterReact{ReactTo: "bass", Rate: 0.3}},
+	// simulated water: a jet that fills a pool on a floor
+	"water_sim": {Rate: 260, Max: 9000, Shape: "circle", Width: 16, Direction: 0, Spread: 8, Speed: 900, SpeedVar: 0.1, Gravity: 1500,
+		Turbulence: 0, Life: 1, Size: 30, SizeEnd: 30, SizeVar: 0.2,
+		ColorStart: "#5aa8f2d8", ColorMid: "#5aa8f2d8", ColorEnd: "#5aa8f2d8", Mode: "soft", Softness: 1,
+		Floor: 330, Look: "liquid", Water: WaterLook{Threshold: 0.6, Clear: 0.65, Shine: 1.1, Bump: 1, Ripple: 2, RippleScale: 40, RippleSpeed: 40},
+		Liquid: DefaultLiquid(), React: EmitterReact{ReactTo: "bass", Speed: 0.2}},
+	// a simulated splash of water on each beat, falling onto a floor
+	"splash_sim": {Rate: 0, Burst: 220, Max: 9000, Shape: "circle", Width: 60, Direction: 0, Spread: 110, Speed: 700, SpeedVar: 0.45, Gravity: 1600,
+		Life: 1, Size: 26, SizeEnd: 26, SizeVar: 0.3,
+		ColorStart: "#7cc0ffd8", ColorMid: "#7cc0ffd8", ColorEnd: "#7cc0ffd8", Mode: "soft", Softness: 1,
+		Floor: 160, Look: "liquid", Water: WaterLook{Threshold: 0.55, Clear: 0.55, Shine: 1.2, Bump: 1, Ripple: 2, RippleScale: 30, RippleSpeed: 40},
+		Liquid: DefaultLiquid(), React: EmitterReact{ReactTo: "beat", Burst: 160}},
 	"snow": {Rate: 70, Max: 6000, Shape: "line", Width: 2100, Direction: 180, Spread: 20, Speed: 70, SpeedVar: 0.5, Gravity: 20, Wind: 10, Drag: 0.3,
 		Turbulence: 35, TurbFreq: 0.3, Life: 14, LifeVar: 0.2, Size: 5, SizeEnd: 5, SizeVar: 0.6,
 		ColorStart: "#ffffffe0", ColorMid: "#ffffffe0", ColorEnd: "#ffffff00", FadeIn: 0.02, FadeOut: 0.1, Mode: "soft", Softness: 0.6},
@@ -405,6 +436,9 @@ func init() {
 		}
 		if e.Gas == (GasLook{}) {
 			e.Gas = DefaultGas()
+		}
+		if e.Liquid == (LiquidLook{}) {
+			e.Liquid = DefaultLiquid()
 		}
 		if e.Light.Reach == 0 {
 			e.Light = EmitLight{Intensity: 0.8, Reach: 450, Mode: "soft", Flicker: 0.25, Depth: 2.5, Shade: 0.6, From: 1, To: 0, RangeSoft: 0.05}

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"audioviz/internal/config"
+	"audioviz/internal/effects"
 )
 
 // gasSession: a small project with one emitter clip of the given preset (an audio file and a
@@ -123,6 +124,36 @@ func BenchmarkGasEngine(b *testing.B) {
 		a := gasSession(b, "fire_gas", "")
 		if gasCells(a, 85) == nil {
 			b.Fatal("no gas")
+		}
+	}
+}
+
+func liquidParts(s *Session, idx int) []effects.Particle {
+	c0 := &s.Cfg.Layers[0].Clips[0]
+	ef := s.emitFrame(0, 0, c0, c0, idx, nil)
+	if ef == nil {
+		return nil
+	}
+	return slices.Clone(ef.Sim)
+}
+
+// the liquid at a frame is the same however it is reached
+func TestLiquidSeek(t *testing.T) {
+	a := gasSession(t, "water_sim", "")
+	var seq [][]effects.Particle
+	for k := 0; k <= 70; k++ {
+		seq = append(seq, liquidParts(a, k))
+	}
+	if len(seq[70]) == 0 {
+		t.Fatal("no liquid")
+	}
+	b := gasSession(t, "water_sim", "")
+	if !slices.Equal(liquidParts(b, 70), seq[70]) {
+		t.Fatal("straight to frame 70 differs from step by step")
+	}
+	for _, k := range []int{40, 29, 61, 10} {
+		if !slices.Equal(liquidParts(b, k), seq[k]) {
+			t.Fatalf("back to frame %d differs", k)
 		}
 	}
 }

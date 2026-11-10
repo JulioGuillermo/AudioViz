@@ -452,6 +452,9 @@ func (s *Session) emitterWords() int {
 			xw, xh := effects.EmitLightGrid(s.W, s.H)
 			n += gw*gh*effects.GasCellWords + xw*xh // (and its flames' light sources)
 		}
+		if c.Emitter != nil && c.Emitter.Look == "liquid" {
+			n += min(max(c.Emitter.Max, 1), effects.LiquidMax) * 9 // its drops
+		}
 		if len(c.Masks) > 0 {
 			return n + mask
 		}

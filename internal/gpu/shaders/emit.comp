@@ -217,6 +217,67 @@ vec4 exprRun(int d, int index, float sRoute, float sPath, uint seed, uint frame,
     return o;
 }
 
+// draws one particle of emitter e (header h) at pos with its velocity, size, color and depth
+// (-1: none): into its accumulation (dv px cells, GW×GH), its depth, its light source, its halo
+void drawParticle(int e, int h, vec2 pos, vec2 vel, float size, vec4 col, float pz, vec4 fd, int dv, int GW, int GH) {
+    // hidden where the scene is nearer than it (its own depth: each particle by itself)
+    col.a *= occlAt(h, pos, pz);
+    if (col.a <= 0.0) return;
+    float r = size * 0.5;
+    float tiny = r >= 0.7 ? 1.0 : (r * r) / (0.7 * 0.7);
+    if (r < 0.7) r = 0.7;
+    vec2 st = vel * fd.z;
+    int px0 = max(int(floor(min(pos.x, pos.x - st.x) - r - 1.0)) / dv, 0);
+    int px1 = min(int(ceil(max(pos.x, pos.x - st.x) + r + 1.0)) / dv + 1, GW - 1);
+    int py0 = max(int(floor(min(pos.y, pos.y - st.y) - r - 1.0)) / dv, 0);
+    int py1 = min(int(ceil(max(pos.y, pos.y - st.y) + r + 1.0)) / dv + 1, GH - 1);
+    float alpha = col.a * tiny;
+    float edge = max(r * fd.w, 0.5);
+    float l2 = dot(st, st);
+    uint base = accBase(e);
+    // the gas look: its particles are not drawn (they feed the gas; only their light and glow)
+    if (ed[h + 43] == 4u) py1 = py0 - 1;
+    for (int yy = py0; yy <= py1; yy++) {
+        for (int xx = px0; xx <= px1; xx++) {
+            vec2 q = (vec2(float(xx), float(yy)) + 0.5) * float(dv) - pos;
+            if (l2 > 0.0) {
+                float t = clamp(-dot(q, st) / l2, 0.0, 1.0);
+                q += st * t;
+            }
+            float dd = length(q);
+            float w = (1.0 - smoothstep(r - edge, r, dd)) * alpha;
+            addCell(base + uint(yy * GW + xx) * 4u, col.rgb, w);
+            if (pz >= 0.0) {
+                uint zq = uint(pz * w * FIXED + 0.5);
+                if (zq > 0u) atomicAdd(acc[zBase(e) + uint(yy * GW + xx)], zq);
+            }
+        }
+    }
+    // its light source: its cell of the light grid
+    if (ed[h + 64] != 0u && ed[h + 43] != 4u) { // (the gas look: its flames are the sources)
+        int lx = int(floor(pos.x / float(XDIV))), ly = int(floor(pos.y / float(XDIV)));
+        uint q = uint(col.a * tiny * FIXED + 0.5);
+        if (q > 0u && lx >= 0 && ly >= 0 && lx < XW && ly < XH) atomicAdd(acc[srcBase(e) + uint(ly * XW + lx)], q);
+    }
+    // the halo: the disc grown by the glow's reach, fading out, on the coarse glow grid
+    float gI = edf(h + 58), gR = edf(h + 59);
+    if (gI > 0.0 && gR > 0.0) {
+        float rg = size * 0.5 + gR;
+        float gd = float(GDIV);
+        int gx0 = max(int(floor((pos.x - rg) / gd)), 0), gx1 = min(int(ceil((pos.x + rg) / gd)), LW - 1);
+        int gy0 = max(int(floor((pos.y - rg) / gd)), 0), gy1 = min(int(ceil((pos.y + rg) / gd)), LH - 1);
+        uint gb = glowBase(e);
+        float norm = gd * gd / (0.25 * 3.14159265 * rg * rg); // the same light whatever the reach
+        for (int yy = gy0; yy <= gy1; yy++) {
+            for (int xx = gx0; xx <= gx1; xx++) {
+                vec2 q = (vec2(float(xx), float(yy)) + 0.5) * gd - pos;
+                float ff2 = 1.0 - smoothstep(0.0, rg, length(q));
+                addCell(gb + uint(yy * LW + xx) * 4u, col.rgb, alpha * norm * ff2 * ff2);
+            }
+        }
+    }
+}
+
 void splatOne(int j) {
     int e = -1, i = 0;
     for (int k = E0; k < E1; k++) {
@@ -232,6 +293,18 @@ void splatOne(int j) {
     float T = edf(h + 41);
     int dv = int(ed[h + 42]);
     int GW = (W + dv - 1) / dv, GH = (H + dv - 1) / dv;
+
+    uint so = ed[h + 120];
+    if (so != 0u) {
+        // simulated particles (the liquid look): their state as uploaded after the emitter's
+        // image (x, y, vx, vy, size, r, g, b, a)
+        uint o = so - 1u + uint(i) * 9u;
+        vec2 spos = vec2(uintBitsToFloat(lay[o]), uintBitsToFloat(lay[o + 1u]));
+        vec2 svel = vec2(uintBitsToFloat(lay[o + 2u]), uintBitsToFloat(lay[o + 3u]));
+        vec4 scol = vec4(uintBitsToFloat(lay[o + 5u]), uintBitsToFloat(lay[o + 6u]), uintBitsToFloat(lay[o + 7u]), uintBitsToFloat(lay[o + 8u]));
+        if (scol.a > 0.0) drawParticle(e, h, spos, svel, uintBitsToFloat(lay[o + 4u]), scol, -1.0, fd, dv, GW, GH);
+        return;
+    }
 
     // birth: the first table entry whose count reaches i + 0.5
     int bo = v0.w, nb = v1.x;
@@ -441,62 +514,7 @@ void splatOne(int j) {
             }
         }
     }
-    // hidden where the scene is nearer than it (its own depth: each particle by itself)
-    col.a *= occlAt(h, pos, pz);
-    if (col.a <= 0.0) return;
-    float r = size * 0.5;
-    float tiny = r >= 0.7 ? 1.0 : (r * r) / (0.7 * 0.7);
-    if (r < 0.7) r = 0.7;
-    vec2 st = vel * fd.z;
-    int px0 = max(int(floor(min(pos.x, pos.x - st.x) - r - 1.0)) / dv, 0);
-    int px1 = min(int(ceil(max(pos.x, pos.x - st.x) + r + 1.0)) / dv + 1, GW - 1);
-    int py0 = max(int(floor(min(pos.y, pos.y - st.y) - r - 1.0)) / dv, 0);
-    int py1 = min(int(ceil(max(pos.y, pos.y - st.y) + r + 1.0)) / dv + 1, GH - 1);
-    float alpha = col.a * tiny;
-    float edge = max(r * fd.w, 0.5);
-    float l2 = dot(st, st);
-    uint base = accBase(e);
-    // the gas look: its particles are not drawn (they feed the gas; only their light and glow)
-    if (ed[h + 43] == 4u) py1 = py0 - 1;
-    for (int yy = py0; yy <= py1; yy++) {
-        for (int xx = px0; xx <= px1; xx++) {
-            vec2 q = (vec2(float(xx), float(yy)) + 0.5) * float(dv) - pos;
-            if (l2 > 0.0) {
-                float t = clamp(-dot(q, st) / l2, 0.0, 1.0);
-                q += st * t;
-            }
-            float dd = length(q);
-            float w = (1.0 - smoothstep(r - edge, r, dd)) * alpha;
-            addCell(base + uint(yy * GW + xx) * 4u, col.rgb, w);
-            if (pz >= 0.0) {
-                uint zq = uint(pz * w * FIXED + 0.5);
-                if (zq > 0u) atomicAdd(acc[zBase(e) + uint(yy * GW + xx)], zq);
-            }
-        }
-    }
-    // its light source: its cell of the light grid
-    if (ed[h + 64] != 0u && ed[h + 43] != 4u) { // (the gas look: its flames are the sources)
-        int lx = int(floor(pos.x / float(XDIV))), ly = int(floor(pos.y / float(XDIV)));
-        uint q = uint(col.a * tiny * FIXED + 0.5);
-        if (q > 0u && lx >= 0 && ly >= 0 && lx < XW && ly < XH) atomicAdd(acc[srcBase(e) + uint(ly * XW + lx)], q);
-    }
-    // the halo: the disc grown by the glow's reach, fading out, on the coarse glow grid
-    float gI = edf(h + 58), gR = edf(h + 59);
-    if (gI > 0.0 && gR > 0.0) {
-        float rg = size * 0.5 + gR;
-        float gd = float(GDIV);
-        int gx0 = max(int(floor((pos.x - rg) / gd)), 0), gx1 = min(int(ceil((pos.x + rg) / gd)), LW - 1);
-        int gy0 = max(int(floor((pos.y - rg) / gd)), 0), gy1 = min(int(ceil((pos.y + rg) / gd)), LH - 1);
-        uint gb = glowBase(e);
-        float norm = gd * gd / (0.25 * 3.14159265 * rg * rg); // the same light whatever the reach
-        for (int yy = gy0; yy <= gy1; yy++) {
-            for (int xx = gx0; xx <= gx1; xx++) {
-                vec2 q = (vec2(float(xx), float(yy)) + 0.5) * gd - pos;
-                float ff2 = 1.0 - smoothstep(0.0, rg, length(q));
-                addCell(gb + uint(yy * LW + xx) * 4u, col.rgb, alpha * norm * ff2 * ff2);
-            }
-        }
-    }
+    drawParticle(e, h, pos, vel, size, col, pz, fd, dv, GW, GH);
 }
 
 vec4 cellSum(uint base, int GW, int GH, int cx, int cy) {

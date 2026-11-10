@@ -448,6 +448,7 @@ export const CLIP_FIELDS = [
 // it throws. Every number and color can have keys.
 export const EMITTER_PRESETS = [['fire', 'Fire', 'flame'], ['fire_real', 'Realistic fire', 'flame'], ['sparks', 'Sparks', 'sparkles'], ['smoke', 'Smoke', 'cloud'],
   ['smoke_real', 'Simulated smoke', 'cloud'], ['fire_gas', 'Simulated fire', 'flame'], ['clouds_gas', 'Storm clouds', 'cloud'],
+  ['water_sim', 'Simulated water', 'droplet'], ['splash_sim', 'Simulated splash', 'waves'],
   ['dust', 'Dust', 'focus'], ['light', 'Lights (bokeh)', 'sun'], ['explosion', 'Explosion', 'zap'], ['snow', 'Snow', 'snowflake'],
   ['lamp', 'Light source (invisible)', 'sun'], ['water', 'Water', 'droplet'], ['water_clear', 'Clear water (lens)', 'droplet'], ['splash', 'Water splash', 'waves'], ['rain', 'Rain', 'cloud-rain']];
 const EMIT_SHAPES = [['point', 'Point'], ['circle', 'Circle (filled)'], ['ring', 'Ring'], ['line', 'Line'], ['box', 'Rectangle'],
@@ -531,7 +532,7 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
   { key: 'lookgrp', label: 'Look (particles or flame)', type: 'section', fields: [
     { key: 'look', label: 'Look', type: 'enum', def: 'plain', anim: false,
       options: [['plain', 'Particles (as they are)'], ['flame', 'Flame (they melt into fire)'], ['smoke', 'Smoke (torn into wisps)'], ['water', 'Water (they melt into a liquid)'],
-        ['gas', 'Gas (simulated smoke and fire)']],
+        ['gas', 'Gas (simulated smoke and fire)'], ['liquid', 'Liquid (simulated water)']],
       help: 'Flame: the color comes from the heat that piles up, and rising noise cuts its edges into tongues. Gas: the particles are not drawn, they feed a simulated gas (smoke, heat, fuel) that then moves by itself' },
     { key: 'gas', label: 'Gas', type: 'group', showIf: (c) => c.look === 'gas', fields: [
       { key: 'detail', label: 'Detail (cell px)', type: 'num', min: 2, max: 32, step: 0.5, def: 7, anim: false,
@@ -579,7 +580,15 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
       { key: 'speed', label: 'Rising speed (px/s)', type: 'num', min: 0, max: 600, step: 1, def: 30 },
       { key: 'warp', label: 'Swirl (px)', type: 'num', min: 0, max: 200, step: 0.5, def: 25, help: 'How far the noise moves it' },
     ] },
-    { key: 'water', label: 'Water', type: 'group', showIf: (c) => c.look === 'water', fields: [
+    { key: 'liquid', label: 'Liquid', type: 'group', showIf: (c) => c.look === 'liquid', fields: [
+      { key: 'detail', label: 'Detail (cell px)', type: 'num', min: 2, max: 32, step: 0.5, def: 6, anim: false,
+        help: 'The size of the simulation\'s cells: smaller is finer but slower' },
+      { key: 'splash', label: 'Splash', type: 'num', min: 0, max: 1, step: 0.01, def: 0.95,
+        help: 'How lively it is: 1 splashes and keeps every ripple, 0 calm and thick, like honey' },
+      { key: 'speed', label: 'Speed', type: 'num', min: 0.05, max: 8, step: 0.05, def: 1,
+        help: 'How fast it lives: 2 = twice as fast, 0.5 = slow motion' },
+    ] },
+    { key: 'water', label: 'Water', type: 'group', showIf: (c) => c.look === 'water' || c.look === 'liquid', fields: [
       { key: 'threshold', label: 'Where it becomes liquid', type: 'num', min: 0.05, max: 2, step: 0.01, def: 0.5,
         help: 'How much of the particles must pile up: less, fatter water that joins sooner; more, thinner and in drops' },
       { key: 'clear', label: 'See-through', type: 'num', min: 0, max: 1, step: 0.01, def: 0.7, help: 'How much you see through its body (its edges stay)' },
