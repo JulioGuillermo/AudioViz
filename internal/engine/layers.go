@@ -446,6 +446,12 @@ func (s *Session) emitterWords() int {
 			return 0
 		}
 		n := s.W * s.H
+		if e := c.Emitter; e != nil && (e.Look == "water" || e.Look == "liquid") && e.Water.Lens > 0 {
+			n += s.W * s.H // its lens (after its image)
+		}
+		if e := c.Emitter; e != nil && (e.Route != nil || e.FollowPath) {
+			n += s.W * s.H // its particles' depth along their path (after its image)
+		}
 		if c.Emitter != nil && c.Emitter.Look == "gas" {
 			// its gas grid (written every frame after its image)
 			gw, gh, _ := effects.GasGrid(s.W, s.H, s.gasCell(c.Emitter))

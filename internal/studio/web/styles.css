@@ -611,6 +611,8 @@ a.btn { text-decoration: none; }
 .presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 4px; margin: 2px 0 8px; }
 .presets .btn { justify-content: flex-start; min-width: 0; }
 .presets .btn .pl { overflow: hidden; text-overflow: ellipsis; }
+.presets .presets-h { grid-column: 1 / -1; font-size: 11px; color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; padding: 6px 2px 1px; }
+.presets .presets-h:first-child { padding-top: 0; }
 .seg.clip.emit { background: rgba(255, 130, 50, .18); border-color: rgba(255, 140, 60, .5); }
 .seg.clip.emit.on { background: #33261c; border-color: var(--accent); }
 

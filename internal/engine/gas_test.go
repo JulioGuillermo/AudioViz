@@ -137,9 +137,15 @@ func liquidParts(s *Session, idx int) []effects.Particle {
 	return slices.Clone(ef.Sim)
 }
 
-// the liquid at a frame is the same however it is reached
+// the liquid at a frame is the same however it is reached (on the CPU and on the GPU)
 func TestLiquidSeek(t *testing.T) {
-	a := gasSession(t, "water_sim", "")
+	for _, sim := range []string{"cpu", "gpu"} {
+		t.Run(sim, func(t *testing.T) { liquidSeek(t, ", sim: "+sim) })
+	}
+}
+
+func liquidSeek(t *testing.T, extra string) {
+	a := gasSession(t, "water_sim", extra)
 	var seq [][]effects.Particle
 	for k := 0; k <= 70; k++ {
 		seq = append(seq, liquidParts(a, k))
@@ -147,7 +153,7 @@ func TestLiquidSeek(t *testing.T) {
 	if len(seq[70]) == 0 {
 		t.Fatal("no liquid")
 	}
-	b := gasSession(t, "water_sim", "")
+	b := gasSession(t, "water_sim", extra)
 	if !slices.Equal(liquidParts(b, 70), seq[70]) {
 		t.Fatal("straight to frame 70 differs from step by step")
 	}

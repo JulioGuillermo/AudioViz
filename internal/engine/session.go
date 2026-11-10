@@ -96,6 +96,7 @@ func (s *Session) Close() {
 	s.closeLayerMedia()
 	gasMu.Lock()
 	s.closeGas()
+	s.closeLiquids()
 	gasMu.Unlock()
 }
 

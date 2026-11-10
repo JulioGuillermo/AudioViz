@@ -548,6 +548,14 @@ grid; `emit.comp`'s light phase reads them instead of the particles' (header wor
 - the frame's newborn drops are added after the steps, where `EmitFrame.At` puts their particles
   at that moment (their own age).
 
+On the GPU (`sim: gpu`; `effects.LiquidGPU`, `gpu.LiquidJob`, `shaders/liquid.comp`) the same
+steps, one kernel each, over the whole grid. The drops are uploaded before a frame's steps and read
+back after them (host-cached); the CPU adds the newborn and drops those gone. The splat uses integer
+atomic adds in fixed point (velocity × 256, weights × 65536), so the sums do not depend on the
+order. The pressure goes by 16×16 blocks in shared memory (6 dispatches of 10 sweeps, P ↔ P2).
+`simOnGPU` picks the backend per clip; auto is the GPU for the gas and the CPU for the liquid (on
+the iGPU it is as fast or faster: the box makes its cost the liquid's).
+
 The state (drops, exactly) is checkpointed every second like the gas. The drops are drawn as the
 emitter's particles with the water look: `EmitFrame.Sim` on the CPU; on the GPU uploaded after the
 image (9 floats each, room for `max`), and `emit.comp`'s splat reads them (header word 120) through

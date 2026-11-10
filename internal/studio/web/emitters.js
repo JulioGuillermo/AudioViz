@@ -1,5 +1,5 @@
 import { html, useState } from './vendor/preact-htm.js';
-import { EMITTER_PRESETS } from './schema.js';
+import { EMITTER_PRESETS, EMITTER_GROUPS } from './schema.js';
 import { Icon } from './icons.js';
 import { t } from './i18n.js';
 import { clone } from './util.js';
@@ -15,7 +15,7 @@ export const presetLabel = (k) => { const p = EMITTER_PRESETS.find((x) => x[0] =
 export const presetIcon = (k) => { const p = EMITTER_PRESETS.find((x) => x[0] === k); return p ? p[2] : 'sparkles'; };
 
 // Where a preset starts on the frame (0..1)
-const START = { fire: [0.5, 0.95], fire_real: [0.5, 0.95], sparks: [0.5, 0.8], smoke: [0.5, 0.8], smoke_real: [0.5, 0.85], fire_gas: [0.5, 0.9], clouds_gas: [0.5, 0.03], water_sim: [0.5, 0.3], splash_sim: [0.5, 0.75], dust: [0.5, 0.5], light: [0.5, 0.5],
+const START = { fire: [0.5, 0.95], fire_real: [0.5, 0.95], sparks: [0.5, 0.8], smoke: [0.5, 0.8], smoke_real: [0.5, 0.85], fire_gas: [0.5, 0.9], clouds_gas: [0.5, 0.03], water_sim: [0.5, 0.3], water_sim_clear: [0.5, 0.3], splash_sim: [0.5, 0.75], fog_gas: [0.5, 0.88], dust: [0.5, 0.5], light: [0.5, 0.5],
   explosion: [0.5, 0.5], snow: [0.5, -0.02] };
 
 // A new emitter clip from a preset, from st for dur seconds
@@ -28,14 +28,16 @@ export function newEmitterClip(proj, preset, st, dur) {
 }
 
 // The menu items to add an emitter (one per preset)
-export const emitterMenuItems = (onPick) => EMITTER_PRESETS.map(([k, label, icon]) => ({ label: t(label), icon, onClick: () => onPick(k) }));
+export const emitterMenuItems = (onPick) => EMITTER_GROUPS.flatMap(([g, ps]) => [{ header: t(g) },
+  ...ps.map(([k, label, icon]) => ({ label: t(label), icon, onClick: () => onPick(k) }))]);
 
 // Choosing another preset replaces the emitter's settings (its place on the clip stays)
 export function PresetPicker({ clip, onPick }) {
   const cur = clip.emitter && clip.emitter.preset;
-  return html`<div class="presets">${EMITTER_PRESETS.map(([k, label, icon]) => html`<button key=${k}
+  return html`<div class="presets">${EMITTER_GROUPS.map(([g, ps]) => [html`<div class="presets-h" key=${'h' + g}>${t(g)}</div>`,
+    ...ps.map(([k, label, icon]) => html`<button key=${k}
       class=${'btn sm' + (cur === k ? ' on' : '')} title=${t(label) + ' · ' + t('Start again from this preset (its settings replace the current ones)')}
-      onClick=${() => onPick(k)}><${Icon} name=${icon} size=${13} /><span class="pl">${t(label)}</span></button>`)}</div>`;
+      onClick=${() => onPick(k)}><${Icon} name=${icon} size=${13} /><span class="pl">${t(label)}</span></button>`)])}</div>`;
 }
 
 // The circles of a light around its center (frame px cx, cy) over a view of the frame: its

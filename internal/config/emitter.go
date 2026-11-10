@@ -104,11 +104,15 @@ type EmitterConfig struct {
 	// drops of a simulated liquid, drawn as the water look: LiquidLook)
 	Look string `yaml:"look"`
 	// Only its light (and its glow): the particles themselves are not drawn (a light source)
-	Hidden bool       `yaml:"hidden,omitempty"`
-	Flame  FlameLook  `yaml:"flame"`
-	Smoke  SmokeLook  `yaml:"smoke,omitempty"`
-	Water  WaterLook  `yaml:"water,omitempty"`
-	Gas    GasLook    `yaml:"gas,omitempty"`
+	Hidden bool      `yaml:"hidden,omitempty"`
+	Flame  FlameLook `yaml:"flame"`
+	Smoke  SmokeLook `yaml:"smoke,omitempty"`
+	Water  WaterLook `yaml:"water,omitempty"`
+	Gas    GasLook   `yaml:"gas,omitempty"`
+	// Sim: where the gas or the liquid is simulated: "" / "auto" (the gas on the GPU unless
+	// rendering on the CPU, the liquid on the CPU), "gpu" or "cpu" (they move a little
+	// differently: changing it simulates it again)
+	Sim    string     `yaml:"sim,omitempty"`
 	Liquid LiquidLook `yaml:"liquid,omitempty"`
 	Glow   EmitGlow   `yaml:"glow"`
 	Light  EmitLight  `yaml:"light"`
@@ -386,6 +390,21 @@ var EmitterPresets = map[string]EmitterConfig{
 		ColorStart: "#5aa8f2d8", ColorMid: "#5aa8f2d8", ColorEnd: "#5aa8f2d8", Mode: "soft", Softness: 1,
 		Floor: 330, Look: "liquid", Water: WaterLook{Threshold: 0.6, Clear: 0.65, Shine: 1.1, Bump: 1, Ripple: 2, RippleScale: 40, RippleSpeed: 40},
 		Liquid: DefaultLiquid(), React: EmitterReact{ReactTo: "bass", Speed: 0.2}},
+	// simulated clear water: almost no color, it bends what is behind it like glass (a lens)
+	"water_sim_clear": {Rate: 260, Max: 9000, Shape: "circle", Width: 16, Direction: 0, Spread: 8, Speed: 900, SpeedVar: 0.1, Gravity: 1500,
+		Life: 1, Size: 32, SizeEnd: 32, SizeVar: 0.2,
+		ColorStart: "#d8ecffd8", ColorMid: "#d8ecffd8", ColorEnd: "#d8ecffd8", Mode: "soft", Softness: 1,
+		Floor: 330, Look: "liquid", Water: WaterLook{Threshold: 0.6, Clear: 1, Shine: 1.3, Bump: 0.9, Ripple: 2, RippleScale: 40, RippleSpeed: 40, Lens: 40},
+		Liquid: DefaultLiquid(), React: EmitterReact{ReactTo: "bass", Speed: 0.2}},
+	// fog low over the ground, drifting: a soft simulated gas that stays down
+	"fog_gas": {Rate: 260, Max: 4000, Shape: "box", Width: 2400, Height: 160, Direction: 90, Spread: 40, Speed: 20, SpeedVar: 0.5, Drag: 1,
+		Life: 1, LifeVar: 0.3, Size: 170, SizeEnd: 190, SizeVar: 0.3,
+		ColorStart: "#c8d0d8ff", ColorMid: "#c8d0d8ff", ColorEnd: "#c8d0d800", FadeIn: 0.2, FadeOut: 0.4, Mode: "soft", Softness: 1,
+		Look: "gas",
+		Gas: GasLook{Detail: 8, Smoke: 0.05, Push: 0.05, Rise: 0, Weight: 30, Swirl: 1, Wind: 30, Turbulence: 25, TurbScale: 400,
+			Fade: 0.12, Cool: 3, Burn: 2.5, Soot: 0.6, SootColor: "#2a2623", Spread: 800,
+			Opacity: 1.1, Wisps: 0.35, WispScale: 120, LightColor: "#eef2f6", ShadowColor: "#a2adba", Shadow: 0.25, FireLight: 1},
+		React: EmitterReact{ReactTo: "bass", Rate: 0.2}},
 	// a simulated splash of water on each beat, falling onto a floor
 	"splash_sim": {Rate: 0, Burst: 220, Max: 9000, Shape: "circle", Width: 60, Direction: 0, Spread: 110, Speed: 700, SpeedVar: 0.45, Gravity: 1600,
 		Life: 1, Size: 26, SizeEnd: 26, SizeVar: 0.3,

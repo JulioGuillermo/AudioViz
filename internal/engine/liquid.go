@@ -19,7 +19,7 @@ type liquidRun struct {
 	tab   string
 	f0    int
 	fp    []uint64
-	sim   *effects.LiquidSim
+	sim   effects.LiquidSimulator
 	live  int
 	ck    map[int][]byte
 	every int
@@ -73,14 +73,18 @@ func (s *Session) liquidFrame(li, ci int, c0 *config.ClipConfig, idx int, feats 
 	tb := s.emitTableFor(li, ci, c0, feats)
 	id := fmt.Sprintf("%d:%d", li, ci)
 	cs := s.liquidCell(e)
-	grid := fmt.Sprintf("%dx%d@%d|%g|%d", s.W, s.H, s.FPS, cs, tb.f0)
+	grid := fmt.Sprintf("%dx%d@%d|%g|%d|%v", s.W, s.H, s.FPS, cs, tb.f0, s.simOnGPU(e))
 	run := s.liquidRuns[id]
 	if run == nil || run.grid != grid {
+		if run != nil {
+			run.sim.Close()
+		}
 		if s.liquidRuns == nil || len(s.liquidRuns) > 16 {
+			s.closeLiquids()
 			s.liquidRuns = map[string]*liquidRun{}
 		}
 		run = &liquidRun{grid: grid, f0: tb.f0, live: tb.f0 - 1, ck: map[int][]byte{}, every: max(1, s.FPS), outK: -1}
-		run.sim = effects.NewLiquidSim(s.W, s.H, cs)
+		run.sim = s.newLiquidSim(cs, e)
 		run.ck[run.f0-1] = run.sim.Save()
 		s.liquidRuns[id] = run
 	}
@@ -134,7 +138,16 @@ func (s *Session) liquidFrame(li, ci int, c0 *config.ClipConfig, idx int, feats 
 		if !ok {
 			g = s.liquidClip(li, ci, c0, k, feats)
 		}
-		s.liquidStep(g, k, run)
+		if err := s.liquidStep(g, k, run); err != nil {
+			// the GPU failed: everything again on the CPU
+			s.Logf("⚠️  Liquid simulation on the GPU failed (%v), using the CPU", err)
+			s.gasCPU = true
+			s.closeLiquids()
+			gasMu.Unlock()
+			out := s.liquidFrame(li, ci, c0, idx, feats, e)
+			gasMu.Lock()
+			return out
+		}
 		run.live, run.outK = k, -1
 		if (k-run.f0+1)%run.every == 0 {
 			if _, ok := run.ck[k]; !ok {
@@ -191,37 +204,59 @@ func (s *Session) liquidPrint(g gasPre, tb *emitTable, k int) uint64 {
 
 // liquidStep: the simulation through frame k: its steps, then the drops born since frame k - 1
 // where their particles are at frame k (each at its own age: a jet stays a jet)
-func (s *Session) liquidStep(g gasPre, k int, run *liquidRun) {
+func (s *Session) liquidStep(g gasPre, k int, run *liquidRun) error {
 	ef, e := g.ef, g.e
 	if ef == nil {
-		return
+		return nil
 	}
 	t := float64(k) / float64(s.FPS)
 	var bs []effects.LiquidBirth
 	col := ef.P.Col[1]
+	next := run.sim.NextBirth()
 	for {
-		i := int(run.sim.Next)
+		i := int(*next)
 		bt, ok := ef.BirthOf(i)
 		if !ok || bt > t {
 			// (born before this frame's window: gone; after now: later)
 			if ok || i >= ef.I1 {
 				break
 			}
-			run.sim.Next++
+			*next++
 			continue
 		}
 		if pt, ok := ef.At(i); ok { // (at frame k's moment)
 			bs = append(bs, effects.LiquidBirth{X: pt.X, Y: pt.Y, VX: pt.VX, VY: pt.VY, Size: pt.Size,
 				Col: [4]float32{float32(col[0]), float32(col[1]), float32(col[2]), float32(col[3])}, Idx: int32(i)})
 		}
-		run.sim.Next++
+		*next++
 	}
-	run.sim.Solid = g.solid
 	ph := s.liquidPhys(ef, e, t)
 	dt := liquidSpeed(e) / float32(s.FPS)
 	steps := run.sim.Substeps(dt, &ph)
-	for j := 0; j < steps; j++ {
-		run.sim.Step(&ph, dt/float32(steps))
+	if err := run.sim.Advance(&ph, dt, steps, g.solid); err != nil {
+		return err
 	}
 	run.sim.Add(bs, max(e.Max, 1))
+	return nil
+}
+
+// newLiquidSim: an empty liquid, where emitter e says (simOnGPU)
+func (s *Session) newLiquidSim(cs float64, e *config.EmitterConfig) effects.LiquidSimulator {
+	if s.simOnGPU(e) {
+		g, err := effects.NewLiquidGPU(s.Cfg.Output.GPUDevice, s.W, s.H, cs)
+		if err == nil {
+			return g
+		}
+		s.Logf("⚠️  Liquid simulation on the GPU not available (%v), using the CPU", err)
+		s.gasCPU = true
+	}
+	return effects.NewLiquidSim(s.W, s.H, cs)
+}
+
+// closeLiquids forgets every liquid simulation (freeing what they hold on the GPU)
+func (s *Session) closeLiquids() {
+	for _, r := range s.liquidRuns {
+		r.sim.Close()
+	}
+	s.liquidRuns = nil
 }

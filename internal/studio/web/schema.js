@@ -446,11 +446,20 @@ export const CLIP_FIELDS = [
 
 // Emitter clips (config.EmitterConfig): the clip places the emitter, the emitter block says what
 // it throws. Every number and color can have keys.
-export const EMITTER_PRESETS = [['fire', 'Fire', 'flame'], ['fire_real', 'Realistic fire', 'flame'], ['sparks', 'Sparks', 'sparkles'], ['smoke', 'Smoke', 'cloud'],
-  ['smoke_real', 'Simulated smoke', 'cloud'], ['fire_gas', 'Simulated fire', 'flame'], ['clouds_gas', 'Storm clouds', 'cloud'],
-  ['water_sim', 'Simulated water', 'droplet'], ['splash_sim', 'Simulated splash', 'waves'],
-  ['dust', 'Dust', 'focus'], ['light', 'Lights (bokeh)', 'sun'], ['explosion', 'Explosion', 'zap'], ['snow', 'Snow', 'snowflake'],
-  ['lamp', 'Light source (invisible)', 'sun'], ['water', 'Water', 'droplet'], ['water_clear', 'Clear water (lens)', 'droplet'], ['splash', 'Water splash', 'waves'], ['rain', 'Rain', 'cloud-rain']];
+// grouped by what they make (fire, smoke, fog, clouds, water…), in this order everywhere
+export const EMITTER_GROUPS = [
+  ['Fire', [['fire', 'Fire', 'flame'], ['fire_real', 'Realistic fire', 'flame'], ['fire_gas', 'Simulated fire', 'flame'],
+    ['explosion', 'Explosion', 'zap'], ['sparks', 'Sparks', 'sparkles']]],
+  ['Smoke', [['smoke', 'Smoke', 'cloud'], ['smoke_real', 'Simulated smoke', 'cloud']]],
+  ['Fog', [['fog_gas', 'Ground fog', 'cloud-fog']]],
+  ['Clouds', [['clouds_gas', 'Storm clouds', 'cloud']]],
+  ['Water', [['water', 'Water', 'droplet'], ['water_clear', 'Clear water (lens)', 'droplet'], ['splash', 'Water splash', 'waves'],
+    ['rain', 'Rain', 'cloud-rain'], ['water_sim', 'Simulated water', 'droplet'], ['water_sim_clear', 'Simulated clear water (lens)', 'droplet'],
+    ['splash_sim', 'Simulated splash', 'waves']]],
+  ['Other', [['dust', 'Dust', 'focus'], ['light', 'Lights (bokeh)', 'sun'], ['snow', 'Snow', 'snowflake'],
+    ['lamp', 'Light source (invisible)', 'sun']]],
+];
+export const EMITTER_PRESETS = EMITTER_GROUPS.flatMap((g) => g[1]);
 const EMIT_SHAPES = [['point', 'Point'], ['circle', 'Circle (filled)'], ['ring', 'Ring'], ['line', 'Line'], ['box', 'Rectangle'],
   ['text', 'The letters of a text']];
 // an emitter light's reaction to the music (in Audio reaction)
@@ -534,6 +543,9 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
       options: [['plain', 'Particles (as they are)'], ['flame', 'Flame (they melt into fire)'], ['smoke', 'Smoke (torn into wisps)'], ['water', 'Water (they melt into a liquid)'],
         ['gas', 'Gas (simulated smoke and fire)'], ['liquid', 'Liquid (simulated water)']],
       help: 'Flame: the color comes from the heat that piles up, and rising noise cuts its edges into tongues. Gas: the particles are not drawn, they feed a simulated gas (smoke, heat, fuel) that then moves by itself' },
+    { key: 'sim', label: 'Simulated on', type: 'enum', def: '', anim: false, showIf: (c) => c.look === 'gas' || c.look === 'liquid',
+      options: [['', 'Auto (gas: GPU; liquid: CPU)'], ['gpu', 'GPU'], ['cpu', 'CPU']],
+      help: 'Where the gas or the liquid is simulated. Auto: the gas on the GPU (on the CPU when rendering on the CPU), the liquid on the CPU, which works only where the liquid is and is usually as fast or faster. Both give the same kind of motion, but not exactly the same: changing it simulates it again' },
     { key: 'gas', label: 'Gas', type: 'group', showIf: (c) => c.look === 'gas', fields: [
       { key: 'detail', label: 'Detail (cell px)', type: 'num', min: 2, max: 32, step: 0.5, def: 7, anim: false,
         help: 'The size of the simulation\'s cells: smaller is finer but slower. The particles\' fine wisps are added on top' },

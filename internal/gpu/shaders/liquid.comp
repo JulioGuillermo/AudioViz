@@ -1,0 +1,304 @@
+#version 450
+// The simulated liquid on the GPU (the emitter look "liquid"): the steps of effects.LiquidSim
+// (liquid.go, the CPU path), one kernel per step chosen by a push constant. The drops are
+// uploaded before a frame's steps and read back after them (the CPU adds the newborn and drops
+// those gone). The drops' velocities go onto the grid with integer atomic adds (fixed point):
+// the sums do not depend on the order, so a frame is the same every time.
+layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
+
+layout(std430, set = 0, binding = 0) readonly buffer Cfg {
+    ivec4 c0; // cells across, down, drops, floor on
+    vec4 f0;  // cell size (px), frame width, height (px), floor (y px)
+    vec4 f1;  // gravity x, y (px/s²), FLIP's share, -
+} C;
+layout(std430, set = 0, binding = 1) buffer Drops { float dr[]; };  // x, y, vx, vy, born: CAP each
+layout(std430, set = 0, binding = 2) buffer GridF { float gf[]; };  // u, v, u0, v0, uE, vE, p, div, p2
+layout(std430, set = 0, binding = 3) buffer GridI { int gi[]; };    // u sums, u weights, v sums, v weights, count, kind, u known, v known
+layout(std430, set = 0, binding = 4) readonly buffer Solid { uint sol[]; }; // 1: solid cell
+layout(std430, set = 0, binding = 5) buffer Spray { uint spr[]; };  // 1: the drop flies by itself
+
+layout(push_constant) uniform Push {
+    int kernel;
+    int a0, a1, a2;
+    float t;  // seconds since it started
+    float dt;
+    float p0, p1;
+} K;
+
+const int CAP = 40000; // effects.LiquidMax
+const float VFIX = 256.0, WFIX = 65536.0;
+const int AIR = 0, FLUID = 1, SOLID = 2;
+
+int GW, GH, N, NU, NV, ND;
+float CS;
+// offsets in gf
+int oU, oV, oU0, oV0, oUE, oVE, oP, oDIV, oP2;
+// offsets in gi
+int oUS, oUW, oVS, oVW, oCNT, oKIND, oUK, oVK;
+
+void layout_() {
+    GW = C.c0.x; GH = C.c0.y; ND = C.c0.z; CS = C.f0.x;
+    N = GW * GH; NU = (GW + 1) * GH; NV = GW * (GH + 1);
+    oU = 0; oV = oU + NU; oU0 = oV + NV; oV0 = oU0 + NU; oUE = oV0 + NV; oVE = oUE + NU;
+    oP = oVE + NV; oDIV = oP + N; oP2 = oDIV + N;
+    oUS = 0; oUW = NU; oVS = 2 * NU; oVW = 2 * NU + NV; oCNT = 2 * NU + 2 * NV; oKIND = oCNT + N;
+    oUK = oKIND + N; oVK = oUK + NU;
+}
+
+float X(int q) { return dr[q]; }
+float Y(int q) { return dr[CAP + q]; }
+float VXq(int q) { return dr[2 * CAP + q]; }
+float VYq(int q) { return dr[3 * CAP + q]; }
+float BORN(int q) { return dr[4 * CAP + q]; }
+
+// the kind of cell (i, j); out of the grid: air (open edges)
+int kindAt(int i, int j) {
+    if (i < 0 || j < 0 || i >= GW || j >= GH) return AIR;
+    return gi[oKIND + j * GW + i];
+}
+// whether (x, y) px is solid: below the floor, or a solid cell
+bool solidAt(float x, float y) {
+    if (C.c0.w != 0 && y >= C.f0.w) return true;
+    int i = int(floor(x / CS)), j = int(floor(y / CS));
+    if (i < 0 || j < 0 || i >= GW || j >= GH) return false;
+    return sol[j * GW + i] != 0u;
+}
+
+// field f (offset o, w×h) at (x, y) in its samples, clamped to its edges (as effects.bilerp)
+float bilerp(int o, int w, int h, float x, float y) {
+    x = clamp(x, 0.0, float(w - 1)); y = clamp(y, 0.0, float(h - 1));
+    int ix = min(int(x), w - 2), iy = min(int(y), h - 2);
+    float fx = x - float(ix), fy = y - float(iy);
+    float a = gf[o + iy * w + ix], b = gf[o + iy * w + ix + 1];
+    float c = gf[o + (iy + 1) * w + ix], d = gf[o + (iy + 1) * w + ix + 1];
+    return (a + (b - a) * fx) * (1.0 - fy) + (c + (d - c) * fx) * fy;
+}
+float sampleU(int o, float x, float y) { return bilerp(o, GW + 1, GH, x / CS, y / CS - 0.5); }
+float sampleV(int o, float x, float y) { return bilerp(o, GW, GH + 1, x / CS - 0.5, y / CS); }
+
+// 0: the sums cleared, the cells' kinds started (solid or air)
+void clearK(int i) {
+    if (i < NU) { gi[oUS + i] = 0; gi[oUW + i] = 0; }
+    if (i < NV) { gi[oVS + i] = 0; gi[oVW + i] = 0; }
+    if (i < N) {
+        gi[oCNT + i] = 0;
+        int x = i % GW, y = i / GW;
+        bool s = sol[i] != 0u || (C.c0.w != 0 && (float(y) + 0.5) * CS >= C.f0.w);
+        gi[oKIND + i] = s ? SOLID : AIR;
+    }
+}
+// 1: the drops per cell
+void countK(int q) {
+    int i = int(floor(X(q) / CS)), j = int(floor(Y(q) / CS));
+    if (i >= 0 && j >= 0 && i < GW && j < GH) atomicAdd(gi[oCNT + j * GW + i], 1);
+}
+// 2: spray (few around, or newborn) or the liquid's: its cell is liquid then
+void classifyK(int q) {
+    int i = int(floor(X(q) / CS)), j = int(floor(Y(q) / CS));
+    bool ok = i >= 0 && j >= 0 && i < GW && j < GH;
+    int around = 0;
+    if (ok)
+        for (int dj = -1; dj <= 1; dj++)
+            for (int di = -1; di <= 1; di++) {
+                int x = i + di, y = j + dj;
+                if (x >= 0 && y >= 0 && x < GW && y < GH) around += gi[oCNT + y * GW + x];
+            }
+    bool sp = !ok || around < 6 || K.t - BORN(q) < 0.25; // (lqSprayBelow, lqLaunch)
+    spr[q] = sp ? 1u : 0u;
+    if (!sp) atomicCompSwap(gi[oKIND + j * GW + i], AIR, FLUID);
+}
+// 3: the liquid drops' velocity onto the cells' sides (tent weights), fixed point
+void splat(int os, int ow, int w, int h, float gx, float gy, float val) {
+    int ix = int(floor(gx)), iy = int(floor(gy));
+    float fx = gx - float(ix), fy = gy - float(iy);
+    vec4 wts = vec4((1.0 - fx) * (1.0 - fy), fx * (1.0 - fy), (1.0 - fx) * fy, fx * fy);
+    for (int c = 0; c < 4; c++) {
+        int x = ix + (c & 1), y = iy + (c >> 1);
+        if (x < 0 || y < 0 || x >= w || y >= h) continue;
+        atomicAdd(gi[os + y * w + x], int(round(wts[c] * val * VFIX)));
+        atomicAdd(gi[ow + y * w + x], int(round(wts[c] * WFIX)));
+    }
+}
+void p2gK(int q) {
+    if (spr[q] != 0u) return;
+    float x = X(q), y = Y(q);
+    splat(oUS, oUW, GW + 1, GH, x / CS, y / CS - 0.5, VXq(q));
+    splat(oVS, oVW, GW, GH + 1, x / CS - 0.5, y / CS, VYq(q));
+}
+// 4: the sides: their velocity (before the forces: u0), the forces, nothing through solid sides
+void facesK(int f) {
+    float dt = K.dt;
+    if (f < NU) {
+        int i = f % (GW + 1), j = f / (GW + 1);
+        int ws = gi[oUW + f];
+        float v = ws > 0 ? (float(gi[oUS + f]) / VFIX) / (float(ws) / WFIX) : 0.0;
+        gf[oU0 + f] = v;
+        if (ws > 0) v += C.f1.x * dt;
+        if (kindAt(i - 1, j) == SOLID || kindAt(i, j) == SOLID) v = 0.0;
+        gf[oU + f] = v;
+        return;
+    }
+    f -= NU;
+    if (f >= NV) return;
+    int i = f % GW, j = f / GW;
+    int ws = gi[oVW + f];
+    float v = ws > 0 ? (float(gi[oVS + f]) / VFIX) / (float(ws) / WFIX) : 0.0;
+    gf[oV0 + f] = v;
+    if (ws > 0) v += C.f1.y * dt;
+    if (kindAt(i, j - 1) == SOLID || kindAt(i, j) == SOLID) v = 0.0;
+    gf[oV + f] = v;
+}
+// 5: the divergence of the liquid cells (no pressure elsewhere)
+void divK(int c) {
+    int i = c % GW, j = c / GW;
+    if (gi[oKIND + c] != FLUID) { gf[oP + c] = 0.0; gf[oDIV + c] = 0.0; return; }
+    gf[oDIV + c] = (gf[oU + j * (GW + 1) + i + 1] - gf[oU + j * (GW + 1) + i] + gf[oV + (j + 1) * GW + i] - gf[oV + j * GW + i]) / CS;
+}
+// 6: the pressure by blocks of 16×16 cells in shared memory (a1 red-black sweeps each), the blocks
+// a0 cells back; from field a2 (P or P2) into the other: no block sees its neighbours' new values
+// half way. Air has none, solid walls let nothing through, out of the grid is air
+const int PT = 16, PH = PT + 2;
+shared float sp[PH * PH];
+shared int sk[PH * PH];
+shared float sd[PT * PT];
+void pressureK() {
+    int tw = (GW + PT - 1) / PT + 1;
+    int tile = int(gl_WorkGroupID.x);
+    int ox = (tile % tw) * PT - K.a0, oy = (tile / tw) * PT - K.a0;
+    int li = int(gl_LocalInvocationID.x);
+    int src = K.a2 == 0 ? oP : oP2, dst = K.a2 == 0 ? oP2 : oP;
+    for (int k = li; k < PH * PH; k += 256) {
+        int x = ox + k % PH - 1, y = oy + k / PH - 1;
+        bool in_ = x >= 0 && y >= 0 && x < GW && y < GH;
+        sk[k] = in_ ? gi[oKIND + y * GW + x] : AIR;
+        sp[k] = in_ && sk[k] == FLUID ? gf[src + y * GW + x] : 0.0;
+    }
+    for (int k = li; k < PT * PT; k += 256) {
+        int x = ox + k % PT, y = oy + k / PT;
+        sd[k] = (x >= 0 && y >= 0 && x < GW && y < GH) ? gf[oDIV + y * GW + x] : 0.0;
+    }
+    barrier();
+    float h2 = CS * CS;
+    for (int it = 0; it < K.a1; it++) {
+        for (int c = 0; c < 2; c++) {
+            for (int k = li; k < PT * PT; k += 256) {
+                int bx = k % PT, by = k / PT;
+                int x = ox + bx, y = oy + by;
+                int q = (by + 1) * PH + bx + 1;
+                if (((x + y + c) & 1) != 0 || sk[q] != FLUID) continue;
+                float sum = 0.0;
+                int cnt = 0;
+                int nb[4] = int[4](q - 1, q + 1, q - PH, q + PH);
+                for (int d = 0; d < 4; d++) {
+                    if (sk[nb[d]] == FLUID) { sum += sp[nb[d]]; cnt++; }
+                    else if (sk[nb[d]] == AIR) cnt++;
+                }
+                if (cnt > 0) {
+                    float v = (sum - h2 * sd[k]) / float(cnt);
+                    sp[q] += 1.7 * (v - sp[q]);
+                }
+            }
+            barrier();
+        }
+    }
+    for (int k = li; k < PT * PT; k += 256) {
+        int x = ox + k % PT, y = oy + k / PT;
+        if (x >= 0 && y >= 0 && x < GW && y < GH) gf[dst + y * GW + x] = sp[(k / PT + 1) * PH + k % PT + 1];
+    }
+}
+float pAt(int i, int j) { return kindAt(i, j) == FLUID ? gf[oP + j * GW + i] : 0.0; }
+// 7: the pressure's gradient taken off the sides between liquid (and air), solid sides nothing
+void gradK(int f) {
+    if (f < NU) {
+        int i = f % (GW + 1), j = f / (GW + 1);
+        int a = kindAt(i - 1, j), b = kindAt(i, j);
+        if (a == SOLID || b == SOLID) gf[oU + f] = 0.0;
+        else if (a == FLUID || b == FLUID) gf[oU + f] -= (pAt(i, j) - pAt(i - 1, j)) / CS;
+        return;
+    }
+    f -= NU;
+    if (f >= NV) return;
+    int i = f % GW, j = f / GW;
+    int a = kindAt(i, j - 1), b = kindAt(i, j);
+    if (a == SOLID || b == SOLID) gf[oV + f] = 0.0;
+    else if (a == FLUID || b == FLUID) gf[oV + f] -= (pAt(i, j) - pAt(i, j - 1)) / CS;
+}
+// 8: the velocity carried into the air around: pass a0 (0: from the sides with liquid into uE /
+// vE and the known marks; 1: back, solid sides nothing)
+void extK(int f) {
+    bool isU = f < NU;
+    int w = isU ? GW + 1 : GW, h = isU ? GH : GH + 1;
+    int g = isU ? f : f - NU;
+    if (g >= (isU ? NU : NV)) return;
+    int i = g % w, j = g / w;
+    int oV_ = isU ? oU : oV, oE = isU ? oUE : oVE, oW = isU ? oUW : oVW, oKn = isU ? oUK : oVK;
+    int from = K.a0 == 0 ? oV_ : oE, to = K.a0 == 0 ? oE : oV_;
+    // known: before pass 0 the sides with weight; before pass 1 those marked by pass 0
+    bool kn = K.a0 == 0 ? gi[oW + g] > 0 : gi[oKn + g] != 0;
+    float v = gf[from + g];
+    bool nowKnown = kn;
+    if (!kn) {
+        float sum = 0.0;
+        int c = 0;
+        ivec2 d4[4] = ivec2[4](ivec2(-1, 0), ivec2(1, 0), ivec2(0, -1), ivec2(0, 1));
+        for (int d = 0; d < 4; d++) {
+            int x = i + d4[d].x, y = j + d4[d].y;
+            if (x < 0 || y < 0 || x >= w || y >= h) continue;
+            int n = y * w + x;
+            bool nk = K.a0 == 0 ? gi[oW + n] > 0 : gi[oKn + n] != 0;
+            if (nk) { sum += gf[from + n]; c++; }
+        }
+        if (c > 0) { v = sum / float(c); nowKnown = true; }
+    }
+    if (K.a0 == 0) gi[oKn + g] = nowKnown ? 1 : 0;
+    if (K.a0 == 1) {
+        bool solidSide = isU ? (kindAt(i - 1, j) == SOLID || kindAt(i, j) == SOLID) : (kindAt(i, j - 1) == SOLID || kindAt(i, j) == SOLID);
+        if (solidSide) v = 0.0;
+    }
+    gf[to + g] = v;
+}
+// 9: the drops: back from the grid and moved by it (midpoint), or flying (spray); sliding off
+// what is solid
+void g2pK(int q) {
+    float dt = K.dt;
+    float x = X(q), y = Y(q), vx = VXq(q), vy = VYq(q);
+    float nx, ny;
+    if (spr[q] != 0u) {
+        vx += C.f1.x * dt; vy += C.f1.y * dt;
+        nx = x + dt * vx; ny = y + dt * vy;
+    } else {
+        float nu = sampleU(oU, x, y), nv = sampleV(oV, x, y);
+        float ou = sampleU(oU0, x, y), ov = sampleV(oV0, x, y);
+        float flip = C.f1.z;
+        vx = flip * (vx + nu - ou) + (1.0 - flip) * nu;
+        vy = flip * (vy + nv - ov) + (1.0 - flip) * nv;
+        float mx = x + 0.5 * dt * nu, my = y + 0.5 * dt * nv;
+        nx = x + dt * sampleU(oU, mx, my); ny = y + dt * sampleV(oV, mx, my);
+    }
+    if (solidAt(nx, ny)) {
+        if (!solidAt(nx, y)) { ny = y; vy = 0.0; }
+        else if (!solidAt(x, ny)) { nx = x; vx = 0.0; }
+        else { nx = x; ny = y; vx = 0.0; vy = 0.0; }
+    }
+    dr[q] = nx; dr[CAP + q] = ny; dr[2 * CAP + q] = vx; dr[3 * CAP + q] = vy;
+}
+// 10: the pressure cleared (a checkpoint's state)
+void clearPK(int c) { if (c < N) { gf[oP + c] = 0.0; gf[oP2 + c] = 0.0; } }
+
+void main() {
+    layout_();
+    if (K.kernel == 6) { pressureK(); return; }
+    int i = int(gl_GlobalInvocationID.x);
+    switch (K.kernel) {
+    case 0: if (i < max(max(NU, NV), N)) clearK(i); break;
+    case 1: if (i < ND) countK(i); break;
+    case 2: if (i < ND) classifyK(i); break;
+    case 3: if (i < ND) p2gK(i); break;
+    case 4: if (i < NU + NV) facesK(i); break;
+    case 5: if (i < N) divK(i); break;
+    case 7: if (i < NU + NV) gradK(i); break;
+    case 8: if (i < NU + NV) extK(i); break;
+    case 9: if (i < ND) g2pK(i); break;
+    case 10: clearPK(i); break;
+    }
+}

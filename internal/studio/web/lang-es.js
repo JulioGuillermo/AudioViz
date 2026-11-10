@@ -1258,4 +1258,13 @@ export const ES = {
   "Splash": "Salpicadura",
   "How lively it is: 1 splashes and keeps every ripple, 0 calm and thick, like honey": "Lo vivo que es: 1 salpica y conserva cada onda, 0 tranquilo y espeso, como la miel",
   "How fast it lives: 2 = twice as fast, 0.5 = slow motion": "Lo rápido que vive: 2 = el doble de rápido, 0,5 = cámara lenta",
+  "Simulated on": "Simulado en",
+  "Auto (gas: GPU; liquid: CPU)": "Auto (gas: GPU; líquido: CPU)",
+  "Where the gas or the liquid is simulated. Auto: the gas on the GPU (on the CPU when rendering on the CPU), the liquid on the CPU, which works only where the liquid is and is usually as fast or faster. Both give the same kind of motion, but not exactly the same: changing it simulates it again": "Dónde se simula el gas o el líquido. Auto: el gas en la GPU (en la CPU si se renderiza en CPU), el líquido en la CPU, que solo trabaja donde hay líquido y suele ser igual de rápida o más. Los dos dan el mismo tipo de movimiento, pero no exactamente igual: cambiarlo lo vuelve a simular",
+  "Fog": "Niebla",
+  "Other": "Otros",
+  "Ground fog": "Niebla a ras de suelo",
+  "Simulated clear water (lens)": "Agua transparente simulada (lente)",
+  "Clear water": "Agua transparente",
+  "Water": "Agua",
 };

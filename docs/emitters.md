@@ -7,6 +7,8 @@ always give the same result: any frame can be seen or rendered directly.
 
 ## In the studio
 
+The presets are grouped by what they make: fire, smoke, fog, clouds, water, and the others.
+
 - **+ Layer** (left panel, Layers zone) → *Particle emitter* → a preset. The new layer has a 10 s
   clip at the cursor.
 - **Place it**: its point on the preview (or in the editor) moves it; the tip of its arrow turns it
@@ -54,7 +56,7 @@ layers:
         y: 0.95
         blend: add
         emitter:
-          preset: fire          # fire, fire_real, sparks, smoke, smoke_real, fire_gas, clouds_gas, water_sim, splash_sim, dust, light, explosion, lamp, water, water_clear, splash, rain, snow
+          preset: fire          # fire, fire_real, fire_gas, explosion, sparks · smoke, smoke_real · fog_gas · clouds_gas · water, water_clear, splash, rain, water_sim, water_sim_clear, splash_sim · dust, light, snow, lamp light, explosion, lamp, water, water_clear, splash, rain, snow
           rate: 650             # anything not written comes from the preset
           react: { react_to: bass, rate: 1, size: 0.35 }
         keys:
@@ -105,10 +107,12 @@ inside. Fine wisps carried by the flow tear its edges.
 The particles stay the source, with everything they already have: shape, where they are born,
 direction, speed, motion path, text, music reaction and colors (the smoke's color).
 
-Three presets start from it:
+Four presets start from it:
 - **Simulated smoke** (`smoke_real`): a column of grey smoke rising and curling.
 - **Simulated fire** (`fire_gas`): fuel burning into flames with tongues, and the dark
   smoke they make. It has a glow and lights the scene.
+- **Ground fog** (`fog_gas`): a soft bank of fog low over the ground, drifting slowly, the scene
+  seen through it.
 - **Storm clouds** (`clouds_gas`): a line across the top of the frame giving off heavy
   smoke that sinks in lit lobes with ragged edges, like a storm front.
 
@@ -185,8 +189,11 @@ ripples, lens). The drops live until they leave the frame; past **Most alive at 
 go. Its settings (*Liquid*): **Detail** (the cells, px), **Splash** (1 lively, splashing; 0 calm and
 thick, like honey) and **Speed**.
 
-Two presets start from it: **Simulated water** (`water_sim`, a fountain falling onto a floor) and
-**Simulated splash** (`splash_sim`, a splash on each beat).
+Three presets start from it: **Simulated water** (`water_sim`, a fountain falling onto a floor),
+**Simulated clear water (lens)** (`water_sim_clear`: almost colorless, it bends what is behind it
+like glass instead of looking blue) and **Simulated splash** (`splash_sim`, a splash on each
+beat). Any of them turns into glass with the Water settings: *See-through* to 1 and **Lens** (px)
+above 0.
 
 ```yaml
         emitter:
@@ -196,8 +203,13 @@ Two presets start from it: **Simulated water** (`water_sim`, a fountain falling 
 ```
 
 Like the gas, it is simulated from the clip's start, kept every second for seeking, and changing
-only how it looks does not simulate it again. For now it runs on the CPU (about 6 ms a frame for a
-few thousand drops).
+only how it looks does not simulate it again.
+
+**Simulated on** (gas and liquid; `sim: auto | gpu | cpu`): where each clip is simulated. Auto puts
+the gas on the GPU (on the CPU when rendering on the CPU) and the liquid on the CPU: the CPU
+works only around the liquid there is and is usually as fast as the GPU or faster, a few ms a
+frame. The GPU and CPU simulations give the same kind of motion but not exactly the same, so
+changing it simulates the clip again.
 
 The **Light source** preset (`lamp`) is `hidden: true` with its light on and a soft glow: set the
 glow's strength to 0 for a light with nothing visible.

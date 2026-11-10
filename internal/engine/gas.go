@@ -137,10 +137,29 @@ func (s *Session) gasFrame(li, ci int, c0 *config.ClipConfig, idx int, feats []a
 	return g
 }
 
-// newGasSim: an empty gas, on the GPU unless rendering on the CPU (or AUDIOVIZ_GAS_CPU=1, or
-// the GPU failed)
-func (s *Session) newGasSim(cs float64) effects.GasSimulator {
-	if !s.gasCPU && !strings.EqualFold(s.Cfg.Output.Renderer, "cpu") && os.Getenv("AUDIOVIZ_GAS_CPU") == "" {
+// simOnGPU: whether emitter e's gas or liquid is simulated on the GPU: as its clip says (Sim),
+// else (auto) the gas on the GPU unless rendering on the CPU or AUDIOVIZ_GAS_CPU=1, and the liquid
+// on the CPU (it works only where the liquid is: as fast as the GPU on an iGPU, often faster);
+// never once the GPU failed
+func (s *Session) simOnGPU(e *config.EmitterConfig) bool {
+	if s.gasCPU {
+		return false
+	}
+	switch strings.ToLower(e.Sim) {
+	case "cpu":
+		return false
+	case "gpu":
+		return true
+	}
+	if e.Look == "liquid" {
+		return false
+	}
+	return !strings.EqualFold(s.Cfg.Output.Renderer, "cpu") && os.Getenv("AUDIOVIZ_GAS_CPU") == ""
+}
+
+// newGasSim: an empty gas, where emitter e says (simOnGPU)
+func (s *Session) newGasSim(cs float64, e *config.EmitterConfig) effects.GasSimulator {
+	if s.simOnGPU(e) {
 		g, err := effects.NewGasGPU(s.Cfg.Output.GPUDevice, s.W, s.H, cs)
 		if err == nil {
 			return g
@@ -163,7 +182,7 @@ func (s *Session) gasFrameAt(li, ci int, c0 *config.ClipConfig, idx int, feats [
 	tb := s.emitTableFor(li, ci, c0, feats)
 	id := fmt.Sprintf("%d:%d", li, ci)
 	cs := s.gasCell(e)
-	grid := fmt.Sprintf("%dx%d@%d|%g|%d", s.W, s.H, s.FPS, cs, tb.f0)
+	grid := fmt.Sprintf("%dx%d@%d|%g|%d|%v", s.W, s.H, s.FPS, cs, tb.f0, s.simOnGPU(e))
 	run := s.gasRuns[id]
 	if run == nil || run.grid != grid {
 		if run != nil {
@@ -174,7 +193,7 @@ func (s *Session) gasFrameAt(li, ci int, c0 *config.ClipConfig, idx int, feats [
 			s.gasRuns = map[string]*gasRun{}
 		}
 		run = &gasRun{grid: grid, f0: tb.f0, live: tb.f0 - 1, ck: map[int][]byte{}, every: max(1, s.FPS), outK: -1}
-		run.sim = s.newGasSim(cs)
+		run.sim = s.newGasSim(cs, e)
 		// the empty state, to start again from
 		ck, err := run.sim.Checkpoint()
 		if err != nil {
