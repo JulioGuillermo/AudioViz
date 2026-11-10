@@ -98,7 +98,7 @@ type MotionConfig struct {
 	Easing string  `yaml:"easing"` // linear (constant speed) or ease (starts and ends softly)
 	Speed  float64 `yaml:"speed"`  // drift and sway: cycles per 10 s (default 1)
 	// ken_burns: corner the camera moves towards while zooming in: auto (a different one per
-	// segment), top_left, top_right, bottom_left, bottom_right
+	// segment), top_left, top_right, bottom_left, bottom_right, or a side: top, bottom, left, right
 	Direction string `yaml:"direction,omitempty"`
 }
 

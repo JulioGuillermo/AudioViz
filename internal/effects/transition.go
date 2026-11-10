@@ -67,7 +67,7 @@ func MotionAt(m config.MotionConfig, p, tsec float64, w, h, seed int) Layer {
 			l.OffY = -sy * (2*e - 1)
 		}
 		return l
-	case "ken_burns": // zoom in while travelling from the opposite corner to the chosen one
+	case "ken_burns": // zoom in while travelling from the opposite corner (or side) to the chosen one
 		s := 1 + a*(0.5+0.5*e)
 		sx, sy := slack(s)
 		sx, sy = sx*(2*e-1), sy*(2*e-1)
@@ -81,6 +81,14 @@ func MotionAt(m config.MotionConfig, p, tsec float64, w, h, seed int) Layer {
 			d = [2]float64{-1, 1}
 		case "bottom_right":
 			d = [2]float64{1, 1}
+		case "top":
+			d = [2]float64{0, -1}
+		case "bottom":
+			d = [2]float64{0, 1}
+		case "left":
+			d = [2]float64{-1, 0}
+		case "right":
+			d = [2]float64{1, 0}
 		default:
 			d = [4][2]float64{{1, 1}, {-1, 1}, {1, -1}, {-1, -1}}[((seed%4)+4)%4]
 		}

@@ -1395,4 +1395,5 @@ export const ES = {
   "Simulated gas and liquid: the route is a channel that carries them along it (at the emitter's speed). How far it reaches on each side (it fades out by twice that)": "Gas y líquido simulados: la ruta es un canal que los lleva a lo largo de ella (a la velocidad del emisor). Hasta dónde llega a cada lado (se desvanece al doble)",
   "Pulls back to it": "Atrae hacia ella",
   "How hard it pulls back what strays from the route (0: it only carries what is in the channel)": "Cuánto atrae de vuelta lo que se sale de la ruta (0: solo lleva lo que está en el canal)",
+  "Corner or side the camera moves to while zooming in (from the opposite one)": "Esquina o lado hacia el que va la cámara mientras hace zoom (desde el contrario)",
 };
