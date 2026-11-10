@@ -1301,4 +1301,11 @@ export const ES = {
   "Clean simulated fire with heat haze": "Fuego simulado limpio con calima",
   "Clean fire": "Fuego limpio",
   "Clean fire and haze": "Fuego limpio y calima",
+  "Smoke in the scene (3D)": "Humo en la escena (3D)",
+  "Fog in the scene (3D)": "Niebla en la escena (3D)",
+  "Fog (3D)": "Niebla (3D)",
+  "Smoke (3D)": "Humo (3D)",
+  "With a depth map: the gas has its own depth (born at the emitter's, carried by the flow). What of the scene is at its depth is solid for it and it slides along it; what is nearer hides it, and the 2.5D camera and the depth of field move and blur it as deep as it is. Simulated on the CPU": "Con mapa de profundidad: el gas tiene su propia profundidad (nace a la del emisor y la arrastra el flujo). Lo que hay en la escena a su profundidad es sólido para él y lo rodea; lo que está más cerca lo tapa, y la cámara 2.5D y el desenfoque lo mueven y difuminan según su profundidad. Se simula en la CPU",
+  "Drift in depth (px/s)": "Deriva en profundidad (px/s)",
+  "How fast it drifts into the scene (positive) or towards you (negative). The scene's whole depth is about 800 px": "Lo rápido que se desplaza hacia el fondo de la escena (positivo) o hacia ti (negativo). Toda la profundidad de la escena son unos 800 px",
 };

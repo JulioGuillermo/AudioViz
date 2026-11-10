@@ -56,7 +56,7 @@ layers:
         y: 0.95
         blend: add
         emitter:
-          preset: fire          # fire, fire_real, fire_gas, fire_gas_haze, fire_clean, fire_clean_haze, heat_haze, explosion, sparks · smoke, smoke_real, steam · fog_gas · clouds_gas · water, water_clear, splash, rain, water_sim, water_sim_clear, water_3d, water_3d_clear, splash_sim · dust, light, snow, lamp light, explosion, lamp, water, water_clear, splash, rain, snow
+          preset: fire          # fire, fire_real, fire_gas, fire_gas_haze, fire_clean, fire_clean_haze, heat_haze, explosion, sparks · smoke, smoke_real, smoke_3d, steam · fog_gas, fog_3d · clouds_gas · water, water_clear, splash, rain, water_sim, water_sim_clear, water_3d, water_3d_clear, splash_sim · dust, light, snow, lamp light, explosion, lamp, water, water_clear, splash, rain, snow
           rate: 650             # anything not written comes from the preset
           react: { react_to: bass, rate: 1, size: 0.35 }
         keys:
@@ -168,6 +168,20 @@ works even where there is no smoke: the presets **Simulated fire with heat haze*
 soon vanishes) and its version with heat haze (`fire_clean_haze`), **Heat haze (invisible)** (`heat_haze`: only shimmering warm air, as over hot
 asphalt or an engine) and **Steam** (`steam`: light white vapour that soon vanishes and makes what is
 behind it waver).
+
+**3D (with the scene's depth)** (`gas.d3`): with a depth map, the gas has a depth of its own. It is
+born at the emitter's (its clip's depth, else just in front of what is under it), the flow carries
+it, and where gases of two depths meet their depths mix.
+- What of the scene is at the gas's depth there (within *Solid within*, the collide band) is
+  solid for it. What is nearer passes in front without stopping it, what is farther stays behind.
+- Near a surface it slides along it, in front of or behind it, instead of crossing it.
+- It drifts in depth **Drift in depth** px/s (into the scene, or towards you if negative).
+- It is drawn as deep as it is on every pixel: what is nearer hides it, and the 2.5D camera and the
+  depth of field move and blur it.
+- It is simulated on the CPU.
+
+The presets **Smoke in the scene (3D)** (`smoke_3d`) and **Fog in the scene (3D)** (`fog_3d`) start
+from it.
 
 **Takes room** (`expand`): the gas given off pushes out from its source. Under a ceiling, or in an
 upside-down glass, the smoke fills down until it spills out of the openings, and then rises

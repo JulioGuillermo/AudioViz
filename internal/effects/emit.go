@@ -945,13 +945,18 @@ func DrawEmitter(e *EmitFrame, W, H int) (*image.RGBA, *LightField) {
 		for y := y0; y < y1; y++ {
 			for x := 0; x < W; x++ {
 				var ln [2]float32
-				c := resolvePixel(p, float32(e.T), acc, GW, GH, div, glow, LW, LH, x, y, &ln)
+				gz := float32(-1)
+				c := resolvePixel(p, float32(e.T), acc, GW, GH, div, glow, LW, LH, x, y, &ln, &gz)
 				copy(img.Pix[(y*W+x)*4:], c[:])
 				if e.Lens != nil {
 					e.Lens[(y*W+x)*2], e.Lens[(y*W+x)*2+1] = ln[0], ln[1]
 				}
 				if e.ZPlane != nil {
-					e.ZPlane[y*W+x] = zPlaneAt(acc, zacc, GW, GH, div, x, y)
+					if p.GasOn {
+						e.ZPlane[y*W+x] = gz // (the gas's own depth here)
+					} else {
+						e.ZPlane[y*W+x] = zPlaneAt(acc, zacc, GW, GH, div, x, y)
+					}
 				}
 			}
 		}
@@ -1127,7 +1132,7 @@ func waterPixel(p *EmitParams, T float32, acc []uint32, GW, GH, div int, px, py 
 }
 
 // resolvePixel: pixel (x, y) of the emitter's image (premultiplied RGBA8), as resolveOne in emit.comp
-func resolvePixel(p *EmitParams, T float32, acc []uint32, GW, GH, div int, glow []uint32, LW, LH, x, y int, lens *[2]float32) [4]uint8 {
+func resolvePixel(p *EmitParams, T float32, acc []uint32, GW, GH, div int, glow []uint32, LW, LH, x, y int, lens *[2]float32, gz *float32) [4]uint8 {
 	px, py := float32(x)+0.5, float32(y)+0.5
 	var o [4]float32
 	if p.Flame {
@@ -1165,7 +1170,7 @@ func resolvePixel(p *EmitParams, T float32, acc []uint32, GW, GH, div int, glow 
 		o, *lens = waterPixel(p, T, acc, GW, GH, div, px, py)
 	} else if p.GasOn {
 		if p.Gas != nil {
-			o, *lens = gasPixel(p, p.Gas, px, py, T)
+			o, *lens, *gz = gasPixel(p, p.Gas, px, py, T)
 		}
 	} else {
 		var s [4]float32

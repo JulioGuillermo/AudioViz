@@ -61,6 +61,19 @@ type GasSim struct {
 	t0, t1, t2, t3                          []float32      // scratch
 	bx, by                                  []float32      // where each cell's gas came from this step (back)
 	adv                                     [][3][]float32 // per field carried: back, lowest and highest source
+	// 3D: the gas's depth in each cell, as depth × amount (ZD) and amount (ZW), carried by the
+	// flow (where gases of two depths meet, their depths mix); the scene's surface (depth 0..1 on
+	// the cells) and the cells free around the emitter, set per frame (SetScene); what is solid
+	// is worked out each step from them: what is at the gas's own depth (within Band)
+	ZD, ZW []float32
+	Surf   []float32
+	Free   []uint8
+	Z0     float32 // the emitter's depth (the new gas's)
+	Band   float32
+	DriftZ float32 // depth per second the gas drifts (+ nearer)
+	d3     bool
+	base   []uint8 // the solid cells set from outside (the frame's walls)
+	solid3 []uint8 // (the solid cells this step)
 	// Inj: how much gas the particles gave off in each cell this step (its expansion)
 	Inj    []float32
 	expand float32
@@ -98,7 +111,7 @@ func NewGasSim(W, H int, cs float64) *GasSim {
 
 // fields: the state kept at checkpoints
 func (s *GasSim) fields() []*[]float32 {
-	return []*[]float32{&s.VX, &s.VY, &s.D, &s.Heat, &s.Fuel, &s.Fire, &s.R, &s.G, &s.B, &s.C1x, &s.C1y, &s.C2x, &s.C2y}
+	return []*[]float32{&s.VX, &s.VY, &s.D, &s.Heat, &s.Fuel, &s.Fire, &s.R, &s.G, &s.B, &s.C1x, &s.C1y, &s.C2x, &s.C2y, &s.ZD, &s.ZW}
 }
 
 // Save: the state, compressed (halves). The state is set to what is saved (the pressure
@@ -199,11 +212,14 @@ type GasSimulator interface {
 	Draw(l GasLight) (*GasFrame, error)
 	Checkpoint() ([]byte, error)
 	Restore(b []byte) bool
+	// SetScene: 3D (the CPU only): the scene's surface on the cells (nil: not 3D), the cells free
+	// around the emitter, the new gas's depth, the band of what is solid, its drift (depth/s)
+	SetScene(surf []float32, free []uint8, z0, band, drift float32)
 	Close()
 }
 
 func (s *GasSim) Advance(srcs [][]GasSource, ph *GasPhys, dt float32, solid []uint8) error {
-	s.Solid = solid
+	s.Solid, s.base = solid, solid
 	s.expand = ph.Expand
 	for _, src := range srcs {
 		s.Feed(src, ph, dt)
@@ -300,6 +316,12 @@ func (s *GasSim) Feed(src []GasSource, ph *GasPhys, dt float32) {
 				s.B[i] += d * p.Col[2]
 				s.Heat[i] += ph.Heat * a
 				s.Fuel[i] += ph.Fuel * a
+				if s.d3 {
+					// (3D: it is born at the emitter's depth)
+					wz := a * (ph.Density + ph.Heat + ph.Fuel)
+					s.ZW[i] += wz
+					s.ZD[i] += wz * s.Z0
+				}
 				if m := min(1, ph.Push*w*dt*12); m > 0 {
 					s.VX[i] += (p.VX - s.VX[i]) * m
 					s.VY[i] += (p.VY - s.VY[i]) * m
@@ -363,6 +385,9 @@ func (s *GasSim) back(x, y int, dt float32) (float32, float32) {
 func (s *GasSim) Step(ph *GasPhys, dt float32) {
 	W := s.GW
 	cs := s.CS
+	if s.d3 {
+		s.depth3D(dt)
+	}
 	// 1. forces: heat rises, smoke sinks, the wind, the turbulence (a curl of noise: no
 	// divergence), swirls kept alive (vorticity confinement)
 	wk, diffK, fade, cool, warm, burn := gasStepFactors(ph, cs, dt)
@@ -449,11 +474,11 @@ func (s *GasSim) Step(ph *GasPhys, dt float32) {
 		}
 	})
 	// 4. the smoke, its color, heat and fuel carried by the flow (MacCormack, clamped)
-	s.advectAll([][]float32{s.D, s.R, s.G, s.B, s.Heat, s.Fuel, s.Fire}, dt)
-	s.clearSolid(s.D, s.R, s.G, s.B, s.Heat, s.Fuel, s.Fire)
+	s.advectAll([][]float32{s.D, s.R, s.G, s.B, s.Heat, s.Fuel, s.Fire, s.ZD, s.ZW}, dt)
+	s.clearSolid(s.D, s.R, s.G, s.B, s.Heat, s.Fuel, s.Fire, s.ZD, s.ZW)
 	// the smoke spreads out a little by itself (and its heat): fuller, softer volumes
 	if diffK > 0 {
-		for _, f := range [][]float32{s.D, s.R, s.G, s.B, s.Heat} {
+		for _, f := range [][]float32{s.D, s.R, s.G, s.B, s.Heat, s.ZD, s.ZW} {
 			s.diffuse(f, diffK)
 		}
 	}
@@ -500,6 +525,8 @@ func (s *GasSim) Step(ph *GasPhys, dt float32) {
 				s.B[i] += so * ph.SootCol[2]
 			}
 			s.D[i] *= fade
+			s.ZD[i] *= fade
+			s.ZW[i] *= fade
 			s.R[i] *= fade
 			s.G[i] *= fade
 			s.B[i] *= fade
@@ -552,6 +579,67 @@ func (s *GasSim) diffuse(f []float32, k float32) {
 		}
 	})
 	copy(f, out)
+}
+
+// SetScene: 3D: the scene's surface (depth 0..1 on the cells; nil: not 3D), the cells free around
+// the emitter, the new gas's depth, how near to its depth things are solid, its drift in depth
+// (per second, + nearer)
+func (s *GasSim) SetScene(surf []float32, free []uint8, z0, band, drift float32) {
+	s.Surf, s.Free, s.Z0, s.Band, s.DriftZ, s.d3 = surf, free, z0, band, drift, surf != nil
+}
+
+// zAt: 3D: the gas's depth in cell i (the emitter's where there is none)
+func (s *GasSim) zAt(i int) float32 {
+	if !s.d3 {
+		return 0
+	}
+	if w := s.ZW[i]; w > 1e-4 {
+		return max(0, min(1, s.ZD[i]/w))
+	}
+	return s.Z0
+}
+
+// depth3D: 3D: the gas's depth drifts (DriftZ) and hugs the surfaces it is near (it slides along
+// them, in front of or behind them, instead of crossing them); then what is solid this step:
+// what of the scene is at the gas's own depth there (within Band), not around the emitter, plus
+// the walls set from outside
+func (s *GasSim) depth3D(dt float32) {
+	n := s.GW * s.GH
+	if len(s.solid3) != n {
+		s.solid3 = make([]uint8, n)
+	}
+	hug := min(1, 6*dt)
+	parallelFor(s.GH, func(y0, y1 int) {
+		for i := y0 * s.GW; i < y1*s.GW; i++ {
+			if w := s.ZW[i]; w > 1e-4 {
+				z := s.ZD[i]/w + s.DriftZ*dt
+				if sf := s.Surf[i]; abs32(z-sf) < 2*s.Band {
+					t := sf + s.Band*1.05
+					if z < sf {
+						t = sf - s.Band*1.05
+					}
+					z += (t - z) * hug
+				}
+				s.ZD[i] = max(0, min(1, z)) * w
+			}
+			sol := uint8(0)
+			if s.base != nil {
+				sol = s.base[i]
+			}
+			if sol == 0 && (s.Free == nil || s.Free[i] == 0) && abs32(s.Surf[i]-s.zAt(i)) < s.Band {
+				sol = 1
+			}
+			s.solid3[i] = sol
+		}
+	})
+	s.Solid = s.solid3
+}
+
+func abs32(v float32) float32 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 // project takes the divergence out of the velocity
@@ -879,7 +967,7 @@ func (s *GasSim) Frame(l GasLight) *GasFrame {
 		g.Cells[o+3] = pk(s.G[i], s.B[i])
 		g.Cells[o+4] = pk(s.C1x[i], s.C1y[i])
 		g.Cells[o+5] = pk(s.C2x[i], s.C2y[i])
-		g.Cells[o+6] = pk(s.Heat[i], 0) // (the warmth: the heat haze)
+		g.Cells[o+6] = pk(s.Heat[i], s.zAt(i)) // (the warmth: the heat haze; 3D: its depth)
 	}
 	return g
 }
@@ -1021,7 +1109,7 @@ func gasNoise(x, y float32, seed uint32) float32 {
 // gasPixel: the gas look at (px, py) (premultiplied), as gasPixel in emit.comp: the smoke eaten
 // at its edges by wisps carried by the flow, lit by the light that reaches it (and by the fire),
 // the flame where it is hot in front
-func gasPixel(p *EmitParams, g *GasFrame, px, py, T float32) ([4]float32, [2]float32) {
+func gasPixel(p *EmitParams, g *GasFrame, px, py, T float32) ([4]float32, [2]float32, float32) {
 	v := g.at(px, py)
 	d0, heat := v[0], v[1]
 	// the heat haze: where the air is warm, what is behind it shimmers (a lens moved by noise that
@@ -1034,7 +1122,7 @@ func gasPixel(p *EmitParams, g *GasFrame, px, py, T float32) ([4]float32, [2]flo
 		lens = [2]float32{k * (2*efbm(u, w, p.Seed+51) - 1), k * (2*efbm(u+7.1, w+3.7, p.Seed+51) - 1)}
 	}
 	if d0 < 1e-4 && heat < 1e-4 {
-		return [4]float32{}, lens
+		return [4]float32{}, lens, -1
 	}
 	sc := max(float32(p.GasWispScale), 1)
 	w1 := g.W1
@@ -1071,5 +1159,18 @@ func gasPixel(p *EmitParams, g *GasFrame, px, py, T float32) ([4]float32, [2]flo
 		}
 		o[3] = ac + o[3]*(1-ac)
 	}
-	return o, lens
+	// 3D: at its own depth here: hidden where the scene is nearer (and its depth for the camera
+	// and the depth of field)
+	z := float32(-1)
+	if p.PerZ {
+		z = v[13]
+		k := p.occl(px, py, z)
+		for c := range o {
+			o[c] *= k
+		}
+		if o[3] < 0.01 {
+			z = -1
+		}
+	}
+	return o, lens, z
 }

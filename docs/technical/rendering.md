@@ -524,6 +524,16 @@ blurs, packing into halves) is computed there too, and the cells are copied out.
 simulations are not bit-identical (a chaotic flow then drifts apart), but every renderer draws the
 same simulated frames.
 
+**3D gas** (`gas.d3`, on the CPU): two more carried fields, depth × amount (ZD) and amount (ZW). The
+feed adds amount·z0, advection, diffusion and fading treat them as the smoke, so z = ZD/ZW mixes
+where gases meet (the emitter's z0 where there is none). Each step (`depth3D`) first drifts z
+(`drift_z`) and pulls it to surface ± 1.05·band where it is within 2·band of the scene's surface
+(it slides along it). Then the solid cells: the walls, plus where |surface − z| < band outside
+the free disc around the emitter. The frame's 7th word carries z; `gasPixel` multiplies the
+pixel by the scene's occlusion at that z and writes z to the emitter's depth plane (`PerZ`), so
+the camera and the depth of field take it per pixel. A per-pixel-depth emitter is always behind
+what is nearer.
+
 **Heat haze** (`haze`): the frame's cells carry the warmth too (a 7th word). Where it is warm the
 pixel's lens is haze·(1 − e^(−1.5·warmth)) × (2·fbm − 1) on two axes, the noise rising 3 of its
 sizes (`haze_scale`) a second; it uses the lens plane of the water's lens (`EmitParams.LensOn`,

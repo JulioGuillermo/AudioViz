@@ -244,6 +244,13 @@ type GasLook struct {
 	// by a rising noise of HazeScale px
 	Haze      float64 `yaml:"haze,omitempty"`
 	HazeScale float64 `yaml:"haze_scale,omitempty"`
+	// 3D: with a depth map, the gas has its own depth (born at the emitter's, carried by the flow):
+	// what of the scene is at its depth (within the emitter's collide band) is solid for it, it
+	// slides along the surfaces it is near, nearer things hide it and the 2.5D camera and the
+	// depth of field move and blur it as deep as it is; it drifts in depth DriftZ px/s (into the
+	// scene; the scene's whole depth is about 800 px)
+	D3     bool    `yaml:"d3,omitempty"`
+	DriftZ float64 `yaml:"drift_z,omitempty"`
 }
 
 // DefaultGas: cool smoke rising slowly
@@ -504,6 +511,13 @@ func init() {
 	EmitterPresets["fire_clean"] = fc
 	fc.Gas.Haze, fc.Gas.HazeScale = 6, 25
 	EmitterPresets["fire_clean_haze"] = fc
+	// smoke and fog in the scene's depth (3D)
+	s3 := EmitterPresets["smoke_real"]
+	s3.Gas.D3 = true
+	EmitterPresets["smoke_3d"] = s3
+	f3 := EmitterPresets["fog_gas"]
+	f3.Gas.D3 = true
+	EmitterPresets["fog_3d"] = f3
 	// every preset can turn on the flame look with sensible colors, and has a glow reach ready
 	for k, e := range EmitterPresets {
 		if e.Flame == (FlameLook{}) {

@@ -60,7 +60,9 @@ type gasPre struct {
 	ef    *effects.EmitFrame
 	e     *config.EmitterConfig
 	solid []uint8            // the cells the gas goes round then (nil: none)
-	surf  []float32          // 3D liquid: the scene's surface (depth px at each cell)
+	surf  []float32          // 3D: the scene's surface (the liquid: depth px; the gas: depth 0..1)
+	free  []uint8            // 3D gas: the cells free around the emitter
+	z0    float32            // 3D gas: the emitter's depth
 	scene *effects.Scene     // (and the scene it comes from)
 	c     *config.ClipConfig // the clip then (its keys applied)
 }
@@ -154,8 +156,8 @@ func (s *Session) simOnGPU(e *config.EmitterConfig) bool {
 	case "gpu":
 		return true
 	}
-	if e.Look == "liquid" {
-		return false
+	if e.Look == "liquid" || (e.Look == "gas" && e.Gas.D3) {
+		return false // (the gas in 3D runs on the CPU)
 	}
 	return !strings.EqualFold(s.Cfg.Output.Renderer, "cpu") && os.Getenv("AUDIOVIZ_GAS_CPU") == ""
 }
@@ -310,9 +312,12 @@ func (s *Session) gasClip(li, ci int, c0 *config.ClipConfig, k int, feats []audi
 		e = &d
 	}
 	ef := s.emitParticles(li, ci, c0, c, k, feats)
-	g := gasPre{ef: ef, e: e}
+	g := gasPre{ef: ef, e: e, c: c}
 	if ef != nil {
 		g.solid = s.simSolid(c, e, ef, t, s.gasCell(e))
+		if e.Gas.D3 {
+			s.gasScene3D(&g, c, e, t)
+		}
 	}
 	return g
 }
@@ -379,7 +384,7 @@ func (s *Session) gasSolid(c *config.ClipConfig, e *config.EmitterConfig, ef *ef
 // round at time t: the scene's (collide) and the frame's edges (walls); nil: none
 func (s *Session) simSolid(c *config.ClipConfig, e *config.EmitterConfig, ef *effects.EmitFrame, t, cell float64) []uint8 {
 	var solid []uint8
-	if e.Collide {
+	if e.Collide && !(e.Look == "gas" && e.Gas.D3) { // (the gas in 3D works its solids out itself)
 		solid = s.gasSolid(c, e, ef, t, cell)
 	}
 	if e.Walls {
@@ -415,7 +420,46 @@ func gasPrintOf(g gasPre, sc float64, tb *emitTable, k int) uint64 {
 	if j > 0 {
 		lo = tb.at[j-1] + 1
 	}
-	return gasFingerprint(&ef.P, &ph, tb.births[lo:tb.at[j]+1], g.solid)
+	fp := gasFingerprint(&ef.P, &ph, tb.births[lo:tb.at[j]+1], g.solid)
+	if g.surf != nil {
+		fp ^= gasFingerprint(&ef.P, &g.z0, nil, append(g.free, unsafeBytes(g.surf)...)) * 31
+	}
+	return fp
+}
+
+// gasScene3D: the 3D gas's scene at time t: the surface on the gas's cells (depth 0..1), the
+// cells free around the emitter (as the particles' collide), the new gas's depth (its clip's,
+// else just in front of what is under the emitter)
+func (s *Session) gasScene3D(g *gasPre, c *config.ClipConfig, e *config.EmitterConfig, t float64) {
+	scene := s.simScene(t)
+	if !scene.On() {
+		return
+	}
+	gw, gh, cs := effects.GasGrid(s.W, s.H, s.gasCell(e))
+	ox, oy := float64(s.W)/2, float64(s.H)/2
+	if n := len(g.ef.Births); n > 0 {
+		ox, oy = g.ef.Births[n-1].X, g.ef.Births[n-1].Y
+	}
+	band := e.CollideBand
+	if band <= 0 {
+		band = 0.06
+	}
+	z, ok := clipDepth(&c.Depth, scene, ox, oy)
+	if !ok {
+		z = float64(scene.Ground(float32(ox), float32(oy))) + band*1.2
+	}
+	free := math.Max(e.Width, e.Height)*s.emitScale()*math.Max(c.Scale, 0.01)/2 + 24*s.emitScale()
+	g.surf, g.free = make([]float32, gw*gh), make([]uint8, gw*gh)
+	for j := 0; j < gh; j++ {
+		for i := 0; i < gw; i++ {
+			x, y := (float32(i)+0.5)*cs, (float32(j)+0.5)*cs
+			g.surf[j*gw+i] = scene.At(x, y)
+			if math.Hypot(float64(x)-ox, float64(y)-oy) < free {
+				g.free[j*gw+i] = 1
+			}
+		}
+	}
+	g.z0 = float32(z)
 }
 
 // gasStep: the simulation through frame k (from the moment of frame k - 1): its steps, each fed
@@ -452,5 +496,10 @@ func (s *Session) gasStep(li, ci int, c0 *config.ClipConfig, k int, feats []audi
 		}
 		srcs[j] = src
 	}
+	band := e.CollideBand
+	if band <= 0 {
+		band = 0.06
+	}
+	run.sim.SetScene(g.surf, g.free, g.z0, float32(band), float32(-e.Gas.DriftZ/effects.DepthPx))
 	return run.sim.Advance(srcs, &ph, dt, g.solid)
 }

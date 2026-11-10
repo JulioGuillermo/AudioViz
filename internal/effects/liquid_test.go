@@ -57,13 +57,6 @@ func TestLiquidPool(t *testing.T) {
 	}
 }
 
-func abs32(v float32) float32 {
-	if v < 0 {
-		return -v
-	}
-	return v
-}
-
 // a jet onto a floor at 1080p: some thousands of drops, a pool
 func BenchmarkLiquidStep(b *testing.B) {
 	s := NewLiquidSim(1920, 1080, 6)

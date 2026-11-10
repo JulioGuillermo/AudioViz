@@ -152,3 +152,6 @@ func (g *GasGPU) Restore(b []byte) bool {
 	copy(g.job.Fields(), buf)
 	return true
 }
+
+// SetScene: 3D runs on the CPU (the engine never asks the GPU for it)
+func (g *GasGPU) SetScene(surf []float32, free []uint8, z0, band, drift float32) {}

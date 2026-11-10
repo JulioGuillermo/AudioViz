@@ -612,7 +612,9 @@ vec3 flameRamp(int h, float ht) {
     if (ht < 0.7) return cool + (mid - cool) * ((ht - 0.35) / 0.35);
     return mid + (hot - mid) * ((ht - 0.7) / 0.3);
 }
+float gGasZ = -1.0; // (gasPixel: the gas's depth here; -1 none)
 vec4 gasPixel(int h, vec2 pp, uint seed, float T) {
+    gGasZ = -1.0;
     int o = int(ed[h + 104]) - 1;
     if (o < 0) return vec4(0.0);
     int gw = int(ed[h + 105]), gh = int(ed[h + 106]);
@@ -664,6 +666,14 @@ vec4 gasPixel(int h, vec2 pp, uint seed, float T) {
         float af = smoothstep(0.02, 0.3, ht);
         float ac = af * 0.7; // light: it adds its glow and only partly hides what is behind it
         c = vec4(fc * af + c.rgb * (1.0 - ac), ac + c.a * (1.0 - ac));
+    }
+    // 3D: at its own depth here (as effects.gasPixel): hidden where the scene is nearer, and its
+    // depth for the camera and the depth of field
+    gGasZ = -1.0;
+    if (ed[h + 95] != 0u) {
+        float z = gasV[13];
+        c *= occlAt(h, pp, z);
+        if (c.a >= 0.01) gGasZ = z;
     }
     return c;
 }
@@ -761,6 +771,7 @@ void resolveOne(uint id) {
         int cx = min(x / dv, GW - 1), cy = min(y / dv, GH - 1);
         uint ca = acc[base + uint(cy * GW + cx) * 4u + 3u];
         float zv = ca == 0u ? -1.0 : float(acc[zBase(e) + uint(cy * GW + cx)]) / float(ca);
+        if (ed[h + 43] == 4u) zv = gGasZ; // (the gas look: its own depth here)
         lay[v1.y + n * (lensOn ? 2 : 1) + p] = floatBitsToUint(zv);
     }
 }

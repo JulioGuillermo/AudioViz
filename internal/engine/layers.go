@@ -139,6 +139,11 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fs *
 						z = float64(scene.Ground(float32(ox), float32(oy)))
 					}
 					ok, d = true, pathDepthSettings(d)
+					// (its own depth on every pixel: what is nearer always hides it)
+					d.Behind = true
+					if d.Soft <= 0 {
+						d.Soft = 0.03
+					}
 				}
 				s.placeInDepth(&lf, &d, scene, z, ox, oy, ok)
 				if (ef.P.ZTrack != nil || ef.P.PerZ) && lf.Behind && scene.On() {
@@ -469,6 +474,9 @@ func (s *Session) emitterWords() int {
 			if c.Emitter.Liquid.D3 {
 				n += s.W * s.H // their depth (after its image)
 			}
+		}
+		if c.Emitter != nil && c.Emitter.Look == "gas" && c.Emitter.Gas.D3 {
+			n += s.W * s.H // its depth (after its image)
 		}
 		if len(c.Masks) > 0 {
 			return n + mask
