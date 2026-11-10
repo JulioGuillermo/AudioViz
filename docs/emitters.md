@@ -282,6 +282,11 @@ particle settings are hidden; the *Clouds* group has:
   own thickness: dark cores, lit edges);
 - **Fog by depth**: with a [depth map](depth.md), thicker the farther the scene is (fog in the
   distance, clear near you);
+- **Only between depths of the scene** (with a depth map): from a depth (far) to another (near),
+  0 the farthest of the scene, 1 the nearest. In each pixel there is as much of it as the way from
+  you to the scene has inside those depths: what is nearer stays clear in front of it, what is
+  inside is partly in it, what is beyond is behind all of it — fog between the trees in the middle
+  and the hills, clouds only behind the mountains;
 - **Lightning on the beat**: a flash inside the clouds on each beat.
 
 Presets: **Sky of clouds** (`clouds_sky`, a ceiling to the horizon), **Cloud bank** (`clouds_bank`,
@@ -299,7 +304,13 @@ a band at the top), **Storm sky with lightning** (`clouds_storm`) and **Fog in t
 With the **ocean** look there are no particles either: water below a **horizon**, seen from a
 little above it, with waves of many sizes going away into the distance (each moving as fast as
 real waves of its size), drawn at once at any moment. Its *Ocean* group:
-- **Horizon** (where the water ends, 0 top … 1 bottom);
+- **Horizon** (where the water starts far away, 0 top … 1 bottom) and **Water down to** (where it
+  ends near you: its shore; 1 the bottom of the frame);
+- **In the scene's depth** (with a depth map): the water's depth at the horizon and at its shore
+  (0 the farthest of the scene, 1 the nearest), in between as it goes away. What is nearer than
+  the water stays in front of it; what crosses it goes into it, seen above its waterline, with
+  **foam where things meet it**; **Waterline softness**. Over a photo that already has sea or
+  ground, put the water a little nearer than the photo's own surface;
 - the waves: **Wave size** (px, the longest, near you), **Wave height** (1 a fresh sea), **Sharp
   crests**, **Speed**, where they go (**Waves go towards**, degrees: 0 towards you) and how far
   their directions **spread**;

@@ -478,6 +478,8 @@ func (s *Session) oceanParams(e *config.EmitterConfig, sc float64, idx int, feat
 		SunX: f(o.SunX * W), SunY: f(o.SunY * H), SunCol: rgb(o.SunColor, "#fff0d2"), Glint: f(math.Max(o.Glint, 0)),
 		Foam: f(math.Min(math.Max(o.Foam, 0), 1)), FoamCol: rgb(o.FoamColor, "#e6edf2"),
 		Reflect: f(math.Min(math.Max(o.Reflect, 0), 1)), Fade: f(0.004*H + 1),
+		Bottom: f(math.Min(math.Max(o.Bottom, 0), 1.02) * H), DepthOn: o.Depth,
+		DFar: f(o.DepthFar), DNear: f(o.DepthNear), DSoft: f(math.Max(o.DepthSoft, 0.001)), Contact: f(math.Max(o.ContactFoam, 0)),
 	}
 }
 
@@ -502,6 +504,7 @@ func (s *Session) cloudParams(e *config.EmitterConfig, sc float64, idx int, feat
 		LX: f(math.Sin(a)), LY: f(-math.Cos(a)),
 		LightCol: rgb(c.LightColor, "#ffffff"), ShadowCol: rgb(c.ShadowColor, "#8c98aa"), Shadow: f(math.Max(c.Shadow, 0)),
 		DepthFog: f(math.Max(c.DepthFog, 0)), W: f(W), H: f(H),
+		DepthOn: c.Depth, DFar: f(math.Min(c.DepthFar, c.DepthNear)), DNear: f(math.Max(c.DepthFar, c.DepthNear)),
 	}
 	if c.Lightning > 0 {
 		env := 0.0

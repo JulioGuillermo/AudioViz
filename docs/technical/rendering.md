@@ -604,7 +604,10 @@ goes and the density blends into its mean (coverage·0.55), so far away is a haz
 Shading: 3 samples towards the light (0.12·size apart) of a soft 3-octave density, sun =
 e^(−shadow·(0.4·Σ + 0.6·d)), color = shadow color → light color by sun, the thin edges lit
 through, plus the lightning (from the beat: an envelope decaying in 0.12 s) × (0.2 + 0.7·d).
-Alpha 1 − e^(−4·thickness·d), times 1 − e^(−3·depth_fog·(1 − scene depth)) with fog by depth (the
+With `depth` (only between depths of the scene): d × clamp((near − max(far, scene depth)) /
+(near − far)) — the part of the way from the camera (1) to the scene inside [far, near]. The
+scene's depth for the procedural looks is a grid as fine as `MaxCollideCells` allows
+(div = ⌈√(W·H / MaxCollideCells)⌉: 4 px at 720p, 6 at 1080p). Alpha 1 − e^(−4·thickness·d), times 1 − e^(−3·depth_fog·(1 − scene depth)) with fog by depth (the
 occlusion depth grid). Band and horizon fades multiply d.
 
 **Ocean look** (`effects/proc.go` `oceanPixel`, `emit.comp`'s; look id 6, `OceanParams.Pack`, 32
@@ -620,7 +623,10 @@ by Fresnel (Schlick, 0.02) × reflect, faded where it would leave the top of the
 direction to its point on the frame; glints pow 600 and pow 150 lobes × (0.3 + F). Water color:
 deep × (0.55 + 0.45·N·L) plus the crest color × (height − 0.15)²; foam where the normalized
 height plus noise passes 0.62 − 0.3·foam, broken by a 3-octave noise, gone far away. The bass
-scales the height (1 + bass·BassEnergy).
+scales the height (1 + bass·BassEnergy). `bottom`: hidden below it (its shore). With `depth`: the
+water's depth at row y is far + (near − far)·(y − horizon)/(bottom − horizon) plus a little of
+the wave height; hidden where the scene is nearer (smoothstep(wd, wd + 2·soft, scene depth));
+foam where the scene 1.2 % of H above is in front of the water there (just below a waterline).
 
 **Checkpoints and fingerprints:** the state is stored every second as halves, with the runs of
 zeros left out (`encodeGas`; the GPU's fields are copied out at once first: mapped memory is slow

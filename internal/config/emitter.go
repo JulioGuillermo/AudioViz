@@ -293,6 +293,11 @@ type CloudLook struct {
 	Shadow      float64 `yaml:"shadow"`
 	// with a depth map: more of it the farther (0: none; fog)
 	DepthFog float64 `yaml:"depth_fog,omitempty"`
+	// with a depth map: only between these depths of the scene (0 far … 1 near): what is nearer
+	// stays clear in front of it, what is inside is partly in it, what is beyond is behind all of it
+	Depth     bool    `yaml:"depth,omitempty"`
+	DepthFar  float64 `yaml:"depth_far"`
+	DepthNear float64 `yaml:"depth_near"`
 	// lightning: a flash on each beat (0..1)
 	Lightning float64 `yaml:"lightning,omitempty"`
 }
@@ -300,18 +305,27 @@ type CloudLook struct {
 // DefaultClouds: a sky of white clouds drifting
 func DefaultClouds() CloudLook {
 	return CloudLook{Coverage: 0.5, Density: 1, Scale: 360, Detail: 0.6, Billow: 0.8, WindX: 25, Evolve: 0.05,
-		Soft: 0.1, Horizon: 0.55, LightColor: "#fffaf2", ShadowColor: "#8c98aa", Shadow: 1}
+		Soft: 0.1, Horizon: 0.55, LightColor: "#fffaf2", ShadowColor: "#8c98aa", Shadow: 1, DepthFar: 0, DepthNear: 0.5}
 }
 
 // OceanLook (look "ocean"): procedural water below a horizon (no particles): waves of many
 // sizes going away into perspective, reflecting what is behind it (the sky, the scene: through
 // its lens) more the flatter it is seen, the sun's path on it, foam on the crests
 type OceanLook struct {
-	Horizon float64 `yaml:"horizon"` // where the water ends (0 top … 1 bottom)
-	Size    float64 `yaml:"size"`    // the longest waves (px of a 1080-line frame, near you)
-	Height  float64 `yaml:"height"`  // how high (1 = a fresh sea)
-	Chop    float64 `yaml:"chop"`    // how sharp their crests (0 round … 3 sharp)
-	Speed   float64 `yaml:"speed"`   // how fast they go (1 = as real waves of that size)
+	Horizon float64 `yaml:"horizon"` // where the water starts, far away (0 top … 1 bottom)
+	Bottom  float64 `yaml:"bottom"`  // where it ends near you (its shore; 1 = the frame's bottom)
+	// in the scene's depth (with a depth map): the water's depth at the horizon and at its bottom
+	// (0 far … 1 near); what is nearer than the water stays in front of it, what crosses it goes
+	// into it (seen above its waterline), with foam where they meet
+	Depth       bool    `yaml:"depth,omitempty"`
+	DepthFar    float64 `yaml:"depth_far"`
+	DepthNear   float64 `yaml:"depth_near"`
+	DepthSoft   float64 `yaml:"depth_soft"`
+	ContactFoam float64 `yaml:"contact_foam"`
+	Size        float64 `yaml:"size"`   // the longest waves (px of a 1080-line frame, near you)
+	Height      float64 `yaml:"height"` // how high (1 = a fresh sea)
+	Chop        float64 `yaml:"chop"`   // how sharp their crests (0 round … 3 sharp)
+	Speed       float64 `yaml:"speed"`  // how fast they go (1 = as real waves of that size)
 	// where the waves go (degrees: 0 towards you, 90 to the right) and how far their directions spread
 	WindAngle float64 `yaml:"wind_angle"`
 	Spread    float64 `yaml:"spread"`
@@ -334,7 +348,7 @@ type OceanLook struct {
 
 // DefaultOcean: a fresh sea by day
 func DefaultOcean() OceanLook {
-	return OceanLook{Horizon: 0.5, Size: 700, Height: 1, Chop: 1.2, Speed: 1, Spread: 30, DeepColor: "#0b2a3c",
+	return OceanLook{Horizon: 0.5, Bottom: 1, DepthFar: 0, DepthNear: 1, DepthSoft: 0.02, ContactFoam: 0.5, Size: 700, Height: 1, Chop: 1.2, Speed: 1, Spread: 30, DeepColor: "#0b2a3c",
 		ShallowColor: "#1f7a7a", SunX: 0.65, SunY: 0.3, SunColor: "#fff0d2", Glint: 1, Foam: 0.2, FoamColor: "#e6edf2",
 		Reflect: 1, Bass: 0.5}
 }

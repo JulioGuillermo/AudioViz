@@ -766,6 +766,11 @@ vec4 cloudPixel(int h, vec2 pp, uint seed, float T) {
     vec2 L = vec2(edf(o + 13), edf(o + 14));
     for (int k = 1; k <= 3; k++) sum += cloudDensity(o, q + L * (float(k) * edf(o + 2) * 0.12), T, far, false, seed);
     float sun = exp(-edf(o + 15) * (sum * 0.4 + d * 0.6));
+    if (edf(o + 27) > 0.5 && ed[h + 99] != 0u) {
+        // only between its depths (as effects.cloudPixel)
+        float sd = sceneDepthAt(h, pp), df = edf(o + 28), dn = edf(o + 29);
+        d *= clamp((dn - max(df, sd)) / max(dn - df, 0.01), 0.0, 1.0);
+    }
     float a = 1.0 - exp(-edf(o + 1) * d * 4.0);
     if (edf(o + 22) > 0.0 && ed[h + 99] != 0u) a *= 1.0 - exp(-edf(o + 22) * (1.0 - sceneDepthAt(h, pp)) * 3.0);
     vec3 lc = vec3(edf(o + 16), edf(o + 17), edf(o + 18)), sh = vec3(edf(o + 19), edf(o + 20), edf(o + 21));
@@ -830,12 +835,31 @@ vec4 oceanPixel(int h, vec2 pp, uint seed, float T) {
         foam = min(1.0, fa * 3.0) * smoothstep(fl, fl + 0.25, hn + 0.3 * (f - 0.5)) * smoothstep(0.4, 0.65, f) *
             smoothstep(2.0, 8.0, 2.0 * size * 0.3 / (z * z));
     }
+    // down to its bottom (its shore), and in the scene's depth (as effects.oceanPixel)
+    float bot = edf(o + 29), bs = 0.006 * H_;
+    float vis = 1.0 - smoothstep(bot - bs, bot + bs, pp.y);
+    if (edf(o + 30) > 0.5 && ed[h + 99] != 0u) {
+        float ds = edf(o + 33), df = edf(o + 31), dn = edf(o + 32);
+        float wave = (hn - 0.35) * 0.02 * min(height, 2.0);
+        float wd = df + (dn - df) * clamp(dy / max(bot - hor, 1.0), 0.0, 1.0) + wave;
+        vis *= 1.0 - smoothstep(wd, wd + 2.0 * ds, sceneDepthAt(h, pp));
+        float ct = edf(o + 34);
+        if (ct > 0.0) {
+            float r = 0.012 * H_;
+            float wu = df + (dn - df) * clamp((dy - r) / max(bot - hor, 1.0), 0.0, 1.0) + wave;
+            float up = smoothstep(wu, wu + 2.0 * ds, sceneDepthAt(h, vec2(pp.x, pp.y - r)));
+            if (up > 0.0) {
+                float f = cfbm(vec2(wx, wz) / (size * 0.05), T * 0.6, seed + 9u, 2);
+                foam = max(foam, min(1.0, ct * up * smoothstep(0.25, 0.55, f)));
+            }
+        }
+    }
     vec3 deep = vec3(edf(o + 11), edf(o + 12), edf(o + 13)), shal = vec3(edf(o + 14), edf(o + 15), edf(o + 16));
     vec3 sc = vec3(edf(o + 19), edf(o + 20), edf(o + 21)), fc = vec3(edf(o + 24), edf(o + 25), edf(o + 26));
     vec3 wcol = deep * (0.55 + 0.45 * ndl) + shal * sss;
     vec3 col = (wcol * (1.0 - R) + spec * sc) * (1.0 - foam) + fc * foam;
     float a = (1.0 - R) * (1.0 - foam) + foam;
-    float hf = smoothstep(0.0, edf(o + 28), dy);
+    float hf = smoothstep(0.0, edf(o + 28), dy) * vis;
     gLens = (s - pp) * hf;
     return vec4(col, a) * hf;
 }

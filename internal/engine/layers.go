@@ -160,9 +160,14 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fs *
 					ef.P.Occl, ef.P.OGW, ef.P.OGH, ef.P.ODiv, ef.P.OSoft = g, gw, gh, div, lf.DepthSoft
 					lf.Behind = false // (done per particle)
 				}
-				if cp := ef.P.Clouds; cp != nil && cp.DepthFog > 0 && scene.On() && ef.P.Occl == nil {
-					// the fog of the clouds look: the scene's depth on screen (how far each pixel is)
-					div := effects.CollideDiv(s.W, s.H)
+				if cp, op := ef.P.Clouds, ef.P.Ocean; ((cp != nil && (cp.DepthFog > 0 || cp.DepthOn)) || (op != nil && op.DepthOn)) && scene.On() && ef.P.Occl == nil {
+					// the procedural looks (clouds' fog and depths, the ocean's depth): the scene's depth
+					// on screen (how far each pixel is), as fine as the grid allows (sharp edges)
+					div := int(math.Ceil(math.Sqrt(float64(s.W*s.H) / float64(effects.MaxCollideCells))))
+					div = max(div, 2)
+					for ((s.W+div-1)/div)*((s.H+div-1)/div) > effects.MaxCollideCells {
+						div++
+					}
 					gw, gh := (s.W+div-1)/div, (s.H+div-1)/div
 					g := make([]float32, gw*gh)
 					for cy := 0; cy < gh; cy++ {

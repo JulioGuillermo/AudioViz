@@ -20,12 +20,15 @@ type CloudParams struct {
 	LightCol, ShadowCol [3]float32
 	Shadow              float32
 	DepthFog            float32 // with the scene's depth (EmitParams.Occl): more the farther
-	Flash               float32 // the lightning now (0..1)
-	W, H                float32 // the frame
+	// only between these depths of the scene (EmitParams.Occl; 0 far … 1 near)
+	DepthOn     bool
+	DFar, DNear float32
+	Flash       float32 // the lightning now (0..1)
+	W, H        float32 // the frame
 }
 
 // CloudWords: the GPU's words of the clouds' params (EmitParams.Clouds)
-const CloudWords = 28
+const CloudWords = 32
 
 // Pack: the params as emit.comp reads them
 func (c *CloudParams) Pack() []float32 {
@@ -36,7 +39,7 @@ func (c *CloudParams) Pack() []float32 {
 	return []float32{c.Cov, c.Dens, c.Scale, c.Detail, c.Billow, c.WindX, c.WindY, c.Evolve,
 		c.Top, c.Bottom, c.Soft, b, c.Horizon, c.LX, c.LY, c.Shadow,
 		c.LightCol[0], c.LightCol[1], c.LightCol[2], c.ShadowCol[0], c.ShadowCol[1], c.ShadowCol[2],
-		c.DepthFog, c.Flash, c.W, c.H, c.EdgeSoft, 0}
+		c.DepthFog, c.Flash, c.W, c.H, c.EdgeSoft, b2f(c.DepthOn), c.DFar, c.DNear, 0, 0}
 }
 
 // cgrad: 3D gradient noise (about 0..1) at (x, y, z): smoother than value noise, no grid
@@ -139,6 +142,11 @@ func cloudPixel(p *EmitParams, c *CloudParams, px, py, T float32) [4]float32 {
 	}
 	// (and its own thickness here: darker in its core, light at its edges)
 	sun := float32(math.Exp(float64(-c.Shadow * (sum*0.4 + d*0.6))))
+	if c.DepthOn && p.Occl != nil {
+		// only between its depths: the part of the way from the camera to the scene inside them
+		sd := p.sceneDepthAt(px, py)
+		d *= max(0, min(1, (c.DNear-max(c.DFar, sd))/max(c.DNear-c.DFar, 0.01)))
+	}
 	a := 1 - float32(math.Exp(float64(-c.Dens*d*4)))
 	if c.DepthFog > 0 && p.Occl != nil {
 		// fog: thicker the farther the scene is here
@@ -185,10 +193,15 @@ type OceanParams struct {
 	FoamCol    [3]float32
 	Reflect    float32 // how much it reflects what is behind (through its lens)
 	Fade       float32 // the horizon's softness (px)
+	Bottom     float32 // where it ends near you (px from the top)
+	// in the scene's depth (EmitParams.Occl): at the horizon and at its bottom, the softness of
+	// where the scene crosses it, the foam there
+	DepthOn                     bool
+	DFar, DNear, DSoft, Contact float32
 }
 
 // OceanWords: the GPU's words of the ocean's params (EmitParams.Ocean)
-const OceanWords = 32
+const OceanWords = 36
 
 // OceanWaves: how many waves are summed
 const OceanWaves = 12
@@ -198,7 +211,15 @@ func (o *OceanParams) Pack() []float32 {
 	return []float32{o.Horizon, o.W, o.H, o.Size, o.Height, o.Chop, o.Speed, o.Spread,
 		o.DirX, o.DirZ, o.G, o.Deep[0], o.Deep[1], o.Deep[2], o.Shallow[0], o.Shallow[1], o.Shallow[2],
 		o.SunX, o.SunY, o.SunCol[0], o.SunCol[1], o.SunCol[2], o.Glint, o.Foam,
-		o.FoamCol[0], o.FoamCol[1], o.FoamCol[2], o.Reflect, o.Fade, 0, 0, 0}
+		o.FoamCol[0], o.FoamCol[1], o.FoamCol[2], o.Reflect, o.Fade, o.Bottom, b2f(o.DepthOn), o.DFar, o.DNear,
+		o.DSoft, o.Contact, 0}
+}
+
+func b2f(b bool) float32 {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 func norm3(x, y, z float32) (float32, float32, float32) {
@@ -274,6 +295,28 @@ func oceanPixel(p *EmitParams, o *OceanParams, px, py, T float32) ([4]float32, [
 		fl := 0.62 - 0.3*o.Foam
 		foam = min(1, o.Foam*3) * smooth32(fl, fl+0.25, hn+0.3*(f-0.5)) * smooth32(0.4, 0.65, f) * smooth32(2, 8, 2*o.Size*0.3/(z*z))
 	}
+	// where it is: down to its bottom (its shore), and in the scene's depth: hidden where the scene
+	// is nearer than the water there, foam where they meet
+	bs := 0.006 * o.H
+	vis := 1 - smooth32(o.Bottom-bs, o.Bottom+bs, py)
+	if o.DepthOn && p.Occl != nil {
+		wave := (hn - 0.35) * 0.02 * min(o.Height, 2)
+		wdAt := func(y float32) float32 {
+			return o.DFar + (o.DNear-o.DFar)*max(0, min(1, (y-o.Horizon)/max(o.Bottom-o.Horizon, 1))) + wave
+		}
+		wd := wdAt(py)
+		vis *= 1 - smooth32(wd, wd+2*o.DSoft, p.sceneDepthAt(px, py))
+		if o.Contact > 0 {
+			// foam just below where something stands in the water (the scene in front of it a
+			// little above here)
+			r := 0.012 * o.H
+			up := smooth32(wdAt(py-r), wdAt(py-r)+2*o.DSoft, p.sceneDepthAt(px, py-r))
+			if up > 0 {
+				f := cfbm(wx/(o.Size*0.05), wz/(o.Size*0.05), T*0.6, p.Seed+9, 2)
+				foam = max(foam, min(1, o.Contact*up*smooth32(0.25, 0.55, f)))
+			}
+		}
+	}
 	var out [4]float32
 	for k := 0; k < 3; k++ {
 		wcol := o.Deep[k]*(0.55+0.45*ndl) + o.Shallow[k]*sss
@@ -281,7 +324,7 @@ func oceanPixel(p *EmitParams, o *OceanParams, px, py, T float32) ([4]float32, [
 		out[k] = col*(1-foam) + o.FoamCol[k]*foam
 	}
 	out[3] = (1-R)*(1-foam) + foam
-	hf := smooth32(0, o.Fade, dy)
+	hf := smooth32(0, o.Fade, dy) * vis
 	for k := range out {
 		out[k] *= hf
 	}
