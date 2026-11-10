@@ -421,6 +421,9 @@ func gasPrintOf(g gasPre, sc float64, tb *emitTable, k int) uint64 {
 		lo = tb.at[j-1] + 1
 	}
 	fp := gasFingerprint(&ef.P, &ph, tb.births[lo:tb.at[j]+1], g.solid)
+	if ef.P.Route {
+		fp ^= gasFingerprint(&ef.P, &[2]float64{e.RouteWidth, e.RoutePull}, nil, nil) * 41
+	}
 	if g.surf != nil {
 		fp ^= gasFingerprint(&ef.P, &g.z0, nil, append(g.free, unsafeBytes(g.surf)...)) * 31
 	}
@@ -501,5 +504,27 @@ func (s *Session) gasStep(li, ci int, c0 *config.ClipConfig, k int, feats []audi
 		band = 0.06
 	}
 	run.sim.SetScene(g.surf, g.free, g.z0, float32(band), float32(-e.Gas.DriftZ/effects.DepthPx))
+	gw, gh, cs := effects.GasGrid(s.W, s.H, s.gasCell(e))
+	run.sim.SetGuide(s.simGuide(ef, e, gw, gh, cs))
 	return run.sim.Advance(srcs, &ph, dt, g.solid)
+}
+
+// simGuide: the particles' route as a guide for the simulated flow (effects.SimGuide) on a
+// gw×gh grid of cs px: where it is drawn, or from where the emitter is now; nil: no route
+func (s *Session) simGuide(ef *effects.EmitFrame, e *config.EmitterConfig, gw, gh int, cs float32) []float32 {
+	P := &ef.P
+	if !P.Route || P.RouteK <= 0 || len(P.Path) < 6 {
+		return nil
+	}
+	var sx, sy float32
+	if n := len(ef.Births); !P.RouteFixed && n > 0 {
+		sx, sy = float32(ef.Births[n-1].X)-P.Path[0], float32(ef.Births[n-1].Y)-P.Path[1]
+	}
+	w := e.RouteWidth
+	if w <= 0 {
+		w = 120
+	}
+	sc := s.emitScale()
+	return effects.SimGuide(P.Path, P.PathClosed, sx, sy, gw, gh, cs, float32(w*sc), float32(P.Speed),
+		float32(math.Min(math.Max(e.RoutePull, 0), 1)), float32(P.RouteK))
 }

@@ -49,6 +49,11 @@ type EmitterConfig struct {
 	// route (as far along it as their launch and the forces would take them; turbulence stays),
 	// between a mix of both
 	RouteStrength float64 `yaml:"route_strength"`
+	// with the simulated looks (gas, liquid) the route is also a channel that guides the flow:
+	// its half width (px of a 1080-line frame; it fades out by twice that) and how hard it pulls
+	// what strays back to it (0..1)
+	RouteWidth float64 `yaml:"route_width,omitempty"`
+	RoutePull  float64 `yaml:"route_pull,omitempty"`
 	// A floor they bounce on: px below the emitter (0 = none) or the scene's (FloorDepth: where
 	// the depth below the emitter comes up to its own); how much speed they keep at each bounce
 	// (0..1) and how much of their sideways speed (friction, 0..1)
@@ -659,6 +664,9 @@ func init() {
 			e.Glow.Radius = 60
 		}
 		e.RouteStrength = 1
+		if e.RouteWidth == 0 {
+			e.RouteWidth, e.RoutePull = 120, 0.5
+		}
 		if e.Water == (WaterLook{}) {
 			e.Water = DefaultWater()
 		}

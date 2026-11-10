@@ -73,6 +73,30 @@ type LiquidSim struct {
 	spray                []bool  // which drops fly by themselves (this step)
 	exK                  []uint8 // (extrapolate's scratch)
 	exV, exN             []float32
+	// Guide: the route's guide on the cells (SimGuide; set per frame: nil none)
+	Guide []float32
+}
+
+// guideAt: the route's guide at cell (i, j) (clamped to the grid): velocity and weight
+func (s *LiquidSim) guideAt(i, j int) (float32, float32, float32) {
+	i, j = max(0, min(s.GW-1, i)), max(0, min(s.GH-1, j))
+	k := (j*s.GW + i) * 3
+	return s.Guide[k], s.Guide[k+1], s.Guide[k+2]
+}
+
+// guideDrop: a drop's velocity at (x, y) after gravity (gx, gy: px/s²) over dt, in the route's
+// channel carried like in a pipe: gravity less as the guide pulls, pulled towards its velocity
+func (s *LiquidSim) guideDrop(x, y, vx, vy, gx, gy, dt float32) (float32, float32) {
+	if s.Guide == nil {
+		return vx + gx*dt, vy + gy*dt
+	}
+	tx, ty, w := s.guideAt(int(x/s.CS), int(y/s.CS))
+	vx, vy = vx+gx*dt*(1-w), vy+gy*dt*(1-w)
+	if w <= 0 {
+		return vx, vy
+	}
+	k := guideK(w, dt)
+	return vx + k*(tx-vx), vy + k*(ty-vy)
 }
 
 // liquid cell kinds
@@ -291,8 +315,7 @@ func (s *LiquidSim) Step(ph *LiquidPhys, dt float32) {
 			x, y := s.X[q], s.Y[q]
 			var nx, ny float32
 			if s.spray[q] {
-				s.VX[q] += ph.GravX * dt
-				s.VY[q] += ph.GravY * dt
+				s.VX[q], s.VY[q] = s.guideDrop(x, y, s.VX[q], s.VY[q], ph.GravX, ph.GravY, dt)
 				nx, ny = x+dt*s.VX[q], y+dt*s.VY[q]
 			} else {
 				nu, nv := s.sampleU(s.u, x, y), s.sampleV(s.v, x, y)
@@ -409,14 +432,36 @@ func (s *LiquidSim) grid(ph *LiquidPhys, dt float32, i0, j0, i1, j1 int) {
 	// the forces (on the sides that have liquid; FLIP's change counts them)
 	copy(s.u0, s.u)
 	copy(s.v0, s.v)
-	eachU(func(_, _, k int) {
+	// gravity, and in the route's channel each side carried towards the guide of its two cells
+	// (like in a pipe: gravity less as the guide pulls)
+	eachU(func(i, j, k int) {
 		if s.uw[k] > 0 {
-			s.u[k] += ph.GravX * dt
+			if s.Guide == nil {
+				s.u[k] += ph.GravX * dt
+				return
+			}
+			ax, _, aw := s.guideAt(i-1, j)
+			bx, _, bw := s.guideAt(i, j)
+			w := (aw + bw) / 2
+			s.u[k] += ph.GravX * dt * (1 - w)
+			if w > 0 {
+				s.u[k] += guideK(w, dt) * ((ax+bx)/2 - s.u[k])
+			}
 		}
 	})
-	eachV(func(_, _, k int) {
+	eachV(func(i, j, k int) {
 		if s.vw[k] > 0 {
-			s.v[k] += ph.GravY * dt
+			if s.Guide == nil {
+				s.v[k] += ph.GravY * dt
+				return
+			}
+			_, ay, aw := s.guideAt(i, j-1)
+			_, by, bw := s.guideAt(i, j)
+			w := (aw + bw) / 2
+			s.v[k] += ph.GravY * dt * (1 - w)
+			if w > 0 {
+				s.v[k] += guideK(w, dt) * ((ay+by)/2 - s.v[k])
+			}
 		}
 	})
 	// nothing goes through what is solid
@@ -599,7 +644,8 @@ func (s *LiquidSim) step3D(ph *LiquidPhys, dt float32) {
 	parallelFor(n, func(q0, q1 int) {
 		for q := q0; q < q1; q++ {
 			x, y, z := s.X[q], s.Y[q], s.Z[q]
-			vx, vy, vz := s.VX[q]+ph.GravX*dt, s.VY[q]+ph.GravY*dt, s.VZ[q]+ph.GravZ*dt
+			vx, vy := s.guideDrop(x, y, s.VX[q], s.VY[q], ph.GravX, ph.GravY, dt)
+			vz := s.VZ[q] + ph.GravZ*dt
 			nx, ny, nz := x+vx*dt, y+vy*dt, z+vz*dt
 			if s.solidAt(nx, ny, ph) {
 				switch {

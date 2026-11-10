@@ -80,6 +80,7 @@ type GasSim struct {
 	// Solid: the cells the gas goes round this frame (the scene at the emitter's depth; nil:
 	// none): no gas in them, no flow through their sides
 	Solid []uint8
+	guide []float32 // the route's guide (SimGuide; nil: none)
 }
 
 // GasGrid: the grid of a W×H frame with cells of about cs px (coarser past GasMaxCells)
@@ -215,6 +216,8 @@ type GasSimulator interface {
 	// SetScene: 3D (the CPU only): the scene's surface on the cells (nil: not 3D), the cells free
 	// around the emitter, the new gas's depth, the band of what is solid, its drift (depth/s)
 	SetScene(surf []float32, free []uint8, z0, band, drift float32)
+	// SetGuide: the route's guide on the cells (SimGuide; nil: none)
+	SetGuide(g []float32)
 	Close()
 }
 
@@ -228,6 +231,7 @@ func (s *GasSim) Advance(srcs [][]GasSource, ph *GasPhys, dt float32, solid []ui
 	return nil
 }
 func (s *GasSim) Draw(l GasLight) (*GasFrame, error) { return s.Frame(l), nil }
+func (s *GasSim) SetGuide(g []float32)               { s.guide = g }
 func (s *GasSim) Checkpoint() ([]byte, error)        { return s.Save(), nil }
 func (s *GasSim) Restore(b []byte) bool              { return s.Load(b) }
 func (s *GasSim) Close()                             {}
@@ -440,6 +444,12 @@ func (s *GasSim) Step(ph *GasPhys, dt float32) {
 					k := ph.Turb * (ph.Turb / ph.TurbScale) * ph.TurbScale / (2 * cs)
 					fx += k * (psi[yd*W+x] - psi[yu*W+x])
 					fy -= k * (psi[y*W+xr] - psi[y*W+xl])
+				}
+				if g := s.guide; g != nil && g[i*3+2] > 0 {
+					// the route's channel: towards its velocity (as the wind)
+					gk := guideK(g[i*3+2], dt)
+					fx += gk * (g[i*3] - s.VX[i]) / dt
+					fy += gk * (g[i*3+1] - s.VY[i]) / dt
 				}
 				s.t1[i] = s.VX[i] + fx*dt
 				s.t3[i] = s.VY[i] + fy*dt

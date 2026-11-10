@@ -628,6 +628,16 @@ water's depth at row y is far + (near − far)·(y − horizon)/(bottom − hori
 the wave height; hidden where the scene is nearer (smoothstep(wd, wd + 2·soft, scene depth));
 foam where the scene 1.2 % of H above is in front of the water there (just below a waterline).
 
+**The route as a guide** (`effects/guide.go`, gas and liquid): `SimGuide` turns the particles'
+route (sampled path, moved to the emitter unless `route_fixed`) into a field per cell: the
+nearest point of the route within 2·width, a target velocity = speed·tangent + pull·2·min(d, width)
+towards the route, a weight route_strength·(1 − smoothstep(width, 2·width, d)). Each step the
+velocity is relaxed towards it, k = 1 − e^(−4·w·dt) (`GuideRate`), like the wind: the gas in its
+forces (gas.comp fields 51–53), the liquid on its grid's sides (the mean of their two cells),
+its spray drops and its 3D drops, where gravity is also × (1 − w) (a pipe); liquid.comp reads it
+from binding 6 (Cfg f2.x: on). Built per simulated frame (not in the fingerprint pass); the
+fingerprint has the route's samples, the births and `route_width`/`route_pull`.
+
 **Checkpoints and fingerprints:** the state is stored every second as halves, with the runs of
 zeros left out (`encodeGas`; the GPU's fields are copied out at once first: mapped memory is slow
 to read value by value). Checkpoints of the CPU and GPU simulations are the same format.

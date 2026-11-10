@@ -15,6 +15,8 @@ type LiquidSimulator interface {
 	Advance(ph *LiquidPhys, dt float32, steps int, solid []uint8) error
 	// SetSurface: 3D: the scene's surface this frame (nil none) and px per unit of depth
 	SetSurface(surf []float32, dp float32, d3 bool)
+	// SetGuide: the route's guide on the cells (SimGuide; nil: none)
+	SetGuide(g []float32)
 	Substeps(dt float32, ph *LiquidPhys) int
 	Particles() []Particle
 	Save() []byte
@@ -34,7 +36,8 @@ func (s *LiquidSim) NextBirth() *int32 { return &s.Next }
 func (s *LiquidSim) SetSurface(surf []float32, dp float32, d3 bool) {
 	s.Surf, s.DP, s.D3 = surf, dp, d3
 }
-func (s *LiquidSim) Close() {}
+func (s *LiquidSim) Close()               {}
+func (s *LiquidSim) SetGuide(g []float32) { s.Guide = g }
 
 // LiquidGPU: the liquid simulated on the GPU (gpu.LiquidJob, liquid.comp): the steps of a frame
 // there, the drops (LiquidSim's state) uploaded before and read back after
@@ -83,8 +86,13 @@ func (g *LiquidGPU) Advance(ph *LiquidPhys, dt float32, steps int, solid []uint8
 	if ph.Walls {
 		walls = 1
 	}
+	guide := float32(0)
+	if s.Guide != nil {
+		guide = 1
+		copy(g.job.Guide(), s.Guide)
+	}
 	copy(g.job.Cfg(), []float32{ib(int32(s.GW)), ib(int32(s.GH)), ib(int32(n)), ib(on),
-		s.CS, s.W, s.H, ph.Floor, ph.GravX, ph.GravY, ph.Flip, walls})
+		s.CS, s.W, s.H, ph.Floor, ph.GravX, ph.GravY, ph.Flip, walls, guide, 0, 0, 0})
 	if solid != nil || g.lastSolid {
 		sb := g.job.Solid()
 		clear(sb)

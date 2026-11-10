@@ -16,7 +16,12 @@ type GasGPU struct {
 	T   float64
 	// solid: the solid cells' field holds some (cleared when they go)
 	solid bool
+	// the route's guide (SimGuide; nil: none), whether its fields hold one
+	guide   []float32
+	guideOn bool
 }
+
+func (g *GasGPU) SetGuide(gd []float32) { g.guide = gd }
 
 // NewGasGPU: an empty gas over a W×H frame, cells of about cs px, on GPU deviceIndex
 func NewGasGPU(deviceIndex, W, H int, cs float64) (*GasGPU, error) {
@@ -25,7 +30,7 @@ func NewGasGPU(deviceIndex, W, H int, cs float64) (*GasGPU, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &GasGPU{job: job, GW: gw, GH: gh, CS: c}, nil
+	return &GasGPU{job: job, GW: gw, GH: gh, CS: c, guideOn: true}, nil // (guideOn: its fields cleared first)
 }
 
 func (g *GasGPU) Close() { g.job.Close() }
@@ -65,6 +70,19 @@ func (g *GasGPU) Advance(srcs [][]GasSource, ph *GasPhys, dt float32, solid []ui
 		}
 		copy(g.job.Fields()[49*n:], buf) // (gas.comp's SOL)
 		g.solid = solid != nil
+	}
+	// the route's guide (gas.comp's GDX, GDY, GDW)
+	if g.guide != nil || g.guideOn {
+		n := g.GW * g.GH
+		f := g.job.Fields()
+		for i := 0; i < n; i++ {
+			if g.guide != nil {
+				f[51*n+i], f[52*n+i], f[53*n+i] = g.guide[i*3], g.guide[i*3+1], g.guide[i*3+2]
+			} else {
+				f[53*n+i] = 0
+			}
+		}
+		g.guideOn = g.guide != nil
 	}
 	g.job.Begin()
 	buf := make([]float32, 0, 1024)

@@ -10,12 +10,14 @@ layout(std430, set = 0, binding = 0) readonly buffer Cfg {
     ivec4 c0; // cells across, down, drops, floor on
     vec4 f0;  // cell size (px), frame width, height (px), floor (y px)
     vec4 f1;  // gravity x, y (px/s²), FLIP's share, walls (1)
+    vec4 f2;  // the route's guide (1: on), -, -, -
 } C;
 layout(std430, set = 0, binding = 1) buffer Drops { float dr[]; };  // x, y, vx, vy, born: CAP each
 layout(std430, set = 0, binding = 2) buffer GridF { float gf[]; };  // u, v, u0, v0, uE, vE, p, div, p2
 layout(std430, set = 0, binding = 3) buffer GridI { int gi[]; };    // u sums, u weights, v sums, v weights, count, kind, u known, v known
 layout(std430, set = 0, binding = 4) readonly buffer Solid { uint sol[]; }; // 1: solid cell
 layout(std430, set = 0, binding = 5) buffer Spray { uint spr[]; };  // 1: the drop flies by itself
+layout(std430, set = 0, binding = 6) readonly buffer Guide { float gd[]; }; // the route's guide: vx, vy, weight per cell
 
 layout(push_constant) uniform Push {
     int kernel;
@@ -125,6 +127,21 @@ void p2gK(int q) {
     splat(oUS, oUW, GW + 1, GH, x / CS, y / CS - 0.5, VXq(q));
     splat(oVS, oVW, GW, GH + 1, x / CS - 0.5, y / CS, VYq(q));
 }
+// the route's guide at cell (i, j), clamped (as effects.LiquidSim.guideAt); its pull over dt
+vec3 guideAt(int i, int j) {
+    i = clamp(i, 0, GW - 1); j = clamp(j, 0, GH - 1);
+    int k = (j * GW + i) * 3;
+    return vec3(gd[k], gd[k + 1], gd[k + 2]);
+}
+float guideK(float w, float dt) { return 1.0 - exp(-4.0 * w * dt); } // (effects.GuideRate)
+// a drop's velocity after gravity over dt, in the channel carried like in a pipe (as
+// effects.LiquidSim.guideDrop)
+vec2 guideDrop(float x, float y, vec2 v, float dt) {
+    if (C.f2.x < 0.5) return v + C.f1.xy * dt;
+    vec3 g = guideAt(int(x / CS), int(y / CS));
+    v += C.f1.xy * dt * (1.0 - g.z);
+    return g.z > 0.0 ? v + guideK(g.z, dt) * (g.xy - v) : v;
+}
 // 4: the sides: their velocity (before the forces: u0), the forces, nothing through solid sides
 void facesK(int f) {
     float dt = K.dt;
@@ -133,7 +150,15 @@ void facesK(int f) {
         int ws = gi[oUW + f];
         float v = ws > 0 ? (float(gi[oUS + f]) / VFIX) / (float(ws) / WFIX) : 0.0;
         gf[oU0 + f] = v;
-        if (ws > 0) v += C.f1.x * dt;
+        if (ws > 0) {
+            if (C.f2.x < 0.5) v += C.f1.x * dt;
+            else {
+                vec3 a = guideAt(i - 1, j), b = guideAt(i, j);
+                float w = (a.z + b.z) / 2.0;
+                v += C.f1.x * dt * (1.0 - w);
+                if (w > 0.0) v += guideK(w, dt) * ((a.x + b.x) / 2.0 - v);
+            }
+        }
         if (kindAt(i - 1, j) == SOLID || kindAt(i, j) == SOLID) v = 0.0;
         gf[oU + f] = v;
         return;
@@ -144,7 +169,15 @@ void facesK(int f) {
     int ws = gi[oVW + f];
     float v = ws > 0 ? (float(gi[oVS + f]) / VFIX) / (float(ws) / WFIX) : 0.0;
     gf[oV0 + f] = v;
-    if (ws > 0) v += C.f1.y * dt;
+    if (ws > 0) {
+        if (C.f2.x < 0.5) v += C.f1.y * dt;
+        else {
+            vec3 a = guideAt(i, j - 1), b = guideAt(i, j);
+            float w = (a.z + b.z) / 2.0;
+            v += C.f1.y * dt * (1.0 - w);
+            if (w > 0.0) v += guideK(w, dt) * ((a.y + b.y) / 2.0 - v);
+        }
+    }
     if (kindAt(i, j - 1) == SOLID || kindAt(i, j) == SOLID) v = 0.0;
     gf[oV + f] = v;
 }
@@ -268,7 +301,8 @@ void g2pK(int q) {
     float x = X(q), y = Y(q), vx = VXq(q), vy = VYq(q);
     float nx, ny;
     if (spr[q] != 0u) {
-        vx += C.f1.x * dt; vy += C.f1.y * dt;
+        vec2 gv = guideDrop(x, y, vec2(vx, vy), dt);
+        vx = gv.x; vy = gv.y;
         nx = x + dt * vx; ny = y + dt * vy;
     } else {
         float nu = sampleU(oU, x, y), nv = sampleV(oV, x, y);

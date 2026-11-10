@@ -37,6 +37,7 @@ const int ADV = 23; // 7 fields × (back, lowest, highest)
 const int SUN = 44, AMB = 45, FIRE_E = 46, BL1 = 47, BL2 = 48;
 const int SOL = 49; // 1: a solid cell this frame (the gas goes round it)
 const int INJ = 50; // the gas the particles gave off in each cell this step (its expansion)
+const int GDX = 51, GDY = 52, GDW = 53; // the route's guide (effects.SimGuide): velocity, weight
 // (GasFieldCount in gpu/gas.go)
 
 int GW, GH, N;
@@ -169,6 +170,13 @@ void forces(int i) {
         float k = C.f2.z * (C.f2.z / C.f2.w) * C.f2.w / (2.0 * CS);
         fx += k * (F(PSI, yd * GW + x) - F(PSI, yu * GW + x));
         fy -= k * (F(PSI, y * GW + xr) - F(PSI, y * GW + xl));
+    }
+    float gw = F(GDW, i);
+    if (gw > 0.0) {
+        // the route's channel: towards its velocity (as effects.GasSim.Step)
+        float gk = 1.0 - exp(-4.0 * gw * dt); // (effects.GuideRate)
+        fx += gk * (F(GDX, i) - vx) / dt;
+        fy += gk * (F(GDY, i) - vy) / dt;
     }
     S(T1, i, vx + fx * dt);
     S(T3, i, vy + fy * dt);

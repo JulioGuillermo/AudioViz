@@ -73,7 +73,8 @@ export function RouteSection({ obj, ctx, edit, kf }) {
   const on = hasRoute(obj);
   return html`<${Section} id="route" title=${t('Particles\' route')} help=${'The particles can follow a route of their own while they live (flames licking along a line, a stream that turns): draw it in the editor. They go along it at their speed.'}>
     ${on && html`<${Form} fields=${ROUTE_FIELDS} value=${obj.emitter} ctx=${ctx} kf=${kf} prefix="emitter"
-      onChange=${(ne) => edit((o) => { o.emitter = { ...o.emitter, route_strength: ne.route_strength, route_fixed: ne.route_fixed || undefined }; })} />`}
+      onChange=${(ne) => edit((o) => { o.emitter = { ...o.emitter, route_strength: ne.route_strength, route_fixed: ne.route_fixed || undefined,
+        route_width: ne.route_width, route_pull: ne.route_pull }; })} />`}
     <div class="row" style="margin-top:6px">
       <button class="btn sm" onClick=${() => ctx.openEditor('path', 'route')}><${Icon} name="route" size=${13} /> ${t(on ? 'Edit the route' : 'Draw the route')}</button>
       ${on && html`<span class="spacer"></span><button class="btn sm ghost danger"
@@ -86,6 +87,10 @@ const ROUTE_FIELDS = [
     help: '0: as if there were no route (their launch, gravity, wind). 1: they go along the route as far as their speed and the forces would take them (gravity pushes them along it, not down; turbulence stays). Between: a mix' },
   { key: 'route_fixed', label: 'Where it is drawn', type: 'bool', anim: false,
     help: 'Off: each particle starts the route where it is born (it moves with the emitter). On: they all go along it where it is drawn' },
+  { key: 'route_width', label: 'Channel width (px)', type: 'num', min: 5, max: 2000, step: 1, def: 120, showIf: (c) => c.look === 'gas' || c.look === 'liquid',
+    help: 'Simulated gas and liquid: the route is a channel that carries them along it (at the emitter\'s speed). How far it reaches on each side (it fades out by twice that)' },
+  { key: 'route_pull', label: 'Pulls back to it', type: 'num', min: 0, max: 1, step: 0.01, def: 0.5, showIf: (c) => c.look === 'gas' || c.look === 'liquid',
+    help: 'How hard it pulls back what strays from the route (0: it only carries what is in the channel)' },
 ];
 
 // Moving an object that follows a path moves the path (dx, dy: 0..1 of the frame)

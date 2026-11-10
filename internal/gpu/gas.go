@@ -20,7 +20,7 @@ var gasSPV []byte
 // in place (checkpoints), the sources and the tile lists are written before each frame.
 
 const (
-	GasFieldCount = 51 // fields in the field buffer (gas.comp; then the solid cells, the gas given off)
+	GasFieldCount = 54 // fields in the field buffer (gas.comp; then the solid cells, the gas given off, the route's guide)
 	GasStateCount = 14 // the first ones: the state (velocity, pressure, smoke…, coordinates)
 	GasSrcFloats  = 10 // per source: x, y, radius, alpha, vx, vy, r, g, b, -
 	GasTile       = 16 // cells per side of a tile of the sources' lists

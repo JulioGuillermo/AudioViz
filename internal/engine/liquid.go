@@ -215,10 +215,11 @@ func (s *Session) liquidPrint(g gasPre, tb *emitTable, k int) uint64 {
 	}
 	ph := s.liquidPhys(ef, e, float64(k)/float64(s.FPS))
 	extra := struct {
-		Ph    effects.LiquidPhys
-		Speed float32
-		Max   int64
-	}{ph, liquidSpeed(e), int64(e.Max)}
+		Ph          effects.LiquidPhys
+		Speed       float32
+		Max         int64
+		Width, Pull float64
+	}{ph, liquidSpeed(e), int64(e.Max), e.RouteWidth, e.RoutePull}
 	j := k - tb.f0
 	lo := 0
 	if j > 0 {
@@ -270,6 +271,8 @@ func (s *Session) liquidStep(g gasPre, k int, run *liquidRun) error {
 	}
 	ph := s.liquidPhys(ef, e, t)
 	run.sim.SetSurface(g.surf, float32(effects.DepthPx*s.emitScale()), ph.D3)
+	gw, gh, cs := effects.GasGrid(s.W, s.H, s.liquidCell(e))
+	run.sim.SetGuide(s.simGuide(ef, e, gw, gh, cs))
 	dt := liquidSpeed(e) / float32(s.FPS)
 	steps := run.sim.Substeps(dt, &ph)
 	if err := run.sim.Advance(&ph, dt, steps, g.solid); err != nil {

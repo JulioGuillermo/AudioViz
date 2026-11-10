@@ -21,7 +21,7 @@ var liquidSPV []byte
 
 const (
 	LiquidCap     = 40000 // drops (liquid.comp's CAP, effects.LiquidMax)
-	liquidCfgF    = 12
+	liquidCfgF    = 16
 	liquidPushLen = 32
 )
 
@@ -49,6 +49,7 @@ func NewLiquidJob(deviceIndex, gw, gh int) (*LiquidJob, error) {
 		C.size_t((3*nu + 3*nv + 2*n) * 4),
 		C.size_t(n * 4),
 		C.size_t(LiquidCap * 4),
+		C.size_t(n * 3 * 4),
 	}
 	errBuf := make([]byte, 512)
 	spv := C.CBytes(liquidSPV)
@@ -78,6 +79,9 @@ func (l *LiquidJob) Cfg() []float32 { return unsafe.Slice((*float32)(C.vkj_map(l
 func (l *LiquidJob) Drops() []float32 {
 	return unsafe.Slice((*float32)(C.vkj_map(l.j, 1)), 5*LiquidCap)
 }
+
+// Guide: the route's guide on the cells (effects.SimGuide: velocity x, y, weight)
+func (l *LiquidJob) Guide() []float32 { return unsafe.Slice((*float32)(C.vkj_map(l.j, 6)), l.n*3) }
 
 // Solid: the solid cells (1)
 func (l *LiquidJob) Solid() []uint32 { return unsafe.Slice((*uint32)(C.vkj_map(l.j, 4)), l.n) }
