@@ -1,6 +1,7 @@
 package effects
 
 import (
+	"slices"
 	"testing"
 	"time"
 )
@@ -83,5 +84,54 @@ func BenchmarkLiquidStep(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		s.Step(&ph, 1.0/60)
+	}
+}
+
+// a glass filled by a jet: the level rises as it fills
+func TestLiquidFills(t *testing.T) {
+	s := NewLiquidSim(640, 360, 6)
+	ph := LiquidPhys{GravY: 900, Flip: 0.95, FloorOn: true, Floor: 340}
+	s.Solid = make([]uint8, s.GW*s.GH)
+	for j := 0; j < s.GH; j++ {
+		for i := 0; i < s.GW; i++ {
+			x, y := (float32(i)+0.5)*s.CS, (float32(j)+0.5)*s.CS
+			if ((x > 254 && x < 266) || (x > 374 && x < 386)) && y > 140 {
+				s.Solid[j*s.GW+i] = 1
+			}
+		}
+	}
+	top := func() float32 {
+		// the liquid's surface in the glass: the highest drop of the 2nd decile
+		var ys []float32
+		for q := range s.X {
+			if s.X[q] > 270 && s.X[q] < 370 && s.Y[q] > 150 {
+				ys = append(ys, s.Y[q])
+			}
+		}
+		if len(ys) < 10 {
+			return 340
+		}
+		slices.Sort(ys)
+		return ys[len(ys)/10]
+	}
+	var levels []float32
+	for f := 0; f < 240; f++ {
+		var bs []LiquidBirth
+		for k := 0; k < 6; k++ {
+			bs = append(bs, LiquidBirth{X: 318 + float32(k)*1.5, Y: 60, VY: 200, Size: 10})
+		}
+		s.Add(bs, 20000)
+		dt := float32(1.0 / 30)
+		n := s.Substeps(dt, &ph)
+		for i := 0; i < n; i++ {
+			s.Step(&ph, dt/float32(n))
+		}
+		if f%60 == 59 {
+			levels = append(levels, top())
+			t.Logf("frame %d: %d drops, surface at y %.0f", f, s.Count(), top())
+		}
+	}
+	if !(levels[3] < levels[1]-15) {
+		t.Fatalf("the level does not rise: %v", levels)
 	}
 }

@@ -43,6 +43,7 @@ type GasPhys struct {
 	Fade, Cool, Burn float32 // 1/s: smoke vanishing, heat lost, fuel burnt
 	Soot             float32 // smoke made per unit of fuel burnt
 	Spread           float32 // px²/s: how much the smoke spreads out by itself (diffusion: fuller, softer)
+	Expand           float32 // 1/s at a particle's centre: the gas it gives off takes room (pushes out)
 	TimeScale        float32 // how fast the gas lives against the video (the engine's steps; 1 = real time)
 	SootCol          [3]float32
 	Seed             uint32
@@ -60,6 +61,9 @@ type GasSim struct {
 	t0, t1, t2, t3                          []float32      // scratch
 	bx, by                                  []float32      // where each cell's gas came from this step (back)
 	adv                                     [][3][]float32 // per field carried: back, lowest and highest source
+	// Inj: how much gas the particles gave off in each cell this step (its expansion)
+	Inj    []float32
+	expand float32
 	// Solid: the cells the gas goes round this frame (the scene at the emitter's depth; nil:
 	// none): no gas in them, no flow through their sides
 	Solid []uint8
@@ -86,6 +90,7 @@ func NewGasSim(W, H int, cs float64) *GasSim {
 	}
 	n := gw * gh
 	s.P = make([]float32, n)
+	s.Inj = make([]float32, n)
 	s.t0, s.t1, s.t2, s.t3 = make([]float32, n), make([]float32, n), make([]float32, n), make([]float32, n)
 	s.bx, s.by = make([]float32, n), make([]float32, n)
 	return s
@@ -199,6 +204,7 @@ type GasSimulator interface {
 
 func (s *GasSim) Advance(srcs [][]GasSource, ph *GasPhys, dt float32, solid []uint8) error {
 	s.Solid = solid
+	s.expand = ph.Expand
 	for _, src := range srcs {
 		s.Feed(src, ph, dt)
 		s.Step(ph, dt)
@@ -285,6 +291,7 @@ func (s *GasSim) Feed(src []GasSource, ph *GasPhys, dt float32) {
 					continue
 				}
 				w := (1 - q) * (1 - q) * p.A
+				s.Inj[i] += w // (the room the new gas takes: GasPhys.Expand)
 				a := w * dt // per second at its centre (the same whatever the cells' size)
 				d := ph.Density * a
 				s.D[i] += d
@@ -574,6 +581,16 @@ func (s *GasSim) project() {
 			}
 		}
 	})
+	// the new gas takes room: it flows out of where it is given off (under a ceiling it fills down
+	// until it spills out)
+	if expand := s.expand; expand > 0 {
+		for i, w := range s.Inj {
+			if w > 0 && !s.solid(i) {
+				div[i] -= expand * min(w, 4)
+			}
+		}
+	}
+	clear(s.Inj)
 	p := s.P
 	// a solid neighbour's pressure: this cell's (no flow through that side)
 	pn := func(i, j int) float32 {
@@ -672,7 +689,8 @@ func (s *GasSim) advectAll(fs [][]float32, dt float32) {
 		w = [4]float32{(1 - ux) * (1 - uy), ux * (1 - uy), (1 - ux) * uy, ux * uy}
 		for q := 0; q < 4; q++ {
 			cx, cy := ix+(q&1), iy+(q>>1)
-			if cx < 0 || cy < 0 || cx >= W || cy >= H {
+			// (outside, or solid: nothing comes from there, not even through a wall)
+			if cx < 0 || cy < 0 || cx >= W || cy >= H || s.solid(cy*W+cx) {
 				idx[q] = -1
 			} else {
 				idx[q] = cy*W + cx
@@ -800,7 +818,7 @@ func (s *GasSim) Frame(l GasLight) *GasFrame {
 	if s.Solid != nil {
 		sol = make([]float32, n)
 		for i, v := range s.Solid {
-			if v != 0 {
+			if v == 1 { // (the scene's; the frame's walls cast none)
 				sol[i] = gasSolidShade
 			}
 		}

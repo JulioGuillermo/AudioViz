@@ -9,7 +9,7 @@ layout(local_size_x = 256, local_size_y = 1, local_size_z = 1) in;
 layout(std430, set = 0, binding = 0) readonly buffer Cfg {
     ivec4 c0; // cells across, down, drops, floor on
     vec4 f0;  // cell size (px), frame width, height (px), floor (y px)
-    vec4 f1;  // gravity x, y (px/s²), FLIP's share, -
+    vec4 f1;  // gravity x, y (px/s²), FLIP's share, walls (1)
 } C;
 layout(std430, set = 0, binding = 1) buffer Drops { float dr[]; };  // x, y, vx, vy, born: CAP each
 layout(std430, set = 0, binding = 2) buffer GridF { float gf[]; };  // u, v, u0, v0, uE, vE, p, div, p2
@@ -60,7 +60,7 @@ int kindAt(int i, int j) {
 bool solidAt(float x, float y) {
     if (C.c0.w != 0 && y >= C.f0.w) return true;
     int i = int(floor(x / CS)), j = int(floor(y / CS));
-    if (i < 0 || j < 0 || i >= GW || j >= GH) return false;
+    if (i < 0 || j < 0 || i >= GW || j >= GH) return C.f1.w > 0.5; // (out of the frame: in its walls, if any)
     return sol[j * GW + i] != 0u;
 }
 
@@ -152,7 +152,11 @@ void facesK(int f) {
 void divK(int c) {
     int i = c % GW, j = c / GW;
     if (gi[oKIND + c] != FLUID) { gf[oP + c] = 0.0; gf[oDIV + c] = 0.0; return; }
-    gf[oDIV + c] = (gf[oU + j * (GW + 1) + i + 1] - gf[oU + j * (GW + 1) + i] + gf[oV + (j + 1) * GW + i] - gf[oV + j * GW + i]) / CS;
+    float dv = (gf[oU + j * (GW + 1) + i + 1] - gf[oU + j * (GW + 1) + i] + gf[oV + (j + 1) * GW + i] - gf[oV + j * GW + i]) / CS;
+    // volume: drops packed tighter than at rest (3 a cell) are spread (lqRest, lqVolumeK)
+    float over = float(gi[oCNT + c]) / 3.0 - 1.0;
+    if (over > 0.0) dv -= 0.15 * min(over, 2.0) / K.dt;
+    gf[oDIV + c] = dv;
 }
 // 6: the pressure by blocks of 16×16 cells in shared memory (a1 red-black sweeps each), the blocks
 // a0 cells back; from field a2 (P or P2) into the other: no block sees its neighbours' new values

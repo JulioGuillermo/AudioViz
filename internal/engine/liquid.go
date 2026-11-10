@@ -3,6 +3,7 @@ package engine
 import (
 	"fmt"
 	"math"
+	"unsafe"
 
 	"audioviz/internal/audio"
 	"audioviz/internal/config"
@@ -48,8 +49,19 @@ func liquidSpeed(e *config.EmitterConfig) float32 {
 // liquidPhys: how the liquid of frame ef moves (its floor: the emitter's, or the scene's under it)
 func (s *Session) liquidPhys(ef *effects.EmitFrame, e *config.EmitterConfig, t float64) effects.LiquidPhys {
 	P := &ef.P
-	ph := effects.LiquidPhys{GravX: float32(P.Wind), GravY: float32(P.Gravity),
-		Flip: float32(math.Min(math.Max(e.Liquid.Splash, 0), 1)), FloorOn: P.FloorOn, Floor: float32(P.Floor)}
+	sc := s.emitScale()
+	lq := e.Liquid
+	ph := effects.LiquidPhys{GravX: float32(P.Wind + lq.GravityX*sc), GravY: float32(P.Gravity),
+		Flip: float32(math.Min(math.Max(lq.Splash, 0), 1)), FloorOn: P.FloorOn, Floor: float32(P.Floor), Walls: e.Walls}
+	if lq.D3 {
+		dp := effects.DepthPx * sc
+		ph.D3, ph.GravZ = true, float32(-lq.GravityZ*sc) // (into the scene: farther, less depth)
+		if lq.Thickness > 0 && lq.Thickness < 1 {
+			ph.Thick = float32(lq.Thickness * dp)
+		}
+		ph.BackSlope = float32(math.Min(math.Max(lq.BackSlope, 0), 1))
+		ph.Bounce, ph.Friction = float32(math.Min(math.Max(lq.Bounce, 0), 1)), float32(math.Min(math.Max(lq.Friction, 0), 1))
+	}
 	if e.FloorDepth {
 		// the scene's floor below the emitter (as layersAt finds it for the particles)
 		if scene := s.simScene(t); scene.On() && len(ef.Births) > 0 {
@@ -174,9 +186,22 @@ func (s *Session) liquidClip(li, ci int, c0 *config.ClipConfig, k int, feats []a
 		e = &d
 	}
 	ef := s.emitParticles(li, ci, c0, c, k, feats)
-	g := gasPre{ef: ef, e: e}
-	if ef != nil && e.Collide {
-		g.solid = s.gasSolid(c, e, ef, t, s.liquidCell(e))
+	g := gasPre{ef: ef, e: e, c: c}
+	if ef != nil {
+		g.solid = s.simSolid(c, e, ef, t, s.liquidCell(e))
+		if e.Liquid.D3 {
+			// 3D: the scene's surface on the grid's cells (depth px)
+			if g.scene = s.simScene(t); g.scene.On() {
+				gw, gh, cs := effects.GasGrid(s.W, s.H, s.liquidCell(e))
+				dp := float32(effects.DepthPx * s.emitScale())
+				g.surf = make([]float32, gw*gh)
+				for j := 0; j < gh; j++ {
+					for i := 0; i < gw; i++ {
+						g.surf[j*gw+i] = g.scene.At((float32(i)+0.5)*cs, (float32(j)+0.5)*cs) * dp
+					}
+				}
+			}
+		}
 	}
 	return g
 }
@@ -199,7 +224,11 @@ func (s *Session) liquidPrint(g gasPre, tb *emitTable, k int) uint64 {
 	if j > 0 {
 		lo = tb.at[j-1] + 1
 	}
-	return gasFingerprint(&ef.P, &extra, tb.births[lo:tb.at[j]+1], g.solid)
+	fp := gasFingerprint(&ef.P, &extra, tb.births[lo:tb.at[j]+1], g.solid)
+	if g.surf != nil {
+		fp ^= gasFingerprint(&ef.P, &ph, nil, unsafeBytes(g.surf)) * 31
+	}
+	return fp
 }
 
 // liquidStep: the simulation through frame k: its steps, then the drops born since frame k - 1
@@ -225,12 +254,22 @@ func (s *Session) liquidStep(g gasPre, k int, run *liquidRun) error {
 			continue
 		}
 		if pt, ok := ef.At(i); ok { // (at frame k's moment)
-			bs = append(bs, effects.LiquidBirth{X: pt.X, Y: pt.Y, VX: pt.VX, VY: pt.VY, Size: pt.Size,
-				Col: [4]float32{float32(col[0]), float32(col[1]), float32(col[2]), float32(col[3])}, Idx: int32(i)})
+			b := effects.LiquidBirth{X: pt.X, Y: pt.Y, VX: pt.VX, VY: pt.VY, Size: pt.Size,
+				Col: [4]float32{float32(col[0]), float32(col[1]), float32(col[2]), float32(col[3])}, Idx: int32(i)}
+			if g.surf != nil {
+				// 3D: born at the emitter's depth (its clip's), else just in front of the scene there
+				z, ok := clipDepth(&g.c.Depth, g.scene, float64(pt.X), float64(pt.Y))
+				if !ok {
+					z = float64(g.scene.Ground(pt.X, pt.Y)) + 0.02
+				}
+				b.Z = float32(z * effects.DepthPx * s.emitScale())
+			}
+			bs = append(bs, b)
 		}
 		*next++
 	}
 	ph := s.liquidPhys(ef, e, t)
+	run.sim.SetSurface(g.surf, float32(effects.DepthPx*s.emitScale()), ph.D3)
 	dt := liquidSpeed(e) / float32(s.FPS)
 	steps := run.sim.Substeps(dt, &ph)
 	if err := run.sim.Advance(&ph, dt, steps, g.solid); err != nil {
@@ -259,4 +298,12 @@ func (s *Session) closeLiquids() {
 		r.sim.Close()
 	}
 	s.liquidRuns = nil
+}
+
+// unsafeBytes: a float slice's bytes (to hash it)
+func unsafeBytes(f []float32) []uint8 {
+	if len(f) == 0 {
+		return nil
+	}
+	return unsafe.Slice((*uint8)(unsafe.Pointer(&f[0])), len(f)*4)
 }

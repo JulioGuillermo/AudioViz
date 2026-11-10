@@ -112,7 +112,10 @@ type EmitterConfig struct {
 	// Sim: where the gas or the liquid is simulated: "" / "auto" (the gas on the GPU unless
 	// rendering on the CPU, the liquid on the CPU), "gpu" or "cpu" (they move a little
 	// differently: changing it simulates it again)
-	Sim    string     `yaml:"sim,omitempty"`
+	Sim string `yaml:"sim,omitempty"`
+	// Walls: the frame's edges are walls for the gas or the liquid (sides, floor and ceiling of
+	// the frame): it stays in, as in a fish tank, instead of leaving
+	Walls  bool       `yaml:"walls,omitempty"`
 	Liquid LiquidLook `yaml:"liquid,omitempty"`
 	Glow   EmitGlow   `yaml:"glow"`
 	Light  EmitLight  `yaml:"light"`
@@ -220,7 +223,10 @@ type GasLook struct {
 	Cool float64 `yaml:"cool"`
 	Burn float64 `yaml:"burn"`
 	// how much the smoke spreads out by itself (px²/s): fuller, softer
-	Spread    float64 `yaml:"spread"`
+	Spread float64 `yaml:"spread"`
+	// how much room the new gas takes (1/s): it pushes out from its source; under a ceiling it
+	// fills down until it spills out
+	Expand    float64 `yaml:"expand,omitempty"`
 	Soot      float64 `yaml:"soot"`
 	SootColor string  `yaml:"soot_color"`
 	// how it looks: how thick (per unit of smoke), its wisps (how much 0..1, their size px), the
@@ -238,7 +244,7 @@ type GasLook struct {
 
 // DefaultGas: cool smoke rising slowly
 func DefaultGas() GasLook {
-	return GasLook{Detail: 7, Smoke: 0.2, Heat: 0.4, Push: 0.1, Rise: 250, Swirl: 2.5, Turbulence: 120, TurbScale: 140,
+	return GasLook{Detail: 7, Expand: 0.8, Smoke: 0.2, Heat: 0.4, Push: 0.1, Rise: 250, Swirl: 2.5, Turbulence: 120, TurbScale: 140,
 		Fade: 0.12, Cool: 3, Burn: 2.5, Soot: 0.6, SootColor: "#2a2623", Spread: 300,
 		Opacity: 1.6, Wisps: 0.4, WispScale: 60, LightColor: "#fff2e0", ShadowColor: "#66707e", Shadow: 0.6, FireLight: 1}
 }
@@ -255,10 +261,26 @@ type LiquidLook struct {
 	Splash float64 `yaml:"splash"`
 	// how fast it lives (1 = real time)
 	Speed float64 `yaml:"speed,omitempty"`
+	// gravity sideways (px/s², to the right) and in depth (px/s², into the scene; its depth in px
+	// of a 1080-line frame, 800 for the scene's whole depth), added to the emitter's gravity
+	GravityX float64 `yaml:"gravity_x,omitempty"`
+	GravityZ float64 `yaml:"gravity_z,omitempty"`
+	// 3D: with a depth map, the drops move in the scene's depth: they fall onto its surface and
+	// roll, slide and drip off it in 3D; behind what they see, things are solid Thickness deep
+	// (0..1 of the scene's depth; 1: all of it) and their hidden back slopes as BackSlope (1 a
+	// vertical wall: what passes behind falls; 0 a ledge); at each hit they keep Bounce of their
+	// speed off it and lose Friction of it sliding
+	D3        bool    `yaml:"d3,omitempty"`
+	Thickness float64 `yaml:"thickness,omitempty"`
+	BackSlope float64 `yaml:"back_slope,omitempty"`
+	Bounce    float64 `yaml:"bounce,omitempty"`
+	Friction  float64 `yaml:"friction,omitempty"`
 }
 
 // DefaultLiquid: water at real speed
-func DefaultLiquid() LiquidLook { return LiquidLook{Detail: 6, Splash: 0.95, Speed: 1} }
+func DefaultLiquid() LiquidLook {
+	return LiquidLook{Detail: 6, Splash: 0.95, Speed: 1, Thickness: 1, BackSlope: 1, Bounce: 0.1, Friction: 0.15}
+}
 
 // DefaultWater: the water look's settings
 func DefaultWater() WaterLook {
@@ -370,7 +392,7 @@ var EmitterPresets = map[string]EmitterConfig{
 		ColorStart: "#5c5650ff", ColorMid: "#5c5650ff", ColorEnd: "#5c565000", FadeIn: 0.05, FadeOut: 0.4, Mode: "soft", Softness: 1,
 		Look: "gas", Flame: FlameLook{ColorCool: "#8a1606", ColorMid: "#ff6a14", ColorHot: "#fff2c8", Heat: 1.2, NoiseScale: 55,
 			NoiseSpeed: 280, Edge: 0.7},
-		Gas: GasLook{Detail: 5, Speed: 1.5, Smoke: 0.02, Heat: 0.2, Fuel: 0.8, Push: 0.3, Rise: 300, Swirl: 3, Turbulence: 140, TurbScale: 60,
+		Gas: GasLook{Detail: 5, Speed: 1.5, Expand: 1.5, Smoke: 0.02, Heat: 0.2, Fuel: 0.8, Push: 0.3, Rise: 300, Swirl: 3, Turbulence: 140, TurbScale: 60,
 			Fade: 0.15, Cool: 3.5, Burn: 4, Soot: 0.5, SootColor: "#24201d", Spread: 100,
 			Opacity: 1.6, Wisps: 0.7, WispScale: 25, LightColor: "#ffe8d0", ShadowColor: "#4a4c54", Shadow: 1, FireLight: 1.2},
 		Glow:  EmitGlow{Intensity: 0.6, Radius: 130, Color: "#ff6a18"},
@@ -405,6 +427,13 @@ var EmitterPresets = map[string]EmitterConfig{
 			Fade: 0.12, Cool: 3, Burn: 2.5, Soot: 0.6, SootColor: "#2a2623", Spread: 800,
 			Opacity: 1.1, Wisps: 0.35, WispScale: 120, LightColor: "#eef2f6", ShadowColor: "#a2adba", Shadow: 0.25, FireLight: 1},
 		React: EmitterReact{ReactTo: "bass", Rate: 0.2}},
+	// water poured onto the scene in 3D: with a depth map it falls onto what is there and runs
+	// off it (no floor: the scene holds it)
+	"water_3d": {Rate: 220, Max: 9000, Shape: "circle", Width: 30, Direction: 180, Spread: 10, Speed: 250, SpeedVar: 0.15, Gravity: 1400,
+		Life: 1, Size: 26, SizeEnd: 26, SizeVar: 0.2,
+		ColorStart: "#6cb4f4d8", ColorMid: "#6cb4f4d8", ColorEnd: "#6cb4f4d8", Mode: "soft", Softness: 1,
+		Look: "liquid", Water: WaterLook{Threshold: 0.55, Clear: 0.7, Shine: 1.2, Bump: 1, Ripple: 2, RippleScale: 40, RippleSpeed: 40},
+		Liquid: func() LiquidLook { l := DefaultLiquid(); l.D3 = true; return l }(), React: EmitterReact{ReactTo: "bass", Rate: 0.3}},
 	// a simulated splash of water on each beat, falling onto a floor
 	"splash_sim": {Rate: 0, Burst: 220, Max: 9000, Shape: "circle", Width: 60, Direction: 0, Spread: 110, Speed: 700, SpeedVar: 0.45, Gravity: 1600,
 		Life: 1, Size: 26, SizeEnd: 26, SizeVar: 0.3,

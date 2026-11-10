@@ -297,12 +297,12 @@ void splatOne(int j) {
     uint so = ed[h + 120];
     if (so != 0u) {
         // simulated particles (the liquid look): their state as uploaded after the emitter's
-        // image (x, y, vx, vy, size, r, g, b, a)
-        uint o = so - 1u + uint(i) * 9u;
+        // image (x, y, vx, vy, size, r, g, b, a, depth: -1 none)
+        uint o = so - 1u + uint(i) * 10u;
         vec2 spos = vec2(uintBitsToFloat(lay[o]), uintBitsToFloat(lay[o + 1u]));
         vec2 svel = vec2(uintBitsToFloat(lay[o + 2u]), uintBitsToFloat(lay[o + 3u]));
         vec4 scol = vec4(uintBitsToFloat(lay[o + 5u]), uintBitsToFloat(lay[o + 6u]), uintBitsToFloat(lay[o + 7u]), uintBitsToFloat(lay[o + 8u]));
-        if (scol.a > 0.0) drawParticle(e, h, spos, svel, uintBitsToFloat(lay[o + 4u]), scol, -1.0, fd, dv, GW, GH);
+        if (scol.a > 0.0) drawParticle(e, h, spos, svel, uintBitsToFloat(lay[o + 4u]), scol, uintBitsToFloat(lay[o + 9u]), fd, dv, GW, GH);
         return;
     }
 

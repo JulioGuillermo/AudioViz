@@ -127,6 +127,8 @@ type EmitParams struct {
 	// Gas look (gas.go): the gas their particles feed, this frame (nil: none yet); how thick it
 	// looks per unit of smoke, its wisps (how much, their size px), the light's color and the
 	// color in its shadow, how much its fire lights it (the flame's colors, heat and edge: Flame…)
+	// PerZ: each particle has its own depth (Particle.Z: the 3D liquid's drops), as with ZTrack
+	PerZ                   bool
 	GasOn                  bool
 	Gas                    *GasFrame
 	GasOpacity, GasWisp    float64
@@ -874,7 +876,7 @@ func DrawEmitter(e *EmitFrame, W, H int) (*image.RGBA, *LightField) {
 	acc := make([]uint32, GW*GH*4)
 	glow := make([]uint32, LW*LH*4)
 	var zacc []uint32 // their depth (× their weight) when it comes from their path
-	if p.ZTrack != nil {
+	if p.ZTrack != nil || p.PerZ {
 		zacc = make([]uint32, GW*GH)
 	}
 	XW, XH := emitGrid(W, H, EmitLightDiv)

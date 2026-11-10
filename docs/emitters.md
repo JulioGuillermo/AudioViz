@@ -56,7 +56,7 @@ layers:
         y: 0.95
         blend: add
         emitter:
-          preset: fire          # fire, fire_real, fire_gas, explosion, sparks · smoke, smoke_real · fog_gas · clouds_gas · water, water_clear, splash, rain, water_sim, water_sim_clear, splash_sim · dust, light, snow, lamp light, explosion, lamp, water, water_clear, splash, rain, snow
+          preset: fire          # fire, fire_real, fire_gas, explosion, sparks · smoke, smoke_real · fog_gas · clouds_gas · water, water_clear, splash, rain, water_sim, water_sim_clear, water_3d, splash_sim · dust, light, snow, lamp light, explosion, lamp, water, water_clear, splash, rain, snow
           rate: 650             # anything not written comes from the preset
           react: { react_to: bass, rate: 1, size: 0.35 }
         keys:
@@ -138,6 +138,7 @@ Four presets start from it:
             soot: 0.5            # smoke made by the fuel burnt…
             soot_color: "#24201d" # …and its color
             spread: 100          # px²/s: the smoke spreads out by itself (fuller, softer)
+            expand: 1.5          # 1/s: the new gas takes room, pushing out from its source
             opacity: 1.6         # how thick it looks
             wisps: 0.7           # fine detail tearing its edges (0..1)…
             wisp_scale: 25       # …and its size (px)
@@ -159,6 +160,10 @@ particles:
   with them.
 - Its **depth** (Depth section) places it in the scene as one plane, like the particles: what is
   nearer hides it, and the 2.5D camera and the depth of field move and blur it.
+
+**Takes room** (`expand`): the gas given off pushes out from its source. Under a ceiling, or in an
+upside-down glass, the smoke fills down until it spills out of the openings, and then rises
+outside. 0: it only thickens where it is held.
 
 The simulation starts at the clip's start and runs on from frame to frame. The studio keeps its
 state every second, so jumping around the timeline goes on from the nearest second before.
@@ -201,6 +206,31 @@ above 0.
           liquid: { detail: 6, splash: 0.95, speed: 1 }
           floor: 330
 ```
+
+It keeps its volume: in a glass (or a basin of the scene, or behind the closed edges of the frame)
+the level rises as it fills.
+
+**Gravity sideways** adds to the emitter's gravity (it falls at an angle).
+
+**3D (with the scene's depth)**: with a depth map, the drops move in the scene's depth too. They
+are born at the emitter's depth (its clip's, or just in front of what is there), fall onto what
+they meet and roll, slide and drip off it in 3D: forwards, backwards, to the sides, as its surface
+slopes. A sudden step of the surface towards you is the side of something and stops them.
+- **Gravity in depth**: positive pulls into the scene, negative towards you. The scene's whole
+  depth is about 800 px.
+- **Things' thickness**: how deep things are behind the surface you see. 1 = solid all the way
+  back; less, and the drops can pass behind them.
+- **Their back's slope**: 1 = a vertical wall (what passes behind falls freely), 0 = a ledge it
+  rolls on.
+- **Bounce** and **Friction** at each hit.
+
+In 3D each drop moves by itself (they do not push each other), and they are drawn at their own
+depth: what is nearer hides them, and the 2.5D camera and the depth of field move and blur each
+one. The preset **Water on the scene (3D)** (`water_3d`) pours water from the top of the frame onto
+the scene.
+
+**Closed frame edges** (`walls`, gas and liquid): the frame's sides, floor and ceiling are walls,
+so the gas or the liquid stays in, as in a fish tank.
 
 Like the gas, it is simulated from the clip's start, kept every second for seeking, and changing
 only how it looks does not simulate it again.

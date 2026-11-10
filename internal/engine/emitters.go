@@ -265,6 +265,7 @@ func (s *Session) emitParticles(li, ci int, c0, c *config.ClipConfig, idx int, f
 		p.SmokeWisp, p.SmokeScale = math.Min(math.Max(sm.Wisp, 0), 1), math.Max(sm.Scale*sc, 1)
 		p.SmokeSpeed, p.SmokeWarp = sm.Speed*sc, sm.Warp*sc
 	}
+	p.PerZ = e.Look == "liquid" && e.Liquid.D3
 	if e.Look == "water" || e.Look == "liquid" {
 		w := e.Water
 		p.Water = true

@@ -59,7 +59,10 @@ var gasMu sync.Mutex
 type gasPre struct {
 	ef    *effects.EmitFrame
 	e     *config.EmitterConfig
-	solid []uint8 // the cells the gas goes round then (nil: none)
+	solid []uint8            // the cells the gas goes round then (nil: none)
+	surf  []float32          // 3D liquid: the scene's surface (depth px at each cell)
+	scene *effects.Scene     // (and the scene it comes from)
+	c     *config.ClipConfig // the clip then (its keys applied)
 }
 
 // gasPhys: how the gas of emitter e moves, at sc px per px of a 1080-line frame
@@ -76,7 +79,7 @@ func gasPhys(e *config.EmitterConfig, sc float64, seed uint32) effects.GasPhys {
 		Buoyancy: f(g.Rise) * sc32, Weight: f(g.Weight) * sc32, Swirl: f(math.Max(g.Swirl, 0)),
 		WindX: f(g.Wind) * sc32, Turb: f(math.Max(g.Turbulence, 0)) * sc32, TurbScale: f(math.Max(g.TurbScale, 1)) * sc32,
 		Fade: f(math.Max(g.Fade, 0)), Cool: f(math.Max(g.Cool, 0)), Burn: f(math.Max(g.Burn, 0)), Soot: f(math.Max(g.Soot, 0)),
-		Spread:  f(math.Max(g.Spread, 0)) * sc32 * sc32,
+		Spread: f(math.Max(g.Spread, 0)) * sc32 * sc32, Expand: f(math.Max(g.Expand, 0)),
 		SootCol: soot, Seed: seed, TimeScale: gasSpeed(e),
 	}
 }
@@ -308,8 +311,8 @@ func (s *Session) gasClip(li, ci int, c0 *config.ClipConfig, k int, feats []audi
 	}
 	ef := s.emitParticles(li, ci, c0, c, k, feats)
 	g := gasPre{ef: ef, e: e}
-	if ef != nil && e.Collide {
-		g.solid = s.gasSolid(c, e, ef, t, s.gasCell(e))
+	if ef != nil {
+		g.solid = s.simSolid(c, e, ef, t, s.gasCell(e))
 	}
 	return g
 }
@@ -368,6 +371,29 @@ func (s *Session) gasSolid(c *config.ClipConfig, e *config.EmitterConfig, ef *ef
 	}
 	if !found {
 		return nil
+	}
+	return solid
+}
+
+// simSolid: the cells of a simulation's grid (cells of about cell px) its gas or liquid goes
+// round at time t: the scene's (collide) and the frame's edges (walls); nil: none
+func (s *Session) simSolid(c *config.ClipConfig, e *config.EmitterConfig, ef *effects.EmitFrame, t, cell float64) []uint8 {
+	var solid []uint8
+	if e.Collide {
+		solid = s.gasSolid(c, e, ef, t, cell)
+	}
+	if e.Walls {
+		gw, gh, _ := effects.GasGrid(s.W, s.H, cell)
+		if solid == nil {
+			solid = make([]uint8, gw*gh)
+		}
+		// (2: a wall, solid but casting no shadow on the gas's light)
+		for x := 0; x < gw; x++ {
+			solid[x], solid[(gh-1)*gw+x] = 2, 2
+		}
+		for y := 0; y < gh; y++ {
+			solid[y*gw], solid[y*gw+gw-1] = 2, 2
+		}
 	}
 	return solid
 }

@@ -133,9 +133,15 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fs *
 				if t := ef.P.ZTrack; t != nil && scene.On() {
 					// its particles take the depth of their point on their path (its depth plane)
 					z, ok, d = float64(t.At(0)), true, pathDepthSettings(d)
+				} else if ef.P.PerZ && scene.On() {
+					// each drop at its own depth (the 3D liquid)
+					if !ok {
+						z = float64(scene.Ground(float32(ox), float32(oy)))
+					}
+					ok, d = true, pathDepthSettings(d)
 				}
 				s.placeInDepth(&lf, &d, scene, z, ox, oy, ok)
-				if ef.P.ZTrack != nil && lf.Behind && scene.On() {
+				if (ef.P.ZTrack != nil || ef.P.PerZ) && lf.Behind && scene.On() {
 					// each particle at its own depth: hidden by the scene where it is nearer than that
 					// particle (emit.comp's occlAt), not the whole image by one depth per pixel
 					div := effects.CollideDiv(s.W, s.H)
@@ -459,7 +465,10 @@ func (s *Session) emitterWords() int {
 			n += gw*gh*effects.GasCellWords + xw*xh // (and its flames' light sources)
 		}
 		if c.Emitter != nil && c.Emitter.Look == "liquid" {
-			n += min(max(c.Emitter.Max, 1), effects.LiquidMax) * 9 // its drops
+			n += min(max(c.Emitter.Max, 1), effects.LiquidMax) * 10 // its drops
+			if c.Emitter.Liquid.D3 {
+				n += s.W * s.H // their depth (after its image)
+			}
 		}
 		if len(c.Masks) > 0 {
 			return n + mask
@@ -607,7 +616,7 @@ func (s *Session) placeInDepth(lf *effects.LayerFrame, d *config.ClipDepth, scen
 		lf.InDepth, lf.DepthZ, lf.DepthSoft = true, float32(z), float32(math.Max(d.Soft, 0.005))
 		lf.Behind = d.Behind
 	}
-	if lf.ZTrack != nil || (lf.Emit != nil && lf.Emit.P.ZTrack != nil) {
+	if lf.ZTrack != nil || (lf.Emit != nil && (lf.Emit.P.ZTrack != nil || lf.Emit.P.PerZ)) {
 		return // its depth changes along it: blurred and moved per point (DrawLayer, render.comp)
 	}
 	if ok && scene.Blurs(lf.Side) {

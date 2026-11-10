@@ -13,6 +13,8 @@ type LiquidSimulator interface {
 	Add(bs []LiquidBirth, max int)
 	// Advance: a frame of dt in steps (Substeps), the solid cells then (nil: none)
 	Advance(ph *LiquidPhys, dt float32, steps int, solid []uint8) error
+	// SetSurface: 3D: the scene's surface this frame (nil none) and px per unit of depth
+	SetSurface(surf []float32, dp float32, d3 bool)
 	Substeps(dt float32, ph *LiquidPhys) int
 	Particles() []Particle
 	Save() []byte
@@ -29,6 +31,9 @@ func (s *LiquidSim) Advance(ph *LiquidPhys, dt float32, steps int, solid []uint8
 	return nil
 }
 func (s *LiquidSim) NextBirth() *int32 { return &s.Next }
+func (s *LiquidSim) SetSurface(surf []float32, dp float32, d3 bool) {
+	s.Surf, s.DP, s.D3 = surf, dp, d3
+}
 func (s *LiquidSim) Close()            {}
 
 // LiquidGPU: the liquid simulated on the GPU (gpu.LiquidJob, liquid.comp): the steps of a frame
@@ -64,14 +69,22 @@ func (g *LiquidGPU) Load(b []byte) bool {
 
 func (g *LiquidGPU) Advance(ph *LiquidPhys, dt float32, steps int, solid []uint8) error {
 	s := g.LiquidSim
+	if ph.D3 {
+		// (3D runs on the CPU: each drop by itself against the scene's surface)
+		return s.Advance(ph, dt, steps, solid)
+	}
 	n := min(len(s.X), gpu.LiquidCap)
 	ib := func(v int32) float32 { return math.Float32frombits(uint32(v)) }
 	on := int32(0)
 	if ph.FloorOn {
 		on = 1
 	}
+	walls := float32(0)
+	if ph.Walls {
+		walls = 1
+	}
 	copy(g.job.Cfg(), []float32{ib(int32(s.GW)), ib(int32(s.GH)), ib(int32(n)), ib(on),
-		s.CS, s.W, s.H, ph.Floor, ph.GravX, ph.GravY, ph.Flip, 0})
+		s.CS, s.W, s.H, ph.Floor, ph.GravX, ph.GravY, ph.Flip, walls})
 	if solid != nil || g.lastSolid {
 		sb := g.job.Solid()
 		clear(sb)

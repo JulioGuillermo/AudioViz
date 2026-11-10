@@ -524,6 +524,11 @@ blurs, packing into halves) is computed there too, and the cells are copied out.
 simulations are not bit-identical (a chaotic flow then drifts apart), but every renderer draws the
 same simulated frames.
 
+**Walls** (`walls`): the outer ring of cells is solid (2 for the gas: its light is not shaded by
+it). **Expansion** (`expand`): each cell's feed weight this step (`Inj`) sets a divergence target
+−expand·min(w, 4), so the gas given off pushes out. Advection never takes values from a solid
+cell, so nothing passes through a wall.
+
 **In the scene:** with `collide`, `Session.gasSolid` marks, for each frame, the cells within
 `collide_band` of the emitter's depth. It uses the background segment on screen, its depth and its
 motion, but no camera views, and leaves out the free disc around the emitter as for the particles.
@@ -545,6 +550,15 @@ grid; `emit.comp`'s light phase reads them instead of the particles' (header wor
   sliding off what is solid; dropped when out of the frame;
 - spray (fewer than 6 drops in the 3×3 cells around, or born less than 0.25 s ago) flies by itself
   and stays out of the grid;
+- volume: a liquid cell with more than 3 drops gets a divergence target of
+  −0.15·min(drops/3 − 1, 2)/dt, so packed drops spread and a pool rises as it fills;
+- 3D (`liquid.d3`): no grid, each drop with a depth z (px of `DepthPx`) and three gravity axes,
+  against the scene's surface S (the depth on the cells, bilinear). Inside [S − thickness, S] it
+  came through the visible face (out in front, normal (−∂S/∂x, −∂S/∂y, 1)) or the hidden back
+  (normal between (0, 0, −1) for a vertical back and (0, −1, 0) for a ledge: `back_slope`). A step
+  of S towards the camera of more than 2 cells is a wall. The normal part bounces (`bounce`), the
+  rest loses `friction`. The drops carry their depth to the renderer (`EmitParams.PerZ`, the
+  per-particle depth plane and occlusion that path depth uses);
 - the frame's newborn drops are added after the steps, where `EmitFrame.At` puts their particles
   at that moment (their own age).
 

@@ -253,7 +253,7 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		}
 		px := iw * ih
 		lens := l.Emit != nil && l.Emit.P.Water && l.Emit.P.WaterLens > 0
-		zplane := l.Emit != nil && l.Emit.P.ZTrack != nil && len(l.Emit.P.ZTrack.S) <= 256
+		zplane := l.Emit != nil && ((l.Emit.P.ZTrack != nil && len(l.Emit.P.ZTrack.S) <= 256) || l.Emit.P.PerZ)
 		planes := 1
 		if lens {
 			planes++ // its lens after its image (x, y as halves)
@@ -272,7 +272,7 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		// stays the same from frame to frame)
 		swords := 0
 		if l.Emit != nil && l.Emit.Sim != nil {
-			swords = simCap(&l.Emit.P) * 9
+			swords = simCap(&l.Emit.P) * 10
 		}
 		px += swords
 		mwords := 0
@@ -412,14 +412,14 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 				if l.Emit.P.Water && l.Emit.P.WaterLens > 0 {
 					off += r.s.W * r.s.H
 				}
-				if t := l.Emit.P.ZTrack; t != nil && len(t.S) <= 256 {
+				if t := l.Emit.P.ZTrack; (t != nil && len(t.S) <= 256) || l.Emit.P.PerZ {
 					off += r.s.W * r.s.H
 				}
 				if g := l.Emit.P.Gas; g != nil {
 					off += len(g.Cells) + len(g.Light)
 				}
 				if l.Emit.Sim != nil {
-					off += simCap(&l.Emit.P) * 9
+					off += simCap(&l.Emit.P) * 10
 				}
 			} else {
 				copy(buf[off*4:], l.Img.Pix)
@@ -444,9 +444,9 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 	}
 	for _, sa := range sims {
 		b := buf[sa.off*4:]
-		for q, pt := range sa.ps[:min(len(sa.ps), len(b)/36)] {
-			o := q * 36
-			for j, v := range [9]float32{pt.X, pt.Y, pt.VX, pt.VY, pt.Size, pt.R, pt.G, pt.B, pt.A} {
+		for q, pt := range sa.ps[:min(len(sa.ps), len(b)/40)] {
+			o := q * 40
+			for j, v := range [10]float32{pt.X, pt.Y, pt.VX, pt.VY, pt.Size, pt.R, pt.G, pt.B, pt.A, pt.Z} {
 				binary.LittleEndian.PutUint32(b[o+4*j:], math.Float32bits(v))
 			}
 		}
@@ -705,6 +705,9 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 			for j := 0; j < n; j++ {
 				f[zo+1+j], f[zo+1+n+j], f[zo+1+2*n+j] = t.S[j], t.V[j], float32(t.E[j])
 			}
+			u[h+95] = uint32(zo + 1)
+		} else if P.PerZ {
+			f[zo] = 0 // (no track: each particle's own depth; emit.comp writes their depth plane)
 			u[h+95] = uint32(zo + 1)
 		}
 		// the expressions worked out per particle: after the depth track

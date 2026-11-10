@@ -44,7 +44,7 @@ func (g *GasGPU) setCfg(ph *GasPhys) {
 		g.CS, ph.Density, ph.Heat, ph.Fuel,
 		ph.Push, ph.Buoyancy, ph.Weight, ph.Swirl,
 		ph.WindX, ph.WindY, ph.Turb, ph.TurbScale,
-		ph.Spread, ph.Soot, 0, 0,
+		ph.Spread, ph.Soot, ph.Expand, 0,
 		ph.SootCol[0], ph.SootCol[1], ph.SootCol[2], 0,
 	})
 }
@@ -56,11 +56,14 @@ func (g *GasGPU) Advance(srcs [][]GasSource, ph *GasPhys, dt float32, solid []ui
 		n := g.GW * g.GH
 		buf := make([]float32, n)
 		for i, v := range solid {
-			if v != 0 {
-				buf[i] = 1
+			switch v {
+			case 1:
+				buf[i] = 1 // the scene's
+			case 2:
+				buf[i] = -1 // the frame's walls (no shadow)
 			}
 		}
-		copy(g.job.Fields()[(gpu.GasFieldCount-1)*n:], buf)
+		copy(g.job.Fields()[49*n:], buf) // (gas.comp's SOL)
 		g.solid = solid != nil
 	}
 	g.job.Begin()

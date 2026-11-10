@@ -22,6 +22,16 @@ type LiquidPhys struct {
 	Flip         float32 // 0..1: FLIP's share (lively, splashy) against PIC's (calm, viscous)
 	FloorOn      bool
 	Floor        float32 // y px of the floor (FloorOn)
+	Walls        bool    // the frame's edges are walls
+	// 3D (with the scene's depth: LiquidSim.Surf): the drops have a depth and move in it; the
+	// pull into the scene (px/s², + towards the camera, in the depth's px: DepthPx), how far
+	// behind the surface things are solid (px; <= 0: all of it), how the hidden back of things
+	// slopes (1 a vertical wall: what passes behind falls; 0 a ledge it rolls on), and at each hit
+	// how much speed it keeps bouncing off and how much it loses sliding
+	D3               bool
+	GravZ            float32
+	Thick, BackSlope float32
+	Bounce, Friction float32
 }
 
 // LiquidBirth: a drop born now: where, its velocity, its size and color, the emitter's index of
@@ -31,6 +41,7 @@ type LiquidBirth struct {
 	Size         float32
 	Col          [4]float32
 	Idx          int32
+	Z            float32 // 3D: its depth (px of DepthPx)
 }
 
 // LiquidSim: the drops and the grid (GW×GH cells of CS px over the frame)
@@ -45,6 +56,12 @@ type LiquidSim struct {
 	Col                [][4]float32
 	Idx                []int32
 	Born               []float32 // when each was born (T)
+	Z, VZ              []float32 // 3D: depth (px of DepthPx: more is nearer) and its speed
+	// Surf: 3D: the scene's surface (its depth in px of DepthPx at each cell's centre; set per
+	// frame: nil none)
+	Surf []float32
+	D3   bool    // 3D (the last frame's)
+	DP   float32 // px per unit of depth (DepthPx at this frame's size)
 	// the grid: velocities on the cells' sides (u: (GW+1)×GH, v: GW×(GH+1)), their weights and
 	// values before the forces, the pressure (× dt), the cells' kind, the solid cells (Solid,
 	// set per frame: nil none)
@@ -67,6 +84,13 @@ const (
 
 // lqSprayBelow: a drop with fewer drops than this around it (3×3 cells, itself included) is spray
 const lqSprayBelow = 6
+
+// lqRest, lqVolumeK: the drops in a cell at rest, and how much of their crowding beyond that the
+// pressure undoes per step
+const (
+	lqRest    = 3
+	lqVolumeK = 0.15
+)
 
 // lqLaunch: seconds a newborn drop flies by itself (a jet or a splash is thrown, not squeezed)
 const lqLaunch = 0.25
@@ -95,7 +119,7 @@ func (s *LiquidSim) Save() []byte {
 	binary.Write(&b, binary.LittleEndian, s.T)
 	binary.Write(&b, binary.LittleEndian, s.Next)
 	binary.Write(&b, binary.LittleEndian, int32(len(s.X)))
-	for _, f := range [][]float32{s.X, s.Y, s.VX, s.VY, s.Size, s.Born} {
+	for _, f := range [][]float32{s.X, s.Y, s.VX, s.VY, s.Size, s.Born, s.Z, s.VZ} {
 		binary.Write(&b, binary.LittleEndian, f)
 	}
 	binary.Write(&b, binary.LittleEndian, s.Col)
@@ -113,9 +137,9 @@ func (s *LiquidSim) Load(b []byte) bool {
 		return false
 	}
 	mk := func() []float32 { return make([]float32, n) }
-	s.X, s.Y, s.VX, s.VY, s.Size, s.Born = mk(), mk(), mk(), mk(), mk(), mk()
+	s.X, s.Y, s.VX, s.VY, s.Size, s.Born, s.Z, s.VZ = mk(), mk(), mk(), mk(), mk(), mk(), mk(), mk()
 	s.Col, s.Idx = make([][4]float32, n), make([]int32, n)
-	for _, f := range [][]float32{s.X, s.Y, s.VX, s.VY, s.Size, s.Born} {
+	for _, f := range [][]float32{s.X, s.Y, s.VX, s.VY, s.Size, s.Born, s.Z, s.VZ} {
 		if binary.Read(r, binary.LittleEndian, f) != nil {
 			return false
 		}
@@ -133,6 +157,7 @@ func (s *LiquidSim) Add(bs []LiquidBirth, max int) {
 		s.X, s.Y, s.VX, s.VY = append(s.X, b.X), append(s.Y, b.Y), append(s.VX, b.VX), append(s.VY, b.VY)
 		s.Size, s.Col, s.Idx = append(s.Size, b.Size), append(s.Col, b.Col), append(s.Idx, b.Idx)
 		s.Born = append(s.Born, float32(s.T))
+		s.Z, s.VZ = append(s.Z, b.Z), append(s.VZ, 0)
 	}
 	if over := len(s.X) - min(max, LiquidMax); over > 0 {
 		s.drop(func(i int) bool { return i < over })
@@ -147,11 +172,11 @@ func (s *LiquidSim) drop(gone func(i int) bool) {
 			continue
 		}
 		s.X[k], s.Y[k], s.VX[k], s.VY[k], s.Size[k], s.Col[k], s.Idx[k] = s.X[i], s.Y[i], s.VX[i], s.VY[i], s.Size[i], s.Col[i], s.Idx[i]
-		s.Born[k] = s.Born[i]
+		s.Born[k], s.Z[k], s.VZ[k] = s.Born[i], s.Z[i], s.VZ[i]
 		k++
 	}
 	s.X, s.Y, s.VX, s.VY, s.Size, s.Col, s.Idx = s.X[:k], s.Y[:k], s.VX[:k], s.VY[:k], s.Size[:k], s.Col[:k], s.Idx[:k]
-	s.Born = s.Born[:k]
+	s.Born, s.Z, s.VZ = s.Born[:k], s.Z[:k], s.VZ[:k]
 }
 
 // solidAt: whether (x, y) px is solid (the scene's solid cells, below the floor)
@@ -164,7 +189,7 @@ func (s *LiquidSim) solidAt(x, y float32, ph *LiquidPhys) bool {
 	}
 	i, j := int(math.Floor(float64(x/s.CS))), int(math.Floor(float64(y/s.CS)))
 	if i < 0 || j < 0 || i >= s.GW || j >= s.GH {
-		return false
+		return ph.Walls // (out of the frame: in the walls, if it has them)
 	}
 	return s.Solid[j*s.GW+i] != 0
 }
@@ -175,7 +200,12 @@ func (s *LiquidSim) Substeps(dt float32, ph *LiquidPhys) int {
 	for i := range s.VX {
 		vm = max(vm, float32(math.Hypot(float64(s.VX[i]), float64(s.VY[i]))))
 	}
-	vm += float32(math.Hypot(float64(ph.GravX), float64(ph.GravY))) * dt
+	if ph.D3 {
+		for i := range s.VZ {
+			vm = max(vm, float32(math.Abs(float64(s.VZ[i]))))
+		}
+	}
+	vm += float32(math.Sqrt(float64(ph.GravX*ph.GravX+ph.GravY*ph.GravY+ph.GravZ*ph.GravZ))) * dt
 	return max(1, min(8, int(math.Ceil(float64(vm*dt/s.CS)))))
 }
 
@@ -205,6 +235,10 @@ func bilerp(f []float32, w, h int, x, y float32) float32 {
 // Step moves the liquid dt seconds on. The grid's work is done only around the liquid that holds
 // together (its box, a few cells wider): what costs is the liquid there is, not the frame.
 func (s *LiquidSim) Step(ph *LiquidPhys, dt float32) {
+	if ph.D3 {
+		s.step3D(ph, dt)
+		return
+	}
 	W, H := s.GW, s.GH
 	cs := s.CS
 	n := len(s.X)
@@ -410,6 +444,11 @@ func (s *LiquidSim) grid(ph *LiquidPhys, dt float32, i0, j0, i1, j1 int) {
 				continue
 			}
 			s.div[k] = (s.u[j*(W+1)+i+1] - s.u[j*(W+1)+i] + s.v[(j+1)*W+i] - s.v[j*W+i]) / cs
+			// volume: where the drops are packed tighter than at rest the pressure spreads them
+			// (a pool keeps its volume: it rises as it fills, instead of packing)
+			if over := float32(s.cnt[k])/lqRest - 1; over > 0 {
+				s.div[k] -= lqVolumeK * min(over, 2) / dt
+			}
 			cells[(i+j)&1] = append(cells[(i+j)&1], int32(k))
 		}
 	}
@@ -536,12 +575,98 @@ func (s *LiquidSim) extrapolate(f, wt []float32, w, x0, y0, x1, y1 int) {
 	}
 }
 
+// surf: 3D: the scene's surface depth at (x, y) px (bilinear on the cells' centres) and its slope
+// (px of depth per px across, down); no surface: far behind everything
+func (s *LiquidSim) surf(x, y float32) (float32, float32, float32) {
+	if s.Surf == nil {
+		return -1e9, 0, 0
+	}
+	gx, gy := x/s.CS-0.5, y/s.CS-0.5
+	z := bilerp(s.Surf, s.GW, s.GH, gx, gy)
+	dx := (bilerp(s.Surf, s.GW, s.GH, gx+0.5, gy) - bilerp(s.Surf, s.GW, s.GH, gx-0.5, gy)) / s.CS
+	dy := (bilerp(s.Surf, s.GW, s.GH, gx, gy+0.5) - bilerp(s.Surf, s.GW, s.GH, gx, gy-0.5)) / s.CS
+	return z, dx, dy
+}
+
+// step3D: a step of the drops in 3D: each by itself, pulled by the three axes of gravity, off
+// the frame's floor and walls and the scene's solid cells as in 2D, and off the scene's surface
+// in depth: its visible face (from in front) and its hidden back (Thick behind it, sloping as
+// BackSlope); a jump of the surface towards the camera bigger than a step is the side of
+// something: it stops the drop as a wall
+func (s *LiquidSim) step3D(ph *LiquidPhys, dt float32) {
+	n := len(s.X)
+	climb := 2 * s.CS
+	parallelFor(n, func(q0, q1 int) {
+		for q := q0; q < q1; q++ {
+			x, y, z := s.X[q], s.Y[q], s.Z[q]
+			vx, vy, vz := s.VX[q]+ph.GravX*dt, s.VY[q]+ph.GravY*dt, s.VZ[q]+ph.GravZ*dt
+			nx, ny, nz := x+vx*dt, y+vy*dt, z+vz*dt
+			if s.solidAt(nx, ny, ph) {
+				switch {
+				case !s.solidAt(nx, y, ph):
+					ny, vy = y, 0
+				case !s.solidAt(x, ny, ph):
+					nx, vx = x, 0
+				default:
+					nx, ny, vx, vy = x, y, 0, 0
+				}
+			}
+			s0, _, _ := s.surf(x, y)
+			s1, gx, gy := s.surf(nx, ny)
+			back := s1 - ph.Thick
+			if ph.Thick <= 0 {
+				back = -1e9
+			}
+			if nz <= s1 && nz >= back {
+				// inside what is solid: which face it came through
+				var nnx, nny, nnz float32
+				if z >= s0-climb*0.25 {
+					if s1-z > climb && s1-s0 > climb {
+						// the side of something nearer: a wall across
+						nx, ny, vx, vy = x, y, 0, 0
+						s.X[q], s.Y[q], s.Z[q], s.VX[q], s.VY[q], s.VZ[q] = nx, ny, nz, vx, vy, vz
+						continue
+					}
+					// its visible face: out in front of it, its normal from its slope
+					nz = s1 + 0.5
+					l := float32(math.Sqrt(float64(gx*gx + gy*gy + 1)))
+					nnx, nny, nnz = -gx/l, -gy/l, 1/l
+				} else {
+					// its hidden back: out behind it, a wall (1) or a ledge (0)
+					nz = back - 0.5
+					sl := max(0, min(1, ph.BackSlope))
+					l := float32(math.Sqrt(float64((1-sl)*(1-sl) + sl*sl)))
+					nnx, nny, nnz = 0, -(1-sl)/l, -sl/l
+				}
+				if vn := vx*nnx + vy*nny + vz*nnz; vn < 0 {
+					// off it: the normal part bounced (or not), the rest slides, losing some
+					vx, vy, vz = vx-vn*nnx, vy-vn*nny, vz-vn*nnz
+					f := 1 - max(0, min(1, ph.Friction))
+					vx, vy, vz = vx*f, vy*f, vz*f
+					b := -ph.Bounce * vn
+					vx, vy, vz = vx+b*nnx, vy+b*nny, vz+b*nnz
+				}
+			}
+			s.X[q], s.Y[q], s.Z[q], s.VX[q], s.VY[q], s.VZ[q] = nx, ny, nz, vx, vy, vz
+		}
+	})
+	mg := 4 * s.CS
+	s.drop(func(q int) bool {
+		return s.X[q] < -mg || s.X[q] > s.W+mg || s.Y[q] > s.H+mg || s.Y[q] < -s.H
+	})
+	s.T += float64(dt)
+}
+
 // Particles: the drops as the emitter's particles to draw
 func (s *LiquidSim) Particles() []Particle {
 	out := make([]Particle, len(s.X))
 	for q := range s.X {
 		c := s.Col[q]
-		out[q] = Particle{X: s.X[q], Y: s.Y[q], VX: s.VX[q], VY: s.VY[q], Size: s.Size[q], R: c[0], G: c[1], B: c[2], A: c[3], Z: -1}
+		z := float32(-1)
+		if s.Surf != nil || s.D3 {
+			z = max(0, min(1, s.Z[q]/s.DP)) // (3D: its depth, 0 far … 1 near)
+		}
+		out[q] = Particle{X: s.X[q], Y: s.Y[q], VX: s.VX[q], VY: s.VY[q], Size: s.Size[q], R: c[0], G: c[1], B: c[2], A: c[3], Z: z}
 	}
 	return out
 }
