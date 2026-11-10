@@ -56,7 +56,7 @@ layers:
         y: 0.95
         blend: add
         emitter:
-          preset: fire          # fire, fire_real, fire_gas, explosion, sparks · smoke, smoke_real · fog_gas · clouds_gas · water, water_clear, splash, rain, water_sim, water_sim_clear, water_3d, water_3d_clear, splash_sim · dust, light, snow, lamp light, explosion, lamp, water, water_clear, splash, rain, snow
+          preset: fire          # fire, fire_real, fire_gas, fire_gas_haze, heat_haze, explosion, sparks · smoke, smoke_real, steam · fog_gas · clouds_gas · water, water_clear, splash, rain, water_sim, water_sim_clear, water_3d, water_3d_clear, splash_sim · dust, light, snow, lamp light, explosion, lamp, water, water_clear, splash, rain, snow
           rate: 650             # anything not written comes from the preset
           react: { react_to: bass, rate: 1, size: 0.35 }
         keys:
@@ -160,6 +160,13 @@ particles:
   with them.
 - Its **depth** (Depth section) places it in the scene as one plane, like the particles: what is
   nearer hides it, and the 2.5D camera and the depth of field move and blur it.
+
+**Heat haze** (`haze`, px; 0 = none): where the air is warm, what is behind it shimmers, moved up
+to that many px by a noise that rises with the warm air (`haze_scale`: the size of its ripples). It
+works even where there is no smoke: the presets **Simulated fire with heat haze**
+(`fire_gas_haze`), **Heat haze (invisible)** (`heat_haze`: only shimmering warm air, as over hot
+asphalt or an engine) and **Steam** (`steam`: light white vapour that soon vanishes and makes what is
+behind it waver).
 
 **Takes room** (`expand`): the gas given off pushes out from its source. Under a ceiling, or in an
 upside-down glass, the smoke fills down until it spills out of the openings, and then rises

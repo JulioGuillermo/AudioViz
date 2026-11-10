@@ -1288,4 +1288,13 @@ export const ES = {
   "How much room the new gas takes: it pushes out from its source. Under a ceiling it fills down until it spills out of the openings. 0: none": "Cuánto espacio ocupa el gas nuevo: empuja hacia fuera desde su fuente. Bajo un techo se va llenando hacia abajo hasta salir por los huecos. 0: nada",
   "Clear water on the scene (3D, lens)": "Agua transparente sobre la escena (3D, lente)",
   "Clear water (3D)": "Agua transparente (3D)",
+  "Simulated fire with heat haze": "Fuego simulado con calima",
+  "Heat haze (invisible)": "Calima (invisible)",
+  "Steam": "Vapor",
+  "Heat haze (px)": "Calima (px)",
+  "Where the air is warm, what is behind it shimmers, moved up to this many px (0: none). It works even where there is no smoke": "Donde el aire está caliente, lo de detrás tiembla, desplazado hasta estos px (0: nada). Funciona aunque no haya humo",
+  "Haze size (px)": "Tamaño de la calima (px)",
+  "The size of its ripples: smaller, a finer shimmer": "El tamaño de sus ondas: más pequeño, un temblor más fino",
+  "Fire and haze": "Fuego y calima",
+  "Heat haze": "Calima",
 };

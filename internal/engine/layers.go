@@ -452,7 +452,7 @@ func (s *Session) emitterWords() int {
 			return 0
 		}
 		n := s.W * s.H
-		if e := c.Emitter; e != nil && (e.Look == "water" || e.Look == "liquid") && e.Water.Lens > 0 {
+		if e := c.Emitter; e != nil && (((e.Look == "water" || e.Look == "liquid") && e.Water.Lens > 0) || (e.Look == "gas" && e.Gas.Haze > 0)) {
 			n += s.W * s.H // its lens (after its image)
 		}
 		if e := c.Emitter; e != nil && (e.Route != nil || e.FollowPath) {

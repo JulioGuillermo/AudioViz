@@ -258,6 +258,7 @@ func (s *Session) emitParticles(li, ci int, c0, c *config.ClipConfig, idx int, f
 		p.Heat, p.Edge = math.Max(fl.Heat, 0.01), math.Min(math.Max(fl.Edge, 0), 1)
 		p.GasOpacity, p.GasWisp, p.GasWispScale = math.Max(g.Opacity, 0), math.Min(math.Max(g.Wisps, 0), 1), math.Max(g.WispScale, 1)*sc
 		p.GasLightCol, p.GasShadow, p.GasFireLight = rgb(g.LightColor, "#fff2e0"), rgb(g.ShadowColor, "#3a4250"), math.Max(g.FireLight, 0)
+		p.GasHaze, p.GasHazeScale = math.Max(g.Haze, 0)*sc, math.Max(g.HazeScale, 4)*sc
 	}
 	if e.Look == "smoke" {
 		sm := e.Smoke

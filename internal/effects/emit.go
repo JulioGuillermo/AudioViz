@@ -135,6 +135,7 @@ type EmitParams struct {
 	GasWispScale           float64
 	GasLightCol, GasShadow [3]float64
 	GasFireLight           float64
+	GasHaze, GasHazeScale  float64 // the heat haze: how far it moves what is behind (px), its size (px)
 	// What they go round in the scene: a signed distance (px; < 0 inside) on a CGW×CGH grid of
 	// CDiv px cells (nil: nothing)
 	CSDF           []float32
@@ -933,7 +934,7 @@ func DrawEmitter(e *EmitFrame, W, H int) (*image.RGBA, *LightField) {
 	}
 	img := image.NewRGBA(image.Rect(0, 0, W, H))
 	e.Lens = nil
-	if p.Water && p.WaterLens > 0 {
+	if p.LensOn() {
 		e.Lens = make([]float32, W*H*2)
 	}
 	e.ZPlane = nil
@@ -1164,7 +1165,7 @@ func resolvePixel(p *EmitParams, T float32, acc []uint32, GW, GH, div int, glow 
 		o, *lens = waterPixel(p, T, acc, GW, GH, div, px, py)
 	} else if p.GasOn {
 		if p.Gas != nil {
-			o = gasPixel(p, p.Gas, px, py)
+			o, *lens = gasPixel(p, p.Gas, px, py, T)
 		}
 	} else {
 		var s [4]float32
@@ -1555,4 +1556,10 @@ func PackEmitExprs(u []uint32, f []float32, off int, xs []EmitExpr) {
 		}
 		f[h+5] = float32(x.Mul)
 	}
+}
+
+// LensOn: whether the emitter bends what is behind it (the water's lens, the gas's heat haze):
+// its lens plane after its image
+func (p *EmitParams) LensOn() bool {
+	return (p.Water && p.WaterLens > 0) || (p.GasOn && p.GasHaze > 0)
 }

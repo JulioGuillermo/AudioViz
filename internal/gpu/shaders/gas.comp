@@ -456,13 +456,14 @@ void lightEnd(int i) {
 }
 // 23: the frame's cells (halves)
 void pack(int i) {
-    int o = i * 6;
+    int o = i * 7;
     outc[o] = packHalf2x16(vec2(F(D, i), F(FIRE, i)));
     outc[o + 1] = packHalf2x16(vec2(F(SUN, i), F(AMB, i)));
     outc[o + 2] = packHalf2x16(vec2(F(FIRE_E, i), F(R, i)));
     outc[o + 3] = packHalf2x16(vec2(F(G, i), F(B, i)));
     outc[o + 4] = packHalf2x16(vec2(F(C1X, i), F(C1Y, i)));
     outc[o + 5] = packHalf2x16(vec2(F(C2X, i), F(C2Y, i)));
+    outc[o + 6] = packHalf2x16(vec2(F(HEAT, i), 0.0)); // (the warmth: the heat haze)
 }
 
 void main() {

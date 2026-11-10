@@ -1095,7 +1095,7 @@ function App() {
     addEmitter: (tt, preset) => {
       const id = newLayerId();
       const st = Math.max(0, Math.min(meta.duration - 0.5, +tt.toFixed(3)));
-      const names = { fire: t('Fire'), fire_real: t('Realistic fire'), sparks: t('Sparks'), smoke: t('Smoke'), smoke_real: t('Realistic smoke'), fire_gas: t('Fire and smoke'), clouds_gas: t('Storm clouds'), water_sim: t('Simulated water'), water_sim_clear: t('Clear water'), water_3d: t('Water (3D)'), water_3d_clear: t('Clear water (3D)'), splash_sim: t('Simulated splash'), fog_gas: t('Fog'), dust: t('Dust'), light: t('Lights (bokeh)'), explosion: t('Explosion'), snow: t('Snow') };
+      const names = { fire: t('Fire'), fire_real: t('Realistic fire'), sparks: t('Sparks'), smoke: t('Smoke'), smoke_real: t('Realistic smoke'), fire_gas: t('Fire and smoke'), clouds_gas: t('Storm clouds'), water_sim: t('Simulated water'), water_sim_clear: t('Clear water'), water_3d: t('Water (3D)'), water_3d_clear: t('Clear water (3D)'), splash_sim: t('Simulated splash'), fog_gas: t('Fog'), fire_gas_haze: t('Fire and haze'), heat_haze: t('Heat haze'), steam: t('Steam'), dust: t('Dust'), light: t('Lights (bokeh)'), explosion: t('Explosion'), snow: t('Snow') };
       update((p) => {
         p.layers = [...(p.layers || []), { id, name: names[preset] || '', kind: 'emitter',
           clips: [newEmitterClip(p, preset, st, Math.min(meta.duration - st, 10))] }];

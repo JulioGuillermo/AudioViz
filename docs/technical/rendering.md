@@ -524,6 +524,11 @@ blurs, packing into halves) is computed there too, and the cells are copied out.
 simulations are not bit-identical (a chaotic flow then drifts apart), but every renderer draws the
 same simulated frames.
 
+**Heat haze** (`haze`): the frame's cells carry the warmth too (a 7th word). Where it is warm the
+pixel's lens is haze·(1 − e^(−1.5·warmth)) × (2·fbm − 1) on two axes, the noise rising 3 of its
+sizes (`haze_scale`) a second; it uses the lens plane of the water's lens (`EmitParams.LensOn`,
+header words 121–122), so it bends what is behind even where there is no smoke.
+
 **Walls** (`walls`): the outer ring of cells is solid (2 for the gas: its light is not shaded by
 it). **Expansion** (`expand`): each cell's feed weight this step (`Inj`) sets a divergence target
 −expand·min(w, 4), so the gas given off pushes out. Advection never takes values from a solid

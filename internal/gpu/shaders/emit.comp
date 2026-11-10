@@ -590,12 +590,12 @@ vec4 waterPixel(int h, uint base, int GW, int GH, int dv, vec2 pp, float T, uint
 // ed[h+105]×ed[h+106] cells of edf(h+107) px, 6 words (pairs of halves) per cell: smoke, heat;
 // the light reaching it, the light around it; the fire's light, red; green, blue (× smoke); the
 // two sets of wisp coordinates
-float gasV[12];
+float gasV[14];
 void gasCell(int o, int gw, int gh, int i, int j, float w) {
     i = clamp(i, 0, gw - 1);
     j = clamp(j, 0, gh - 1);
-    int c = o + (j * gw + i) * 6;
-    for (int k = 0; k < 6; k++) {
+    int c = o + (j * gw + i) * 7;
+    for (int k = 0; k < 7; k++) {
         vec2 v = unpackHalf2x16(lay[c + k]);
         gasV[2 * k] += w * v.x;
         gasV[2 * k + 1] += w * v.y;
@@ -612,7 +612,7 @@ vec3 flameRamp(int h, float ht) {
     if (ht < 0.7) return cool + (mid - cool) * ((ht - 0.35) / 0.35);
     return mid + (hot - mid) * ((ht - 0.7) / 0.3);
 }
-vec4 gasPixel(int h, vec2 pp, uint seed) {
+vec4 gasPixel(int h, vec2 pp, uint seed, float T) {
     int o = int(ed[h + 104]) - 1;
     if (o < 0) return vec4(0.0);
     int gw = int(ed[h + 105]), gh = int(ed[h + 106]);
@@ -622,10 +622,18 @@ vec4 gasPixel(int h, vec2 pp, uint seed) {
     vec2 t = q - cc;
     vec3 wx = vec3(0.5 * (0.5 - t.x) * (0.5 - t.x), 0.75 - t.x * t.x, 0.5 * (0.5 + t.x) * (0.5 + t.x));
     vec3 wy = vec3(0.5 * (0.5 - t.y) * (0.5 - t.y), 0.75 - t.y * t.y, 0.5 * (0.5 + t.y) * (0.5 + t.y));
-    for (int k = 0; k < 12; k++) gasV[k] = 0.0;
+    for (int k = 0; k < 14; k++) gasV[k] = 0.0;
     for (int j = 0; j < 3; j++)
         for (int i = 0; i < 3; i++) gasCell(o, gw, gh, int(cc.x) + i - 1, int(cc.y) + j - 1, wx[i] * wy[j]);
     float d0 = gasV[0], heat = gasV[1];
+    // the heat haze (as effects.gasPixel): where the air is warm, what is behind it shimmers
+    float hz = edf(h + 121);
+    if (hz > 0.0 && gasV[12] > 1e-4) {
+        float k = hz * (1.0 - exp(-gasV[12] * 1.5));
+        float hs = max(edf(h + 122), 1.0);
+        vec2 u = vec2(pp.x / hs, pp.y / hs + T * 3.0);
+        gLens = vec2(k * (2.0 * fbm(u, seed + 51u) - 1.0), k * (2.0 * fbm(vec2(u.x + 7.1, u.y + 3.7), seed + 51u) - 1.0));
+    }
     if (d0 < 1e-4 && heat < 1e-4) return vec4(0.0);
     float sc = max(edf(h + 111), 1.0);
     float w1 = edf(h + 108), w2 = 1.0 - w1;
@@ -717,7 +725,7 @@ void resolveOne(uint id) {
     } else if (ed[h + 43] == 3u) {
         c = waterPixel(h, base, GW, GH, dv, pp, T, seed);
     } else if (ed[h + 43] == 4u) {
-        c = gasPixel(h, pp, seed);
+        c = gasPixel(h, pp, seed, T);
     } else {
         vec4 s = dv == 1 ? cellSum(base, GW, GH, x, y) : sumAt(base, GW, GH, dv, pp);
         if ((v1.w & 1) != 0) {
@@ -744,7 +752,7 @@ void resolveOne(uint id) {
         c.a = max(c.a, max(c.r, max(c.g, c.b)));
     }
     lay[v1.y + p] = packUnorm4x8(clamp(c, 0.0, 1.0));
-    bool lensOn = ed[h + 43] == 3u && edf(h + 94) > 0.0;
+    bool lensOn = (ed[h + 43] == 3u && edf(h + 94) > 0.0) || (ed[h + 43] == 4u && edf(h + 121) > 0.0);
     if (lensOn) lay[v1.y + n + p] = packHalf2x16(gLens); // its lens, after its image
     if (ed[h + 95] != 0u) {
         // its particles' depth here (weighted as their alpha, in this pixel's cell; -1 without any),

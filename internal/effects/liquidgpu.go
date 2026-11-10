@@ -34,7 +34,7 @@ func (s *LiquidSim) NextBirth() *int32 { return &s.Next }
 func (s *LiquidSim) SetSurface(surf []float32, dp float32, d3 bool) {
 	s.Surf, s.DP, s.D3 = surf, dp, d3
 }
-func (s *LiquidSim) Close()            {}
+func (s *LiquidSim) Close() {}
 
 // LiquidGPU: the liquid simulated on the GPU (gpu.LiquidJob, liquid.comp): the steps of a frame
 // there, the drops (LiquidSim's state) uploaded before and read back after

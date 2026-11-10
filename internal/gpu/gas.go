@@ -55,7 +55,7 @@ func NewGasJob(deviceIndex, gw, gh int) (*GasJob, error) {
 		C.size_t(GasFieldCount * n * 4),
 		C.size_t(GasMaxSrc * GasSrcFloats * 4),
 		C.size_t(GasMaxList * 4),
-		C.size_t(n * 6 * 4),
+		C.size_t(n * 7 * 4),
 		C.size_t(GasStateCount * n * 4),
 	}
 	errBuf := make([]byte, 512)
@@ -88,7 +88,7 @@ func (g *GasJob) Fields() []float32 {
 }
 
 // Out: the frame's cells (6 words each) after Light
-func (g *GasJob) Out() []uint32 { return unsafe.Slice((*uint32)(C.vkj_map(g.j, 4)), g.n*6) }
+func (g *GasJob) Out() []uint32 { return unsafe.Slice((*uint32)(C.vkj_map(g.j, 4)), g.n*7) }
 
 // gasK: a kernel of gas.comp with its arguments
 type gasK struct {

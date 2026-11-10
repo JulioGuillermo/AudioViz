@@ -21,7 +21,7 @@ const (
 	// GasMaxCells: the most cells of a gas grid (larger frames get coarser cells)
 	GasMaxCells = 131072
 	// GasCellWords: 32-bit words per cell of a GasFrame (pairs of halves)
-	GasCellWords = 6
+	GasCellWords = 7
 	// gasSolidShade: how much smoke a solid cell is worth for the light that goes through it
 	gasSolidShade = 4
 	// gasPeriod: seconds between the restarts of each set of wisp coordinates
@@ -292,7 +292,7 @@ func (s *GasSim) Feed(src []GasSource, ph *GasPhys, dt float32) {
 				}
 				w := (1 - q) * (1 - q) * p.A
 				s.Inj[i] += w // (the room the new gas takes: GasPhys.Expand)
-				a := w * dt // per second at its centre (the same whatever the cells' size)
+				a := w * dt   // per second at its centre (the same whatever the cells' size)
 				d := ph.Density * a
 				s.D[i] += d
 				s.R[i] += d * p.Col[0]
@@ -879,6 +879,7 @@ func (s *GasSim) Frame(l GasLight) *GasFrame {
 		g.Cells[o+3] = pk(s.G[i], s.B[i])
 		g.Cells[o+4] = pk(s.C1x[i], s.C1y[i])
 		g.Cells[o+5] = pk(s.C2x[i], s.C2y[i])
+		g.Cells[o+6] = pk(s.Heat[i], 0) // (the warmth: the heat haze)
 	}
 	return g
 }
@@ -985,7 +986,7 @@ func HalfF(h uint16) float32 {
 }
 
 // cellAt: the 12 values of cell (i, j) of the gas frame (clamped to the grid)
-func (g *GasFrame) cellAt(i, j int, v *[12]float32, w float32) {
+func (g *GasFrame) cellAt(i, j int, v *[14]float32, w float32) {
 	i, j = max(0, min(g.GW-1, i)), max(0, min(g.GH-1, j))
 	o := (j*g.GW + i) * GasCellWords
 	for k := 0; k < GasCellWords; k++ {
@@ -997,13 +998,13 @@ func (g *GasFrame) cellAt(i, j int, v *[12]float32, w float32) {
 
 // at: the gas frame at (px, py) px: quadratic B-spline over the 3×3 nearest cells (smooth, as
 // smoke is), as gasAt in emit.comp
-func (g *GasFrame) at(px, py float32) [12]float32 {
+func (g *GasFrame) at(px, py float32) [14]float32 {
 	qx, qy := px/g.CS-0.5, py/g.CS-0.5
 	cx, cy := float32(math.Floor(float64(qx+0.5))), float32(math.Floor(float64(qy+0.5)))
 	tx, ty := qx-cx, qy-cy
 	wx := [3]float32{0.5 * (0.5 - tx) * (0.5 - tx), 0.75 - tx*tx, 0.5 * (0.5 + tx) * (0.5 + tx)}
 	wy := [3]float32{0.5 * (0.5 - ty) * (0.5 - ty), 0.75 - ty*ty, 0.5 * (0.5 + ty) * (0.5 + ty)}
-	var v [12]float32
+	var v [14]float32
 	for j := 0; j < 3; j++ {
 		for i := 0; i < 3; i++ {
 			g.cellAt(int(cx)+i-1, int(cy)+j-1, &v, wx[i]*wy[j])
@@ -1020,11 +1021,20 @@ func gasNoise(x, y float32, seed uint32) float32 {
 // gasPixel: the gas look at (px, py) (premultiplied), as gasPixel in emit.comp: the smoke eaten
 // at its edges by wisps carried by the flow, lit by the light that reaches it (and by the fire),
 // the flame where it is hot in front
-func gasPixel(p *EmitParams, g *GasFrame, px, py float32) [4]float32 {
+func gasPixel(p *EmitParams, g *GasFrame, px, py, T float32) ([4]float32, [2]float32) {
 	v := g.at(px, py)
 	d0, heat := v[0], v[1]
+	// the heat haze: where the air is warm, what is behind it shimmers (a lens moved by noise that
+	// rises with the warm air)
+	var lens [2]float32
+	if hz := float32(p.GasHaze); hz > 0 && v[12] > 1e-4 {
+		k := hz * (1 - float32(math.Exp(float64(-v[12]*1.5))))
+		hs := max(float32(p.GasHazeScale), 1)
+		u, w := px/hs, py/hs+T*3
+		lens = [2]float32{k * (2*efbm(u, w, p.Seed+51) - 1), k * (2*efbm(u+7.1, w+3.7, p.Seed+51) - 1)}
+	}
 	if d0 < 1e-4 && heat < 1e-4 {
-		return [4]float32{}
+		return [4]float32{}, lens
 	}
 	sc := max(float32(p.GasWispScale), 1)
 	w1 := g.W1
@@ -1061,5 +1071,5 @@ func gasPixel(p *EmitParams, g *GasFrame, px, py float32) [4]float32 {
 		}
 		o[3] = ac + o[3]*(1-ac)
 	}
-	return o
+	return o, lens
 }

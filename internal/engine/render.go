@@ -252,7 +252,7 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 			break // no accumulation left for it
 		}
 		px := iw * ih
-		lens := l.Emit != nil && l.Emit.P.Water && l.Emit.P.WaterLens > 0
+		lens := l.Emit != nil && l.Emit.P.LensOn()
 		zplane := l.Emit != nil && ((l.Emit.P.ZTrack != nil && len(l.Emit.P.ZTrack.S) <= 256) || l.Emit.P.PerZ)
 		planes := 1
 		if lens {
@@ -409,7 +409,7 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 			l := &fs.Layers[i]
 			if l.Emit != nil {
 				off += r.s.W * r.s.H // drawn there by the emitter pass (and its lens, its depth)
-				if l.Emit.P.Water && l.Emit.P.WaterLens > 0 {
+				if l.Emit.P.LensOn() {
 					off += r.s.W * r.s.H
 				}
 				if t := l.Emit.P.ZTrack; (t != nil && len(t.S) <= 256) || l.Emit.P.PerZ {
@@ -746,6 +746,7 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 				f[h+112+j], f[h+115+j] = float32(P.GasLightCol[j]), float32(P.GasShadow[j])
 			}
 			f[h+118] = float32(P.GasFireLight)
+			f[h+121], f[h+122] = float32(P.GasHaze), float32(P.GasHazeScale)
 		}
 		if P.CSDF != nil && P.CGW*P.CGH <= effects.MaxCollideCells {
 			copy(f[co:], P.CSDF)

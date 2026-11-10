@@ -449,8 +449,9 @@ export const CLIP_FIELDS = [
 // grouped by what they make (fire, smoke, fog, clouds, water…), in this order everywhere
 export const EMITTER_GROUPS = [
   ['Fire', [['fire', 'Fire', 'flame'], ['fire_real', 'Realistic fire', 'flame'], ['fire_gas', 'Simulated fire', 'flame'],
+    ['fire_gas_haze', 'Simulated fire with heat haze', 'flame'], ['heat_haze', 'Heat haze (invisible)', 'waves'],
     ['explosion', 'Explosion', 'zap'], ['sparks', 'Sparks', 'sparkles']]],
-  ['Smoke', [['smoke', 'Smoke', 'cloud'], ['smoke_real', 'Simulated smoke', 'cloud']]],
+  ['Smoke', [['smoke', 'Smoke', 'cloud'], ['smoke_real', 'Simulated smoke', 'cloud'], ['steam', 'Steam', 'cloud']]],
   ['Fog', [['fog_gas', 'Ground fog', 'cloud-fog']]],
   ['Clouds', [['clouds_gas', 'Storm clouds', 'cloud']]],
   ['Water', [['water', 'Water', 'droplet'], ['water_clear', 'Clear water (lens)', 'droplet'], ['splash', 'Water splash', 'waves'],
@@ -579,6 +580,10 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
       { key: 'light_color', label: 'Light color', type: 'color', def: '#fff2e0' },
       { key: 'shadow_color', label: 'Shadow color', type: 'color', def: '#66707e', help: 'The light from around (the sky) that its shadows get' },
       { key: 'shadow', label: 'Own shadow', type: 'num', min: 0, max: 3, step: 0.01, def: 0.6, help: 'How dark the smoke gets where the light has gone through a lot of it' },
+      { key: 'haze', label: 'Heat haze (px)', type: 'num', min: 0, max: 60, step: 0.5, def: 0,
+        help: 'Where the air is warm, what is behind it shimmers, moved up to this many px (0: none). It works even where there is no smoke' },
+      { key: 'haze_scale', label: 'Haze size (px)', type: 'num', min: 4, max: 200, step: 1, def: 30, showIf: (c) => c.haze > 0,
+        help: 'The size of its ripples: smaller, a finer shimmer' },
       { key: 'fire_light', label: 'Fire lights it', type: 'num', min: 0, max: 4, step: 0.01, def: 1, help: 'How much its flames light the smoke around them (the flame\'s body color)' },
     ] },
     { key: 'flame', label: 'Flame', type: 'group', showIf: (c) => c.look === 'flame' || c.look === 'gas', fields: [

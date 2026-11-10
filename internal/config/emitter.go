@@ -240,6 +240,10 @@ type GasLook struct {
 	ShadowColor string  `yaml:"shadow_color"`
 	Shadow      float64 `yaml:"shadow"`
 	FireLight   float64 `yaml:"fire_light"`
+	// heat haze: where the air is warm, what is behind it shimmers, moved up to Haze px (0: none)
+	// by a rising noise of HazeScale px
+	Haze      float64 `yaml:"haze,omitempty"`
+	HazeScale float64 `yaml:"haze_scale,omitempty"`
 }
 
 // DefaultGas: cool smoke rising slowly
@@ -397,6 +401,23 @@ var EmitterPresets = map[string]EmitterConfig{
 			Opacity: 1.6, Wisps: 0.7, WispScale: 25, LightColor: "#ffe8d0", ShadowColor: "#4a4c54", Shadow: 1, FireLight: 1.2},
 		Glow:  EmitGlow{Intensity: 0.6, Radius: 130, Color: "#ff6a18"},
 		React: EmitterReact{ReactTo: "bass", Rate: 0.8, Speed: 0.4}},
+	// heat haze only: invisible warm air rising that makes what is behind it shimmer
+	"heat_haze": {Rate: 200, Max: 3000, Shape: "line", Width: 360, Direction: 0, Spread: 10, Speed: 60, SpeedVar: 0.3, Drag: 1,
+		Life: 0.5, LifeVar: 0.3, Size: 60, SizeEnd: 60, SizeVar: 0.3,
+		ColorStart: "#ffffffff", ColorMid: "#ffffffff", ColorEnd: "#ffffff00", Mode: "soft", Softness: 1,
+		Look: "gas",
+		Gas: GasLook{Detail: 7, Speed: 1.2, Expand: 0.5, Smoke: 0, Heat: 0.4, Push: 0.2, Rise: 220, Swirl: 1.5, Turbulence: 70, TurbScale: 100,
+			Fade: 0.5, Cool: 1.2, Burn: 2.5, Soot: 0, SootColor: "#2a2623", Spread: 200,
+			Opacity: 1, Wisps: 0.4, WispScale: 40, LightColor: "#ffffff", ShadowColor: "#ffffff", Shadow: 0, FireLight: 0, Haze: 7, HazeScale: 22}},
+	// steam: light white vapour that vanishes soon and makes what is behind it waver a little
+	"steam": {Rate: 160, Max: 3000, Shape: "circle", Width: 120, Direction: 0, Spread: 20, Speed: 90, SpeedVar: 0.3, Drag: 1.5,
+		Life: 0.5, LifeVar: 0.3, Size: 80, SizeEnd: 100, SizeVar: 0.3,
+		ColorStart: "#f2f6faff", ColorMid: "#f2f6faff", ColorEnd: "#f2f6fa00", FadeIn: 0.1, FadeOut: 0.4, Mode: "soft", Softness: 1,
+		Look: "gas",
+		Gas: GasLook{Detail: 6, Speed: 1.5, Expand: 0.8, Smoke: 0.12, Heat: 0.6, Push: 0.15, Rise: 260, Swirl: 2, Turbulence: 90, TurbScale: 120,
+			Fade: 0.7, Cool: 1.5, Burn: 2.5, Soot: 0, SootColor: "#2a2623", Spread: 500,
+			Opacity: 0.8, Wisps: 0.5, WispScale: 40, LightColor: "#ffffff", ShadowColor: "#c4ccd6", Shadow: 0.3, FireLight: 0, Haze: 3, HazeScale: 25},
+		React: EmitterReact{ReactTo: "bass", Rate: 0.4}},
 	// a bank of storm clouds: heavy smoke from the top of the frame that sinks in lobes
 	"clouds_gas": {Rate: 600, Max: 9000, Shape: "line", Width: 2400, Direction: 180, Spread: 20, Speed: 60, SpeedVar: 0.3, Drag: 1.5,
 		Turbulence: 10, TurbFreq: 1, Life: 0.8, LifeVar: 0.3, Size: 120, SizeEnd: 140, SizeVar: 0.3,
@@ -473,6 +494,10 @@ func (e *EmitterConfig) UnmarshalYAML(n *yaml.Node) error {
 }
 
 func init() {
+	// the simulated fire with heat haze: the air over it shimmers
+	fh := EmitterPresets["fire_gas"]
+	fh.Gas.Haze, fh.Gas.HazeScale = 6, 25
+	EmitterPresets["fire_gas_haze"] = fh
 	// every preset can turn on the flame look with sensible colors, and has a glow reach ready
 	for k, e := range EmitterPresets {
 		if e.Flame == (FlameLook{}) {
