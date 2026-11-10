@@ -36,7 +36,7 @@ The presets are grouped by what they make: fire, smoke, fog, clouds, water, and 
 | Floor and the scene | a floor px below the emitter, or **the scene's** (with a depth map: where the depth below the emitter comes up to its own): with gravity they fall onto it and **bounce**, keeping part of their speed (bounce) and of their sideways speed. **They go round the scene**: with a depth map, what is in the scene at their depth (within *Solid within*, in depth, of the emitter's) is solid and they slide off it — smoke goes round a wing, fire licks a rock; what is nearer hides them and what is farther is behind them. Where they are born is left free. While you adjust it the preview shows what is solid in cyan. **Bounce off it**: 0 they slide along it (flames lick it); more, they bounce off walls and ceilings (sparks) keeping that much speed — on what faces up they still slide (the floor above bounces them) |
 | Life and size | life (s) and its variation; size at birth and at the end, and its variation |
 | Color and look | colors at birth, halfway and at the end (their opacity fades them), fade in / out, how they add up (*light* or *matter*), streak (stretched along their motion), soft edge, random seed |
-| Look | *particles* (each as it is) or *flame*: they melt into one flame — the color comes from the heat that piles up (colors of its edges, body and core; heat), and rising noise cuts its edges into long tongues (how far, the size of the whirls, how fast they rise, how much they eat the edges) — or *smoke*: soft matter torn into wisps by noise (how much, the size of the wisps, how fast the pattern rises, how far it swirls) — or *water*: they melt into one liquid with a surface lit from the top left (where it becomes liquid: how much of them must pile up; how see-through its body is, its edges staying; its shine; how rounded it looks; ripples: how far, their size and speed; **lens**, px: what is behind it is seen through it bent like through glass — the drops magnify it, and turn it upside down when strong) — or *gas*: the particles are not drawn, they feed a simulated gas of smoke, heat and fuel that moves by itself (see [Simulated gas](#simulated-gas-smoke-fire-clouds) below) — or *liquid*: they are born as drops of a simulated liquid (see [Simulated liquid](#simulated-liquid-water) below). **Only its light (and glow)**: the particles are not drawn, only their light on the scene and their glow — an invisible light source (preset *Light source*) |
+| Look | *particles* (each as it is) or *flame*: they melt into one flame — the color comes from the heat that piles up (colors of its edges, body and core; heat), and rising noise cuts its edges into long tongues (how far, the size of the whirls, how fast they rise, how much they eat the edges) — or *smoke*: soft matter torn into wisps by noise (how much, the size of the wisps, how fast the pattern rises, how far it swirls) — or *water*: they melt into one liquid with a surface lit from the top left (where it becomes liquid: how much of them must pile up; how see-through its body is, its edges staying; its shine; how rounded it looks; ripples: how far, their size and speed; **lens**, px: what is behind it is seen through it bent like through glass — the drops magnify it, and turn it upside down when strong) — or *gas*: the particles are not drawn, they feed a simulated gas of smoke, heat and fuel that moves by itself (see [Simulated gas](#simulated-gas-smoke-fire-clouds) below) — or *liquid*: they are born as drops of a simulated liquid (see [Simulated liquid](#simulated-liquid-water) below) — or *clouds*: no particles, procedural clouds or fog over the frame (see [Procedural clouds and fog](#procedural-clouds-and-fog) below). **Only its light (and glow)**: the particles are not drawn, only their light on the scene and their glow — an invisible light source (preset *Light source*) |
 | Glow | a halo of light around them: strength, reach (px) and color (empty = the particles' own; the flame's body color with the flame look) |
 | Light | it lights up what is behind it (the background and the layers below it), from where its particles are: strength, reach (px, where it is still strong), where it fades out (px; 0 = 2.5 × the reach), color (empty = the particles' own; the flame's body), how (*soft*: lights and tints what is there; *add*: adds its color, like neon) and flicker. On by default for fire, realistic fire and explosion |
 | Audio reaction | the band (bass, mids, treble, volume, transients, beats) makes more of them, faster, bigger, and a burst on each beat |
@@ -56,7 +56,7 @@ layers:
         y: 0.95
         blend: add
         emitter:
-          preset: fire          # fire, fire_real, fire_gas, fire_gas_haze, fire_clean, fire_clean_haze, heat_haze, explosion, sparks · smoke, smoke_real, smoke_3d, steam · fog_gas, fog_3d · clouds_gas · water, water_clear, splash, rain, water_sim, water_sim_clear, water_3d, water_3d_clear, splash_sim · dust, light, snow, lamp light, explosion, lamp, water, water_clear, splash, rain, snow
+          preset: fire          # fire, fire_real, fire_gas, fire_gas_haze, fire_clean, fire_clean_haze, heat_haze, explosion, sparks · smoke, smoke_real, smoke_3d, steam · fog_gas, fog_3d, fog_proc · clouds_gas, clouds_sky, clouds_bank, clouds_storm · water, water_clear, splash, rain, water_sim, water_sim_clear, water_3d, water_3d_clear, splash_sim · dust, light, snow, lamp light, explosion, lamp, water, water_clear, splash, rain, snow
           rate: 650             # anything not written comes from the preset
           react: { react_to: bass, rate: 1, size: 0.35 }
         keys:
@@ -263,6 +263,35 @@ the gas on the GPU (on the CPU when rendering on the CPU) and the liquid on the 
 works only around the liquid there is and is usually as fast as the GPU or faster, a few ms a
 frame. The GPU and CPU simulations give the same kind of motion but not exactly the same, so
 changing it simulates the clip again.
+
+## Procedural clouds and fog
+
+With the **clouds** look there are no particles: each pixel is worked out from the time, so any
+moment is drawn at once (no simulation, nothing to warm up) and it costs the same everywhere. The
+particle settings are hidden; the *Clouds* group has:
+- **Coverage** (how much is cloud), **Thickness** (how opaque), **Size** (px of its lumps),
+  **Detail** (finer noise eating its edges), **Billows** (how much the shapes roll), **Soft edges**
+  (0 crisp cumulus … 1 wisps and fog);
+- **Wind** (px/s, sideways and up/down) and **Change of shape** (how fast they change as they go);
+- a **band** of the frame (from/to, 0 top … 1 bottom, with soft edges; equal: all of it);
+- **Perspective**: a ceiling of clouds going away to the **Horizon** — smaller and flatter towards
+  it, melting into a haze far away;
+- the light: where it comes from (**Light from**, degrees, 0 = above), its color, the color in the
+  shadows and how dark their **own shadow** gets (the cloud between a point and the light, and its
+  own thickness: dark cores, lit edges);
+- **Fog by depth**: with a [depth map](depth.md), thicker the farther the scene is (fog in the
+  distance, clear near you);
+- **Lightning on the beat**: a flash inside the clouds on each beat.
+
+Presets: **Sky of clouds** (`clouds_sky`, a ceiling to the horizon), **Cloud bank** (`clouds_bank`,
+a band at the top), **Storm sky with lightning** (`clouds_storm`) and **Fog in the distance**
+(`fog_proc`, soft, in the lower part, thicker the farther the scene is).
+
+```yaml
+        emitter:
+          preset: clouds_sky
+          clouds: { coverage: 0.5, scale: 300, wind_x: 25, perspective: true, horizon: 0.62 }
+```
 
 The **Light source** preset (`lamp`) is `hidden: true` with its light on and a soft glow: set the
 glow's strength to 0 for a light with nothing visible.

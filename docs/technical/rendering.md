@@ -590,6 +590,22 @@ emitter's particles with the water look: `EmitFrame.Sim` on the CPU; on the GPU 
 image (9 floats each, room for `max`), and `emit.comp`'s splat reads them (header word 120) through
 `drawParticle`.
 
+**Clouds look** (`effects/proc.go`, `emit.comp`'s `cloudPixel`; the same code on both): procedural,
+no particles (`EmitParams.Clouds`; nothing is splatted, the resolve computes each pixel from the
+time; look id 5, the params `CloudParams.Pack`, 28 floats, at header word 123). The noise is
+gradient noise (`cgrad`, quintic fade, two hashes for the gradient) in an fbm whose octaves are
+turned 37° each (`cfbm`), so no lattice shows. Density at a point of the clouds' plane: the
+coordinates drift with the wind and are warped by a 2-octave fbm (billows); 4 octaves stretched to
+about 0..1, plus with detail a finer 2-octave fbm; past the threshold 1 − coverage by a smoothstep
+(wider with `edge_soft` and far away) times 0.35 + 0.65·thickness (how far past it). Perspective:
+the plane is at z = H/(horizon − y), x and y scaled by z; towards the horizon (z 2→6) the detail
+goes and the density blends into its mean (coverage·0.55), so far away is a haze, not flicker.
+Shading: 3 samples towards the light (0.12·size apart) of a soft 3-octave density, sun =
+e^(−shadow·(0.4·Σ + 0.6·d)), color = shadow color → light color by sun, the thin edges lit
+through, plus the lightning (from the beat: an envelope decaying in 0.12 s) × (0.2 + 0.7·d).
+Alpha 1 − e^(−4·thickness·d), times 1 − e^(−3·depth_fog·(1 − scene depth)) with fog by depth (the
+occlusion depth grid). Band and horizon fades multiply d.
+
 **Checkpoints and fingerprints:** the state is stored every second as halves, with the runs of
 zeros left out (`encodeGas`; the GPU's fields are copied out at once first: mapped memory is slow
 to read value by value). Checkpoints of the CPU and GPU simulations are the same format.

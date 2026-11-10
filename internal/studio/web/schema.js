@@ -454,8 +454,10 @@ export const EMITTER_GROUPS = [
     ['explosion', 'Explosion', 'zap'], ['sparks', 'Sparks', 'sparkles']]],
   ['Smoke', [['smoke', 'Smoke', 'cloud'], ['smoke_real', 'Simulated smoke', 'cloud'], ['smoke_3d', 'Smoke in the scene (3D)', 'cloud'],
     ['steam', 'Steam', 'cloud']]],
-  ['Fog', [['fog_gas', 'Ground fog', 'cloud-fog'], ['fog_3d', 'Fog in the scene (3D)', 'cloud-fog']]],
-  ['Clouds', [['clouds_gas', 'Storm clouds', 'cloud']]],
+  ['Fog', [['fog_gas', 'Ground fog', 'cloud-fog'], ['fog_3d', 'Fog in the scene (3D)', 'cloud-fog'],
+    ['fog_proc', 'Fog in the distance (procedural)', 'cloud-fog']]],
+  ['Clouds', [['clouds_gas', 'Storm clouds', 'cloud'], ['clouds_sky', 'Sky of clouds (procedural)', 'cloud'],
+    ['clouds_bank', 'Cloud bank (procedural)', 'cloud'], ['clouds_storm', 'Storm sky with lightning (procedural)', 'cloud']]],
   ['Water', [['water', 'Water', 'droplet'], ['water_clear', 'Clear water (lens)', 'droplet'], ['splash', 'Water splash', 'waves'],
     ['rain', 'Rain', 'cloud-rain'], ['water_sim', 'Simulated water', 'droplet'], ['water_sim_clear', 'Simulated clear water (lens)', 'droplet'],
     ['water_3d', 'Water on the scene (3D)', 'droplet'], ['water_3d_clear', 'Clear water on the scene (3D, lens)', 'droplet'],
@@ -476,13 +478,15 @@ const LIGHT_MUSIC = [
   { key: 'quiet', label: 'Light weaker when quiet', type: 'num', min: 0, max: 1, step: 0.01, def: 0, showIf: (c) => c.enabled,
     help: 'How much it dims where the band is low (1 = dark in silence, full strength at full band)' },
 ];
+// a procedural look (no particles: their settings are hidden)
+const procLook = (c) => c && (c.look === 'clouds' || c.look === 'ocean');
 const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', fields: [
-  { key: 'amount', label: 'Amount', type: 'section', fields: [
+  { key: 'amount', label: 'Amount', type: 'section', showIf: (c) => !procLook(c), fields: [
     { key: 'rate', label: 'Per second', type: 'num', min: 0, max: 3000, step: 1 },
     { key: 'burst', label: 'Burst at the start', type: 'int', min: 0, max: 20000, step: 1, help: 'Particles thrown at once when the clip starts' },
     { key: 'max', label: 'Most alive at once', type: 'int', min: 10, max: 200000, step: 10, anim: false },
   ] },
-  { key: 'origin', label: 'Where they are born', type: 'section', fields: [
+  { key: 'origin', label: 'Where they are born', type: 'section', showIf: (c) => !procLook(c), fields: [
     { key: 'shape', label: 'Shape', type: 'enum', def: 'point', options: EMIT_SHAPES, anim: false },
     { key: 'width', label: 'Width / diameter (px)', type: 'num', min: 0, max: 4000, step: 1, showIf: (c) => c.shape && c.shape !== 'point' && c.shape !== 'text' },
     { key: 'height', label: 'Height (px)', type: 'num', min: 0, max: 4000, step: 1, showIf: (c) => c.shape === 'box' },
@@ -493,20 +497,20 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
     { key: 'follow_path', label: 'They travel along the motion path', type: 'bool', anim: false,
       help: 'With a motion path (Motion path section): they go along it at their speed, from where the emitter is on it; the shape\'s width spreads them across it' },
   ] },
-  { key: 'launch', label: 'How they leave', type: 'section', fields: [
+  { key: 'launch', label: 'How they leave', type: 'section', showIf: (c) => !procLook(c), fields: [
     { key: 'direction', label: 'Direction (°)', type: 'num', min: -180, max: 180, step: 1, help: '0 = up, 90 = right (plus the clip\'s rotation)' },
     { key: 'spread', label: 'Spread (°)', type: 'num', min: 0, max: 360, step: 1, help: '360 = every way' },
     { key: 'speed', label: 'Speed (px/s)', type: 'num', min: 0, max: 4000, step: 1 },
     { key: 'speed_var', label: 'Speed variation', type: 'num', min: 0, max: 1, step: 0.01 },
   ] },
-  { key: 'forces', label: 'Forces', type: 'section', fields: [
+  { key: 'forces', label: 'Forces', type: 'section', showIf: (c) => !procLook(c), fields: [
     { key: 'gravity', label: 'Gravity (px/s²)', type: 'num', min: -3000, max: 3000, step: 1, help: 'Negative: they rise (fire, smoke)' },
     { key: 'wind', label: 'Wind (px/s²)', type: 'num', min: -3000, max: 3000, step: 1, help: 'Positive: to the right' },
     { key: 'drag', label: 'Drag', type: 'num', min: 0, max: 10, step: 0.05, help: 'How fast they slow down' },
     { key: 'turbulence', label: 'Turbulence (px)', type: 'num', min: 0, max: 400, step: 1 },
     { key: 'turb_freq', label: 'Turbulence speed (Hz)', type: 'num', min: 0, max: 8, step: 0.05 },
   ] },
-  { key: 'floorsec', label: 'Floor and the scene', type: 'section', fields: [
+  { key: 'floorsec', label: 'Floor and the scene', type: 'section', showIf: (c) => !procLook(c), fields: [
     { key: 'floor', label: 'Floor below it (px)', type: 'num', min: 0, max: 3000, step: 1, def: 0,
       help: '0 = none. With gravity they fall onto it and bounce' },
     { key: 'floor_depth', label: 'The scene\'s floor', type: 'bool', anim: false,
@@ -521,14 +525,14 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
     { key: 'collide_bounce', label: 'Bounce off it', type: 'num', min: 0, max: 0.95, step: 0.01, def: 0, showIf: (c) => c.collide,
       help: '0 = they slide along it (flames lick it); more: they bounce off walls and ceilings (sparks), keeping that much speed. On what faces up they still slide' },
   ] },
-  { key: 'lifesize', label: 'Life and size', type: 'section', fields: [
+  { key: 'lifesize', label: 'Life and size', type: 'section', showIf: (c) => !procLook(c), fields: [
     { key: 'life', label: 'Life (s)', type: 'num', min: 0.05, max: 30, step: 0.05 },
     { key: 'life_var', label: 'Life variation', type: 'num', min: 0, max: 1, step: 0.01 },
     { key: 'size', label: 'Size at birth (px)', type: 'num', min: 0.5, max: 600, step: 0.5 },
     { key: 'size_end', label: 'Size at the end (px)', type: 'num', min: 0, max: 600, step: 0.5 },
     { key: 'size_var', label: 'Size variation', type: 'num', min: 0, max: 1, step: 0.01 },
   ] },
-  { key: 'look', label: 'Colors', type: 'section', fields: [
+  { key: 'look', label: 'Colors', type: 'section', showIf: (c) => !procLook(c), fields: [
     { key: 'color_start', label: 'Color at birth', type: 'color' },
     { key: 'color_mid', label: 'Color halfway', type: 'color' },
     { key: 'color_end', label: 'Color at the end', type: 'color', help: 'The opacity of each color fades them over their life' },
@@ -545,8 +549,31 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
   { key: 'lookgrp', label: 'Look (particles or flame)', type: 'section', fields: [
     { key: 'look', label: 'Look', type: 'enum', def: 'plain', anim: false,
       options: [['plain', 'Particles (as they are)'], ['flame', 'Flame (they melt into fire)'], ['smoke', 'Smoke (torn into wisps)'], ['water', 'Water (they melt into a liquid)'],
-        ['gas', 'Gas (simulated smoke and fire)'], ['liquid', 'Liquid (simulated water)']],
+        ['gas', 'Gas (simulated smoke and fire)'], ['liquid', 'Liquid (simulated water)'], ['clouds', 'Clouds (procedural)']],
       help: 'Flame: the color comes from the heat that piles up, and rising noise cuts its edges into tongues. Gas: the particles are not drawn, they feed a simulated gas (smoke, heat, fuel) that then moves by itself' },
+    { key: 'clouds', label: 'Clouds', type: 'group', showIf: (c) => c.look === 'clouds', fields: [
+      { key: 'coverage', label: 'Coverage', type: 'num', min: 0, max: 1, step: 0.01, def: 0.5, help: 'How much of it is cloud' },
+      { key: 'density', label: 'Thickness', type: 'num', min: 0, max: 4, step: 0.01, def: 1, help: 'How opaque the clouds are' },
+      { key: 'scale', label: 'Size (px)', type: 'num', min: 20, max: 3000, step: 5, def: 360, help: 'The size of their lumps' },
+      { key: 'detail', label: 'Detail', type: 'num', min: 0, max: 1, step: 0.01, def: 0.6 },
+      { key: 'billow', label: 'Billows', type: 'num', min: 0, max: 2, step: 0.01, def: 0.8, help: 'How much they roll into rounded billows' },
+      { key: 'wind_x', label: 'Wind (px/s)', type: 'num', min: -2000, max: 2000, step: 1, def: 25, help: 'How fast they drift, positive to the right' },
+      { key: 'wind_y', label: 'Wind up/down (px/s)', type: 'num', min: -2000, max: 2000, step: 1, def: 0 },
+      { key: 'edge_soft', label: 'Soft edges', type: 'num', min: 0, max: 1, step: 0.01, def: 0, help: '0: crisp edges (cumulus) … 1: wisps and fog' },
+      { key: 'evolve', label: 'Change of shape', type: 'num', min: 0, max: 2, step: 0.01, def: 0.05, help: 'How fast their shapes change as they go (0: still)' },
+      { key: 'top', label: 'Band from (top)', type: 'num', min: 0, max: 1, step: 0.01, def: 0, help: 'Only between these two heights (0 = top, 1 = bottom of the frame); equal: all of it' },
+      { key: 'bottom', label: 'Band to (bottom)', type: 'num', min: 0, max: 1, step: 0.01, def: 0 },
+      { key: 'soft', label: 'Band edge softness', type: 'num', min: 0, max: 0.5, step: 0.01, def: 0.1 },
+      { key: 'perspective', label: 'Perspective (a ceiling to the horizon)', type: 'bool', anim: false, help: 'A ceiling of clouds going away: smaller and flatter towards the horizon' },
+      { key: 'horizon', label: 'Horizon', type: 'num', min: 0, max: 1, step: 0.005, def: 0.55, showIf: (c) => c.perspective, help: 'Where the horizon is (0 = top, 1 = bottom)' },
+      { key: 'light_angle', label: 'Light from (°)', type: 'num', min: -180, max: 180, step: 1, def: 0, help: '0 = from above: their far side is in their own shadow' },
+      { key: 'light_color', label: 'Light color', type: 'color', def: '#fffaf2' },
+      { key: 'shadow_color', label: 'Shadow color', type: 'color', def: '#8c98aa' },
+      { key: 'shadow', label: 'Own shadow', type: 'num', min: 0, max: 4, step: 0.01, def: 1 },
+      { key: 'depth_fog', label: 'Fog by depth', type: 'num', min: 0, max: 5, step: 0.01, def: 0,
+        help: 'With a depth map: thicker the farther the scene is (fog in the distance, clear near you). 0: none' },
+      { key: 'lightning', label: 'Lightning on the beat', type: 'num', min: 0, max: 1, step: 0.01, def: 0, help: 'A flash on each beat' },
+    ] },
     { key: 'sim', label: 'Simulated on', type: 'enum', def: '', anim: false, showIf: (c) => c.look === 'gas' || c.look === 'liquid',
       options: [['', 'Auto (gas: GPU; liquid: CPU)'], ['gpu', 'GPU'], ['cpu', 'CPU']],
       help: 'Where the gas or the liquid is simulated. Auto: the gas on the GPU (on the CPU when rendering on the CPU), the liquid on the CPU, which works only where the liquid is and is usually as fast or faster. Both give the same kind of motion, but not exactly the same: changing it simulates it again' },
@@ -643,7 +670,7 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
         help: 'What is behind it is seen through it, bent like through glass: the drops magnify it (and turn it upside down when strong). 0 = none' },
     ] },
   ] },
-  { key: 'light', label: 'Light', type: 'group', fields: [
+  { key: 'light', label: 'Light', type: 'group', showIf: (c) => !procLook(c), fields: [
     { key: 'enabled', label: 'Lights what is behind', type: 'bool', help: 'The background and the layers below it, from where its particles are' },
     { key: 'intensity', label: 'Strength', type: 'num', min: 0, max: 4, step: 0.01, showIf: (c) => c.enabled },
     { key: 'reach', label: 'Reach (px)', type: 'num', min: 20, max: 3000, step: 5, showIf: (c) => c.enabled, help: 'Where it is still strong (or drag the handle of its circle)' },
@@ -676,7 +703,7 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
     { key: 'rim_edge', label: 'What counts as an edge', type: 'num', min: 0.005, max: 0.4, step: 0.005, def: 0.04, showIf: (c) => c.enabled && c.rim,
       help: 'How much the surface must turn away from you to be an edge: less = more edges (even small bumps)' },
   ] },
-  { key: 'glow', label: 'Glow', type: 'group', fields: [
+  { key: 'glow', label: 'Glow', type: 'group', showIf: (c) => !procLook(c), fields: [
     { key: 'intensity', label: 'Strength', type: 'num', min: 0, max: 4, step: 0.01, help: '0 = no glow' },
     { key: 'radius', label: 'Reach (px)', type: 'num', min: 2, max: 400, step: 1 },
     { key: 'color', label: 'Color', type: 'color', optional: true, help: 'Empty: the particles\' own color' },

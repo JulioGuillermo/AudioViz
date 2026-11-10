@@ -236,7 +236,7 @@ void drawParticle(int e, int h, vec2 pos, vec2 vel, float size, vec4 col, float 
     float l2 = dot(st, st);
     uint base = accBase(e);
     // the gas look: its particles are not drawn (they feed the gas; only their light and glow)
-    if (ed[h + 43] == 4u) py1 = py0 - 1;
+    if (ed[h + 43] == 4u || ed[h + 43] == 5u) py1 = py0 - 1;
     for (int yy = py0; yy <= py1; yy++) {
         for (int xx = px0; xx <= px1; xx++) {
             vec2 q = (vec2(float(xx), float(yy)) + 0.5) * float(dv) - pos;
@@ -678,6 +678,95 @@ vec4 gasPixel(int h, vec2 pp, uint seed, float T) {
     return c;
 }
 
+// The procedural clouds (as effects.cloudPixel): their params at ed[h+123]-1 (CloudParams.Pack)
+// gradient noise (as effects.cgrad)
+float cgrad(vec2 p, uint seed) {
+    vec2 fl = floor(p);
+    int ix = int(fl.x), iy = int(fl.y);
+    vec2 u = p - fl;
+    float a = (hash2(ix, iy, seed) * 2.0 - 1.0) * u.x + (hash2(ix, iy, seed ^ 0x9e3779b9u) * 2.0 - 1.0) * u.y;
+    float b = (hash2(ix + 1, iy, seed) * 2.0 - 1.0) * (u.x - 1.0) + (hash2(ix + 1, iy, seed ^ 0x9e3779b9u) * 2.0 - 1.0) * u.y;
+    float c = (hash2(ix, iy + 1, seed) * 2.0 - 1.0) * u.x + (hash2(ix, iy + 1, seed ^ 0x9e3779b9u) * 2.0 - 1.0) * (u.y - 1.0);
+    float d = (hash2(ix + 1, iy + 1, seed) * 2.0 - 1.0) * (u.x - 1.0) + (hash2(ix + 1, iy + 1, seed ^ 0x9e3779b9u) * 2.0 - 1.0) * (u.y - 1.0);
+    vec2 s = u * u * u * (u * (u * 6.0 - 15.0) + 10.0);
+    return 0.5 + (a + (b - a) * s.x + (c - a) * s.y + (a - b - c + d) * s.x * s.y) * 1.2;
+}
+float cfbm(vec2 p, uint seed, int oct) {
+    float v = 0.0, w = 0.0, a = 0.5;
+    for (int k = 0; k < oct; k++) {
+        p = vec2(0.8 * p.x - 0.6 * p.y, 0.6 * p.x + 0.8 * p.y);
+        v += a * cgrad(p, seed + uint(k) * 17u);
+        w += a;
+        p = vec2(2.0 * p.x + 3.1, 2.0 * p.y + 7.3);
+        a *= 0.5;
+    }
+    return v / w;
+}
+// how much cloud at q (as effects.CloudParams.density)
+float cloudDensity(int o, vec2 q, float T, float far, bool fine, uint seed) {
+    vec2 c = (q + vec2(edf(o + 5), edf(o + 6)) * T) / edf(o + 2);
+    float te = T * edf(o + 7);
+    float wx = cfbm(vec2(c.x + 1.7 + te * 0.1, c.y + 9.2), seed + 40u, 2);
+    float wy = cfbm(vec2(c.x + 8.3 - te * 0.1, c.y + 2.8), seed + 50u, 2);
+    c += edf(o + 4) * 0.3 * (vec2(wx, wy) - 0.5);
+    float t = 1.0 - edf(o);
+    if (!fine) {
+        float n = 0.5 + (cfbm(vec2(c.x + te * 0.13, c.y - te * 0.07), seed, 3) - 0.5) * 2.0;
+        return smoothstep(t - 0.15, t + 0.4, n);
+    }
+    float n = 0.5 + (cfbm(vec2(c.x + te * 0.13, c.y - te * 0.07), seed, 4) - 0.5) * 2.0;
+    float det = edf(o + 3) * (1.0 - far);
+    if (det > 0.0) n += det * 0.35 * (cfbm(vec2(6.1 * c.x + 2.9, 6.1 * c.y + te * 0.2 + 7.7), seed + 90u, 2) - 0.5);
+    float es = edf(o + 26);
+    float edge = smoothstep(t - 0.03 - 0.25 * es, t + 0.1 + 0.2 * far + 0.35 * es, n);
+    float thick = clamp((n - t) / max(0.25, 1.1 - t), 0.0, 1.0);
+    return edge * (0.35 + 0.65 * thick);
+}
+// the scene's depth at p on its grid (the occlusion's: ed[h+99]-1)
+float sceneDepthAt(int h, vec2 p) {
+    uint og = ed[h + 99];
+    if (og == 0u) return 1.0;
+    int gw = int(ed[h + 100]), gh = int(ed[h + 101]);
+    float d = float(ed[h + 102]);
+    vec2 q = clamp(p / d - 0.5, vec2(0.0), vec2(float(gw - 1), float(gh - 1)));
+    ivec2 i = max(min(ivec2(q), ivec2(gw - 2, gh - 2)), ivec2(0));
+    vec2 f = q - vec2(i);
+    int b = int(og) - 1;
+    float a00 = edf(b + i.y * gw + i.x), a10 = edf(b + i.y * gw + min(i.x + 1, gw - 1));
+    float a01 = edf(b + min(i.y + 1, gh - 1) * gw + i.x), a11 = edf(b + min(i.y + 1, gh - 1) * gw + min(i.x + 1, gw - 1));
+    return mix(mix(a00, a10, f.x), mix(a01, a11, f.x), f.y);
+}
+vec4 cloudPixel(int h, vec2 pp, uint seed, float T) {
+    int o = int(ed[h + 123]) - 1;
+    if (o < 0) return vec4(0.0);
+    float W_ = edf(o + 24), H_ = edf(o + 25);
+    vec2 q = pp;
+    float fade = 1.0, far = 0.0;
+    if (edf(o + 11) > 0.5) {
+        // on a ceiling going away to the horizon
+        float dy = edf(o + 12) - pp.y;
+        if (dy <= 0.0) return vec4(0.0);
+        float z = H_ / dy;
+        q = vec2((pp.x - W_ / 2.0) * z * 0.5, H_ * z * 0.5);
+        fade = smoothstep(0.0, 0.1 * H_, dy);
+        far = smoothstep(2.0, 6.0, z);
+    }
+    float top = edf(o + 8), bot = edf(o + 9), soft = edf(o + 10);
+    if (top < bot) fade *= smoothstep(top - soft, top + soft, pp.y) * (1.0 - smoothstep(bot - soft, bot + soft, pp.y));
+    float d = cloudDensity(o, q, T, far, true, seed);
+    d = (d + (edf(o) * 0.55 - d) * far) * fade;
+    if (d <= 0.001) return vec4(0.0);
+    float sum = 0.0;
+    vec2 L = vec2(edf(o + 13), edf(o + 14));
+    for (int k = 1; k <= 3; k++) sum += cloudDensity(o, q + L * (float(k) * edf(o + 2) * 0.12), T, far, false, seed);
+    float sun = exp(-edf(o + 15) * (sum * 0.4 + d * 0.6));
+    float a = 1.0 - exp(-edf(o + 1) * d * 4.0);
+    if (edf(o + 22) > 0.0 && ed[h + 99] != 0u) a *= 1.0 - exp(-edf(o + 22) * (1.0 - sceneDepthAt(h, pp)) * 3.0);
+    vec3 lc = vec3(edf(o + 16), edf(o + 17), edf(o + 18)), sh = vec3(edf(o + 19), edf(o + 20), edf(o + 21));
+    vec3 col = sh + (lc - sh) * sun + lc * (1.0 - d) * sun * 0.2 + edf(o + 23) * (0.2 + 0.7 * d) * lc;
+    return vec4(min(col, vec3(1.5)) * a, a);
+}
+
 void resolveOne(uint id) {
     int n = W * H;
     int e = int(id) / n, p = int(id) - e * n;
@@ -734,6 +823,8 @@ void resolveOne(uint id) {
         }
     } else if (ed[h + 43] == 3u) {
         c = waterPixel(h, base, GW, GH, dv, pp, T, seed);
+    } else if (ed[h + 43] == 5u) {
+        c = cloudPixel(h, pp, seed, T);
     } else if (ed[h + 43] == 4u) {
         c = gasPixel(h, pp, seed, T);
     } else {

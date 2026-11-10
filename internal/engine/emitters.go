@@ -267,6 +267,9 @@ func (s *Session) emitParticles(li, ci int, c0, c *config.ClipConfig, idx int, f
 		p.SmokeSpeed, p.SmokeWarp = sm.Speed*sc, sm.Warp*sc
 	}
 	p.PerZ = (e.Look == "liquid" && e.Liquid.D3) || (e.Look == "gas" && e.Gas.D3)
+	if e.Look == "clouds" {
+		p.Clouds = s.cloudParams(e, sc, idx, feats)
+	}
 	if e.Look == "water" || e.Look == "liquid" {
 		w := e.Water
 		p.Water = true
@@ -442,4 +445,40 @@ func (s *Session) emitExprs(p *effects.EmitParams, c0, c *config.ClipConfig, e *
 		p.Exprs = append(p.Exprs, effects.EmitExpr{Prop: prop, Prog: q, Mul: mul, Keys: keys})
 	}
 	p.Exprs = effects.FitEmitExprs(p.Exprs)
+}
+
+// cloudParams: the procedural clouds look of emitter e at frame idx (sc: px per px of a
+// 1080-line frame, the clip's scale in it); its lightning flashes on the beats, fading in 0.12 s
+func (s *Session) cloudParams(e *config.EmitterConfig, sc float64, idx int, feats []audio.FrameFeatures) *effects.CloudParams {
+	c := e.Clouds
+	W, H := float64(s.W), float64(s.H)
+	f := func(v float64) float32 { return float32(v) }
+	rgb := func(h, def string) [3]float32 {
+		v, err := visualizer.ParseHexColor(h)
+		if err != nil {
+			v, _ = visualizer.ParseHexColor(def)
+		}
+		return [3]float32{float32(v.R) / 255, float32(v.G) / 255, float32(v.B) / 255}
+	}
+	a := c.LightAngle * math.Pi / 180
+	p := &effects.CloudParams{
+		Cov: f(math.Min(math.Max(c.Coverage, 0), 1)), Dens: f(math.Max(c.Density, 0)), Scale: f(math.Max(c.Scale, 4) * sc),
+		Detail: f(math.Min(math.Max(c.Detail, 0), 1)), Billow: f(math.Max(c.Billow, 0)), EdgeSoft: f(math.Min(math.Max(c.EdgeSoft, 0), 1)),
+		WindX: f(c.WindX * sc), WindY: f(c.WindY * sc), Evolve: f(math.Max(c.Evolve, 0)),
+		Top: f(c.Top * H), Bottom: f(c.Bottom * H), Soft: f(math.Max(c.Soft, 0.001) * H),
+		Persp: c.Perspective, Horizon: f(c.Horizon * H),
+		LX: f(math.Sin(a)), LY: f(-math.Cos(a)),
+		LightCol: rgb(c.LightColor, "#ffffff"), ShadowCol: rgb(c.ShadowColor, "#8c98aa"), Shadow: f(math.Max(c.Shadow, 0)),
+		DepthFog: f(math.Max(c.DepthFog, 0)), W: f(W), H: f(H),
+	}
+	if c.Lightning > 0 {
+		env := 0.0
+		for k := 0; k < s.FPS/2 && idx-k >= 0; k++ {
+			if idx-k < len(feats) && feats[idx-k].IsBeat {
+				env = math.Max(env, math.Exp(-float64(k)/float64(s.FPS)/0.12))
+			}
+		}
+		p.Flash = f(c.Lightning * env)
+	}
+	return p
 }

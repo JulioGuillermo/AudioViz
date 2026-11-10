@@ -117,6 +117,7 @@ type EmitterConfig struct {
 	// the frame): it stays in, as in a fish tank, instead of leaving
 	Walls  bool       `yaml:"walls,omitempty"`
 	Liquid LiquidLook `yaml:"liquid,omitempty"`
+	Clouds CloudLook  `yaml:"clouds,omitempty"`
 	Glow   EmitGlow   `yaml:"glow"`
 	Light  EmitLight  `yaml:"light"`
 }
@@ -258,6 +259,47 @@ func DefaultGas() GasLook {
 	return GasLook{Detail: 7, Expand: 0.8, Smoke: 0.2, Heat: 0.4, Push: 0.1, Rise: 250, Swirl: 2.5, Turbulence: 120, TurbScale: 140,
 		Fade: 0.12, Cool: 3, Burn: 2.5, Soot: 0.6, SootColor: "#2a2623", Spread: 300,
 		Opacity: 1.6, Wisps: 0.4, WispScale: 60, LightColor: "#fff2e0", ShadowColor: "#66707e", Shadow: 0.6, FireLight: 1}
+}
+
+// CloudLook (look "clouds"): procedural clouds, fog or haze, worked out per pixel from the time
+// (nothing simulated: any moment at once). Noise warped into billows, drifting with the wind and
+// changing shape as it goes, lit from a light (its far side in its own shadow), in a band of
+// the frame or on a ceiling going away to the horizon (perspective), and with a depth map denser
+// the farther (fog). Lengths in px of a 1080-line frame.
+type CloudLook struct {
+	Coverage float64 `yaml:"coverage"` // how much of it is cloud (0..1)
+	Density  float64 `yaml:"density"`  // how thick (opaque) the clouds are
+	Scale    float64 `yaml:"scale"`    // the size of their lumps (px)
+	Detail   float64 `yaml:"detail"`   // fine detail (0..1)
+	Billow   float64 `yaml:"billow"`   // how much the noise is warped into rolling billows (0..2)
+	WindX    float64 `yaml:"wind_x"`   // drift (px/s)
+	WindY    float64 `yaml:"wind_y"`
+	Evolve   float64 `yaml:"evolve"` // how fast their shapes change (0 = still)
+	// how soft their edges are (0 crisp cumulus … 1 wisps and fog)
+	EdgeSoft float64 `yaml:"edge_soft,omitempty"`
+	// a band of the frame (0..1 from the top; Top = Bottom: all of it) with soft edges
+	Top    float64 `yaml:"top"`
+	Bottom float64 `yaml:"bottom"`
+	Soft   float64 `yaml:"soft"`
+	// on a ceiling going away to the horizon (y 0..1 from the top): smaller and flatter towards it
+	Perspective bool    `yaml:"perspective,omitempty"`
+	Horizon     float64 `yaml:"horizon"`
+	// the light: where it comes from (degrees, 0 = above), its color, the color in the shadows,
+	// how dark its own shadow gets
+	LightAngle  float64 `yaml:"light_angle"`
+	LightColor  string  `yaml:"light_color"`
+	ShadowColor string  `yaml:"shadow_color"`
+	Shadow      float64 `yaml:"shadow"`
+	// with a depth map: more of it the farther (0: none; fog)
+	DepthFog float64 `yaml:"depth_fog,omitempty"`
+	// lightning: a flash on each beat (0..1)
+	Lightning float64 `yaml:"lightning,omitempty"`
+}
+
+// DefaultClouds: a sky of white clouds drifting
+func DefaultClouds() CloudLook {
+	return CloudLook{Coverage: 0.5, Density: 1, Scale: 360, Detail: 0.6, Billow: 0.8, WindX: 25, Evolve: 0.05,
+		Soft: 0.1, Horizon: 0.55, LightColor: "#fffaf2", ShadowColor: "#8c98aa", Shadow: 1}
 }
 
 // LiquidLook (look "liquid"): the particles are born as drops of a liquid simulated over the
@@ -511,6 +553,27 @@ func init() {
 	EmitterPresets["fire_clean"] = fc
 	fc.Gas.Haze, fc.Gas.HazeScale = 6, 25
 	EmitterPresets["fire_clean_haze"] = fc
+	// procedural clouds and fog (no particles)
+	proc := func(c CloudLook) EmitterConfig {
+		return EmitterConfig{Rate: 0, Max: 1, Shape: "point", Mode: "soft", Softness: 1, Look: "clouds", Clouds: c,
+			ColorStart: "#ffffffff", ColorMid: "#ffffffff", ColorEnd: "#ffffff00"}
+	}
+	sky := DefaultClouds()
+	sky.Perspective, sky.Horizon, sky.Coverage, sky.Scale = true, 0.62, 0.5, 300
+	EmitterPresets["clouds_sky"] = proc(sky)
+	bank := DefaultClouds()
+	bank.Top, bank.Bottom, bank.Soft, bank.Coverage, bank.Scale, bank.Shadow, bank.Billow = 0, 0.45, 0.12, 0.62, 260, 1.4, 1.1
+	bank.ShadowColor, bank.WindX = "#56606e", 18
+	EmitterPresets["clouds_bank"] = proc(bank)
+	storm := DefaultClouds()
+	storm.Coverage, storm.Density, storm.Scale, storm.Shadow, storm.Billow, storm.Lightning = 0.85, 1.4, 320, 1, 1.2, 0.8
+	storm.LightColor, storm.ShadowColor, storm.WindX, storm.Evolve, storm.LightAngle = "#b8bec8", "#3a404c", 40, 0.12, 35
+	EmitterPresets["clouds_storm"] = proc(storm)
+	fog := DefaultClouds()
+	fog.Coverage, fog.Density, fog.Scale, fog.Billow, fog.Detail, fog.Shadow = 0.9, 0.7, 520, 0.5, 0.4, 0.2
+	fog.Top, fog.Bottom, fog.Soft, fog.DepthFog, fog.WindX, fog.Evolve, fog.EdgeSoft = 0.3, 1, 0.25, 1.2, 15, 0.08, 1
+	fog.LightColor, fog.ShadowColor = "#e8ecf0", "#b0b8c2"
+	EmitterPresets["fog_proc"] = proc(fog)
 	// smoke and fog in the scene's depth (3D)
 	s3 := EmitterPresets["smoke_real"]
 	s3.Gas.D3 = true
@@ -538,6 +601,9 @@ func init() {
 		}
 		if e.Liquid == (LiquidLook{}) {
 			e.Liquid = DefaultLiquid()
+		}
+		if e.Clouds == (CloudLook{}) {
+			e.Clouds = DefaultClouds()
 		}
 		if e.Light.Reach == 0 {
 			e.Light = EmitLight{Intensity: 0.8, Reach: 450, Mode: "soft", Flicker: 0.25, Depth: 2.5, Shade: 0.6, From: 1, To: 0, RangeSoft: 0.05}

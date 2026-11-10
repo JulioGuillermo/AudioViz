@@ -160,6 +160,18 @@ func (s *Session) layersAt(t float64, idx int, feats []audio.FrameFeatures, fs *
 					ef.P.Occl, ef.P.OGW, ef.P.OGH, ef.P.ODiv, ef.P.OSoft = g, gw, gh, div, lf.DepthSoft
 					lf.Behind = false // (done per particle)
 				}
+				if cp := ef.P.Clouds; cp != nil && cp.DepthFog > 0 && scene.On() && ef.P.Occl == nil {
+					// the fog of the clouds look: the scene's depth on screen (how far each pixel is)
+					div := effects.CollideDiv(s.W, s.H)
+					gw, gh := (s.W+div-1)/div, (s.H+div-1)/div
+					g := make([]float32, gw*gh)
+					for cy := 0; cy < gh; cy++ {
+						for cx := 0; cx < gw; cx++ {
+							g[cy*gw+cx] = scene.At((float32(cx)+0.5)*float32(div), (float32(cy)+0.5)*float32(div))
+						}
+					}
+					ef.P.Occl, ef.P.OGW, ef.P.OGH, ef.P.ODiv = g, gw, gh, div
+				}
 				if e := c.Emitter; e != nil && e.Collide && scene.On() {
 					// what they go round: the scene at their depth (within the band), but where
 					// they are born

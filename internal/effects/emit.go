@@ -128,8 +128,10 @@ type EmitParams struct {
 	// looks per unit of smoke, its wisps (how much, their size px), the light's color and the
 	// color in its shadow, how much its fire lights it (the flame's colors, heat and edge: Flame…)
 	// PerZ: each particle has its own depth (Particle.Z: the 3D liquid's drops), as with ZTrack
-	PerZ                   bool
-	GasOn                  bool
+	PerZ  bool
+	GasOn bool
+	// Clouds: the procedural clouds look (proc.go; nil: not it): no particles drawn
+	Clouds                 *CloudParams
 	Gas                    *GasFrame
 	GasOpacity, GasWisp    float64
 	GasWispScale           float64
@@ -889,6 +891,9 @@ func DrawEmitter(e *EmitFrame, W, H int) (*image.RGBA, *LightField) {
 	if e.Sim != nil {
 		n = len(e.Sim)
 	}
+	if p.Clouds != nil {
+		n = 0 // (procedural: nothing to splat)
+	}
 	if n > 0 {
 		nw := min(16, max(1, n/256))
 		var wg sync.WaitGroup
@@ -1168,6 +1173,8 @@ func resolvePixel(p *EmitParams, T float32, acc []uint32, GW, GH, div int, glow 
 		}
 	} else if p.Water {
 		o, *lens = waterPixel(p, T, acc, GW, GH, div, px, py)
+	} else if p.Clouds != nil {
+		o = cloudPixel(p, p.Clouds, px, py, T)
 	} else if p.GasOn {
 		if p.Gas != nil {
 			o, *lens, *gz = gasPixel(p, p.Gas, px, py, T)

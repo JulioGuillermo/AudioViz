@@ -729,6 +729,13 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		if P.Hidden {
 			u[h+85] = 1
 		}
+		// the procedural clouds: their params in the extra data (no particles there)
+		u[h+123] = 0
+		if c := P.Clouds; c != nil {
+			u[h+43] = 5
+			copy(f[xo:], c.Pack())
+			u[h+123] = uint32(xo + 1)
+		}
 		// the gas look (effects.GasFrame, gasPixel): its grid in the overlay buffer (+1; 0: none
 		// yet), its size, cells, the first wisps' weight; how it looks
 		if P.GasOn {
