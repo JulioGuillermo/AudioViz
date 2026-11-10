@@ -449,7 +449,8 @@ export const CLIP_FIELDS = [
 // grouped by what they make (fire, smoke, fog, clouds, water…), in this order everywhere
 export const EMITTER_GROUPS = [
   ['Fire', [['fire', 'Fire', 'flame'], ['fire_real', 'Realistic fire', 'flame'], ['fire_gas', 'Simulated fire', 'flame'],
-    ['fire_gas_haze', 'Simulated fire with heat haze', 'flame'], ['heat_haze', 'Heat haze (invisible)', 'waves'],
+    ['fire_gas_haze', 'Simulated fire with heat haze', 'flame'], ['fire_clean', 'Clean simulated fire (hardly any smoke)', 'flame'],
+    ['fire_clean_haze', 'Clean simulated fire with heat haze', 'flame'], ['heat_haze', 'Heat haze (invisible)', 'waves'],
     ['explosion', 'Explosion', 'zap'], ['sparks', 'Sparks', 'sparkles']]],
   ['Smoke', [['smoke', 'Smoke', 'cloud'], ['smoke_real', 'Simulated smoke', 'cloud'], ['steam', 'Steam', 'cloud']]],
   ['Fog', [['fog_gas', 'Ground fog', 'cloud-fog']]],

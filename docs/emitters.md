@@ -56,7 +56,7 @@ layers:
         y: 0.95
         blend: add
         emitter:
-          preset: fire          # fire, fire_real, fire_gas, fire_gas_haze, heat_haze, explosion, sparks · smoke, smoke_real, steam · fog_gas · clouds_gas · water, water_clear, splash, rain, water_sim, water_sim_clear, water_3d, water_3d_clear, splash_sim · dust, light, snow, lamp light, explosion, lamp, water, water_clear, splash, rain, snow
+          preset: fire          # fire, fire_real, fire_gas, fire_gas_haze, fire_clean, fire_clean_haze, heat_haze, explosion, sparks · smoke, smoke_real, steam · fog_gas · clouds_gas · water, water_clear, splash, rain, water_sim, water_sim_clear, water_3d, water_3d_clear, splash_sim · dust, light, snow, lamp light, explosion, lamp, water, water_clear, splash, rain, snow
           rate: 650             # anything not written comes from the preset
           react: { react_to: bass, rate: 1, size: 0.35 }
         keys:
@@ -164,7 +164,8 @@ particles:
 **Heat haze** (`haze`, px; 0 = none): where the air is warm, what is behind it shimmers, moved up
 to that many px by a noise that rises with the warm air (`haze_scale`: the size of its ripples). It
 works even where there is no smoke: the presets **Simulated fire with heat haze**
-(`fire_gas_haze`), **Heat haze (invisible)** (`heat_haze`: only shimmering warm air, as over hot
+(`fire_gas_haze`), **Clean simulated fire** (`fire_clean`, hardly any smoke: a faint trace that
+soon vanishes) and its version with heat haze (`fire_clean_haze`), **Heat haze (invisible)** (`heat_haze`: only shimmering warm air, as over hot
 asphalt or an engine) and **Steam** (`steam`: light white vapour that soon vanishes and makes what is
 behind it waver).
 

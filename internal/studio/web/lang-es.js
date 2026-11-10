@@ -1297,4 +1297,8 @@ export const ES = {
   "The size of its ripples: smaller, a finer shimmer": "El tamaño de sus ondas: más pequeño, un temblor más fino",
   "Fire and haze": "Fuego y calima",
   "Heat haze": "Calima",
+  "Clean simulated fire (hardly any smoke)": "Fuego simulado limpio (casi sin humo)",
+  "Clean simulated fire with heat haze": "Fuego simulado limpio con calima",
+  "Clean fire": "Fuego limpio",
+  "Clean fire and haze": "Fuego limpio y calima",
 };

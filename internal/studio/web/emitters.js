@@ -15,7 +15,7 @@ export const presetLabel = (k) => { const p = EMITTER_PRESETS.find((x) => x[0] =
 export const presetIcon = (k) => { const p = EMITTER_PRESETS.find((x) => x[0] === k); return p ? p[2] : 'sparkles'; };
 
 // Where a preset starts on the frame (0..1)
-const START = { fire: [0.5, 0.95], fire_real: [0.5, 0.95], sparks: [0.5, 0.8], smoke: [0.5, 0.8], smoke_real: [0.5, 0.85], fire_gas: [0.5, 0.9], clouds_gas: [0.5, 0.03], water_sim: [0.5, 0.3], water_sim_clear: [0.5, 0.3], water_3d: [0.5, 0.05], water_3d_clear: [0.5, 0.05], splash_sim: [0.5, 0.75], fog_gas: [0.5, 0.88], fire_gas_haze: [0.5, 0.9], heat_haze: [0.5, 0.95], steam: [0.5, 0.85], dust: [0.5, 0.5], light: [0.5, 0.5],
+const START = { fire: [0.5, 0.95], fire_real: [0.5, 0.95], sparks: [0.5, 0.8], smoke: [0.5, 0.8], smoke_real: [0.5, 0.85], fire_gas: [0.5, 0.9], clouds_gas: [0.5, 0.03], water_sim: [0.5, 0.3], water_sim_clear: [0.5, 0.3], water_3d: [0.5, 0.05], water_3d_clear: [0.5, 0.05], splash_sim: [0.5, 0.75], fog_gas: [0.5, 0.88], fire_gas_haze: [0.5, 0.9], fire_clean: [0.5, 0.9], fire_clean_haze: [0.5, 0.9], heat_haze: [0.5, 0.95], steam: [0.5, 0.85], dust: [0.5, 0.5], light: [0.5, 0.5],
   explosion: [0.5, 0.5], snow: [0.5, -0.02] };
 
 // A new emitter clip from a preset, from st for dur seconds

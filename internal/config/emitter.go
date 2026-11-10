@@ -498,6 +498,12 @@ func init() {
 	fh := EmitterPresets["fire_gas"]
 	fh.Gas.Haze, fh.Gas.HazeScale = 6, 25
 	EmitterPresets["fire_gas_haze"] = fh
+	// clean fire: hardly any smoke, a faint trace that soon vanishes (with or without its haze)
+	fc := EmitterPresets["fire_gas"]
+	fc.Gas.Smoke, fc.Gas.Soot, fc.Gas.Fade = 0, 0.06, 1.5
+	EmitterPresets["fire_clean"] = fc
+	fc.Gas.Haze, fc.Gas.HazeScale = 6, 25
+	EmitterPresets["fire_clean_haze"] = fc
 	// every preset can turn on the flame look with sensible colors, and has a glow reach ready
 	for k, e := range EmitterPresets {
 		if e.Flame == (FlameLook{}) {
