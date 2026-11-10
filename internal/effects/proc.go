@@ -39,28 +39,37 @@ func (c *CloudParams) Pack() []float32 {
 		c.DepthFog, c.Flash, c.W, c.H, c.EdgeSoft, 0}
 }
 
-// cgrad: gradient noise (about 0..1) at (x, y): smoother than value noise, no grid showing
-func cgrad(x, y float32, seed uint32) float32 {
-	fx, fy := float32(math.Floor(float64(x))), float32(math.Floor(float64(y)))
-	ix, iy := int32(fx), int32(fy)
-	ux, uy := x-fx, y-fy
-	g := func(i, j int32, dx, dy float32) float32 {
-		return (hash2(i, j, seed)*2-1)*dx + (hash2(i, j, seed^0x9e3779b9)*2-1)*dy
+// cgrad: 3D gradient noise (about 0..1) at (x, y, z): smoother than value noise, no grid
+// showing; z is time, so the shapes change instead of only moving. Each corner's gradient from
+// one hash (10 bits per axis)
+func cgrad(x, y, z float32, seed uint32) float32 {
+	fx, fy, fz := float32(math.Floor(float64(x))), float32(math.Floor(float64(y))), float32(math.Floor(float64(z)))
+	ix, iy, iz := int32(fx), int32(fy), int32(fz)
+	ux, uy, uz := x-fx, y-fy, z-fz
+	g := func(i, j, k int32, dx, dy, dz float32) float32 {
+		h := pcg(uint32(i)*1597334677 ^ uint32(j)*3812015801 ^ uint32(k)*2798796415 ^ seed)
+		return (float32(h&1023)/511.5-1)*dx + (float32((h>>10)&1023)/511.5-1)*dy + (float32((h>>20)&1023)/511.5-1)*dz
 	}
-	a, b := g(ix, iy, ux, uy), g(ix+1, iy, ux-1, uy)
-	c, d := g(ix, iy+1, ux, uy-1), g(ix+1, iy+1, ux-1, uy-1)
-	sx, sy := ux*ux*ux*(ux*(ux*6-15)+10), uy*uy*uy*(uy*(uy*6-15)+10)
-	return 0.5 + (a+(b-a)*sx+(c-a)*sy+(a-b-c+d)*sx*sy)*1.2
+	f := func(t float32) float32 { return t * t * t * (t*(t*6-15) + 10) }
+	sx, sy, sz := f(ux), f(uy), f(uz)
+	lerp := func(a, b, t float32) float32 { return a + (b-a)*t }
+	plane := func(k int32, dz float32) float32 {
+		a, b := g(ix, iy, k, ux, uy, dz), g(ix+1, iy, k, ux-1, uy, dz)
+		c, d := g(ix, iy+1, k, ux, uy-1, dz), g(ix+1, iy+1, k, ux-1, uy-1, dz)
+		return lerp(lerp(a, b, sx), lerp(c, d, sx), sy)
+	}
+	return 0.5 + lerp(plane(iz, uz), plane(iz+1, uz-1), sz)*1.2
 }
 
-// cfbm: the clouds' noise, oct octaves, each turned so that no grid shows
-func cfbm(x, y float32, seed uint32, oct int) float32 {
+// cfbm: the clouds' noise, oct octaves, each turned so that no grid shows (the finer change
+// faster: z × 1.3 with each)
+func cfbm(x, y, z float32, seed uint32, oct int) float32 {
 	var v, w, a float32 = 0, 0, 0.5
 	for k := 0; k < oct; k++ {
 		x, y = 0.8*x-0.6*y, 0.6*x+0.8*y
-		v += a * cgrad(x, y, seed+uint32(k)*17)
+		v += a * cgrad(x, y, z, seed+uint32(k)*17)
 		w += a
-		x, y = 2*x+3.1, 2*y+7.3
+		x, y, z = 2*x+3.1, 2*y+7.3, 1.3*z+1.9
 		a *= 0.5
 	}
 	return v / w
@@ -72,20 +81,20 @@ func cfbm(x, y float32, seed uint32, oct int) float32 {
 func (c *CloudParams) density(qx, qy, T, far float32, fine bool, seed uint32) float32 {
 	cx, cy := (qx+c.WindX*T)/c.Scale, (qy+c.WindY*T)/c.Scale
 	te := T * c.Evolve
-	wx := cfbm(cx+1.7+te*0.1, cy+9.2, seed+40, 2)
-	wy := cfbm(cx+8.3-te*0.1, cy+2.8, seed+50, 2)
+	wx := cfbm(cx+1.7, cy+9.2, te*0.7, seed+40, 2)
+	wy := cfbm(cx+8.3, cy+2.8, te*0.7, seed+50, 2)
 	b := c.Billow * 0.3
 	cx, cy = cx+b*(wx-0.5), cy+b*(wy-0.5)
 	t := 1 - c.Cov
 	if !fine {
 		// (for the shadows: their big shapes, soft)
-		n := 0.5 + (cfbm(cx+te*0.13, cy-te*0.07, seed, 3)-0.5)*2
+		n := 0.5 + (cfbm(cx, cy, te, seed, 3)-0.5)*2
 		return smooth32(t-0.15, t+0.4, n)
 	}
-	n := cfbm(cx+te*0.13, cy-te*0.07, seed, 4)
+	n := cfbm(cx, cy, te, seed, 4)
 	n = 0.5 + (n-0.5)*2 // (about 0..1)
 	if det := c.Detail * (1 - far); det > 0 {
-		n += det * 0.35 * (cfbm(6.1*cx+2.9, 6.1*cy+te*0.2+7.7, seed+90, 2) - 0.5)
+		n += det * 0.35 * (cfbm(6.1*cx+2.9, 6.1*cy+7.7, 2*te, seed+90, 2) - 0.5)
 	}
 	es := c.EdgeSoft
 	edge := smooth32(t-0.03-0.25*es, t+0.1+0.2*far+0.35*es, n)

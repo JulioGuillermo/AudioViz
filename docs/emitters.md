@@ -272,7 +272,8 @@ particle settings are hidden; the *Clouds* group has:
 - **Coverage** (how much is cloud), **Thickness** (how opaque), **Size** (px of its lumps),
   **Detail** (finer noise eating its edges), **Billows** (how much the shapes roll), **Soft edges**
   (0 crisp cumulus … 1 wisps and fog);
-- **Wind** (px/s, sideways and up/down) and **Change of shape** (how fast they change as they go);
+- **Wind** (px/s, sideways and up/down) and **Change of shape** (how fast they change as they go:
+  they grow, split and melt away, the small details faster; 0.05 changes them in a few seconds);
 - a **band** of the frame (from/to, 0 top … 1 bottom, with soft edges; equal: all of it);
 - **Perspective**: a ceiling of clouds going away to the **Horizon** — smaller and flatter towards
   it, melting into a haze far away;

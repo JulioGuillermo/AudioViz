@@ -593,8 +593,9 @@ image (9 floats each, room for `max`), and `emit.comp`'s splat reads them (heade
 **Clouds look** (`effects/proc.go`, `emit.comp`'s `cloudPixel`; the same code on both): procedural,
 no particles (`EmitParams.Clouds`; nothing is splatted, the resolve computes each pixel from the
 time; look id 5, the params `CloudParams.Pack`, 28 floats, at header word 123). The noise is
-gradient noise (`cgrad`, quintic fade, two hashes for the gradient) in an fbm whose octaves are
-turned 37° each (`cfbm`), so no lattice shows. Density at a point of the clouds' plane: the
+3D gradient noise (`cgrad`, quintic fade, each corner's gradient from one hash, 10 bits per axis)
+whose third axis is time × `evolve` — so the shapes change, not only drift — in an fbm whose
+octaves are turned 37° each (`cfbm`, so no lattice shows) and change 1.3× faster each. Density at a point of the clouds' plane: the
 coordinates drift with the wind and are warped by a 2-octave fbm (billows); 4 octaves stretched to
 about 0..1, plus with detail a finer 2-octave fbm; past the threshold 1 − coverage by a smoothstep
 (wider with `edge_soft` and far away) times 0.35 + 0.65·thickness (how far past it). Perspective:
