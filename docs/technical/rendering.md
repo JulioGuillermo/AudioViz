@@ -607,6 +607,21 @@ through, plus the lightning (from the beat: an envelope decaying in 0.12 s) × (
 Alpha 1 − e^(−4·thickness·d), times 1 − e^(−3·depth_fog·(1 − scene depth)) with fog by depth (the
 occlusion depth grid). Band and horizon fades multiply d.
 
+**Ocean look** (`effects/proc.go` `oceanPixel`, `emit.comp`'s; look id 6, `OceanParams.Pack`, 32
+floats, at header word 123): procedural, no particles. A water plane below the horizon h seen
+from a camera H/2 above it with a focal length H: pixel (x, y) is at z = H/(y − h), (wx, wz) =
+((x − W/2)·z/2, H·z/2). 12 waves, lengths `size`·0.72^i, directions wind ± spread (hashed),
+ω = √(g·k) (g = 1060 px/s² at 1080 lines) × speed, each e^(chop·(sin φ − 1)) (sharp crests) of
+amplitude height·L·0.012, gone where 2L/z² < 4 px (no aliasing far away); each moves the next
+along its slope (they bunch up). Normal from the analytic slopes; the view vector to the camera,
+the reflected ray mapped back onto the frame (a backdrop at infinity: flat water mirrors y to
+2h − y) gives the lens offset, so what is behind the layer is seen reflected (`LensOn`), weighted
+by Fresnel (Schlick, 0.02) × reflect, faded where it would leave the top of the frame. Sun: the
+direction to its point on the frame; glints pow 600 and pow 150 lobes × (0.3 + F). Water color:
+deep × (0.55 + 0.45·N·L) plus the crest color × (height − 0.15)²; foam where the normalized
+height plus noise passes 0.62 − 0.3·foam, broken by a 3-octave noise, gone far away. The bass
+scales the height (1 + bass·BassEnergy).
+
 **Checkpoints and fingerprints:** the state is stored every second as halves, with the runs of
 zeros left out (`encodeGas`; the GPU's fields are copied out at once first: mapped memory is slow
 to read value by value). Checkpoints of the CPU and GPU simulations are the same format.

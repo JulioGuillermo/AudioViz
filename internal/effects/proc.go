@@ -165,3 +165,125 @@ func (p *EmitParams) sceneDepthAt(x, y float32) float32 {
 	at := func(cx, cy int) float32 { return p.Occl[min(cy, p.OGH-1)*p.OGW+min(cx, p.OGW-1)] }
 	return (at(ix, iy)*(1-fx)+at(ix+1, iy)*fx)*(1-fy) + (at(ix, iy+1)*(1-fx)+at(ix+1, iy+1)*fx)*fy
 }
+
+// OceanParams: the ocean look (config.OceanLook) at this frame's size (px). The water is a plane
+// below the horizon seen from a camera H/2 above it, its focal length H: the pixel (x, y) is at
+// (wx, wz) = ((x − W/2)·z/2, H·z/2), z = H/(y − horizon)
+type OceanParams struct {
+	Horizon, W, H float32
+	// the waves: the longest (px), how high, how sharp their crests, how fast, how far their
+	// directions spread (radians), where they go (on the water: x right, z away)
+	Size, Height, Chop, Speed, Spread float32
+	DirX, DirZ                        float32
+	G                                 float32 // gravity (px/s²: how fast waves of a size go)
+	Deep, Shallow                     [3]float32
+	// the sun (px on the frame), its color, how much it shines on the water
+	SunX, SunY float32
+	SunCol     [3]float32
+	Glint      float32
+	Foam       float32
+	FoamCol    [3]float32
+	Reflect    float32 // how much it reflects what is behind (through its lens)
+	Fade       float32 // the horizon's softness (px)
+}
+
+// OceanWords: the GPU's words of the ocean's params (EmitParams.Ocean)
+const OceanWords = 32
+
+// OceanWaves: how many waves are summed
+const OceanWaves = 12
+
+// Pack: the params as emit.comp reads them
+func (o *OceanParams) Pack() []float32 {
+	return []float32{o.Horizon, o.W, o.H, o.Size, o.Height, o.Chop, o.Speed, o.Spread,
+		o.DirX, o.DirZ, o.G, o.Deep[0], o.Deep[1], o.Deep[2], o.Shallow[0], o.Shallow[1], o.Shallow[2],
+		o.SunX, o.SunY, o.SunCol[0], o.SunCol[1], o.SunCol[2], o.Glint, o.Foam,
+		o.FoamCol[0], o.FoamCol[1], o.FoamCol[2], o.Reflect, o.Fade, 0, 0, 0}
+}
+
+func norm3(x, y, z float32) (float32, float32, float32) {
+	l := float32(math.Sqrt(float64(x*x + y*y + z*z)))
+	if l == 0 {
+		return 0, 1, 0
+	}
+	return x / l, y / l, z / l
+}
+
+// oceanPixel: the ocean at (px, py) at time T (premultiplied) and its lens (where what is behind
+// is seen from: the reflection), as oceanPixel in emit.comp
+func oceanPixel(p *EmitParams, o *OceanParams, px, py, T float32) ([4]float32, [2]float32) {
+	dy := py - o.Horizon
+	if dy <= 0 {
+		return [4]float32{}, [2]float32{}
+	}
+	z := o.H / dy
+	wx, wz := (px-o.W/2)*z*0.5, o.H*z*0.5
+	// the waves: each sharper at its crest (e^(chop·(sin − 1))), the shorter ones gone where they
+	// would be smaller than a few px; each moves the next a little along its slope (they bunch up)
+	var ht, hx, hz, asum float32
+	qx, qz := wx, wz
+	L := o.Size
+	baseA := float32(math.Atan2(float64(o.DirX), float64(o.DirZ)))
+	for i := 0; i < OceanWaves; i++ {
+		fade := smooth32(1, 4, 2*L/(z*z))
+		if fade > 0 {
+			ang := baseA + o.Spread*(hash2(int32(i), 0, p.Seed)*2-1)
+			dx, dz := float32(math.Sin(float64(ang))), float32(math.Cos(float64(ang)))
+			k := 2 * math.Pi / L
+			w := float32(math.Sqrt(float64(o.G*k))) * o.Speed
+			ph := k*(dx*qx+dz*qz) - w*T + hash2(int32(i), 1, p.Seed)*2*math.Pi
+			s, c := math.Sincos(float64(ph))
+			e := float32(math.Exp(float64(o.Chop * (float32(s) - 1))))
+			A := o.Height * L * 0.012 * fade
+			ht += A * e
+			sl := A * o.Chop * float32(c) * e * k
+			hx += sl * dx
+			hz += sl * dz
+			asum += A
+			qx -= dx * sl * L * 0.05
+			qz -= dz * sl * L * 0.05
+		}
+		L *= 0.72
+	}
+	hn := float32(0)
+	if asum > 0 {
+		hn = ht / asum
+	}
+	nx, ny, nz := norm3(-hx, 1, -hz)
+	c := o.H * 0.5
+	vx, vy, vz := norm3(-wx, c, -wz)
+	ndv := max(0, nx*vx+ny*vy+nz*vz)
+	// the reflection: where it goes, on the frame (what is behind there, through the lens)
+	rx, ry, rz := -vx+2*ndv*nx, -vy+2*ndv*ny, -vz+2*ndv*nz
+	ry = max(ry, 0.005)
+	rz = max(rz, 0.05)
+	sx, sy := o.W/2+o.H*rx/rz, o.Horizon-o.H*ry/rz
+	F := 0.02 + 0.98*float32(math.Pow(float64(1-ndv), 5))
+	R := min(1, F*o.Reflect) * smooth32(-0.1*o.H, 0, sy) // (nothing above the frame to reflect)
+	// the sun: on the frame at (SunX, SunY), its direction from the camera
+	ux, uy, uz := norm3(o.SunX-o.W/2, o.Horizon-o.SunY, o.H)
+	rl := float32(math.Sqrt(float64(rx*rx + ry*ry + rz*rz)))
+	rd := max(0, (rx*ux+ry*uy+rz*uz)/rl)
+	spec := (float32(math.Pow(float64(rd), 600))*6 + float32(math.Pow(float64(rd), 150))*0.15) * o.Glint * (0.3 + F)
+	ndl := max(0, nx*ux+ny*uy+nz*uz)
+	// the water itself: deep, lighter where the waves rise (light through their crests)
+	sss := max(0, hn-0.15) * max(0, hn-0.15) * 1.2
+	foam := float32(0)
+	if o.Foam > 0 {
+		f := cfbm(wx/(o.Size*0.08), wz/(o.Size*0.08), T*0.4, p.Seed+7, 3)
+		fl := 0.62 - 0.3*o.Foam
+		foam = min(1, o.Foam*3) * smooth32(fl, fl+0.25, hn+0.3*(f-0.5)) * smooth32(0.4, 0.65, f) * smooth32(2, 8, 2*o.Size*0.3/(z*z))
+	}
+	var out [4]float32
+	for k := 0; k < 3; k++ {
+		wcol := o.Deep[k]*(0.55+0.45*ndl) + o.Shallow[k]*sss
+		col := wcol*(1-R) + spec*o.SunCol[k]
+		out[k] = col*(1-foam) + o.FoamCol[k]*foam
+	}
+	out[3] = (1-R)*(1-foam) + foam
+	hf := smooth32(0, o.Fade, dy)
+	for k := range out {
+		out[k] *= hf
+	}
+	return out, [2]float32{(sx - px) * hf, (sy - py) * hf}
+}

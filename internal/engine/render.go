@@ -736,6 +736,11 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 			copy(f[xo:], c.Pack())
 			u[h+123] = uint32(xo + 1)
 		}
+		if o := P.Ocean; o != nil {
+			u[h+43] = 6
+			copy(f[xo:], o.Pack())
+			u[h+123] = uint32(xo + 1)
+		}
 		// the gas look (effects.GasFrame, gasPixel): its grid in the overlay buffer (+1; 0: none
 		// yet), its size, cells, the first wisps' weight; how it looks
 		if P.GasOn {

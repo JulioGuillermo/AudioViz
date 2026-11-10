@@ -132,6 +132,7 @@ type EmitParams struct {
 	GasOn bool
 	// Clouds: the procedural clouds look (proc.go; nil: not it): no particles drawn
 	Clouds                 *CloudParams
+	Ocean                  *OceanParams // the procedural ocean look (proc.go; nil: not it)
 	Gas                    *GasFrame
 	GasOpacity, GasWisp    float64
 	GasWispScale           float64
@@ -891,7 +892,7 @@ func DrawEmitter(e *EmitFrame, W, H int) (*image.RGBA, *LightField) {
 	if e.Sim != nil {
 		n = len(e.Sim)
 	}
-	if p.Clouds != nil {
+	if p.Clouds != nil || p.Ocean != nil {
 		n = 0 // (procedural: nothing to splat)
 	}
 	if n > 0 {
@@ -1175,6 +1176,8 @@ func resolvePixel(p *EmitParams, T float32, acc []uint32, GW, GH, div int, glow 
 		o, *lens = waterPixel(p, T, acc, GW, GH, div, px, py)
 	} else if p.Clouds != nil {
 		o = cloudPixel(p, p.Clouds, px, py, T)
+	} else if p.Ocean != nil {
+		o, *lens = oceanPixel(p, p.Ocean, px, py, T)
 	} else if p.GasOn {
 		if p.Gas != nil {
 			o, *lens, *gz = gasPixel(p, p.Gas, px, py, T)
@@ -1573,5 +1576,5 @@ func PackEmitExprs(u []uint32, f []float32, off int, xs []EmitExpr) {
 // LensOn: whether the emitter bends what is behind it (the water's lens, the gas's heat haze):
 // its lens plane after its image
 func (p *EmitParams) LensOn() bool {
-	return (p.Water && p.WaterLens > 0) || (p.GasOn && p.GasHaze > 0)
+	return (p.Water && p.WaterLens > 0) || (p.GasOn && p.GasHaze > 0) || (p.Ocean != nil && p.Ocean.Reflect > 0)
 }

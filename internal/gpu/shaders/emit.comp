@@ -236,7 +236,7 @@ void drawParticle(int e, int h, vec2 pos, vec2 vel, float size, vec4 col, float 
     float l2 = dot(st, st);
     uint base = accBase(e);
     // the gas look: its particles are not drawn (they feed the gas; only their light and glow)
-    if (ed[h + 43] == 4u || ed[h + 43] == 5u) py1 = py0 - 1;
+    if (ed[h + 43] >= 4u) py1 = py0 - 1;
     for (int yy = py0; yy <= py1; yy++) {
         for (int xx = px0; xx <= px1; xx++) {
             vec2 q = (vec2(float(xx), float(yy)) + 0.5) * float(dv) - pos;
@@ -773,6 +773,73 @@ vec4 cloudPixel(int h, vec2 pp, uint seed, float T) {
     return vec4(min(col, vec3(1.5)) * a, a);
 }
 
+// The procedural ocean (as effects.oceanPixel): its params at ed[h+123]-1 (OceanParams.Pack);
+// its reflection through gLens
+vec4 oceanPixel(int h, vec2 pp, uint seed, float T) {
+    int o = int(ed[h + 123]) - 1;
+    if (o < 0) return vec4(0.0);
+    float hor = edf(o), W_ = edf(o + 1), H_ = edf(o + 2);
+    float dy = pp.y - hor;
+    if (dy <= 0.0) return vec4(0.0);
+    float z = H_ / dy;
+    float wx = (pp.x - W_ / 2.0) * z * 0.5, wz = H_ * z * 0.5;
+    float size = edf(o + 3), height = edf(o + 4), chop = edf(o + 5), speed = edf(o + 6), spread = edf(o + 7);
+    float G = edf(o + 10);
+    float ht = 0.0, hx = 0.0, hz = 0.0, asum = 0.0;
+    vec2 q = vec2(wx, wz);
+    float L = size;
+    float baseA = atan(edf(o + 8), edf(o + 9));
+    for (int i = 0; i < 12; i++) {
+        float fade = smoothstep(1.0, 4.0, 2.0 * L / (z * z));
+        if (fade > 0.0) {
+            float ang = baseA + spread * (hash2(i, 0, seed) * 2.0 - 1.0);
+            vec2 d = vec2(sin(ang), cos(ang));
+            float k = 6.28318530718 / L;
+            float w = sqrt(G * k) * speed;
+            float ph = k * dot(d, q) - w * T + hash2(i, 1, seed) * 6.28318530718;
+            float e = exp(chop * (sin(ph) - 1.0));
+            float A = height * L * 0.012 * fade;
+            ht += A * e;
+            float sl = A * chop * cos(ph) * e * k;
+            hx += sl * d.x;
+            hz += sl * d.y;
+            asum += A;
+            q -= d * (sl * L * 0.05);
+        }
+        L *= 0.72;
+    }
+    float hn = asum > 0.0 ? ht / asum : 0.0;
+    vec3 n = normalize(vec3(-hx, 1.0, -hz));
+    vec3 v = normalize(vec3(-wx, H_ * 0.5, -wz));
+    float ndv = max(0.0, dot(n, v));
+    vec3 r = -v + 2.0 * ndv * n;
+    r.y = max(r.y, 0.005);
+    r.z = max(r.z, 0.05);
+    vec2 s = vec2(W_ / 2.0 + H_ * r.x / r.z, hor - H_ * r.y / r.z);
+    float F = 0.02 + 0.98 * pow(1.0 - ndv, 5.0);
+    float R = min(1.0, F * edf(o + 27)) * smoothstep(-0.1 * H_, 0.0, s.y);
+    vec3 u = normalize(vec3(edf(o + 17) - W_ / 2.0, hor - edf(o + 18), H_));
+    float rd = max(0.0, dot(r, u) / length(r));
+    float spec = (pow(rd, 600.0) * 6.0 + pow(rd, 150.0) * 0.15) * edf(o + 22) * (0.3 + F);
+    float ndl = max(0.0, dot(n, u));
+    float sss = max(0.0, hn - 0.15) * max(0.0, hn - 0.15) * 1.2;
+    float foam = 0.0, fa = edf(o + 23);
+    if (fa > 0.0) {
+        float f = cfbm(vec2(wx, wz) / (size * 0.08), T * 0.4, seed + 7u, 3);
+        float fl = 0.62 - 0.3 * fa;
+        foam = min(1.0, fa * 3.0) * smoothstep(fl, fl + 0.25, hn + 0.3 * (f - 0.5)) * smoothstep(0.4, 0.65, f) *
+            smoothstep(2.0, 8.0, 2.0 * size * 0.3 / (z * z));
+    }
+    vec3 deep = vec3(edf(o + 11), edf(o + 12), edf(o + 13)), shal = vec3(edf(o + 14), edf(o + 15), edf(o + 16));
+    vec3 sc = vec3(edf(o + 19), edf(o + 20), edf(o + 21)), fc = vec3(edf(o + 24), edf(o + 25), edf(o + 26));
+    vec3 wcol = deep * (0.55 + 0.45 * ndl) + shal * sss;
+    vec3 col = (wcol * (1.0 - R) + spec * sc) * (1.0 - foam) + fc * foam;
+    float a = (1.0 - R) * (1.0 - foam) + foam;
+    float hf = smoothstep(0.0, edf(o + 28), dy);
+    gLens = (s - pp) * hf;
+    return vec4(col, a) * hf;
+}
+
 void resolveOne(uint id) {
     int n = W * H;
     int e = int(id) / n, p = int(id) - e * n;
@@ -831,6 +898,8 @@ void resolveOne(uint id) {
         c = waterPixel(h, base, GW, GH, dv, pp, T, seed);
     } else if (ed[h + 43] == 5u) {
         c = cloudPixel(h, pp, seed, T);
+    } else if (ed[h + 43] == 6u) {
+        c = oceanPixel(h, pp, seed, T);
     } else if (ed[h + 43] == 4u) {
         c = gasPixel(h, pp, seed, T);
     } else {
@@ -859,7 +928,8 @@ void resolveOne(uint id) {
         c.a = max(c.a, max(c.r, max(c.g, c.b)));
     }
     lay[v1.y + p] = packUnorm4x8(clamp(c, 0.0, 1.0));
-    bool lensOn = (ed[h + 43] == 3u && edf(h + 94) > 0.0) || (ed[h + 43] == 4u && edf(h + 121) > 0.0);
+    bool lensOn = (ed[h + 43] == 3u && edf(h + 94) > 0.0) || (ed[h + 43] == 4u && edf(h + 121) > 0.0) ||
+        (ed[h + 43] == 6u && ed[h + 123] != 0u && edf(int(ed[h + 123]) - 1 + 27) > 0.0);
     if (lensOn) lay[v1.y + n + p] = packHalf2x16(gLens); // its lens, after its image
     if (ed[h + 95] != 0u) {
         // its particles' depth here (weighted as their alpha, in this pixel's cell; -1 without any),

@@ -270,6 +270,9 @@ func (s *Session) emitParticles(li, ci int, c0, c *config.ClipConfig, idx int, f
 	if e.Look == "clouds" {
 		p.Clouds = s.cloudParams(e, sc, idx, feats)
 	}
+	if e.Look == "ocean" {
+		p.Ocean = s.oceanParams(e, sc, idx, feats)
+	}
 	if e.Look == "water" || e.Look == "liquid" {
 		w := e.Water
 		p.Water = true
@@ -449,6 +452,35 @@ func (s *Session) emitExprs(p *effects.EmitParams, c0, c *config.ClipConfig, e *
 
 // cloudParams: the procedural clouds look of emitter e at frame idx (sc: px per px of a
 // 1080-line frame, the clip's scale in it); its lightning flashes on the beats, fading in 0.12 s
+// oceanParams: the ocean look's params at this frame (the bass raising its waves)
+func (s *Session) oceanParams(e *config.EmitterConfig, sc float64, idx int, feats []audio.FrameFeatures) *effects.OceanParams {
+	o := e.Ocean
+	W, H := float64(s.W), float64(s.H)
+	f := func(v float64) float32 { return float32(v) }
+	rgb := func(h, def string) [3]float32 {
+		v, err := visualizer.ParseHexColor(h)
+		if err != nil {
+			v, _ = visualizer.ParseHexColor(def)
+		}
+		return [3]float32{float32(v.R) / 255, float32(v.G) / 255, float32(v.B) / 255}
+	}
+	ht := math.Max(o.Height, 0)
+	if o.Bass > 0 && idx >= 0 && idx < len(feats) {
+		ht *= 1 + o.Bass*feats[idx].BassEnergy
+	}
+	a := o.WindAngle * math.Pi / 180
+	return &effects.OceanParams{
+		Horizon: f(math.Min(math.Max(o.Horizon, 0), 1) * H), W: f(W), H: f(H),
+		Size: f(math.Max(o.Size, 10) * sc), Height: f(ht), Chop: f(math.Min(math.Max(o.Chop, 0), 4)), Speed: f(o.Speed),
+		Spread: f(math.Min(math.Max(o.Spread, 0), 180) * math.Pi / 180), DirX: f(math.Sin(a)), DirZ: f(-math.Cos(a)),
+		G:    f(1060 * sc),
+		Deep: rgb(o.DeepColor, "#0b2a3c"), Shallow: rgb(o.ShallowColor, "#1f7a7a"),
+		SunX: f(o.SunX * W), SunY: f(o.SunY * H), SunCol: rgb(o.SunColor, "#fff0d2"), Glint: f(math.Max(o.Glint, 0)),
+		Foam: f(math.Min(math.Max(o.Foam, 0), 1)), FoamCol: rgb(o.FoamColor, "#e6edf2"),
+		Reflect: f(math.Min(math.Max(o.Reflect, 0), 1)), Fade: f(0.004*H + 1),
+	}
+}
+
 func (s *Session) cloudParams(e *config.EmitterConfig, sc float64, idx int, feats []audio.FrameFeatures) *effects.CloudParams {
 	c := e.Clouds
 	W, H := float64(s.W), float64(s.H)

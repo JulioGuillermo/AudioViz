@@ -118,6 +118,7 @@ type EmitterConfig struct {
 	Walls  bool       `yaml:"walls,omitempty"`
 	Liquid LiquidLook `yaml:"liquid,omitempty"`
 	Clouds CloudLook  `yaml:"clouds,omitempty"`
+	Ocean  OceanLook  `yaml:"ocean,omitempty"`
 	Glow   EmitGlow   `yaml:"glow"`
 	Light  EmitLight  `yaml:"light"`
 }
@@ -300,6 +301,42 @@ type CloudLook struct {
 func DefaultClouds() CloudLook {
 	return CloudLook{Coverage: 0.5, Density: 1, Scale: 360, Detail: 0.6, Billow: 0.8, WindX: 25, Evolve: 0.05,
 		Soft: 0.1, Horizon: 0.55, LightColor: "#fffaf2", ShadowColor: "#8c98aa", Shadow: 1}
+}
+
+// OceanLook (look "ocean"): procedural water below a horizon (no particles): waves of many
+// sizes going away into perspective, reflecting what is behind it (the sky, the scene: through
+// its lens) more the flatter it is seen, the sun's path on it, foam on the crests
+type OceanLook struct {
+	Horizon float64 `yaml:"horizon"` // where the water ends (0 top … 1 bottom)
+	Size    float64 `yaml:"size"`    // the longest waves (px of a 1080-line frame, near you)
+	Height  float64 `yaml:"height"`  // how high (1 = a fresh sea)
+	Chop    float64 `yaml:"chop"`    // how sharp their crests (0 round … 3 sharp)
+	Speed   float64 `yaml:"speed"`   // how fast they go (1 = as real waves of that size)
+	// where the waves go (degrees: 0 towards you, 90 to the right) and how far their directions spread
+	WindAngle float64 `yaml:"wind_angle"`
+	Spread    float64 `yaml:"spread"`
+	// the water's color deep down and through the crests
+	DeepColor    string `yaml:"deep_color"`
+	ShallowColor string `yaml:"shallow_color"`
+	// the sun (on the frame, 0..1), its color and how much it shines on the water
+	SunX     float64 `yaml:"sun_x"`
+	SunY     float64 `yaml:"sun_y"`
+	SunColor string  `yaml:"sun_color"`
+	Glint    float64 `yaml:"glint"`
+	// foam on the crests (0 none … 1 a stormy sea) and its color
+	Foam      float64 `yaml:"foam"`
+	FoamColor string  `yaml:"foam_color"`
+	// how much it reflects what is behind it (0..1)
+	Reflect float64 `yaml:"reflect"`
+	// how much higher the waves get with the bass (0: not at all)
+	Bass float64 `yaml:"bass"`
+}
+
+// DefaultOcean: a fresh sea by day
+func DefaultOcean() OceanLook {
+	return OceanLook{Horizon: 0.5, Size: 700, Height: 1, Chop: 1.2, Speed: 1, Spread: 30, DeepColor: "#0b2a3c",
+		ShallowColor: "#1f7a7a", SunX: 0.65, SunY: 0.3, SunColor: "#fff0d2", Glint: 1, Foam: 0.2, FoamColor: "#e6edf2",
+		Reflect: 1, Bass: 0.5}
 }
 
 // LiquidLook (look "liquid"): the particles are born as drops of a liquid simulated over the
@@ -574,6 +611,24 @@ func init() {
 	fog.Top, fog.Bottom, fog.Soft, fog.DepthFog, fog.WindX, fog.Evolve, fog.EdgeSoft = 0.3, 1, 0.25, 1.2, 15, 0.08, 1
 	fog.LightColor, fog.ShadowColor = "#e8ecf0", "#b0b8c2"
 	EmitterPresets["fog_proc"] = proc(fog)
+	// procedural water
+	sea := func(o OceanLook) EmitterConfig {
+		e := proc(DefaultClouds())
+		e.Look, e.Ocean = "ocean", o
+		return e
+	}
+	EmitterPresets["ocean"] = sea(DefaultOcean())
+	sun := DefaultOcean()
+	sun.SunX, sun.SunY, sun.SunColor, sun.DeepColor, sun.ShallowColor, sun.Glint, sun.Foam = 0.5, 0.42, "#ffb060", "#101a2a", "#3a4a50", 1.4, 0.1
+	EmitterPresets["ocean_sunset"] = sea(sun)
+	st := DefaultOcean()
+	st.Size, st.Height, st.Chop, st.Foam, st.Glint, st.Speed, st.Bass = 800, 2, 2, 0.8, 0.3, 1.2, 1
+	st.DeepColor, st.ShallowColor, st.Spread = "#1a2a2e", "#3d6060", 40
+	EmitterPresets["ocean_storm"] = sea(st)
+	lake := DefaultOcean()
+	lake.Size, lake.Height, lake.Chop, lake.Foam, lake.Bass, lake.Spread = 300, 0.3, 1, 0, 0.2, 35
+	lake.DeepColor, lake.ShallowColor = "#0e2a30", "#1f6060"
+	EmitterPresets["lake_calm"] = sea(lake)
 	// smoke and fog in the scene's depth (3D)
 	s3 := EmitterPresets["smoke_real"]
 	s3.Gas.D3 = true
@@ -604,6 +659,9 @@ func init() {
 		}
 		if e.Clouds == (CloudLook{}) {
 			e.Clouds = DefaultClouds()
+		}
+		if e.Ocean == (OceanLook{}) {
+			e.Ocean = DefaultOcean()
 		}
 		if e.Light.Reach == 0 {
 			e.Light = EmitLight{Intensity: 0.8, Reach: 450, Mode: "soft", Flicker: 0.25, Depth: 2.5, Shade: 0.6, From: 1, To: 0, RangeSoft: 0.05}
