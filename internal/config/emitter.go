@@ -232,7 +232,7 @@ type GasLook struct {
 
 // DefaultGas: cool smoke rising slowly
 func DefaultGas() GasLook {
-	return GasLook{Detail: 7, Smoke: 0.2, Heat: 0.4, Push: 0.1, Rise: 250, Swirl: 2.5, Turbulence: 50, TurbScale: 140,
+	return GasLook{Detail: 7, Smoke: 0.2, Heat: 0.4, Push: 0.1, Rise: 250, Swirl: 2.5, Turbulence: 120, TurbScale: 140,
 		Fade: 0.12, Cool: 3, Burn: 2.5, Soot: 0.6, SootColor: "#2a2623", Spread: 300,
 		Opacity: 1.6, Wisps: 0.4, WispScale: 60, LightColor: "#fff2e0", ShadowColor: "#66707e", Shadow: 0.6, FireLight: 1}
 }
@@ -357,7 +357,7 @@ var EmitterPresets = map[string]EmitterConfig{
 		Turbulence: 10, TurbFreq: 1, Life: 0.8, LifeVar: 0.3, Size: 120, SizeEnd: 140, SizeVar: 0.3,
 		ColorStart: "#d8d0c8ff", ColorMid: "#d8d0c8ff", ColorEnd: "#d8d0c800", FadeIn: 0.1, FadeOut: 0.4, Mode: "soft", Softness: 1,
 		Look: "gas",
-		Gas: GasLook{Detail: 5, Smoke: 0.2, Push: 0.2, Rise: 250, Weight: 120, Swirl: 3, Turbulence: 20, TurbScale: 300,
+		Gas: GasLook{Detail: 5, Smoke: 0.2, Push: 0.2, Rise: 250, Weight: 120, Swirl: 3, Turbulence: 40, TurbScale: 300,
 			Fade: 0.01, Cool: 3, Burn: 2.5, Soot: 0.6, SootColor: "#2a2623", Spread: 100,
 			Opacity: 1.6, Wisps: 0.5, WispScale: 40, LightColor: "#fff0e2", ShadowColor: "#9aa4b0", Shadow: 0.45, FireLight: 1},
 		React: EmitterReact{ReactTo: "bass", Rate: 0.3}},

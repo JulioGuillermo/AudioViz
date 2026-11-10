@@ -475,7 +475,7 @@ void splatOne(int j) {
         }
     }
     // its light source: its cell of the light grid
-    if (ed[h + 64] != 0u) {
+    if (ed[h + 64] != 0u && ed[h + 43] != 4u) { // (the gas look: its flames are the sources)
         int lx = int(floor(pos.x / float(XDIV))), ly = int(floor(pos.y / float(XDIV)));
         uint q = uint(col.a * tiny * FIXED + 0.5);
         if (q > 0u && lx >= 0 && ly >= 0 && lx < XW && ly < XH) atomicAdd(acc[srcBase(e) + uint(ly * XW + lx)], q);
@@ -755,7 +755,8 @@ void lightPhase() {
         uint sb = srcBase(e);
         float raw = 0.0;
         for (int k = 0; k < XW * XH; k++) {
-            uint v = acc[sb + uint(k)];
+            uint gl = ed[h + 43] == 4u ? ed[h + 119] : 0u; // the gas look: its flames' sources
+            uint v = gl > 0u ? lay[gl - 1u + uint(k)] : ed[h + 43] == 4u ? 0u : acc[sb + uint(k)];
             if (v == 0u) continue;
             float dx = float(k % XW - x) * float(XDIV), dy = float(k / XW - y) * float(XDIV);
             raw += float(v) / FIXED * lightFalloff(sqrt(dx * dx + dy * dy), R, E);

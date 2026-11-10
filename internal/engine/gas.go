@@ -56,8 +56,9 @@ var gasMu sync.Mutex
 
 // gasPre: an emitter clip's particles at a frame and its settings then
 type gasPre struct {
-	ef *effects.EmitFrame
-	e  *config.EmitterConfig
+	ef    *effects.EmitFrame
+	e     *config.EmitterConfig
+	solid []uint8 // the cells the gas goes round then (nil: none)
 }
 
 // gasPhys: how the gas of emitter e moves, at sc px per px of a 1080-line frame
@@ -90,7 +91,7 @@ func (s *Session) gasCell(e *config.EmitterConfig) float64 {
 
 // gasFingerprint: what feeds the gas at a frame: its particles' settings, the births of that
 // frame and how the gas moves
-func gasFingerprint(p *effects.EmitParams, ph *effects.GasPhys, births []effects.Birth) uint64 {
+func gasFingerprint(p *effects.EmitParams, ph *effects.GasPhys, births []effects.Birth, solid []uint8) uint64 {
 	h := fnv.New64a()
 	w := func(v ...any) {
 		for _, x := range v {
@@ -114,6 +115,8 @@ func gasFingerprint(p *effects.EmitParams, ph *effects.GasPhys, births []effects
 	for _, b := range births {
 		w(b)
 	}
+	w(int64(len(solid)))
+	h.Write(solid)
 	return h.Sum64()
 }
 
@@ -200,10 +203,10 @@ func (s *Session) gasFrameAt(li, ci int, c0 *config.ClipConfig, idx int, feats [
 	run.pre = map[int]gasPre{}
 	defer func() { run.pre = nil }()
 	for k := len(run.fp); k < n; k++ {
-		ef, e := s.gasClip(li, ci, c0, run.f0+k, feats)
-		run.fp = append(run.fp, gasPrintOf(ef, e, s.emitScale(), tb, run.f0+k))
+		g := s.gasClip(li, ci, c0, run.f0+k, feats)
+		run.fp = append(run.fp, gasPrintOf(g, s.emitScale(), tb, run.f0+k))
 		if len(run.pre) < 4096 {
-			run.pre[run.f0+k] = gasPre{ef, e}
+			run.pre[run.f0+k] = g
 		}
 	}
 	// from where it is, or the nearest checkpoint before
@@ -250,6 +253,10 @@ func (s *Session) gasFrameAt(li, ci int, c0 *config.ClipConfig, idx int, feats [
 	if err != nil {
 		return nil, err
 	}
+	// its flames as the light sources of the emitter's light (as much light as a flame of
+	// ~250 px² of 1080-line frame per unit)
+	sc32 := float32(sc)
+	out.Light = out.LightSources(s.W, s.H, l.HeatK, 250*sc32*sc32)
 	run.out, run.outK, run.outKey = out, idx, l
 	return run.out, nil
 }
@@ -266,8 +273,9 @@ func (r *gasRun) drop(k int) {
 	}
 }
 
-// gasClip: the emitter clip at frame k (its keys and expressions applied) and its particles
-func (s *Session) gasClip(li, ci int, c0 *config.ClipConfig, k int, feats []audio.FrameFeatures) (*effects.EmitFrame, *config.EmitterConfig) {
+// gasClip: the emitter clip at frame k (its keys and expressions applied): its particles, its
+// settings and what its gas goes round
+func (s *Session) gasClip(li, ci int, c0 *config.ClipConfig, k int, feats []audio.FrameFeatures) gasPre {
 	t := float64(k) / float64(s.FPS)
 	c := c0
 	if len(c0.Keys) > 0 || len(c0.Exprs) > 0 {
@@ -278,17 +286,71 @@ func (s *Session) gasClip(li, ci int, c0 *config.ClipConfig, k int, feats []audi
 		d := config.DefaultEmitter()
 		e = &d
 	}
-	return s.emitParticles(li, ci, c0, c, k, feats), e
+	ef := s.emitParticles(li, ci, c0, c, k, feats)
+	g := gasPre{ef: ef, e: e}
+	if ef != nil && e.Collide {
+		g.solid = s.gasSolid(c, e, ef, t)
+	}
+	return g
+}
+
+// gasSolid: the cells of the gas grid it goes round at time t: where the background's depth (the
+// segment on screen then, as it moves; without the camera's effects) is within the band of the
+// emitter's depth, but not around where it is born (as the particles' collide in layersAt)
+func (s *Session) gasSolid(c *config.ClipConfig, e *config.EmitterConfig, ef *effects.EmitFrame, t float64) []uint8 {
+	tl := &s.Cfg.Timeline
+	bi := config.Active(tl.Background, t)
+	if bi < 0 {
+		return nil
+	}
+	_, cbg, _ := config.BlendEv(tl.Background, t, s.Duration(), s, "Background")
+	dA, nA, _ := s.depthFor(cbg, t-tl.Background[bi].At)
+	if dA == nil {
+		return nil
+	}
+	scene := &effects.Scene{A: dA, NA: nA, LA: s.motionAt(bi, t), W: s.W, H: s.H}
+	ox, oy := float64(s.W)/2, float64(s.H)/2
+	if n := len(ef.Births); n > 0 {
+		ox, oy = ef.Births[n-1].X, ef.Births[n-1].Y
+	}
+	zc, ok := clipDepth(&c.Depth, scene, ox, oy)
+	if !ok {
+		zc = float64(scene.Ground(float32(ox), float32(oy)))
+	}
+	band := e.CollideBand
+	if band <= 0 {
+		band = 0.06
+	}
+	sc := s.emitScale() * math.Max(c.Scale, 0.01)
+	free := math.Max(e.Width, e.Height)*sc/2 + 24*s.emitScale()
+	gw, gh, cs := effects.GasGrid(s.W, s.H, s.gasCell(e))
+	solid := make([]uint8, gw*gh)
+	found := false
+	for cy := 0; cy < gh; cy++ {
+		for cx := 0; cx < gw; cx++ {
+			x, y := (float64(cx)+0.5)*float64(cs), (float64(cy)+0.5)*float64(cs)
+			if math.Hypot(x-ox, y-oy) < free || x >= float64(s.W) || y >= float64(s.H) {
+				continue
+			}
+			if math.Abs(float64(scene.At(float32(x), float32(y)))-zc) < band {
+				solid[cy*gw+cx], found = 1, true
+			}
+		}
+	}
+	if !found {
+		return nil
+	}
+	return solid
 }
 
 // gasPrint: the fingerprint of frame k
 func (s *Session) gasPrint(li, ci int, c0 *config.ClipConfig, k int, feats []audio.FrameFeatures, tb *emitTable) uint64 {
-	ef, e := s.gasClip(li, ci, c0, k, feats)
-	return gasPrintOf(ef, e, s.emitScale(), tb, k)
+	return gasPrintOf(s.gasClip(li, ci, c0, k, feats), s.emitScale(), tb, k)
 }
 
-// gasPrintOf: the fingerprint of frame k with its particles ef
-func gasPrintOf(ef *effects.EmitFrame, e *config.EmitterConfig, sc float64, tb *emitTable, k int) uint64 {
+// gasPrintOf: the fingerprint of frame k with its particles and solid cells g
+func gasPrintOf(g gasPre, sc float64, tb *emitTable, k int) uint64 {
+	ef, e := g.ef, g.e
 	if ef == nil {
 		return 0
 	}
@@ -298,19 +360,17 @@ func gasPrintOf(ef *effects.EmitFrame, e *config.EmitterConfig, sc float64, tb *
 	if j > 0 {
 		lo = tb.at[j-1] + 1
 	}
-	return gasFingerprint(&ef.P, &ph, tb.births[lo:tb.at[j]+1])
+	return gasFingerprint(&ef.P, &ph, tb.births[lo:tb.at[j]+1], g.solid)
 }
 
 // gasStep: the simulation through frame k (from the moment of frame k - 1): its steps, each fed
 // by the particles alive then
 func (s *Session) gasStep(li, ci int, c0 *config.ClipConfig, k int, feats []audio.FrameFeatures, run *gasRun) error {
-	var ef *effects.EmitFrame
-	var e *config.EmitterConfig
-	if p, ok := run.pre[k]; ok {
-		ef, e = p.ef, p.e
-	} else {
-		ef, e = s.gasClip(li, ci, c0, k, feats)
+	g, ok := run.pre[k]
+	if !ok {
+		g = s.gasClip(li, ci, c0, k, feats)
 	}
+	ef, e := g.ef, g.e
 	if ef == nil {
 		return nil
 	}
@@ -337,5 +397,5 @@ func (s *Session) gasStep(li, ci int, c0 *config.ClipConfig, k int, feats []audi
 		}
 		srcs[j] = src
 	}
-	return run.sim.Advance(srcs, &ph, dt)
+	return run.sim.Advance(srcs, &ph, dt, g.solid)
 }

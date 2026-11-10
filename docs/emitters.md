@@ -126,7 +126,7 @@ Three presets start from it:
             weight: 0            # px/s² per unit of smoke: heavy smoke sinks (negative floats)
             swirl: 3             # keeps its curls alive
             wind: 0              # px/s, to the right
-            turbulence: 140      # px/s, how strongly the air stirs it…
+            turbulence: 140      # px/s, how fast the air's gusts are (each whirl lives size / speed)…
             turb_scale: 60       # …and the size of its whirls (px)
             fade: 0.15           # 1/s: smoke vanishing
             cool: 3.5            # 1/s: flames cooling (their length); the warmth that lifts the gas lasts longer
@@ -144,6 +144,17 @@ Three presets start from it:
             fire_light: 1.2      # how much its flames light the smoke
           flame: { color_cool: "#8a1606", color_mid: "#ff6a14", color_hot: "#fff2c8", heat: 1.2, edge: 0.7 }   # the flames' colors
 ```
+
+**In the scene** (with a background that has a [depth map](depth.md)), the gas behaves like the
+particles:
+- **They go round the scene**: what is at the emitter's depth (within *Solid within*) is solid
+  for the gas too. Smoke pools under a ceiling and flows round it, flames lick a wall, and what is
+  solid also shades the smoke from its light. The obstacles come from the background on screen at
+  each moment, as it moves, but without the camera's effects.
+- Its **light** comes from its simulated flames, not from its particles, so it flickers and moves
+  with them.
+- Its **depth** (Depth section) places it in the scene as one plane, like the particles: what is
+  nearer hides it, and the 2.5D camera and the depth of field move and blur it.
 
 The simulation starts at the clip's start and runs on from frame to frame. The studio keeps its
 state every second, so jumping around the timeline goes on from the nearest second before.

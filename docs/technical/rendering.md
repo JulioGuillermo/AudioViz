@@ -494,7 +494,8 @@ A step (`GasSim.Step`, all float32, rows in parallel, deterministic; dt = speed 
 substeps = ⌈60·speed / fps⌉: `speed` makes the gas live faster than the video, its particles
 still taken at their own moments):
 1. **Forces:** buoyancy −rise·heat + weight·smoke; the wind as a target velocity (relaxation
-   0.4/s); the curl of a two-octave value-noise stream function (turbulence); vorticity confinement
+   0.4/s); the curl of a two-octave value-noise stream function (turbulence: its pattern moves at
+   ω = speed / size, the whirls' turnover, and the force is speed·ω, so the gusts stay about `turbulence` px/s); vorticity confinement
    ε = swirl·1.5·cell.
 2. The velocity carried by itself (semi-Lagrangian, midpoint back-trace).
 3. The pressure: red-black SOR, 24 iterations, ω = 1.8, warm-started; p = 0 outside (open edges).
@@ -522,6 +523,16 @@ order: the same sums as the CPU's source-by-source `Feed`. The frame's light (24
 blurs, packing into halves) is computed there too, and the cells are copied out. The GPU and CPU
 simulations are not bit-identical (a chaotic flow then drifts apart), but every renderer draws the
 same simulated frames.
+
+**In the scene:** with `collide`, `Session.gasSolid` marks, for each frame, the cells within
+`collide_band` of the emitter's depth. It uses the background segment on screen, its depth and its
+motion, but no camera views, and leaves out the free disc around the emitter as for the particles.
+The cells are hashed into the frame's fingerprint. Solid cells get no feed and no velocity; their
+sides block the divergence and the pressure (a solid neighbour gives this cell's own pressure,
+Neumann) and the diffusion; carried fields are cleared in them. In the light march they count as 4
+units of smoke (`gasSolidShade`). The emitter's light sources are the flames: per 32 px light cell,
+Σ (1 − e^(−flame·heatK))·cell² / (250·scale²) (`GasFrame.LightSources`). They are uploaded after the
+grid; `emit.comp`'s light phase reads them instead of the particles' (header word 119).
 
 **Checkpoints and fingerprints:** the state is stored every second as halves, with the runs of
 zeros left out (`encodeGas`; the GPU's fields are copied out at once first: mapped memory is slow

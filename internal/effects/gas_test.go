@@ -77,7 +77,7 @@ func BenchmarkGasGPUFrame(b *testing.B) {
 	src := []GasSource{{X: 960, Y: 1000, R: 60, A: 1}}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := g.Advance([][]GasSource{src, src}, &ph, 1.0/60); err != nil {
+		if err := g.Advance([][]GasSource{src, src}, &ph, 1.0/60, nil); err != nil {
 			b.Fatal(err)
 		}
 	}

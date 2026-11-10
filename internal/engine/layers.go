@@ -449,7 +449,8 @@ func (s *Session) emitterWords() int {
 		if c.Emitter != nil && c.Emitter.Look == "gas" {
 			// its gas grid (written every frame after its image)
 			gw, gh, _ := effects.GasGrid(s.W, s.H, s.gasCell(c.Emitter))
-			n += gw * gh * effects.GasCellWords
+			xw, xh := effects.EmitLightGrid(s.W, s.H)
+			n += gw*gh*effects.GasCellWords + xw*xh // (and its flames' light sources)
 		}
 		if len(c.Masks) > 0 {
 			return n + mask

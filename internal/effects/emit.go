@@ -897,7 +897,7 @@ func DrawEmitter(e *EmitFrame, W, H int) (*image.RGBA, *LightField) {
 					if p.GlowI > 0 && p.GlowR > 0 {
 						splatGlow(&pt, float32(p.GlowR), glow, LW, LH)
 					}
-					if src != nil {
+					if src != nil && !p.GasOn {
 						// the particle's light source: its cell
 						cx, cy := int(math.Floor(float64(pt.X/EmitLightDiv))), int(math.Floor(float64(pt.Y/EmitLightDiv)))
 						if q := uint32(pt.A*emitTiny(pt.Size)*EmitFixed + 0.5); q > 0 && cx >= 0 && cy >= 0 && cx < XW && cy < XH {
@@ -908,6 +908,9 @@ func DrawEmitter(e *EmitFrame, W, H int) (*image.RGBA, *LightField) {
 			}(k)
 		}
 		wg.Wait()
+	}
+	if src != nil && p.GasOn && p.Gas != nil && len(p.Gas.Light) == len(src) {
+		copy(src, p.Gas.Light) // the gas look: its flames light the scene
 	}
 	img := image.NewRGBA(image.Rect(0, 0, W, H))
 	e.Lens = nil

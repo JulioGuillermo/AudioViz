@@ -22,6 +22,8 @@ const (
 	GasMaxCells = 131072
 	// GasCellWords: 32-bit words per cell of a GasFrame (pairs of halves)
 	GasCellWords = 6
+	// gasSolidShade: how much smoke a solid cell is worth for the light that goes through it
+	gasSolidShade = 4
 	// gasPeriod: seconds between the restarts of each set of wisp coordinates
 	gasPeriod = 0.8
 )
@@ -58,6 +60,9 @@ type GasSim struct {
 	t0, t1, t2, t3                          []float32      // scratch
 	bx, by                                  []float32      // where each cell's gas came from this step (back)
 	adv                                     [][3][]float32 // per field carried: back, lowest and highest source
+	// Solid: the cells the gas goes round this frame (the scene at the emitter's depth; nil:
+	// none): no gas in them, no flow through their sides
+	Solid []uint8
 }
 
 // GasGrid: the grid of a W×H frame with cells of about cs px (coarser past GasMaxCells)
@@ -182,8 +187,9 @@ func decodeGas(b []byte, fs [][]float32) (float64, bool) {
 // GasSimulator: a gas simulation, on the CPU (GasSim) or on the GPU (GasGPU); checkpoints of one
 // can be restored into the other
 type GasSimulator interface {
-	// Advance: one frame: a step per list of sources (fed first), dt each
-	Advance(srcs [][]GasSource, ph *GasPhys, dt float32) error
+	// Advance: one frame: a step per list of sources (fed first), dt each; solid: the cells it
+	// goes round this frame (nil: none)
+	Advance(srcs [][]GasSource, ph *GasPhys, dt float32, solid []uint8) error
 	// Draw: the gas now with its light
 	Draw(l GasLight) (*GasFrame, error)
 	Checkpoint() ([]byte, error)
@@ -191,7 +197,8 @@ type GasSimulator interface {
 	Close()
 }
 
-func (s *GasSim) Advance(srcs [][]GasSource, ph *GasPhys, dt float32) error {
+func (s *GasSim) Advance(srcs [][]GasSource, ph *GasPhys, dt float32, solid []uint8) error {
+	s.Solid = solid
 	for _, src := range srcs {
 		s.Feed(src, ph, dt)
 		s.Step(ph, dt)
@@ -273,8 +280,11 @@ func (s *GasSim) Feed(src []GasSource, ph *GasPhys, dt float32) {
 				if q >= 1 {
 					continue
 				}
-				w := (1 - q) * (1 - q) * p.A
 				i := y*s.GW + x
+				if s.solid(i) {
+					continue
+				}
+				w := (1 - q) * (1 - q) * p.A
 				a := w * dt // per second at its centre (the same whatever the cells' size)
 				d := ph.Density * a
 				s.D[i] += d
@@ -287,6 +297,23 @@ func (s *GasSim) Feed(src []GasSource, ph *GasPhys, dt float32) {
 					s.VX[i] += (p.VX - s.VX[i]) * m
 					s.VY[i] += (p.VY - s.VY[i]) * m
 				}
+			}
+		}
+	}
+}
+
+// solid: whether cell i is solid
+func (s *GasSim) solid(i int) bool { return s.Solid != nil && s.Solid[i] != 0 }
+
+// clearSolid: the fields nothing in the solid cells
+func (s *GasSim) clearSolid(fs ...[]float32) {
+	if s.Solid == nil {
+		return
+	}
+	for i, v := range s.Solid {
+		if v != 0 {
+			for _, f := range fs {
+				f[i] = 0
 			}
 		}
 	}
@@ -336,13 +363,15 @@ func (s *GasSim) Step(ph *GasPhys, dt float32) {
 	var psi []float32
 	if turbOn {
 		psi = s.t2
-		tt := float32(s.T)
+		// the whirls live as long as they take to turn (size / speed): none lasts long enough to
+		// pile speed up; the force reaches about the turbulence's speed in that time
+		tt := float32(s.T) * (ph.Turb / ph.TurbScale)
 		ls := ph.TurbScale
 		s.rows(func(y0, y1 int) {
 			for y := y0; y < y1; y++ {
 				for x := 0; x < W; x++ {
 					u, v := (float32(x)+0.5)*cs/ls, (float32(y)+0.5)*cs/ls
-					psi[y*W+x] = evnoise(u+tt*0.13, v-tt*0.05, ph.Seed+101) + 0.5*evnoise(1.9*u-tt*0.21+3.3, 1.9*v+tt*0.07, ph.Seed+202)
+					psi[y*W+x] = evnoise(u+tt*0.8, v-tt*0.3, ph.Seed+101) + 0.5*evnoise(1.9*u-tt*1.3+3.3, 1.9*v+tt*0.45, ph.Seed+202)
 				}
 			}
 		})
@@ -375,8 +404,8 @@ func (s *GasSim) Step(ph *GasPhys, dt float32) {
 					}
 				}
 				if turbOn {
-					// ψ's curl, about 1/scale: the turbulence's speed reached in about half a second
-					k := ph.Turb * ph.TurbScale * 2 / (2 * cs)
+					// ψ's curl (per unit of its scale) × speed × 1 / its lifetime
+					k := ph.Turb * (ph.Turb / ph.TurbScale) * ph.TurbScale / (2 * cs)
 					fx += k * (psi[yd*W+x] - psi[yu*W+x])
 					fy -= k * (psi[y*W+xr] - psi[y*W+xl])
 				}
@@ -387,6 +416,7 @@ func (s *GasSim) Step(ph *GasPhys, dt float32) {
 	})
 	copy(s.VX, s.t1)
 	copy(s.VY, s.t3)
+	s.clearSolid(s.VX, s.VY)
 	// 2. the velocity carried by itself
 	s.rows(func(y0, y1 int) {
 		for y := y0; y < y1; y++ {
@@ -399,6 +429,7 @@ func (s *GasSim) Step(ph *GasPhys, dt float32) {
 	})
 	copy(s.VX, s.t1)
 	copy(s.VY, s.t3)
+	s.clearSolid(s.VX, s.VY)
 	// 3. no divergence: the pressure (red-black SOR, from the last one), its gradient taken off;
 	// open edges (no pressure outside)
 	s.project()
@@ -412,6 +443,7 @@ func (s *GasSim) Step(ph *GasPhys, dt float32) {
 	})
 	// 4. the smoke, its color, heat and fuel carried by the flow (MacCormack, clamped)
 	s.advectAll([][]float32{s.D, s.R, s.G, s.B, s.Heat, s.Fuel, s.Fire}, dt)
+	s.clearSolid(s.D, s.R, s.G, s.B, s.Heat, s.Fuel, s.Fire)
 	// the smoke spreads out a little by itself (and its heat): fuller, softer volumes
 	if diffK > 0 {
 		for _, f := range [][]float32{s.D, s.R, s.G, s.B, s.Heat} {
@@ -488,18 +520,25 @@ func (s *GasSim) diffuse(f []float32, k float32) {
 		for y := y0; y < y1; y++ {
 			for x := 0; x < W; x++ {
 				i := y*W + x
+				// (a solid neighbour: no flow through that side)
+				nb := func(j int) float32 {
+					if s.solid(j) {
+						return f[i]
+					}
+					return f[j]
+				}
 				var sum float32
 				if x > 0 {
-					sum += f[i-1]
+					sum += nb(i - 1)
 				}
 				if x < W-1 {
-					sum += f[i+1]
+					sum += nb(i + 1)
 				}
 				if y > 0 {
-					sum += f[i-W]
+					sum += nb(i - W)
 				}
 				if y < H-1 {
-					sum += f[i+W]
+					sum += nb(i + W)
 				}
 				out[i] = f[i] + k*(sum-4*f[i])
 			}
@@ -517,11 +556,32 @@ func (s *GasSim) project() {
 		for y := y0; y < y1; y++ {
 			for x := 0; x < W; x++ {
 				xl, xr, yu, yd := max(x-1, 0), min(x+1, W-1), max(y-1, 0), min(y+1, H-1)
-				div[y*W+x] = ((s.VX[y*W+xr] - s.VX[y*W+xl]) + (s.VY[yd*W+x] - s.VY[yu*W+x])) / (2 * cs)
+				if s.Solid == nil {
+					div[y*W+x] = ((s.VX[y*W+xr] - s.VX[y*W+xl]) + (s.VY[yd*W+x] - s.VY[yu*W+x])) / (2 * cs)
+					continue
+				}
+				// solid cells (and their sides) do not move
+				v := func(f []float32, j int) float32 {
+					if s.Solid[j] != 0 {
+						return 0
+					}
+					return f[j]
+				}
+				div[y*W+x] = 0
+				if s.Solid[y*W+x] == 0 {
+					div[y*W+x] = ((v(s.VX, y*W+xr) - v(s.VX, y*W+xl)) + (v(s.VY, yd*W+x) - v(s.VY, yu*W+x))) / (2 * cs)
+				}
 			}
 		}
 	})
 	p := s.P
+	// a solid neighbour's pressure: this cell's (no flow through that side)
+	pn := func(i, j int) float32 {
+		if s.solid(j) {
+			return p[i]
+		}
+		return p[j]
+	}
 	const omega = 1.8
 	h2 := cs * cs
 	for it := 0; it < 24; it++ {
@@ -530,18 +590,21 @@ func (s *GasSim) project() {
 				for y := y0; y < y1; y++ {
 					for x := (y + color) & 1; x < W; x += 2 {
 						i := y*W + x
+						if s.solid(i) {
+							continue
+						}
 						var sum float32
 						if x > 0 {
-							sum += p[i-1]
+							sum += pn(i, i-1)
 						}
 						if x < W-1 {
-							sum += p[i+1]
+							sum += pn(i, i+1)
 						}
 						if y > 0 {
-							sum += p[i-W]
+							sum += pn(i, i-W)
 						}
 						if y < H-1 {
-							sum += p[i+W]
+							sum += pn(i, i+W)
 						}
 						v := (sum - h2*div[i]) * 0.25
 						p[i] += omega * (v - p[i])
@@ -554,18 +617,22 @@ func (s *GasSim) project() {
 		for y := y0; y < y1; y++ {
 			for x := 0; x < W; x++ {
 				i := y*W + x
+				if s.solid(i) {
+					s.VX[i], s.VY[i] = 0, 0
+					continue
+				}
 				var pl, pr, pu, pd float32
 				if x > 0 {
-					pl = p[i-1]
+					pl = pn(i, i-1)
 				}
 				if x < W-1 {
-					pr = p[i+1]
+					pr = pn(i, i+1)
 				}
 				if y > 0 {
-					pu = p[i-W]
+					pu = pn(i, i-W)
 				}
 				if y < H-1 {
-					pd = p[i+W]
+					pd = pn(i, i+W)
 				}
 				s.VX[i] -= (pr - pl) / (2 * cs)
 				s.VY[i] -= (pd - pu) / (2 * cs)
@@ -683,6 +750,39 @@ type GasFrame struct {
 	CS     float32
 	W1     float32
 	Cells  []uint32
+	// Light: its flames as the emitter's light sources (EmitLightGrid cells, EmitFixed; nil:
+	// none), what the emitter lights the scene from instead of its particles
+	Light []uint32
+}
+
+// LightSources: the flames of the gas frame summed per cell of the emitter's light grid (of a W×H
+// frame): their glow (1 - e^(-flame·heatK)) × their area / unit px²
+func (g *GasFrame) LightSources(W, H int, heatK, unit float32) []uint32 {
+	XW, XH := EmitLightGrid(W, H)
+	acc := make([]float32, XW*XH)
+	a := g.CS * g.CS / max(unit, 1)
+	lit := false
+	for j := 0; j < g.GH; j++ {
+		for i := 0; i < g.GW; i++ {
+			fire := HalfF(uint16(g.Cells[(j*g.GW+i)*GasCellWords] >> 16))
+			if fire <= 1e-4 {
+				continue
+			}
+			x, y := int((float32(i)+0.5)*g.CS/EmitLightDiv), int((float32(j)+0.5)*g.CS/EmitLightDiv)
+			if x < XW && y < XH {
+				acc[y*XW+x] += (1 - float32(math.Exp(float64(-fire*heatK)))) * a
+				lit = true
+			}
+		}
+	}
+	if !lit {
+		return nil
+	}
+	out := make([]uint32, len(acc))
+	for i, v := range acc {
+		out[i] = uint32(v*EmitFixed + 0.5)
+	}
+	return out
 }
 
 // Frame: the gas now with its light
@@ -695,6 +795,16 @@ func (s *GasSim) Frame(l GasLight) *GasFrame {
 	dx, dy := float32(math.Sin(float64(l.Angle))), -float32(math.Cos(float64(l.Angle)))
 	const steps = 24
 	st := max(l.Reach, cs) / steps
+	// what it goes round blocks the light too (as this much smoke)
+	var sol []float32
+	if s.Solid != nil {
+		sol = make([]float32, n)
+		for i, v := range s.Solid {
+			if v != 0 {
+				sol[i] = gasSolidShade
+			}
+		}
+	}
 	s.rows(func(y0, y1 int) {
 		for y := y0; y < y1; y++ {
 			for x := 0; x < W; x++ {
@@ -708,6 +818,9 @@ func (s *GasSim) Frame(l GasLight) *GasFrame {
 				for k := 1; k <= steps; k++ {
 					d := (float32(k) - 0.5) * st / cs
 					tau += s.sample(s.D, px+dx*d, py+dy*d, false)
+					if sol != nil {
+						tau += s.sample(sol, px+dx*d, py+dy*d, false)
+					}
 				}
 				tau *= st / l.Depth
 				// light scattered many times inside gets deeper (a softer second term)

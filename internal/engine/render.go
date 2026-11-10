@@ -259,7 +259,7 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		// the gas look: its grid after its image (written every frame)
 		gwords := 0
 		if l.Emit != nil && l.Emit.P.Gas != nil {
-			gwords = len(l.Emit.P.Gas.Cells)
+			gwords = len(l.Emit.P.Gas.Cells) + len(l.Emit.P.Gas.Light)
 		}
 		px += gwords
 		mwords := 0
@@ -399,7 +399,7 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 					off += r.s.W * r.s.H
 				}
 				if g := l.Emit.P.Gas; g != nil {
-					off += len(g.Cells)
+					off += len(g.Cells) + len(g.Light)
 				}
 			} else {
 				copy(buf[off*4:], l.Img.Pix)
@@ -425,6 +425,10 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 	for _, ga := range gases {
 		b := buf[ga.off*4:]
 		for i, v := range ga.g.Cells {
+			binary.LittleEndian.PutUint32(b[i*4:], v)
+		}
+		b = b[len(ga.g.Cells)*4:]
+		for i, v := range ga.g.Light {
 			binary.LittleEndian.PutUint32(b[i*4:], v)
 		}
 	}
@@ -688,10 +692,13 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		// yet), its size, cells, the first wisps' weight; how it looks
 		if P.GasOn {
 			u[h+43] = 4
-			u[h+104], u[h+105], u[h+106] = 0, 0, 0
+			u[h+104], u[h+105], u[h+106], u[h+119] = 0, 0, 0, 0
 			if gf := P.Gas; gf != nil && em.gas > 0 {
 				u[h+104], u[h+105], u[h+106] = uint32(em.gas+1), uint32(gf.GW), uint32(gf.GH)
 				f[h+107], f[h+108] = gf.CS, gf.W1
+				if len(gf.Light) > 0 {
+					u[h+119] = uint32(em.gas + len(gf.Cells) + 1) // its flames' light sources
+				}
 			}
 			f[h+109], f[h+110], f[h+111] = float32(P.GasOpacity), float32(P.GasWisp), float32(P.GasWispScale)
 			for j := 0; j < 3; j++ {

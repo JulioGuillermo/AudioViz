@@ -303,7 +303,7 @@ func (s *Session) emitParticles(li, ci int, c0, c *config.ClipConfig, idx int, f
 		case l.Color != "":
 			c := col(l.Color, "#ffffff")
 			lc = [3]float64{c[0], c[1], c[2]}
-		case p.Flame:
+		case p.Flame || p.GasOn:
 			lc = p.FlameCol[1]
 		default:
 			lc = [3]float64{p.Col[1][0], p.Col[1][1], p.Col[1][2]}

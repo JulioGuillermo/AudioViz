@@ -34,6 +34,7 @@ const int C1X = 10, C1Y = 11, C2X = 12, C2Y = 13;
 const int T0 = 14, T1 = 15, T2 = 16, T3 = 17, BX = 18, BY = 19, CURL = 20, PSI = 21, DIV = 22;
 const int ADV = 23; // 7 fields × (back, lowest, highest)
 const int SUN = 44, AMB = 45, FIRE_E = 46, BL1 = 47, BL2 = 48;
+const int SOL = 49; // 1: a solid cell this frame (the gas goes round it)
 // (GasFieldCount in gpu/gas.go)
 
 int GW, GH, N;
@@ -41,6 +42,9 @@ float CS;
 
 float F(int f, int i) { return fld[f * N + i]; }
 void S(int f, int i, float v) { fld[f * N + i] = v; }
+bool sol(int i) { return F(SOL, i) > 0.5; }
+// a solid neighbour j of i: i's value (no flow through that side)
+float nb(int f, int i, int j) { return sol(j) ? F(f, i) : F(f, j); }
 
 // field f at (x, y) in cells (centers at i + 0.5): bilinear; outside: the edge (edge) or nothing
 float sampleF(int f, float x, float y, bool edge) {
@@ -89,6 +93,7 @@ float vnoise(float x, float y, uint seed) {
 
 // 0: the particles feed the gas (each cell takes the sources over its tile, in their order)
 void feed(int i) {
+    if (sol(i)) return;
     int x = i % GW, y = i / GW;
     int tile = (y / 16) * C.c0.w + x / 16;
     uint st = tl[K.a0 + 2 * tile], cnt = tl[K.a0 + 2 * tile + 1];
@@ -126,15 +131,16 @@ void curl(int i) {
     int xl = max(x - 1, 0), xr = min(x + 1, GW - 1), yu = max(y - 1, 0), yd = min(y + 1, GH - 1);
     S(CURL, i, ((F(VY, y * GW + xr) - F(VY, y * GW + xl)) - (F(VX, yd * GW + x) - F(VX, yu * GW + x))) / (2.0 * CS));
     if (C.f2.z > 0.0 && C.f2.w > 0.0) {
-        float ls = C.f2.w, tt = K.t;
+        float ls = C.f2.w, tt = K.t * (C.f2.z / C.f2.w); // (the whirls' lifetime: size / speed)
         float u = (float(x) + 0.5) * CS / ls, v = (float(y) + 0.5) * CS / ls;
         uint seed = uint(C.c0.z);
-        S(PSI, i, vnoise(u + tt * 0.13, v - tt * 0.05, seed + 101u) + 0.5 * vnoise(1.9 * u - tt * 0.21 + 3.3, 1.9 * v + tt * 0.07, seed + 202u));
+        S(PSI, i, vnoise(u + tt * 0.8, v - tt * 0.3, seed + 101u) + 0.5 * vnoise(1.9 * u - tt * 1.3 + 3.3, 1.9 * v + tt * 0.45, seed + 202u));
     }
 }
 
 // 2: the forces (into T1, T3)
 void forces(int i) {
+    if (sol(i)) { S(T1, i, 0.0); S(T3, i, 0.0); return; }
     int x = i % GW, y = i / GW;
     float dt = K.dt, wk = K.p0;
     float vx = F(VX, i), vy = F(VY, i);
@@ -153,7 +159,7 @@ void forces(int i) {
         }
     }
     if (C.f2.z > 0.0 && C.f2.w > 0.0) {
-        float k = C.f2.z * C.f2.w * 2.0 / (2.0 * CS);
+        float k = C.f2.z * (C.f2.z / C.f2.w) * C.f2.w / (2.0 * CS);
         fx += k * (F(PSI, yd * GW + x) - F(PSI, yu * GW + x));
         fy -= k * (F(PSI, y * GW + xr) - F(PSI, y * GW + xl));
     }
@@ -165,15 +171,19 @@ void forces(int i) {
 void advVel(int i) {
     int x = i % GW, y = i / GW;
     vec2 b = back(x, y, K.dt);
-    S(T1, i, sampleF(VX, b.x, b.y, true));
-    S(T3, i, sampleF(VY, b.x, b.y, true));
+    bool s = sol(i);
+    S(T1, i, s ? 0.0 : sampleF(VX, b.x, b.y, true));
+    S(T3, i, s ? 0.0 : sampleF(VY, b.x, b.y, true));
 }
 
 // 5: the divergence
 void divergence(int i) {
     int x = i % GW, y = i / GW;
     int xl = max(x - 1, 0), xr = min(x + 1, GW - 1), yu = max(y - 1, 0), yd = min(y + 1, GH - 1);
-    S(DIV, i, ((F(VX, y * GW + xr) - F(VX, y * GW + xl)) + (F(VY, yd * GW + x) - F(VY, yu * GW + x))) / (2.0 * CS));
+    // (solid cells and their sides do not move)
+    float vr = sol(y * GW + xr) ? 0.0 : F(VX, y * GW + xr), vl = sol(y * GW + xl) ? 0.0 : F(VX, y * GW + xl);
+    float vd = sol(yd * GW + x) ? 0.0 : F(VY, yd * GW + x), vu = sol(yu * GW + x) ? 0.0 : F(VY, yu * GW + x);
+    S(DIV, i, sol(i) ? 0.0 : ((vr - vl) + (vd - vu)) / (2.0 * CS));
 }
 
 // 6: one colour of a red-black SOR sweep of the pressure (a0: the colour)
@@ -197,6 +207,7 @@ void sor(int i) {
 const int PT = 16, PH = PT + 2;
 shared float sp[PH * PH];
 shared float sd[PT * PT];
+shared float ss[PH * PH]; // solid (1)
 void sorTiles() {
     int tw = (GW + PT - 1) / PT + 1;
     int tile = int(gl_WorkGroupID.x);
@@ -205,7 +216,9 @@ void sorTiles() {
     // load: the block and its edge (outside the grid: no pressure)
     for (int k = li; k < PH * PH; k += 256) {
         int x = ox + k % PH - 1, y = oy + k / PH - 1;
-        sp[k] = (x >= 0 && y >= 0 && x < GW && y < GH) ? F(K.a2, y * GW + x) : 0.0;
+        bool inG = x >= 0 && y >= 0 && x < GW && y < GH;
+        sp[k] = inG ? F(K.a2, y * GW + x) : 0.0;
+        ss[k] = inG ? F(SOL, y * GW + x) : 0.0;
     }
     for (int k = li; k < PT * PT; k += 256) {
         int x = ox + k % PT, y = oy + k / PT;
@@ -220,7 +233,10 @@ void sorTiles() {
                 int x = ox + bx, y = oy + by;
                 if (((x + y + c) & 1) != 0 || x < 0 || y < 0 || x >= GW || y >= GH) continue;
                 int q = (by + 1) * PH + bx + 1;
-                float sum = sp[q - 1] + sp[q + 1] + sp[q - PH] + sp[q + PH];
+                if (ss[q] > 0.5) continue;
+                float c0 = sp[q];
+                float sum = (ss[q - 1] > 0.5 ? c0 : sp[q - 1]) + (ss[q + 1] > 0.5 ? c0 : sp[q + 1])
+                          + (ss[q - PH] > 0.5 ? c0 : sp[q - PH]) + (ss[q + PH] > 0.5 ? c0 : sp[q + PH]);
                 float v = (sum - h2 * sd[k]) * 0.25;
                 sp[q] += 1.8 * (v - sp[q]);
             }
@@ -236,8 +252,9 @@ void sorTiles() {
 // 7: the pressure's gradient taken off
 void gradient(int i) {
     int x = i % GW, y = i / GW;
-    float pl = x > 0 ? F(P, i - 1) : 0.0, pr = x < GW - 1 ? F(P, i + 1) : 0.0;
-    float pu = y > 0 ? F(P, i - GW) : 0.0, pd = y < GH - 1 ? F(P, i + GW) : 0.0;
+    if (sol(i)) { S(VX, i, 0.0); S(VY, i, 0.0); return; }
+    float pl = x > 0 ? nb(P, i, i - 1) : 0.0, pr = x < GW - 1 ? nb(P, i, i + 1) : 0.0;
+    float pu = y > 0 ? nb(P, i, i - GW) : 0.0, pd = y < GH - 1 ? nb(P, i, i + GW) : 0.0;
     S(VX, i, F(VX, i) - (pr - pl) / (2.0 * CS));
     S(VY, i, F(VY, i) - (pd - pu) / (2.0 * CS));
 }
@@ -290,7 +307,8 @@ void adv2(int i) {
 }
 // 11: the results in place
 void adv3(int i) {
-    for (int j = 0; j < NADV; j++) S(advField(j), i, F(ADV + 3 * j + 1, i));
+    bool s = sol(i);
+    for (int j = 0; j < NADV; j++) S(advField(j), i, s ? 0.0 : F(ADV + 3 * j + 1, i));
 }
 
 // 8: where each cell's gas came from
@@ -307,10 +325,10 @@ void diffuse(int i) {
     for (int j = 0; j < 5; j++) {
         int f = difField(j);
         float sum = 0.0;
-        if (x > 0) sum += F(f, i - 1);
-        if (x < GW - 1) sum += F(f, i + 1);
-        if (y > 0) sum += F(f, i - GW);
-        if (y < GH - 1) sum += F(f, i + GW);
+        if (x > 0) sum += nb(f, i, i - 1);
+        if (x < GW - 1) sum += nb(f, i, i + 1);
+        if (y > 0) sum += nb(f, i, i - GW);
+        if (y < GH - 1) sum += nb(f, i, i + GW);
         float v = F(f, i);
         S(ADV + 3 * j, i, v + k * (sum - 4.0 * v));
     }
@@ -376,6 +394,7 @@ void sun(int i) {
     for (int k = 1; k <= 24; k++) {
         float d = (float(k) - 0.5) * st / CS;
         tau += sampleF(D, px + C.f5.x * d, py + C.f5.y * d, false);
+        tau += 4.0 * sampleF(SOL, px + C.f5.x * d, py + C.f5.y * d, false); // (gasSolidShade: it blocks the light)
     }
     tau *= st / C.f6.x;
     float kk = C.f5.z * tau;

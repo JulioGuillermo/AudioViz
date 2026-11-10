@@ -14,6 +14,8 @@ type GasGPU struct {
 	GH  int
 	CS  float32
 	T   float64
+	// solid: the solid cells' field holds some (cleared when they go)
+	solid bool
 }
 
 // NewGasGPU: an empty gas over a W×H frame, cells of about cs px, on GPU deviceIndex
@@ -47,8 +49,20 @@ func (g *GasGPU) setCfg(ph *GasPhys) {
 	})
 }
 
-func (g *GasGPU) Advance(srcs [][]GasSource, ph *GasPhys, dt float32) error {
+func (g *GasGPU) Advance(srcs [][]GasSource, ph *GasPhys, dt float32, solid []uint8) error {
 	g.setCfg(ph)
+	// the solid cells (gas.comp's last field)
+	if solid != nil || g.solid {
+		n := g.GW * g.GH
+		buf := make([]float32, n)
+		for i, v := range solid {
+			if v != 0 {
+				buf[i] = 1
+			}
+		}
+		copy(g.job.Fields()[(gpu.GasFieldCount-1)*n:], buf)
+		g.solid = solid != nil
+	}
 	g.job.Begin()
 	buf := make([]float32, 0, 1024)
 	for _, src := range srcs {
