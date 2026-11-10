@@ -1,6 +1,6 @@
 import { html, useEffect, useState } from './vendor/preact-htm.js';
 import { CLIP_FIELDS, EMITTER_CLIP_FIELDS } from './schema.js';
-import { isEmitterLayer, presetLabel, presetIcon, PresetPicker, LightCircles } from './emitters.js';
+import { isEmitterLayer, isProcClip, presetLabel, presetIcon, PresetPicker, LightCircles } from './emitters.js';
 import { fmtTime, parseTime, basename, clone } from './util.js';
 import { Form, Edit, Section } from './fields.js';
 import { Icon } from './icons.js';
@@ -296,8 +296,8 @@ export function LayerInspector({ proj, sel, setSel, update, time, meta, ctx }) {
       ${c ? html`<${Form} fields=${emit ? EMITTER_CLIP_FIELDS : CLIP_FIELDS} value=${c} ctx=${ctx} kf=${kf}
           onChange=${(nc) => editLayer((l) => { l.clips[j] = { ...nc, start: l.clips[j].start, end: l.clips[j].end }; })} />`
         : html`<p class="faint" style="font-size:12px">${t('No clips yet. Add one at the cursor, or double-click the layer\'s track on the timeline.')}</p>`}
-      ${c && emit && html`<${RouteSection} obj=${c} ctx=${ctx} kf=${kf} edit=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}
-      ${c && html`<${MotionSection} obj=${c} kf=${kf} ctx=${ctx} edit=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}
+      ${c && emit && !isProcClip(c) && html`<${RouteSection} obj=${c} ctx=${ctx} kf=${kf} edit=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}
+      ${c && !(emit && isProcClip(c)) && html`<${MotionSection} obj=${c} kf=${kf} ctx=${ctx} edit=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}
       ${c && ctx.pathNode && html`<${NodeSection} obj=${c} what=${ctx.pathNode.what} pi=${ctx.pathNode.pi} edit=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}
       ${c && html`<${MaskSection} clip=${c} kf=${kf} selMask=${ctx.selMask} setSelMask=${ctx.setSelMask} ctx=${ctx}
         openEditor=${ctx.openEditor} editClip=${(fn) => editLayer((l) => fn(l.clips[j]))} />`}

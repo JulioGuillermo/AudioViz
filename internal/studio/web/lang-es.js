@@ -1390,4 +1390,5 @@ export const ES = {
   "Its depth at its shore": "Su profundidad en la orilla",
   "Waterline softness": "Suavidad de la línea de flotación",
   "Foam where things meet it": "Espuma donde las cosas tocan el agua",
+  "The color of the drops (and how opaque)": "El color de las gotas (y su opacidad)",
 };

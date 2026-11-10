@@ -481,6 +481,11 @@ const LIGHT_MUSIC = [
 ];
 // a procedural look (no particles: their settings are hidden)
 const procLook = (c) => c && (c.look === 'clouds' || c.look === 'ocean');
+// the look (each shows only what it uses): the liquid takes its particles only as they are born
+// (the simulation moves them after), the gas takes them as they are (not how they are drawn)
+const lookOf = (c) => (c && c.look) || 'plain';
+const isLiquid = (c) => lookOf(c) === 'liquid';
+const isGas = (c) => lookOf(c) === 'gas';
 const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', fields: [
   { key: 'amount', label: 'Amount', type: 'section', showIf: (c) => !procLook(c), fields: [
     { key: 'rate', label: 'Per second', type: 'num', min: 0, max: 3000, step: 1 },
@@ -507,51 +512,53 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
   { key: 'forces', label: 'Forces', type: 'section', showIf: (c) => !procLook(c), fields: [
     { key: 'gravity', label: 'Gravity (px/s²)', type: 'num', min: -3000, max: 3000, step: 1, help: 'Negative: they rise (fire, smoke)' },
     { key: 'wind', label: 'Wind (px/s²)', type: 'num', min: -3000, max: 3000, step: 1, help: 'Positive: to the right' },
-    { key: 'drag', label: 'Drag', type: 'num', min: 0, max: 10, step: 0.05, help: 'How fast they slow down' },
-    { key: 'turbulence', label: 'Turbulence (px)', type: 'num', min: 0, max: 400, step: 1 },
-    { key: 'turb_freq', label: 'Turbulence speed (Hz)', type: 'num', min: 0, max: 8, step: 0.05 },
+    { key: 'drag', label: 'Drag', type: 'num', min: 0, max: 10, step: 0.05, help: 'How fast they slow down', showIf: (c) => !isLiquid(c) },
+    { key: 'turbulence', label: 'Turbulence (px)', type: 'num', min: 0, max: 400, step: 1, showIf: (c) => !isLiquid(c) },
+    { key: 'turb_freq', label: 'Turbulence speed (Hz)', type: 'num', min: 0, max: 8, step: 0.05, showIf: (c) => !isLiquid(c) },
   ] },
   { key: 'floorsec', label: 'Floor and the scene', type: 'section', showIf: (c) => !procLook(c), fields: [
     { key: 'floor', label: 'Floor below it (px)', type: 'num', min: 0, max: 3000, step: 1, def: 0,
       help: '0 = none. With gravity they fall onto it and bounce' },
     { key: 'floor_depth', label: 'The scene\'s floor', type: 'bool', anim: false,
       help: 'With a depth map: where the depth below the emitter comes up to its own (plus the px above)' },
-    { key: 'bounce', label: 'Bounce', type: 'num', min: 0, max: 0.95, step: 0.01, def: 0.5, showIf: (c) => c.floor > 0 || c.floor_depth,
+    { key: 'bounce', label: 'Bounce', type: 'num', min: 0, max: 0.95, step: 0.01, def: 0.5, showIf: (c) => (c.floor > 0 || c.floor_depth) && !isLiquid(c),
       help: 'How much of their speed they keep at each bounce' },
-    { key: 'friction', label: 'Sideways speed kept', type: 'num', min: 0, max: 1, step: 0.01, def: 0.7, showIf: (c) => c.floor > 0 || c.floor_depth },
+    { key: 'friction', label: 'Sideways speed kept', type: 'num', min: 0, max: 1, step: 0.01, def: 0.7, showIf: (c) => (c.floor > 0 || c.floor_depth) && !isLiquid(c) },
     { key: 'collide', label: 'They go round the scene', type: 'bool', anim: false, adjust: 'solid',
       help: 'With a depth map: what is in the scene at their depth is solid: they slide off it (what is nearer hides them, what is farther is behind). With the gas look, the gas flows round it too' },
     { key: 'collide_band', label: 'Solid within (depth)', type: 'num', min: 0.005, max: 0.5, step: 0.005, def: 0.06, showIf: (c) => c.collide || (c.look === 'gas' && c.gas && c.gas.d3), adjust: 'solid',
       help: 'How far in depth from the emitter something counts as solid: more = thicker things. While you adjust it the preview shows what is solid in cyan' },
-    { key: 'collide_bounce', label: 'Bounce off it', type: 'num', min: 0, max: 0.95, step: 0.01, def: 0, showIf: (c) => c.collide,
+    { key: 'collide_bounce', label: 'Bounce off it', type: 'num', min: 0, max: 0.95, step: 0.01, def: 0, showIf: (c) => c.collide && !isLiquid(c),
       help: '0 = they slide along it (flames lick it); more: they bounce off walls and ceilings (sparks), keeping that much speed. On what faces up they still slide' },
   ] },
   { key: 'lifesize', label: 'Life and size', type: 'section', showIf: (c) => !procLook(c), fields: [
-    { key: 'life', label: 'Life (s)', type: 'num', min: 0.05, max: 30, step: 0.05 },
-    { key: 'life_var', label: 'Life variation', type: 'num', min: 0, max: 1, step: 0.01 },
+    { key: 'life', label: 'Life (s)', type: 'num', min: 0.05, max: 30, step: 0.05, showIf: (c) => !isLiquid(c) },
+    { key: 'life_var', label: 'Life variation', type: 'num', min: 0, max: 1, step: 0.01, showIf: (c) => !isLiquid(c) },
     { key: 'size', label: 'Size at birth (px)', type: 'num', min: 0.5, max: 600, step: 0.5 },
-    { key: 'size_end', label: 'Size at the end (px)', type: 'num', min: 0, max: 600, step: 0.5 },
+    { key: 'size_end', label: 'Size at the end (px)', type: 'num', min: 0, max: 600, step: 0.5, showIf: (c) => !isLiquid(c) },
     { key: 'size_var', label: 'Size variation', type: 'num', min: 0, max: 1, step: 0.01 },
   ] },
   { key: 'look', label: 'Colors', type: 'section', showIf: (c) => !procLook(c), fields: [
-    { key: 'color_start', label: 'Color at birth', type: 'color' },
-    { key: 'color_mid', label: 'Color halfway', type: 'color' },
-    { key: 'color_end', label: 'Color at the end', type: 'color', help: 'The opacity of each color fades them over their life' },
-    { key: 'fade_in', label: 'Fade in (part of the life)', type: 'num', min: 0, max: 1, step: 0.01 },
-    { key: 'fade_out', label: 'Fade out (part of the life)', type: 'num', min: 0, max: 1, step: 0.01 },
-    { key: 'mode', label: 'They add up as', type: 'enum', def: 'add', anim: false,
+    { key: 'color_start', label: 'Color at birth', type: 'color', showIf: (c) => !isLiquid(c) },
+    { key: 'color_mid', label: 'Color halfway', type: 'color', showIf: (c) => !isLiquid(c) },
+    { key: 'color_mid', id: 'color_mid_lq', label: 'Color', type: 'color', showIf: isLiquid, help: 'The color of the drops (and how opaque)' },
+    { key: 'color_end', label: 'Color at the end', type: 'color', help: 'The opacity of each color fades them over their life', showIf: (c) => !isLiquid(c) },
+    { key: 'fade_in', label: 'Fade in (part of the life)', type: 'num', min: 0, max: 1, step: 0.01, showIf: (c) => !isLiquid(c) },
+    { key: 'fade_out', label: 'Fade out (part of the life)', type: 'num', min: 0, max: 1, step: 0.01, showIf: (c) => !isLiquid(c) },
+    { key: 'mode', label: 'They add up as', type: 'enum', def: 'add', anim: false, showIf: (c) => lookOf(c) === 'plain',
       options: [['add', 'Light (fire, sparks, glows)'], ['soft', 'Matter (smoke, dust, snow)']] },
-    { key: 'streak', label: 'Streak (s of motion)', type: 'num', min: 0, max: 0.3, step: 0.001, help: 'Stretched along their motion, like sparks' },
-    { key: 'softness', label: 'Soft edge', type: 'num', min: 0, max: 1, step: 0.01 },
+    { key: 'streak', label: 'Streak (s of motion)', type: 'num', min: 0, max: 0.3, step: 0.001, help: 'Stretched along their motion, like sparks', showIf: (c) => !isGas(c) },
+    { key: 'softness', label: 'Soft edge', type: 'num', min: 0, max: 1, step: 0.01, showIf: (c) => !isGas(c) },
     { key: 'seed', label: 'Random seed', type: 'int', min: 0, max: 99999, step: 1, anim: false, help: 'Another number, another pattern' },
     { key: 'hidden', label: 'Only its light (and glow)', type: 'bool', anim: false,
       help: 'The particles are not drawn: it only lights the scene (Light) and glows, if it has a glow. A light source' },
   ] },
-  { key: 'lookgrp', label: 'Look (particles or flame)', type: 'section', fields: [
+  { key: 'lookgrp', label: 'Look', type: 'section', fields: [
     { key: 'look', label: 'Look', type: 'enum', def: 'plain', anim: false,
       options: [['plain', 'Particles (as they are)'], ['flame', 'Flame (they melt into fire)'], ['smoke', 'Smoke (torn into wisps)'], ['water', 'Water (they melt into a liquid)'],
         ['gas', 'Gas (simulated smoke and fire)'], ['liquid', 'Liquid (simulated water)'], ['clouds', 'Clouds (procedural)'], ['ocean', 'Ocean (procedural)']],
       help: 'Flame: the color comes from the heat that piles up, and rising noise cuts its edges into tongues. Gas: the particles are not drawn, they feed a simulated gas (smoke, heat, fuel) that then moves by itself' },
+    { key: 'seed', id: 'seed_proc', label: 'Random seed', type: 'int', min: 0, max: 99999, step: 1, anim: false, showIf: procLook, help: 'Another number, another pattern' },
     { key: 'clouds', label: 'Clouds', type: 'group', showIf: (c) => c.look === 'clouds', fields: [
       { key: 'coverage', label: 'Coverage', type: 'num', min: 0, max: 1, step: 0.01, def: 0.5, help: 'How much of it is cloud' },
       { key: 'density', label: 'Thickness', type: 'num', min: 0, max: 4, step: 0.01, def: 1, help: 'How opaque the clouds are' },
@@ -740,7 +747,7 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
     { key: 'color', label: 'Color', type: 'color', optional: true, help: 'Empty: the particles\' own color' },
   ] },
   // (edits the emitter itself: its react block, and its light's reaction)
-  { key: 'react', label: 'Audio reaction', type: 'group', whole: true, fields: [
+  { key: 'react', label: 'Audio reaction', type: 'group', whole: true, showIf: (c) => !procLook(c), fields: [
     { ...react('bass'), key: 'react.react_to' },
     { key: 'react.rate', label: 'More particles', type: 'num', min: 0, max: 10, step: 0.05, help: '1 = twice as many at full band' },
     { key: 'react.speed', label: 'Faster', type: 'num', min: 0, max: 4, step: 0.05 },
@@ -751,9 +758,9 @@ const EMITTER_BLOCK = { key: 'emitter', label: 'Particles', type: 'group', field
 ] };
 export const EMITTER_CLIP_FIELDS = [
   sec('place', 'Placement', [
-    { key: 'x', label: 'Position X', type: 'num', min: -0.5, max: 1.5, step: 0.001, help: 'Or drag its point on the preview', showIf: (c) => !onPath(c) },
-    { key: 'y', label: 'Position Y', type: 'num', min: -0.5, max: 1.5, step: 0.001, showIf: (c) => !onPath(c) },
-    { key: 'rotation', label: 'Rotation (°)', type: 'num', min: -360, max: 360, step: 0.5, help: 'Turns its shape and its direction (or drag the arrow)' },
+    { key: 'x', label: 'Position X', type: 'num', min: -0.5, max: 1.5, step: 0.001, help: 'Or drag its point on the preview', showIf: (c) => !onPath(c) && !procLook(c.emitter) },
+    { key: 'y', label: 'Position Y', type: 'num', min: -0.5, max: 1.5, step: 0.001, showIf: (c) => !onPath(c) && !procLook(c.emitter) },
+    { key: 'rotation', label: 'Rotation (°)', type: 'num', min: -360, max: 360, step: 0.5, help: 'Turns its shape and its direction (or drag the arrow)', showIf: (c) => !procLook(c.emitter) },
     { key: 'scale', label: 'Scale', type: 'num', min: 0.01, max: 8, step: 0.01, help: 'Sizes, speeds and shape together' },
   ]),
   sec('show', 'Opacity and blend', [
@@ -762,15 +769,18 @@ export const EMITTER_CLIP_FIELDS = [
     { key: 'fade_out', label: 'Fade out (s)', type: 'num', min: 0, max: 10, step: 0.05, anim: false },
     { key: 'blend', label: 'Blend', type: 'enum', def: 'normal', options: BLENDS },
   ]),
-  CLIP_DEPTH,
+  // (the procedural looks have their own depths)
+  { ...CLIP_DEPTH, showIf: (c) => !procLook(c.emitter) },
   // the emitter block, one folding group per part (each edits clip.emitter, or a block inside it)
   ...EMITTER_BLOCK.fields.flatMap((f) => {
-    if (f.whole) return [{ ...f, key: 'emitter', id: 'em_' + f.key }]; // (its fields: paths in the emitter)
-    if (f.type !== 'section') return [{ ...f, key: 'emitter.' + f.key, id: 'em_' + f.key }];
+    // (their showIf looks at the emitter, not at the clip)
+    const onEm = f.showIf && ((c) => f.showIf(c.emitter || {}));
+    if (f.whole) return [{ ...f, key: 'emitter', id: 'em_' + f.key, showIf: onEm }]; // (its fields: paths in the emitter)
+    if (f.type !== 'section') return [{ ...f, key: 'emitter.' + f.key, id: 'em_' + f.key, showIf: onEm }];
     const own = f.fields.filter((x) => x.type !== 'group');
     const subs = f.fields.filter((x) => x.type === 'group').map((x) => ({ ...x, key: 'emitter.' + x.key, id: 'em_' + x.key,
       showIf: x.showIf && ((c) => x.showIf(c.emitter || {})) }));
-    return [{ key: 'emitter', id: 'em_' + f.key, label: f.label, type: 'group', fields: own }, ...subs];
+    return [{ key: 'emitter', id: 'em_' + f.key, label: f.label, type: 'group', fields: own, showIf: onEm }, ...subs];
   }),
   ...CLIP_FIELDS.filter((f) => f.key === 'filters' || f.key === 'effects'),
 ];

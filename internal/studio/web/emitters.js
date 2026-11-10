@@ -11,6 +11,8 @@ import { valueAt } from './keys.js';
 // scale makes everything bigger); its emitter block says what it throws.
 
 export const isEmitterLayer = (l) => !!l && l.kind === 'emitter';
+// a procedural look (clouds, ocean): over the whole frame, no place, route or motion path
+export const isProcClip = (c) => !!(c && c.emitter && (c.emitter.look === 'clouds' || c.emitter.look === 'ocean'));
 export const presetLabel = (k) => { const p = EMITTER_PRESETS.find((x) => x[0] === k); return p ? t(p[1]) : t('Particles'); };
 export const presetIcon = (k) => { const p = EMITTER_PRESETS.find((x) => x[0] === k); return p ? p[2] : 'sparkles'; };
 
@@ -112,6 +114,7 @@ export function LightCircles({ obj, light, prefix, time, cx, cy, sc, k, ox = 0, 
 // (where it is now: OX, OY, ORot).
 export function EmitterHandles({ clip, time, meta, k, ox = 0, oy = 0, toFrame, hs = 1, geo, onChange }) {
   const [drag, setDrag] = useState(null);
+  if (isProcClip(clip)) return null; // (nowhere to drag: it is over the whole frame)
   const W = meta.width, H = meta.height;
   const e = clip.emitter || {};
   const val = (key) => clipValue(clip, key, time);
