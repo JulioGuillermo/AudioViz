@@ -62,3 +62,26 @@ func abs32(v float32) float32 {
 	}
 	return v
 }
+
+// a jet onto a floor at 1080p: some thousands of drops, a pool
+func BenchmarkLiquidStep(b *testing.B) {
+	s := NewLiquidSim(1920, 1080, 6)
+	ph := LiquidPhys{GravY: 1500, Flip: 0.95, FloorOn: true, Floor: 1000}
+	add := func() {
+		var bs []LiquidBirth
+		for k := 0; k < 9; k++ {
+			bs = append(bs, LiquidBirth{X: 960 + float32(k%3)*4, Y: 300 + float32(k/3)*4, VX: float32(k%3-1) * 80, VY: -600, Size: 30})
+		}
+		s.Add(bs, 9000)
+	}
+	for f := 0; f < 300; f++ {
+		add()
+		s.Step(&ph, 1.0/60)
+		s.Step(&ph, 1.0/60)
+	}
+	b.Logf("%d drops", s.Count())
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		s.Step(&ph, 1.0/60)
+	}
+}

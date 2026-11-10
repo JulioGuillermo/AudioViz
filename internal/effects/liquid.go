@@ -49,11 +49,13 @@ type LiquidSim struct {
 	// values before the forces, the pressure (× dt), the cells' kind, the solid cells (Solid,
 	// set per frame: nil none)
 	u, v, uw, vw, u0, v0 []float32
-	p, div              []float32
-	kind                []uint8 // 0 air, 1 liquid, 2 solid
-	Solid               []uint8
-	cnt                 []int32 // drops per cell (this step)
-	spray               []bool  // which drops fly by themselves (this step)
+	p, div               []float32
+	kind                 []uint8 // 0 air, 1 liquid, 2 solid
+	Solid                []uint8
+	cnt                  []int32 // drops per cell (this step)
+	spray                []bool  // which drops fly by themselves (this step)
+	exK                  []uint8 // (extrapolate's scratch)
+	exV, exN             []float32
 }
 
 // liquid cell kinds
@@ -200,23 +202,15 @@ func bilerp(f []float32, w, h int, x, y float32) float32 {
 	return (a+(b-a)*fx)*(1-fy) + (c+(d-c)*fx)*fy
 }
 
-// Step moves the liquid dt seconds on
+// Step moves the liquid dt seconds on. The grid's work is done only around the liquid that holds
+// together (its box, a few cells wider): what costs is the liquid there is, not the frame.
 func (s *LiquidSim) Step(ph *LiquidPhys, dt float32) {
 	W, H := s.GW, s.GH
 	cs := s.CS
 	n := len(s.X)
-	// 1. the cells: solid (the scene, below the floor), liquid where a drop is, else air
-	for j := 0; j < H; j++ {
-		for i := 0; i < W; i++ {
-			k := j*W + i
-			s.kind[k] = lqAir
-			if s.solidAt((float32(i)+0.5)*cs, (float32(j)+0.5)*cs, ph) {
-				s.kind[k] = lqSolid
-			}
-		}
-	}
-	// the drops per cell: a drop with few others around (3×3 cells) is spray: it flies by itself
-	// (its own speed, the forces), and only the liquid that holds together is the grid's
+	// the drops per cell: a drop with few others around (3×3 cells) is spray, and so is a newborn
+	// one: it flies by itself (its own speed, the forces); only the liquid that holds together is
+	// the grid's
 	if len(s.cnt) != W*H {
 		s.cnt = make([]int32, W*H)
 	}
@@ -231,190 +225,49 @@ func (s *LiquidSim) Step(ph *LiquidPhys, dt float32) {
 		}
 	}
 	s.spray = s.spray[:0]
+	i0, j0, i1, j1 := W, H, -1, -1 // the box of the liquid that holds together
 	for q := 0; q < n; q++ {
 		i, j, ok := cellOf(q)
 		var around int32
-		for dj := -1; dj <= 1; dj++ {
-			for di := -1; di <= 1; di++ {
-				if ok && i+di >= 0 && j+dj >= 0 && i+di < W && j+dj < H {
-					around += s.cnt[(j+dj)*W+i+di]
-				}
-			}
-		}
-		// (and the newborn: launched, they fly before they join the liquid)
-		sp := around < lqSprayBelow || float32(s.T)-s.Born[q] < lqLaunch
-		s.spray = append(s.spray, sp)
-		if !sp && s.kind[j*W+i] == lqAir {
-			s.kind[j*W+i] = lqFluid
-		}
-	}
-	// 2. the drops' velocity onto the cells' sides (weights of a tent one cell wide), in the
-	// drops' order (the same sums every time)
-	clear(s.u)
-	clear(s.v)
-	clear(s.uw)
-	clear(s.vw)
-	splat := func(f, fw []float32, w, h int, gx, gy, val float32) {
-		ix, iy := int(math.Floor(float64(gx))), int(math.Floor(float64(gy)))
-		fx, fy := gx-float32(ix), gy-float32(iy)
-		for c := 0; c < 4; c++ {
-			x, y := ix+(c&1), iy+(c>>1)
-			if x < 0 || y < 0 || x >= w || y >= h {
-				continue
-			}
-			wt := (1 - fx) * (1 - fy)
-			switch c {
-			case 1:
-				wt = fx * (1 - fy)
-			case 2:
-				wt = (1 - fx) * fy
-			case 3:
-				wt = fx * fy
-			}
-			f[y*w+x] += wt * val
-			fw[y*w+x] += wt
-		}
-	}
-	for q := 0; q < n; q++ {
-		if s.spray[q] {
-			continue
-		}
-		splat(s.u, s.uw, W+1, H, s.X[q]/cs, s.Y[q]/cs-0.5, s.VX[q])
-		splat(s.v, s.vw, W, H+1, s.X[q]/cs-0.5, s.Y[q]/cs, s.VY[q])
-	}
-	for k := range s.u {
-		if s.uw[k] > 0 {
-			s.u[k] /= s.uw[k]
-		}
-	}
-	for k := range s.v {
-		if s.vw[k] > 0 {
-			s.v[k] /= s.vw[k]
-		}
-	}
-	// 3. the forces (on the sides that have liquid; FLIP's change counts them)
-	copy(s.u0, s.u)
-	copy(s.v0, s.v)
-	for k := range s.u {
-		if s.uw[k] > 0 {
-			s.u[k] += ph.GravX * dt
-		}
-	}
-	for k := range s.v {
-		if s.vw[k] > 0 {
-			s.v[k] += ph.GravY * dt
-		}
-	}
-	// 4. nothing goes through what is solid
-	kindAt := func(i, j int) uint8 {
-		if i < 0 || j < 0 || i >= W || j >= H {
-			return lqAir // open edges
-		}
-		return s.kind[j*W+i]
-	}
-	s.solidSides(kindAt)
-	// 5. the pressure (× dt): no divergence in the liquid; air has none, solid walls let nothing
-	// through (red-black SOR from the last step's)
-	for j := 0; j < H; j++ {
-		for i := 0; i < W; i++ {
-			k := j*W + i
-			if s.kind[k] != lqFluid {
-				s.p[k], s.div[k] = 0, 0
-				continue
-			}
-			s.div[k] = (s.u[j*(W+1)+i+1] - s.u[j*(W+1)+i] + s.v[(j+1)*W+i] - s.v[j*W+i]) / cs
-		}
-	}
-	h2 := cs * cs
-	for it := 0; it < 60; it++ {
-		for color := 0; color < 2; color++ {
-			parallelFor(H, func(y0, y1 int) {
-				for j := y0; j < y1; j++ {
-					for i := (j + color) & 1; i < W; i += 2 {
-						k := j*W + i
-						if s.kind[k] != lqFluid {
-							continue
-						}
-						var sum float32
-						cnt := 0
-						for _, d := range [4][2]int{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
-							switch kindAt(i+d[0], j+d[1]) {
-							case lqFluid:
-								sum += s.p[(j+d[1])*W+i+d[0]]
-								cnt++
-							case lqAir:
-								cnt++
-							}
-						}
-						if cnt == 0 {
-							continue
-						}
-						v := (sum - h2*s.div[k]) / float32(cnt)
-						s.p[k] += 1.7 * (v - s.p[k])
+		if ok {
+			for dj := -1; dj <= 1; dj++ {
+				for di := -1; di <= 1; di++ {
+					if i+di >= 0 && j+dj >= 0 && i+di < W && j+dj < H {
+						around += s.cnt[(j+dj)*W+i+di]
 					}
 				}
-			})
-		}
-	}
-	pAt := func(i, j int) float32 {
-		if kindAt(i, j) == lqFluid {
-			return s.p[j*W+i]
-		}
-		return 0
-	}
-	for j := 0; j < H; j++ {
-		for i := 0; i <= W; i++ {
-			a, b := kindAt(i-1, j), kindAt(i, j)
-			if a == lqSolid || b == lqSolid || (a != lqFluid && b != lqFluid) {
-				continue
 			}
-			s.u[j*(W+1)+i] -= (pAt(i, j) - pAt(i-1, j)) / cs
+		}
+		sp := !ok || around < lqSprayBelow || float32(s.T)-s.Born[q] < lqLaunch
+		s.spray = append(s.spray, sp)
+		if !sp {
+			i0, j0, i1, j1 = min(i0, i), min(j0, j), max(i1, i), max(j1, j)
 		}
 	}
-	for j := 0; j <= H; j++ {
-		for i := 0; i < W; i++ {
-			a, b := kindAt(i, j-1), kindAt(i, j)
-			if a == lqSolid || b == lqSolid || (a != lqFluid && b != lqFluid) {
-				continue
-			}
-			s.v[j*W+i] -= (pAt(i, j) - pAt(i, j-1)) / cs
-		}
+	if i1 >= 0 {
+		const m = 4
+		i0, j0, i1, j1 = max(0, i0-m), max(0, j0-m), min(W-1, i1+m), min(H-1, j1+m)
+		s.grid(ph, dt, i0, j0, i1, j1)
 	}
-	// 6. the velocity carried out into the air around (two cells), for the drops at the surface
-	s.extrapolate(s.u, s.uw, W+1, H)
-	s.extrapolate(s.v, s.vw, W, H+1)
-	s.solidSides(kindAt)
-	// 7. back to the drops (FLIP: their own plus the grid's change; PIC: the grid's), then moved
-	// by the grid (midpoint), sliding off what is solid
+	// the drops: back from the grid (FLIP: their own plus the grid's change; PIC: the grid's) and
+	// moved by it (midpoint), or flying by themselves (spray); sliding off what is solid
 	flip := ph.Flip
 	parallelFor(n, func(q0, q1 int) {
 		for q := q0; q < q1; q++ {
 			x, y := s.X[q], s.Y[q]
+			var nx, ny float32
 			if s.spray[q] {
-				// spray: its own flight
 				s.VX[q] += ph.GravX * dt
 				s.VY[q] += ph.GravY * dt
-				nx, ny := x+dt*s.VX[q], y+dt*s.VY[q]
-				if s.solidAt(nx, ny, ph) {
-					switch {
-					case !s.solidAt(nx, y, ph):
-						ny, s.VY[q] = y, 0
-					case !s.solidAt(x, ny, ph):
-						nx, s.VX[q] = x, 0
-					default:
-						nx, ny, s.VX[q], s.VY[q] = x, y, 0, 0
-					}
-				}
-				s.X[q], s.Y[q] = nx, ny
-				continue
+				nx, ny = x+dt*s.VX[q], y+dt*s.VY[q]
+			} else {
+				nu, nv := s.sampleU(s.u, x, y), s.sampleV(s.v, x, y)
+				ou, ov := s.sampleU(s.u0, x, y), s.sampleV(s.v0, x, y)
+				s.VX[q] = flip*(s.VX[q]+nu-ou) + (1-flip)*nu
+				s.VY[q] = flip*(s.VY[q]+nv-ov) + (1-flip)*nv
+				mx, my := x+0.5*dt*nu, y+0.5*dt*nv
+				nx, ny = x+dt*s.sampleU(s.u, mx, my), y+dt*s.sampleV(s.v, mx, my)
 			}
-			nu, nv := s.sampleU(s.u, x, y), s.sampleV(s.v, x, y)
-			ou, ov := s.sampleU(s.u0, x, y), s.sampleV(s.v0, x, y)
-			s.VX[q] = flip*(s.VX[q]+nu-ou) + (1-flip)*nu
-			s.VY[q] = flip*(s.VY[q]+nv-ov) + (1-flip)*nv
-			mx, my := x+0.5*dt*nu, y+0.5*dt*nv
-			gx, gy := s.sampleU(s.u, mx, my), s.sampleV(s.v, mx, my)
-			nx, ny := x+dt*gx, y+dt*gy
 			if s.solidAt(nx, ny, ph) {
 				switch {
 				case !s.solidAt(nx, y, ph):
@@ -428,70 +281,258 @@ func (s *LiquidSim) Step(ph *LiquidPhys, dt float32) {
 			s.X[q], s.Y[q] = nx, ny
 		}
 	})
-	// 8. the drops gone out of the frame (down or aside; far up they come back)
-	m := 4 * cs
+	// the drops gone out of the frame (down or aside; far up they come back)
+	mg := 4 * cs
 	s.drop(func(q int) bool {
-		return s.X[q] < -m || s.X[q] > s.W+m || s.Y[q] > s.H+m || s.Y[q] < -s.H
+		return s.X[q] < -mg || s.X[q] > s.W+mg || s.Y[q] > s.H+mg || s.Y[q] < -s.H
 	})
 	s.T += float64(dt)
 }
 
-// solidSides: the sides touching a solid cell carry nothing
-func (s *LiquidSim) solidSides(kindAt func(i, j int) uint8) {
-	W, H := s.GW, s.GH
-	for j := 0; j < H; j++ {
-		for i := 0; i <= W; i++ {
+// grid: the grid's part of a step over the cells [i0, i1]×[j0, j1] (the liquid's box): the
+// cells' kinds, the drops' velocity onto the sides, the forces, the pressure, the velocity
+// carried into the air around
+func (s *LiquidSim) grid(ph *LiquidPhys, dt float32, i0, j0, i1, j1 int) {
+	W := s.GW
+	cs := s.CS
+	n := len(s.X)
+	// cells out of the box: air (nothing there)
+	kindAt := func(i, j int) uint8 {
+		if i < i0 || j < j0 || i > i1 || j > j1 {
+			return lqAir
+		}
+		return s.kind[j*W+i]
+	}
+	for j := j0; j <= j1; j++ {
+		for i := i0; i <= i1; i++ {
+			k := j*W + i
+			s.kind[k] = lqAir
+			if s.solidAt((float32(i)+0.5)*cs, (float32(j)+0.5)*cs, ph) {
+				s.kind[k] = lqSolid
+			}
+		}
+	}
+	for q := 0; q < n; q++ {
+		if s.spray[q] {
+			continue
+		}
+		i, j := int(math.Floor(float64(s.X[q]/cs))), int(math.Floor(float64(s.Y[q]/cs)))
+		if s.kind[j*W+i] == lqAir {
+			s.kind[j*W+i] = lqFluid
+		}
+	}
+	// the drops' velocity onto the cells' sides (weights of a tent one cell wide), in the drops'
+	// order (the same sums every time)
+	clear(s.u)
+	clear(s.v)
+	clear(s.uw)
+	clear(s.vw)
+	splat := func(f, fw []float32, w, h int, gx, gy, val float32) {
+		ix, iy := int(math.Floor(float64(gx))), int(math.Floor(float64(gy)))
+		fx, fy := gx-float32(ix), gy-float32(iy)
+		wts := [4]float32{(1 - fx) * (1 - fy), fx * (1 - fy), (1 - fx) * fy, fx * fy}
+		for c := 0; c < 4; c++ {
+			x, y := ix+(c&1), iy+(c>>1)
+			if x < 0 || y < 0 || x >= w || y >= h {
+				continue
+			}
+			f[y*w+x] += wts[c] * val
+			fw[y*w+x] += wts[c]
+		}
+	}
+	for q := 0; q < n; q++ {
+		if s.spray[q] {
+			continue
+		}
+		splat(s.u, s.uw, W+1, s.GH, s.X[q]/cs, s.Y[q]/cs-0.5, s.VX[q])
+		splat(s.v, s.vw, W, s.GH+1, s.X[q]/cs-0.5, s.Y[q]/cs, s.VY[q])
+	}
+	// the faces of the box (u: i0..i1+1, j0..j1; v: i0..i1, j0..j1+1)
+	eachU := func(fn func(i, j, k int)) {
+		for j := j0; j <= j1; j++ {
+			for i := i0; i <= i1+1; i++ {
+				fn(i, j, j*(W+1)+i)
+			}
+		}
+	}
+	eachV := func(fn func(i, j, k int)) {
+		for j := j0; j <= j1+1; j++ {
+			for i := i0; i <= i1; i++ {
+				fn(i, j, j*W+i)
+			}
+		}
+	}
+	eachU(func(_, _, k int) {
+		if s.uw[k] > 0 {
+			s.u[k] /= s.uw[k]
+		}
+	})
+	eachV(func(_, _, k int) {
+		if s.vw[k] > 0 {
+			s.v[k] /= s.vw[k]
+		}
+	})
+	// the forces (on the sides that have liquid; FLIP's change counts them)
+	copy(s.u0, s.u)
+	copy(s.v0, s.v)
+	eachU(func(_, _, k int) {
+		if s.uw[k] > 0 {
+			s.u[k] += ph.GravX * dt
+		}
+	})
+	eachV(func(_, _, k int) {
+		if s.vw[k] > 0 {
+			s.v[k] += ph.GravY * dt
+		}
+	})
+	// nothing goes through what is solid
+	solidSides := func() {
+		eachU(func(i, j, k int) {
 			if kindAt(i-1, j) == lqSolid || kindAt(i, j) == lqSolid {
-				s.u[j*(W+1)+i] = 0
+				s.u[k] = 0
 			}
-		}
-	}
-	for j := 0; j <= H; j++ {
-		for i := 0; i < W; i++ {
+		})
+		eachV(func(i, j, k int) {
 			if kindAt(i, j-1) == lqSolid || kindAt(i, j) == lqSolid {
-				s.v[j*W+i] = 0
+				s.v[k] = 0
 			}
+		})
+	}
+	solidSides()
+	// the pressure (× dt): no divergence in the liquid; air has none, solid walls let nothing
+	// through (red-black SOR over the liquid cells only, from the last step's)
+	var cells [2][]int32
+	for j := j0; j <= j1; j++ {
+		for i := i0; i <= i1; i++ {
+			k := j*W + i
+			if s.kind[k] != lqFluid {
+				s.p[k] = 0
+				continue
+			}
+			s.div[k] = (s.u[j*(W+1)+i+1] - s.u[j*(W+1)+i] + s.v[(j+1)*W+i] - s.v[j*W+i]) / cs
+			cells[(i+j)&1] = append(cells[(i+j)&1], int32(k))
 		}
 	}
+	h2 := cs * cs
+	relax := func(k int) {
+		i, j := k%W, k/W
+		var sum float32
+		cnt := 0
+		for _, d := range [4][2]int{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
+			switch kindAt(i+d[0], j+d[1]) {
+			case lqFluid:
+				sum += s.p[(j+d[1])*W+i+d[0]]
+				cnt++
+			case lqAir:
+				cnt++
+			}
+		}
+		if cnt > 0 {
+			v := (sum - h2*s.div[k]) / float32(cnt)
+			s.p[k] += 1.7 * (v - s.p[k])
+		}
+	}
+	for it := 0; it < 60; it++ {
+		for c := 0; c < 2; c++ {
+			list := cells[c]
+			if len(list) < 2048 {
+				for _, k := range list {
+					relax(int(k))
+				}
+				continue
+			}
+			parallelFor(len(list), func(a, b int) {
+				for _, k := range list[a:b] {
+					relax(int(k))
+				}
+			})
+		}
+	}
+	pAt := func(i, j int) float32 {
+		if kindAt(i, j) == lqFluid {
+			return s.p[j*W+i]
+		}
+		return 0
+	}
+	eachU(func(i, j, k int) {
+		a, b := kindAt(i-1, j), kindAt(i, j)
+		if a != lqSolid && b != lqSolid && (a == lqFluid || b == lqFluid) {
+			s.u[k] -= (pAt(i, j) - pAt(i-1, j)) / cs
+		}
+	})
+	eachV(func(i, j, k int) {
+		a, b := kindAt(i, j-1), kindAt(i, j)
+		if a != lqSolid && b != lqSolid && (a == lqFluid || b == lqFluid) {
+			s.v[k] -= (pAt(i, j) - pAt(i, j-1)) / cs
+		}
+	})
+	// the velocity carried out into the air around (two cells), for the drops at the surface
+	s.extrapolate(s.u, s.uw, W+1, i0, j0, i1+1, j1)
+	s.extrapolate(s.v, s.vw, W, i0, j0, i1, j1+1)
+	solidSides()
 }
 
-// extrapolate: the sides with no liquid take the mean of their neighbours that have some, twice
-func (s *LiquidSim) extrapolate(f, wt []float32, w, h int) {
-	known := make([]bool, len(f))
-	for k := range f {
-		known[k] = wt[k] > 0
+// extrapolate: within [x0, x1]×[y0, y1] of field f (w wide), the samples with no liquid take the
+// mean of their neighbours that have some, twice
+func (s *LiquidSim) extrapolate(f, wt []float32, w, x0, y0, x1, y1 int) {
+	bw, bh := x1-x0+1, y1-y0+1
+	nb := bw * bh
+	if cap(s.exK) < nb {
+		s.exK, s.exV, s.exN = make([]uint8, nb), make([]float32, nb), make([]float32, nb)
 	}
-	next := make([]float32, len(f))
+	known, vals, next := s.exK[:nb], s.exV[:nb], s.exN[:nb]
+	for y := 0; y < bh; y++ {
+		for x := 0; x < bw; x++ {
+			k := (y+y0)*w + x + x0
+			known[y*bw+x] = 0
+			if wt[k] > 0 {
+				known[y*bw+x] = 2 // (2: known before this pass)
+			}
+			vals[y*bw+x] = f[k]
+		}
+	}
 	for pass := 0; pass < 2; pass++ {
-		copy(next, f)
-		add := make([]bool, len(f))
-		for y := 0; y < h; y++ {
-			for x := 0; x < w; x++ {
-				k := y*w + x
-				if known[k] {
+		copy(next, vals)
+		for y := 0; y < bh; y++ {
+			row := y * bw
+			for x := 0; x < bw; x++ {
+				k := row + x
+				if known[k] != 0 {
 					continue
 				}
 				var sum float32
 				c := 0
-				for _, d := range [4][2]int{{-1, 0}, {1, 0}, {0, -1}, {0, 1}} {
-					xx, yy := x+d[0], y+d[1]
-					if xx >= 0 && yy >= 0 && xx < w && yy < h && known[yy*w+xx] {
-						sum += f[yy*w+xx]
-						c++
-					}
+				if x > 0 && known[k-1] == 2 {
+					sum += vals[k-1]
+					c++
+				}
+				if x < bw-1 && known[k+1] == 2 {
+					sum += vals[k+1]
+					c++
+				}
+				if y > 0 && known[k-bw] == 2 {
+					sum += vals[k-bw]
+					c++
+				}
+				if y < bh-1 && known[k+bw] == 2 {
+					sum += vals[k+bw]
+					c++
 				}
 				if c > 0 {
 					next[k] = sum / float32(c)
-					add[k] = true
+					known[k] = 1 // (known from the next pass on)
 				}
 			}
 		}
-		copy(f, next)
-		for k, a := range add {
-			if a {
-				known[k] = true
+		vals, next = next, vals
+		for k, v := range known {
+			if v == 1 {
+				known[k] = 2
 			}
 		}
+	}
+	for y := 0; y < bh; y++ {
+		copy(f[(y+y0)*w+x0:(y+y0)*w+x0+bw], vals[y*bw:(y+1)*bw])
 	}
 }
 
