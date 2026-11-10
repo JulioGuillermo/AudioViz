@@ -22,9 +22,10 @@ import (
 // frame (its particles and the gas's settings): when the clip changes, the simulation is kept up
 // to the first frame whose fingerprint changed (changing only how it looks keeps all of it).
 
-// gasSub: simulation steps per frame (about 60 per second of the gas's own time)
+// gasSub: simulation steps per frame (about 30 per second of the gas's own time: semi-Lagrangian
+// advection stays stable with long steps)
 func gasSub(fps int, speed float32) int {
-	return max(1, int(math.Ceil(60*float64(speed)/float64(max(fps, 1)))))
+	return max(1, int(math.Ceil(30*float64(speed)/float64(max(fps, 1)))))
 }
 
 // gasSpeed: how fast the gas of emitter e lives (GasLook.Speed; 0 = 1)

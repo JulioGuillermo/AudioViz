@@ -111,7 +111,7 @@ func RunFluidSim(deviceIndex int, s *FluidSim) ([]int16, []float32, error) {
 	spv := C.CBytes(fluidSimSPV)
 	defer C.free(spv)
 	var j *C.vkj
-	if C.vkj_create(&j, dev, (*C.uint32_t)(spv), C.size_t(len(fluidSimSPV)), &sizes[0], C.int(len(sizes)), 16,
+	if C.vkj_create(&j, dev, (*C.uint32_t)(spv), C.size_t(len(fluidSimSPV)), &sizes[0], C.int(len(sizes)), 16, 0,
 		(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf))) != 0 {
 		return nil, nil, fmt.Errorf("%s", C.GoString((*C.char)(unsafe.Pointer(&errBuf[0]))))
 	}

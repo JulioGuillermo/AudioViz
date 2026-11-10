@@ -125,10 +125,8 @@ func (g *GasGPU) Checkpoint() ([]byte, error) {
 	if err := g.job.Quantize(); err != nil {
 		return nil, err
 	}
-	// (the mapped fields are slow to read one by one: copied at once first)
 	n := g.GW * g.GH
-	buf := make([]float32, gpu.GasStateCount*n)
-	copy(buf, g.job.Fields()[:gpu.GasStateCount*n])
+	buf := g.job.State()
 	var fs [][]float32
 	for _, k := range gasGPUState {
 		fs = append(fs, buf[k*n:(k+1)*n])

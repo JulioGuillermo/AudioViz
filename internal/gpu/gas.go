@@ -56,12 +56,13 @@ func NewGasJob(deviceIndex, gw, gh int) (*GasJob, error) {
 		C.size_t(GasMaxSrc * GasSrcFloats * 4),
 		C.size_t(GasMaxList * 4),
 		C.size_t(n * 6 * 4),
+		C.size_t(GasStateCount * n * 4),
 	}
 	errBuf := make([]byte, 512)
 	spv := C.CBytes(gasSPV)
 	defer C.free(spv)
 	g := &GasJob{GW: gw, GH: gh, n: n, tw: tw, th: th}
-	if C.vkj_create(&g.j, dev, (*C.uint32_t)(spv), C.size_t(len(gasSPV)), &sizes[0], C.int(len(sizes)), gasPushBytes,
+	if C.vkj_create(&g.j, dev, (*C.uint32_t)(spv), C.size_t(len(gasSPV)), &sizes[0], C.int(len(sizes)), gasPushBytes, 1<<4|1<<5, // (read back: the frame's cells, the state)
 		(*C.char)(unsafe.Pointer(&errBuf[0])), C.int(len(errBuf))) != 0 {
 		return nil, fmt.Errorf("%s", C.GoString((*C.char)(unsafe.Pointer(&errBuf[0]))))
 	}
@@ -168,11 +169,9 @@ func (g *GasJob) Step(src []float32, st GasStep) (bool, error) {
 	steps := []gasK{
 		{0, int32(head), int32(g.srcOff), 0, 0, 0}, // feed
 		{1, 0, 0, 0, 0, 0},                         // curl, ψ
-		{2, 0, 0, 0, st.Wk, 0},                     // forces
-		{3, 0, 0, 0, 0, 0},                         // copy
-		{4, 0, 0, 0, 0, 0},                         // velocity carried
-		{3, 0, 0, 0, 0, 0},
-		{5, 0, 0, 0, 0, 0}, // divergence
+		{2, 0, 0, 0, st.Wk, 0},                     // forces (into T1, T3)
+		{25, 0, 0, 0, 0, 0},                        // the velocity carried (from T1, T3)
+		{5, 0, 0, 0, 0, 0},                         // divergence
 	}
 	for _, s := range steps {
 		if err := g.run(s.k, s.a0, s.a1, s.a2, st.T, st.Dt, s.p0, s.p1); err != nil {
@@ -196,15 +195,16 @@ func (g *GasJob) Step(src []float32, st GasStep) (bool, error) {
 	f32 := func(v float32) int32 { return int32(*(*uint32)(unsafe.Pointer(&v))) }
 	rest := []gasK{
 		{7, 0, 0, 0, 0, 0},  // gradient
-		{8, 0, 0, 0, 0, 0},  // where it came from
-		{9, 0, 0, 0, 0, 0},  // carried: back
-		{10, 0, 0, 0, 0, 0}, // forth, corrected
-		{11, 0, 0, 0, 0, 0},
+		{9, 0, 0, 0, 0, 0},  // carried: back (and where it came from)
+		{10, 0, 0, 0, 0, 0}, // forth, corrected, in place
 	}
+	diff := int32(0)
 	if st.Diff > 0 {
-		rest = append(rest, gasK{12, 0, 0, 0, st.Diff, 0}, gasK{13, 0, 0, 0, 0, 0})
+		rest, diff = append(rest, gasK{12, 0, 0, 0, st.Diff, 0}), 1
 	}
-	rest = append(rest, gasK{14, 0, 0, 0, 0, 0}, gasK{15, st.Restart, 0, 0, 0, 0}, gasK{16, 0, f32(st.Warm), f32(st.Burn), st.Fade, st.Cool})
+	// the wisp coordinates (and the diffusion's results in place), then the reactions (and the
+	// coordinates in place, the sets restarted)
+	rest = append(rest, gasK{14, 0, diff, 0, 0, 0}, gasK{16, st.Restart, f32(st.Warm), f32(st.Burn), st.Fade, st.Cool})
 	for _, s := range rest {
 		if err := g.run(s.k, s.a0, s.a1, s.a2, st.T, st.Dt, s.p0, s.p1); err != nil {
 			return false, err
@@ -231,7 +231,15 @@ func (g *GasJob) Quantize() error {
 	if err := g.run(17, 0, 0, 0, 0, 0, 0, 0); err != nil {
 		return err
 	}
+	if err := g.run(26, 0, 0, 0, 0, 0, 0, 0); err != nil {
+		return err
+	}
 	return g.Run()
+}
+
+// State: the state as Quantize left it (read-back memory: fast to read)
+func (g *GasJob) State() []float32 {
+	return unsafe.Slice((*float32)(C.vkj_map(g.j, 5)), GasStateCount*g.n)
 }
 
 // Light: the frame's light and its cells into Out (run at once); radii of the blurs of the light

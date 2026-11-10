@@ -484,14 +484,14 @@ it. Any number at once: the renderer is sized by `Session.EmitterCount` (the mos
 once, an event sweep over the clips, with margin: `roomFor`), the images by `emitterWords`.
 
 **Gas look** (`effects/gas.go`, `engine/gas.go`): the one stateful emitter look. The particles are
-not splatted (`GasOn`; only their glow and their light sources). Instead, at each of the ~60 steps
+not splatted (`GasOn`; only their glow and their light sources). Instead, at each of the ~30 steps
 per second (`gasSub`), the particles alive then (`EmitFrame.At` at the step's time) feed a
 `GasSim`. The grid covers the frame, with cells of `detail`·scale px, coarser past
 `GasMaxCells` = 131072. Each particle feeds it over its disc ((1 − r²)² × alpha × dt): smoke, heat,
 fuel, dye = its color × smoke, and a relaxation of the velocity towards its own (`push`).
 
 A step (`GasSim.Step`, all float32, rows in parallel, deterministic; dt = speed / (fps·substeps),
-substeps = ⌈60·speed / fps⌉: `speed` makes the gas live faster than the video, its particles
+substeps = ⌈30·speed / fps⌉: `speed` makes the gas live faster than the video, its particles
 still taken at their own moments):
 1. **Forces:** buoyancy −rise·heat + weight·smoke; the wind as a target velocity (relaxation
    0.4/s); the curl of a two-octave value-noise stream function (turbulence: its pattern moves at

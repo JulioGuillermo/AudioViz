@@ -615,7 +615,7 @@ struct vkj {
     } while (0)
 
 int vkj_create(vkj **out, vkr *r, const uint32_t *spirv, size_t spirv_size, const size_t *sizes, int nbufs,
-               int push_size, char *err, int errlen) {
+               int push_size, unsigned cached, char *err, int errlen) {
     *out = NULL;
     if (nbufs > VKJ_MAX_BUFS) {
         snprintf(err, errlen, "too many buffers");
@@ -626,7 +626,10 @@ int vkj_create(vkj **out, vkr *r, const uint32_t *spirv, size_t spirv_size, cons
     j->push_size = (uint32_t)push_size;
     for (int i = 0; i < nbufs; i++) {
         VkDeviceSize sz = sizes[i] < 16 ? 16 : (sizes[i] + 3) / 4 * 4;
-        if (make_buf(r, &j->b[i], sz, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT) != 0)
+        VkMemoryPropertyFlags pref = (cached >> i) & 1u
+            ? VK_MEMORY_PROPERTY_HOST_CACHED_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT  // read back by the CPU
+            : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+        if (make_buf(r, &j->b[i], sz, pref) != 0)
             FAIL("out of GPU memory for buffers");
         j->nb = i + 1;
     }

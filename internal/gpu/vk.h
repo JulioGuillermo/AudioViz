@@ -63,8 +63,9 @@ int vkr_list_devices(char *out, int len);
 // Each dispatch is followed by a barrier; vkj_run submits what was recorded and waits.
 #define VKJ_MAX_BUFS 16
 typedef struct vkj vkj;
+// cached: a bit per buffer the CPU reads back a lot (host-cached memory when there is some)
 int vkj_create(vkj **out, vkr *r, const uint32_t *spirv, size_t spirv_size, const size_t *sizes, int nbufs,
-               int push_size, char *err, int errlen);
+               int push_size, unsigned cached, char *err, int errlen);
 void *vkj_map(vkj *j, int buf);
 int vkj_dispatch(vkj *j, const void *push, uint32_t gx, uint32_t gy, uint32_t gz);
 int vkj_run(vkj *j);

@@ -19,6 +19,7 @@ layout(std430, set = 0, binding = 1) buffer Fields { float fld[]; };
 layout(std430, set = 0, binding = 2) readonly buffer Src { float src[]; };    // 10 per source
 layout(std430, set = 0, binding = 3) readonly buffer Tiles { uint tl[]; };    // per substep: per tile start, count; then indices
 layout(std430, set = 0, binding = 4) writeonly buffer Out { uint outc[]; };   // GasFrame.Cells
+layout(std430, set = 0, binding = 5) writeonly buffer Stage { float stage[]; }; // the state, to read back
 
 layout(push_constant) uniform Push {
     int kernel;
@@ -64,13 +65,15 @@ float sampleF(int f, float x, float y, bool edge) {
     return (v[0] + (v[1] - v[0]) * ux) * (1.0 - uy) + (v[2] + (v[3] - v[2]) * ux) * uy;
 }
 
-vec2 back(int x, int y, float dt) {
+// where the gas at cell (x, y) came from dt ago, the velocity in fields fx, fy (midpoint rule)
+vec2 backV(int x, int y, float dt, int fx, int fy) {
     float k = dt / CS;
     float px = float(x) + 0.5, py = float(y) + 0.5;
     int i = y * GW + x;
-    float mx = px - 0.5 * k * F(VX, i), my = py - 0.5 * k * F(VY, i);
-    return vec2(px - k * sampleF(VX, mx, my, true), py - k * sampleF(VY, mx, my, true));
+    float mx = px - 0.5 * k * F(fx, i), my = py - 0.5 * k * F(fy, i);
+    return vec2(px - k * sampleF(fx, mx, my, true), py - k * sampleF(fy, mx, my, true));
 }
+vec2 back(int x, int y, float dt) { return backV(x, y, dt, VX, VY); }
 
 // value noise (as effects.evnoise)
 uint pcg(uint v) {
@@ -175,6 +178,14 @@ void advVel(int i) {
     S(T1, i, s ? 0.0 : sampleF(VX, b.x, b.y, true));
     S(T3, i, s ? 0.0 : sampleF(VY, b.x, b.y, true));
 }
+// 25: the same from the forces' result (T1, T3) straight into the velocity (no copies)
+void advVelT(int i) {
+    int x = i % GW, y = i / GW;
+    vec2 b = backV(x, y, K.dt, T1, T3);
+    bool s = sol(i);
+    S(VX, i, s ? 0.0 : sampleF(T1, b.x, b.y, true));
+    S(VY, i, s ? 0.0 : sampleF(T3, b.x, b.y, true));
+}
 
 // 5: the divergence
 void divergence(int i) {
@@ -277,8 +288,11 @@ int advField(int j) { return j == 0 ? D : j == 1 ? R : j == 2 ? G : j == 3 ? B :
 
 // 9: back (each carried field's value where it came from, and the range of those four cells)
 void adv1(int i) {
+    // (where it came from: kept for the wisp coordinates)
+    vec2 bk = back(i % GW, i / GW, K.dt);
+    S(BX, i, bk.x); S(BY, i, bk.y);
     ivec4 idx; vec4 w;
-    corners(F(BX, i), F(BY, i), idx, w);
+    corners(bk.x, bk.y, idx, w);
     for (int j = 0; j < NADV; j++) {
         int f = advField(j);
         float v = 0.0, lo = 3.402823e38, hi = -3.402823e38;
@@ -302,7 +316,8 @@ void adv2(int i) {
         for (int q = 0; q < 4; q++)
             if (idx[q] >= 0) bk += w[q] * F(fb, idx[q]);
         float v = F(fb, i) + 0.5 * (F(advField(j), i) - bk);
-        S(fb + 1, i, max(F(fb + 1, i), min(F(fb + 2, i), v)));
+        // (in place: no other cell reads this field here; none in a solid cell)
+        S(advField(j), i, sol(i) ? 0.0 : max(F(fb + 1, i), min(F(fb + 2, i), v)));
     }
 }
 // 11: the results in place
@@ -339,6 +354,7 @@ void diffuse2(int i) {
 
 // 14: the wisp coordinates carried (into T0..T3); 15: in place, a set restarted (a0: bits)
 void coords(int i) {
+    if (K.a1 != 0) diffuse2(i); // (the diffusion's results in place)
     float bx = F(BX, i), by = F(BY, i);
     float vx = F(VX, i) * K.dt, vy = F(VY, i) * K.dt;
     S(T0, i, sampleF(C1X, bx, by, true) - vx);
@@ -354,6 +370,7 @@ void coords2(int i) {
 
 // 16: fuel burns, smoke fades, heat cools (p0: smoke kept, p1: flames kept; a-floats in Cfg)
 void react(int i) {
+    coords2(i); // (the wisp coordinates in place, a set restarted: a0)
     float fade = K.p0, cool = K.p1;
     float warm = uintBitsToFloat(uint(K.a1)), burn = uintBitsToFloat(uint(K.a2));
     float fu = F(FUEL, i);
@@ -383,6 +400,11 @@ void quant(int i) {
         if (f == P) { S(P, i, 0.0); continue; }
         S(f, i, unpackHalf2x16(packHalf2x16(vec2(F(f, i), 0.0))).x);
     }
+}
+
+// 26: the state (the first 14 fields) into the read-back buffer
+void stageState(int i) {
+    for (int f = 0; f < 14; f++) stage[f * N + i] = F(f, i);
 }
 
 // 18: the light reaching each cell (24 steps towards the light)
@@ -467,5 +489,7 @@ void main() {
     case 21: boxV(i); break;
     case 22: lightEnd(i); break;
     case 23: pack(i); break;
+    case 25: advVelT(i); break;
+    case 26: stageState(i); break;
     }
 }

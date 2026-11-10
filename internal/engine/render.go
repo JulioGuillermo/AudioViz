@@ -423,13 +423,14 @@ func (r *Renderer) layerData(slot int, p *gpu.Params, fs *FrameState) bool {
 		putTrack(buf, tr.off, tr.t)
 	}
 	for _, ga := range gases {
+		// (in one copy each: the buffer is write-combined memory; little-endian, as the GPU)
 		b := buf[ga.off*4:]
-		for i, v := range ga.g.Cells {
-			binary.LittleEndian.PutUint32(b[i*4:], v)
+		if n := len(ga.g.Cells); n > 0 {
+			copy(b, unsafe.Slice((*byte)(unsafe.Pointer(&ga.g.Cells[0])), n*4))
+			b = b[n*4:]
 		}
-		b = b[len(ga.g.Cells)*4:]
-		for i, v := range ga.g.Light {
-			binary.LittleEndian.PutUint32(b[i*4:], v)
+		if n := len(ga.g.Light); n > 0 {
+			copy(b, unsafe.Slice((*byte)(unsafe.Pointer(&ga.g.Light[0])), n*4))
 		}
 	}
 	// the texts' depth along their paths and their twist as ribbons, after everything (written
