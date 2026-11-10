@@ -56,7 +56,7 @@ layers:
         y: 0.95
         blend: add
         emitter:
-          preset: fire          # fire, fire_real, fire_gas, explosion, sparks · smoke, smoke_real · fog_gas · clouds_gas · water, water_clear, splash, rain, water_sim, water_sim_clear, water_3d, splash_sim · dust, light, snow, lamp light, explosion, lamp, water, water_clear, splash, rain, snow
+          preset: fire          # fire, fire_real, fire_gas, explosion, sparks · smoke, smoke_real · fog_gas · clouds_gas · water, water_clear, splash, rain, water_sim, water_sim_clear, water_3d, water_3d_clear, splash_sim · dust, light, snow, lamp light, explosion, lamp, water, water_clear, splash, rain, snow
           rate: 650             # anything not written comes from the preset
           react: { react_to: bass, rate: 1, size: 0.35 }
         keys:
@@ -227,7 +227,8 @@ slopes. A sudden step of the surface towards you is the side of something and st
 In 3D each drop moves by itself (they do not push each other), and they are drawn at their own
 depth: what is nearer hides them, and the 2.5D camera and the depth of field move and blur each
 one. The preset **Water on the scene (3D)** (`water_3d`) pours water from the top of the frame onto
-the scene.
+the scene; **Clear water on the scene (3D, lens)** (`water_3d_clear`) does the same with clear water
+that bends what is behind it instead of looking blue.
 
 **Closed frame edges** (`walls`, gas and liquid): the frame's sides, floor and ceiling are walls,
 so the gas or the liquid stays in, as in a fish tank.

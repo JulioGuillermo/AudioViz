@@ -434,6 +434,12 @@ var EmitterPresets = map[string]EmitterConfig{
 		ColorStart: "#6cb4f4d8", ColorMid: "#6cb4f4d8", ColorEnd: "#6cb4f4d8", Mode: "soft", Softness: 1,
 		Look: "liquid", Water: WaterLook{Threshold: 0.55, Clear: 0.7, Shine: 1.2, Bump: 1, Ripple: 2, RippleScale: 40, RippleSpeed: 40},
 		Liquid: func() LiquidLook { l := DefaultLiquid(); l.D3 = true; return l }(), React: EmitterReact{ReactTo: "bass", Rate: 0.3}},
+	// clear water poured onto the scene in 3D: almost no color, it bends what is behind it (a lens)
+	"water_3d_clear": {Rate: 220, Max: 9000, Shape: "circle", Width: 30, Direction: 180, Spread: 10, Speed: 250, SpeedVar: 0.15, Gravity: 1400,
+		Life: 1, Size: 28, SizeEnd: 28, SizeVar: 0.2,
+		ColorStart: "#d8ecffd8", ColorMid: "#d8ecffd8", ColorEnd: "#d8ecffd8", Mode: "soft", Softness: 1,
+		Look: "liquid", Water: WaterLook{Threshold: 0.55, Clear: 1, Shine: 1.3, Bump: 0.9, Ripple: 2, RippleScale: 40, RippleSpeed: 40, Lens: 40},
+		Liquid: func() LiquidLook { l := DefaultLiquid(); l.D3 = true; return l }(), React: EmitterReact{ReactTo: "bass", Rate: 0.3}},
 	// a simulated splash of water on each beat, falling onto a floor
 	"splash_sim": {Rate: 0, Burst: 220, Max: 9000, Shape: "circle", Width: 60, Direction: 0, Spread: 110, Speed: 700, SpeedVar: 0.45, Gravity: 1600,
 		Life: 1, Size: 26, SizeEnd: 26, SizeVar: 0.3,

@@ -455,7 +455,7 @@ export const EMITTER_GROUPS = [
   ['Clouds', [['clouds_gas', 'Storm clouds', 'cloud']]],
   ['Water', [['water', 'Water', 'droplet'], ['water_clear', 'Clear water (lens)', 'droplet'], ['splash', 'Water splash', 'waves'],
     ['rain', 'Rain', 'cloud-rain'], ['water_sim', 'Simulated water', 'droplet'], ['water_sim_clear', 'Simulated clear water (lens)', 'droplet'],
-    ['water_3d', 'Water on the scene (3D)', 'droplet'],
+    ['water_3d', 'Water on the scene (3D)', 'droplet'], ['water_3d_clear', 'Clear water on the scene (3D, lens)', 'droplet'],
     ['splash_sim', 'Simulated splash', 'waves']]],
   ['Other', [['dust', 'Dust', 'focus'], ['light', 'Lights (bokeh)', 'sun'], ['snow', 'Snow', 'snowflake'],
     ['lamp', 'Light source (invisible)', 'sun']]],
